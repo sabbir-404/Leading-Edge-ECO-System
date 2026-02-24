@@ -1,0 +1,104 @@
+{
+  "name": "le-soft",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Leading Edge ECO-System Software",
+  "author": "Sabbir <sabbir@example.com>",
+  "type": "module",
+  "main": "dist-electron/main.cjs",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:check": "tsc && vite build",
+    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "preview": "vite preview",
+    "electron:build": "esbuild electron/main.ts --bundle --platform=node --target=node18 --external:electron --external:sqlite3 --external:bcrypt --external:electron-updater --outfile=dist-electron/main.cjs && esbuild electron/preload.ts --bundle --platform=node --target=node18 --external:electron --outfile=dist-electron/preload.cjs && electron .",
+    "electron:dev": "concurrently -k \"vite\" \"npm run electron:build\"",
+    "rebuild": "electron-rebuild -f -w sqlite3",
+    "dist": "node build-electron.cjs && electron-builder --win",
+    "dist:publish": "node build-electron.cjs && electron-builder --win -p always"
+  },
+  "dependencies": {
+    "@types/bcrypt": "^6.0.0",
+    "bcrypt": "^6.0.0",
+    "clsx": "^2.1.1",
+    "electron-updater": "^6.8.3",
+    "framer-motion": "^12.34.0",
+    "jsbarcode": "^3.12.3",
+    "jspdf": "^4.1.0",
+    "jspdf-autotable": "^5.0.7",
+    "lucide-react": "^0.363.0",
+    "mysql2": "^3.17.1",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.22.3",
+    "sqlite3": "^5.1.7",
+    "tailwind-merge": "^3.4.1",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.0.3",
+    "@types/react": "^18.2.66",
+    "@types/react-dom": "^18.2.22",
+    "@types/sqlite3": "^3.1.11",
+    "@typescript-eslint/eslint-plugin": "^7.2.0",
+    "@typescript-eslint/parser": "^7.2.0",
+    "@vitejs/plugin-react": "^4.2.1",
+    "concurrently": "^8.2.2",
+    "electron": "^29.1.0",
+    "electron-builder": "^24.13.3",
+    "eslint": "^8.57.0",
+    "eslint-plugin-react-hooks": "^4.6.0",
+    "eslint-plugin-react-refresh": "^0.4.6",
+    "typescript": "^5.2.2",
+    "vite": "^5.2.0"
+  },
+  "build": {
+    "appId": "com.leadingedge.lesoft",
+    "productName": "LE-SOFT",
+    "icon": "build/icon.ico",
+    "npmRebuild": false,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "node_modules/sqlite3",
+        "to": "node_modules/sqlite3",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "Logo",
+        "to": "Logo",
+        "filter": [
+          "**/*.png"
+        ]
+      }
+    ],
+    "afterPack": "./afterPack.cjs",
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "LE-SOFT",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "sabbir-404",
+      "repo": "Leading-Edge-ECO-System"
+    }
+  }
+}

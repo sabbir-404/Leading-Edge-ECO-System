@@ -1,0 +1,143 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap');
+
+:root {
+    font-family: 'Inter', system-ui, Avenir, Helvetica, Arial, sans-serif;
+    line-height: 1.5;
+    font-weight: 400;
+
+    /* ━━━ Light Mode (Silver-Gray / Cream, Orange accent, Black borders) ━━━ */
+    --bg-primary: #d4d4d4;
+    /* Silver gray - matching reference */
+    --bg-secondary: #e0e0e0;
+    /* Lighter silver */
+    --text-primary: #111111;
+    /* Near-black text */
+    --text-secondary: #444444;
+    /* Dark gray secondary */
+    --accent-color: #f97316;
+    /* Orange */
+    --accent-hover: #ea580c;
+    /* Darker orange */
+    --border-color: #000000;
+    /* Black borders */
+    --card-bg: #c8c8c8;
+    /* Card background - slightly darker silver */
+    --input-bg: #e8e8e8;
+    /* Input fields */
+    --hover-bg: #bfbfbf;
+    /* Hover state */
+    --sidebar-bg: #b8b8b8;
+    /* Sidebar */
+    --topbar-bg: #c0c0c0;
+    /* Top bar */
+
+    --bg-gradient: linear-gradient(135deg, #d4d4d4 0%, #c8c8c8 100%);
+
+    color-scheme: light dark;
+    color: var(--text-primary);
+    background-color: var(--bg-primary);
+
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* ━━━ Dark Mode (Black, Orange, White) ━━━ */
+.dark,
+:root[class~="dark"] {
+    --bg-primary: #0a0a0a;
+    /* Rich Black */
+    --bg-secondary: #141414;
+    /* Slightly lighter black */
+    --text-primary: #f5f5f5;
+    /* Off-white */
+    --text-secondary: #999999;
+    /* Muted gray */
+    --accent-color: #f97316;
+    /* Orange */
+    --accent-hover: #fb923c;
+    /* Lighter orange on hover */
+    --border-color: #2a2a2a;
+    /* Subtle dark border */
+    --card-bg: #141414;
+    /* Card background */
+    --input-bg: #1e1e1e;
+    /* Input fields */
+    --hover-bg: #1e1e1e;
+    /* Hover state */
+    --sidebar-bg: #111111;
+    /* Sidebar */
+    --topbar-bg: #141414;
+    /* Top bar */
+
+    --bg-gradient: linear-gradient(135deg, #0a0a0a 0%, #111111 100%);
+}
+
+body {
+    margin: 0;
+    display: flex;
+    place-items: center;
+    min-width: 320px;
+    min-height: 100vh;
+    background: var(--bg-gradient);
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: default;
+}
+
+input,
+textarea,
+[contenteditable] {
+    user-select: text;
+    -webkit-user-select: text;
+    cursor: text;
+}
+
+#app,
+#root {
+    width: 100%;
+}
+
+button {
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    padding: 0.6em 1.2em;
+    font-size: 1em;
+    font-weight: 500;
+    font-family: inherit;
+    background-color: var(--card-bg);
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: all 0.25s;
+}
+
+button:hover {
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+}
+
+button:focus,
+button:focus-visible {
+    outline: 2px solid var(--accent-color);
+    outline-offset: 2px;
+}
+
+/* ━━━ Scrollbar ━━━ */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--bg-secondary);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--text-secondary);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--accent-color);
+}

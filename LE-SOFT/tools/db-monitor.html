@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LE SOFT — Database Monitor</title>
+    <style>
+        :root {
+            --bg-primary: #0f172a;
+            --bg-secondary: #1e293b;
+            --bg-card: #1e293b;
+            --border: rgba(99,102,241,0.15);
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --accent: #6366f1;
+            --accent-light: #818cf8;
+            --success: #22c55e;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+        .header {
+            background: linear-gradient(135deg, var(--bg-secondary), var(--bg-primary));
+            border-bottom: 1px solid var(--border);
+            padding: 20px 32px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .header h1 {
+            font-size: 1.3rem;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .header h1 .icon {
+            width: 36px; height: 36px;
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            border-radius: 10px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 18px;
+        }
+        .header .connection-form {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        .header input {
+            padding: 8px 14px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: rgba(15,23,42,0.8);
+            color: var(--text-primary);
+            font-size: 0.85rem;
+            width: 180px;
+        }
+        .header input::placeholder { color: var(--text-muted); }
+        .btn {
+            padding: 8px 18px;
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            color: white;
+        }
+        .btn-primary:hover { opacity: 0.9; }
+        .btn-danger {
+            background: rgba(239,68,68,0.15);
+            color: #fca5a5;
+            border: 1px solid rgba(239,68,68,0.3);
+        }
+        .btn-success {
+            background: rgba(34,197,94,0.15);
+            color: #86efac;
+            border: 1px solid rgba(34,197,94,0.3);
+        }
+        .status-bar {
+            padding: 12px 32px;
+            display: flex;
+            gap: 24px;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+            font-size: 0.82rem;
+        }
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .status-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+        .status-dot.green { background: var(--success); box-shadow: 0 0 8px rgba(34,197,94,0.5); }
+        .status-dot.yellow { background: var(--warning); }
+        .status-dot.red { background: var(--danger); animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+        .main {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            padding: 24px 32px;
+        }
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            overflow: hidden;
+        }
+        .card-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+        .card-header .badge {
+            padding: 3px 10px;
+            border-radius: 20px;
+            font-size: 0.72rem;
+            font-weight: 600;
+            background: rgba(99,102,241,0.15);
+            color: var(--accent-light);
+        }
+        .card-body {
+            padding: 16px 20px;
+            max-height: 360px;
+            overflow-y: auto;
+        }
+        .card-body::-webkit-scrollbar { width: 6px; }
+        .card-body::-webkit-scrollbar-track { background: transparent; }
+        .card-body::-webkit-scrollbar-thumb { background: var(--text-muted); border-radius: 3px; }
+        .full-width { grid-column: 1 / -1; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.82rem;
+        }
+        th {
+            text-align: left;
+            padding: 8px 12px;
+            color: var(--text-muted);
+            font-weight: 600;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-bottom: 1px solid var(--border);
+        }
+        td {
+            padding: 10px 12px;
+            border-bottom: 1px solid rgba(99,102,241,0.08);
+            color: var(--text-secondary);
+        }
+        tr:hover td { background: rgba(99,102,241,0.05); }
+        .tag {
+            padding: 2px 8px;
+            border-radius: 6px;
+            font-size: 0.72rem;
+            font-weight: 600;
+        }
+        .tag-active { background: rgba(34,197,94,0.15); color: #86efac; }
+        .tag-inactive { background: rgba(100,116,139,0.2); color: var(--text-muted); }
+        .tag-success { background: rgba(34,197,94,0.1); color: #4ade80; }
+        .tag-error { background: rgba(239,68,68,0.15); color: #fca5a5; }
+        .tag-select { background: rgba(99,102,241,0.15); color: #818cf8; }
+        .tag-insert { background: rgba(34,197,94,0.15); color: #86efac; }
+        .tag-update { background: rgba(245,158,11,0.15); color: #fbbf24; }
+        .tag-delete { background: rgba(239,68,68,0.15); color: #fca5a5; }
+        .sql-cell {
+            font-family: 'JetBrains Mono', 'Fira Code', monospace;
+            font-size: 0.75rem;
+            max-width: 400px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            color: var(--accent-light);
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            padding: 24px 32px 0;
+        }
+        .stat-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 20px;
+            text-align: center;
+        }
+        .stat-card .value {
+            font-size: 2rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #6366f1, #a78bfa);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .stat-card .label {
+            font-size: 0.78rem;
+            color: var(--text-muted);
+            margin-top: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--text-muted);
+            font-size: 0.85rem;
+        }
+        .auto-refresh {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+        .auto-refresh select {
+            padding: 4px 8px;
+            border-radius: 6px;
+            background: rgba(15,23,42,0.8);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            font-size: 0.8rem;
+        }
+        .disconnected {
+            color: var(--danger);
+            text-align: center;
+            padding: 60px 20px;
+            font-size: 1rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>
+            <span class="icon">🛡️</span>
+            LE SOFT — Database Monitor
+        </h1>
+        <div class="connection-form">
+            <input id="serverHost" type="text" placeholder="Server IP (e.g. 192.168.1.5)" value="localhost" />
+            <input id="serverPort" type="text" placeholder="Port" value="3456" style="width: 80px" />
+            <input id="apiKey" type="password" placeholder="API Key" />
+            <button class="btn btn-primary" onclick="connect()">Connect</button>
+            <div class="auto-refresh">
+                <span>Refresh:</span>
+                <select id="refreshInterval" onchange="setRefresh()">
+                    <option value="0">Manual</option>
+                    <option value="3000">3s</option>
+                    <option value="5000" selected>5s</option>
+                    <option value="10000">10s</option>
+                    <option value="30000">30s</option>
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <div class="status-bar" id="statusBar">
+        <div class="status-item">
+            <span class="status-dot" id="connDot"></span>
+            <span id="connStatus">Disconnected</span>
+        </div>
+        <div class="status-item">Server: <span id="serverAddr">—</span></div>
+        <div class="status-item">Last refresh: <span id="lastRefresh">—</span></div>
+    </div>
+
+    <div class="stats-grid" id="statsGrid">
+        <div class="stat-card">
+            <div class="value" id="statTotal">—</div>
+            <div class="label">Total Connections</div>
+        </div>
+        <div class="stat-card">
+            <div class="value" id="statActive">—</div>
+            <div class="label">Active Now</div>
+        </div>
+        <div class="stat-card">
+            <div class="value" id="statQueries">—</div>
+            <div class="label">Queries Logged</div>
+        </div>
+        <div class="stat-card">
+            <div class="value" id="statAvgDur">—</div>
+            <div class="label">Avg Query Time</div>
+        </div>
+    </div>
+
+    <div class="main">
+        <!-- Connections Panel -->
+        <div class="card">
+            <div class="card-header">
+                Active Connections
+                <span class="badge" id="connCount">0</span>
+            </div>
+            <div class="card-body" id="connectionsBody">
+                <div class="empty-state">Connect to server to view connections</div>
+            </div>
+        </div>
+
+        <!-- Backup Management -->
+        <div class="card">
+            <div class="card-header">
+                Backup Management
+                <button class="btn btn-success" onclick="createBackup()" style="padding: 4px 12px; font-size: 0.78rem;">
+                    Create Backup
+                </button>
+            </div>
+            <div class="card-body" id="backupsBody">
+                <div class="empty-state">Backup management available via LE SOFT app</div>
+            </div>
+        </div>
+
+        <!-- Query Log -->
+        <div class="card full-width">
+            <div class="card-header">
+                Recent Query Log
+                <div style="display:flex; gap: 8px;">
+                    <button class="btn btn-danger" onclick="clearLog()" style="padding: 4px 12px; font-size: 0.78rem;">
+                        Clear
+                    </button>
+                    <span class="badge" id="queryCount">0</span>
+                </div>
+            </div>
+            <div class="card-body" id="queryLogBody" style="max-height: 500px;">
+                <div class="empty-state">No queries logged yet</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let connected = false;
+        let refreshTimer = null;
+        let allData = null;
+
+        function getBaseUrl() {
+            const host = document.getElementById('serverHost').value || 'localhost';
+            const port = document.getElementById('serverPort').value || '3456';
+            return `http://${host}:${port}`;
+        }
+
+        function getHeaders() {
+            return {
+                'Content-Type': 'application/json',
+                'X-API-Key': document.getElementById('apiKey').value
+            };
+        }
+
+        async function connect() {
+            const dot = document.getElementById('connDot');
+            const status = document.getElementById('connStatus');
+            try {
+                // Test connection with ping first
+                const pingRes = await fetch(getBaseUrl() + '/ping');
+                if (!pingRes.ok) throw new Error('Ping failed');
+
+                // Fetch monitoring data
+                const res = await fetch(getBaseUrl() + '/monitoring', { headers: getHeaders() });
+                if (res.status === 401) {
+                    alert('Authentication failed. Check your API key.');
+                    return;
+                }
+                allData = await res.json();
+                connected = true;
+                dot.className = 'status-dot green';
+                status.textContent = 'Connected';
+                document.getElementById('serverAddr').textContent = getBaseUrl();
+                renderAll();
+                setRefresh();
+            } catch (e) {
+                connected = false;
+                dot.className = 'status-dot red';
+                status.textContent = 'Connection Failed';
+                alert('Failed to connect to DB server. Ensure the server is running and accessible.');
+            }
+        }
+
+        async function refresh() {
+            if (!connected) return;
+            try {
+                const res = await fetch(getBaseUrl() + '/monitoring', { headers: getHeaders() });
+                if (!res.ok) throw new Error('Fetch failed');
+                allData = await res.json();
+                renderAll();
+            } catch (e) {
+                document.getElementById('connDot').className = 'status-dot yellow';
+                document.getElementById('connStatus').textContent = 'Reconnecting...';
+            }
+        }
+
+        function setRefresh() {
+            if (refreshTimer) clearInterval(refreshTimer);
+            const interval = parseInt(document.getElementById('refreshInterval').value);
+            if (interval > 0 && connected) {
+                refreshTimer = setInterval(refresh, interval);
+            }
+        }
+
+        function renderAll() {
+            if (!allData) return;
+            document.getElementById('lastRefresh').textContent = new Date().toLocaleTimeString();
+
+            // Stats
+            const stats = allData.stats || {};
+            document.getElementById('statTotal').textContent = stats.totalConnections || 0;
+            document.getElementById('statActive').textContent = stats.activeConnections || 0;
+            document.getElementById('statQueries').textContent = stats.totalQueries || 0;
+
+            const queries = allData.recentQueries || [];
+            if (queries.length > 0) {
+                const avgDur = queries.reduce((s, q) => s + (q.durationMs || 0), 0) / queries.length;
+                document.getElementById('statAvgDur').textContent = avgDur.toFixed(1) + 'ms';
+            } else {
+                document.getElementById('statAvgDur').textContent = '—';
+            }
+
+            // Connections
+            const connections = allData.connections || [];
+            document.getElementById('connCount').textContent = connections.length;
+            if (connections.length === 0) {
+                document.getElementById('connectionsBody').innerHTML = '<div class="empty-state">No connections recorded</div>';
+            } else {
+                let html = '<table><thead><tr><th>IP Address</th><th>First Seen</th><th>Last Active</th><th>Queries</th><th>Status</th></tr></thead><tbody>';
+                connections.forEach(c => {
+                    const statusTag = c.activeNow
+                        ? '<span class="tag tag-active">Active</span>'
+                        : '<span class="tag tag-inactive">Inactive</span>';
+                    html += `<tr>
+                        <td><strong>${c.ip}</strong></td>
+                        <td>${formatTime(c.firstSeen)}</td>
+                        <td>${formatTime(c.lastSeen)}</td>
+                        <td>${c.queryCount}</td>
+                        <td>${statusTag}</td>
+                    </tr>`;
+                });
+                html += '</tbody></table>';
+                document.getElementById('connectionsBody').innerHTML = html;
+            }
+
+            // Query log
+            document.getElementById('queryCount').textContent = queries.length;
+            if (queries.length === 0) {
+                document.getElementById('queryLogBody').innerHTML = '<div class="empty-state">No queries logged yet</div>';
+            } else {
+                let html = '<table><thead><tr><th>Time</th><th>IP</th><th>Method</th><th>SQL</th><th>Duration</th><th>Status</th></tr></thead><tbody>';
+                [...queries].reverse().forEach(q => {
+                    const methodClass = getMethodClass(q.sql);
+                    const statusTag = q.success
+                        ? '<span class="tag tag-success">OK</span>'
+                        : `<span class="tag tag-error" title="${q.error || ''}">Error</span>`;
+                    html += `<tr>
+                        <td>${formatTime(q.timestamp)}</td>
+                        <td>${q.ip}</td>
+                        <td><span class="tag ${methodClass}">${getSqlType(q.sql)}</span></td>
+                        <td class="sql-cell" title="${escapeHtml(q.sql)}">${escapeHtml(q.sql)}</td>
+                        <td>${q.durationMs}ms</td>
+                        <td>${statusTag}</td>
+                    </tr>`;
+                });
+                html += '</tbody></table>';
+                document.getElementById('queryLogBody').innerHTML = html;
+            }
+        }
+
+        function formatTime(iso) {
+            if (!iso) return '—';
+            const d = new Date(iso);
+            return d.toLocaleTimeString() + ' ' + d.toLocaleDateString();
+        }
+
+        function getSqlType(sql) {
+            if (!sql) return 'OTHER';
+            const upper = sql.trim().toUpperCase();
+            if (upper.startsWith('SELECT')) return 'SELECT';
+            if (upper.startsWith('INSERT')) return 'INSERT';
+            if (upper.startsWith('UPDATE')) return 'UPDATE';
+            if (upper.startsWith('DELETE')) return 'DELETE';
+            return 'OTHER';
+        }
+
+        function getMethodClass(sql) {
+            const type = getSqlType(sql);
+            return 'tag-' + type.toLowerCase();
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        function clearLog() {
+            document.getElementById('queryLogBody').innerHTML = '<div class="empty-state">Log cleared (server log persists)</div>';
+        }
+
+        async function createBackup() {
+            alert('Backups are managed from within the LE SOFT application.\nUse Settings > Database Backup in the app.');
+        }
+
+        // Auto-connect if API key is stored in URL hash
+        window.addEventListener('DOMContentLoaded', () => {
+            const params = new URLSearchParams(window.location.hash.substring(1));
+            if (params.get('host')) document.getElementById('serverHost').value = params.get('host');
+            if (params.get('port')) document.getElementById('serverPort').value = params.get('port');
+            if (params.get('key')) {
+                document.getElementById('apiKey').value = params.get('key');
+                connect();
+            }
+        });
+    </script>
+</body>
+</html>
