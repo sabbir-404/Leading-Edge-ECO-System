@@ -19,6 +19,7 @@
     "dist:publish": "node build-electron.cjs && electron-builder --win -p always"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.97.0",
     "@types/bcrypt": "^6.0.0",
     "bcrypt": "^6.0.0",
     "clsx": "^2.1.1",

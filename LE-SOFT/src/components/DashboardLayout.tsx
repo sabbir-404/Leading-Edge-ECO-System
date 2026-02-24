@@ -33,8 +33,8 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTheme } from '../context/ThemeContext';
-import logoBlack from '/logo-black.png';
-import logoWhite from '/logo-white.png';
+import logoBlack from '../assets/logo-black.png';
+import logoWhite from '../assets/logo-white.png';
 import '../pages/Dashboard/Dashboard.css';
 
 interface DashboardLayoutProps {

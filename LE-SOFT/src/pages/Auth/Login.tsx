@@ -3,8 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Lock, User, Eye, EyeOff, Moon, Sun } from 'lucide-react';
 import { useTheme } from '../../context/ThemeContext';
-import logoBlack from '/logo-black.png';
-import logoWhite from '/logo-white.png';
+import logoBlack from '../../assets/logo-black.png';
+import logoWhite from '../../assets/logo-white.png';
 import './Login.css';
 
 const Login: React.FC = () => {
