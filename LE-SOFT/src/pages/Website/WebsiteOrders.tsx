@@ -65,7 +65,7 @@ const CreateOrderModal = ({ onClose, onSave, users, products }: any) => {
                         </div>
                         
                         {customerType === 'existing' ? (
-                            <select value={selectedUser} onChange={e => setSelectedUser(e.target.value)} style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: '#fff', background: '#fff' }}>
+                            <select value={selectedUser} onChange={e => setSelectedUser(e.target.value)} style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: '#fff' }}>
                                 <option value="">-- Select Customer --</option>
                                 {users.map((u: any) => <option key={u.id} value={u.id}>{u.name} ({u.email})</option>)}
                             </select>
@@ -114,7 +114,7 @@ const CreateOrderModal = ({ onClose, onSave, users, products }: any) => {
                         </div>
 
                         <div style={{ display: 'flex', gap: '1rem' }}>
-                            <button onClick={() => setStep(1)} style={{ flex: 1, padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: '#fff', background: 'white' }}>Back</button>
+                            <button onClick={() => setStep(1)} style={{ flex: 1, padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'white' }}>Back</button>
                             <button onClick={handleSubmit} style={{ flex: 1, padding: '0.75rem', borderRadius: '8px', border: 'none', background: '#22c55e', color: 'white' }}>Create Order</button>
                         </div>
                     </div>

@@ -64,7 +64,7 @@ import Billing from './pages/Billing/Billing';
 import BillHistory from './pages/Billing/BillHistory';
 import AlterBill from './pages/Billing/AlterBill';
 import PendingAlterations from './pages/Billing/PendingAlterations';
-import NetworkSetup from './pages/NetworkSetup/NetworkSetup';
+
 
 // Shipping
 import ShippingDashboard from './pages/Shipping/ShippingDashboard';
@@ -224,7 +224,7 @@ function App() {
         <Route path="/company/create" element={<ProtectedRoute><CreateCompany /></ProtectedRoute>} />
 
         {/* Network Setup (Unguarded) */}
-        <Route path="/network-setup" element={<NetworkSetup />} />
+
       </Routes>
     </ThemeProvider>
   );
