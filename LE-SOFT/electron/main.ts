@@ -3,13 +3,10 @@ import path from 'path';
 import fs from 'fs';
 import bcrypt from 'bcrypt';
 import { initDB } from './database';
-import db from './database';
+import supabase from './supabase';
 import mysql from 'mysql2/promise';
-import * as networkConfig from './network-config';
-import { startDbServer, getLocalIp, getDbMonitoringData } from './db-server';
-import { testConnection } from './db-client';
 import * as licenseManager from './license-manager';
-import { encryptDatabaseOnShutdown } from './db-encryption';
+import { registerDevice, startHeartbeat, getConnectedDevices, setBackupNode, DEVICE_ID } from './device-monitor';
 
 // ═══════════════════════════════════════════════
 //  SECURITY: Brute-force login protection
@@ -210,12 +207,7 @@ function createWindow() {
         win.loadURL('http://localhost:5173');
     }
 
-    // If not configured, redirect to network setup
-    win.webContents.on('did-finish-load', () => {
-        if (!networkConfig.isConfigured()) {
-            win.webContents.send('redirect-to', '/network-setup');
-        }
-    });
+    // Supabase is the database — no network re-routing needed
 
     win.once('ready-to-show', () => {
         win.show();
@@ -243,17 +235,9 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
-    // Start server if in server mode
-    if (networkConfig.isServerMode()) {
-        const config = networkConfig.getNetworkConfig();
-        try {
-            await startDbServer(config.port);
-        } catch (e) {
-            console.error('Failed to start DB Server:', e);
-        }
-    }
-
-    initDB();
+    await initDB();          // Supabase connectivity check
+    registerDevice();         // Register this PC in device_sessions
+    startHeartbeat(60_000);  // Keep session alive every 60s
     createWindow();
 
     app.on('activate', () => {
@@ -269,14 +253,6 @@ app.on('window-all-closed', () => {
     }
 });
 
-// SECURITY: Encrypt database when app is quitting
-app.on('before-quit', () => {
-    try {
-        encryptDatabaseOnShutdown();
-    } catch (e) {
-        console.error('[ENCRYPTION] Shutdown encryption failed:', e);
-    }
-});
 
 // ═══════════════════════════════════════════════
 //  GROUPS — IPC Handlers
