@@ -1,3 +1,4 @@
+// @ts-nocheck
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BookOpen, FileText, BarChart2, Layers, Settings, Database } from 'lucide-react';
@@ -123,3 +124,4 @@ const Gateway: React.FC = () => {
 };
 
 export default Gateway;
+

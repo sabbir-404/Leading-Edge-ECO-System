@@ -30,6 +30,8 @@ nsis:
   shortcutName: LE-SOFT
   installerIcon: build/icon.ico
   uninstallerIcon: build/icon.ico
+mac:
+  target: zip
 publish:
   provider: github
   owner: sabbir-404

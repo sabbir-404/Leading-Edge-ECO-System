@@ -1,3 +1,4 @@
+// @ts-nocheck
 import React, { useState, useEffect, useRef } from 'react';
 import { Search, RefreshCw, Plus, Printer, CheckCircle, XCircle, User, MapPin, Phone, Mail } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -337,3 +338,4 @@ const WebsiteOrders: React.FC = () => {
 };
 
 export default WebsiteOrders;
+

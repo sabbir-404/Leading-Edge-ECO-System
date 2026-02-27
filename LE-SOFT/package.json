@@ -1,7 +1,7 @@
 {
   "name": "le-soft",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.2",
   "description": "Leading Edge ECO-System Software",
   "author": "Sabbir <sabbir@example.com>",
   "type": "module",
@@ -95,6 +95,9 @@
       "shortcutName": "LE-SOFT",
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico"
+    },
+    "mac": {
+      "target": "zip"
     },
     "publish": {
       "provider": "github",

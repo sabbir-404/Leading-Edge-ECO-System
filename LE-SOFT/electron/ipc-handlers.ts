@@ -9,7 +9,7 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import bcrypt from 'bcrypt';
-import supabase from './supabase';
+import supabase, { supabaseAdmin } from './supabase';
 import mysql from 'mysql2/promise';
 import * as licenseManager from './license-manager';
 import { getConnectedDevices, setBackupNode, DEVICE_ID } from './device-monitor';
@@ -69,19 +69,125 @@ const userTyping: Map<string, number> = new Map();
 
 // ── Supabase audit helper ─────────────────────────────────────────────────────
 async function writeAuditLog(params: { module: string; action: string; entity_type?: string; entity_id?: string | number; description?: string; old_value?: any; new_value?: any; performed_by: string }) {
-    await supabase.from('system_audit_log').insert({
-        module: params.module, action: params.action,
-        entity_type: params.entity_type || null,
-        entity_id: params.entity_id != null ? String(params.entity_id) : null,
-        description: params.description || null,
-        old_value: params.old_value != null ? JSON.stringify(params.old_value) : null,
-        new_value: params.new_value != null ? JSON.stringify(params.new_value) : null,
-        performed_by: params.performed_by,
-    }).catch(() => { });
+    try {
+        await supabase.from('system_audit_log').insert({
+            module: params.module, action: params.action,
+            entity_type: params.entity_type || null,
+            entity_id: params.entity_id != null ? String(params.entity_id) : null,
+            description: params.description || null,
+            old_value: params.old_value != null ? JSON.stringify(params.old_value) : null,
+            new_value: params.new_value != null ? JSON.stringify(params.new_value) : null,
+            performed_by: params.performed_by,
+        });
+    } catch { }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 export function registerHandlers() {
+
+    // ═══ DATABASE HEALTH ═════════════════════════════════════════════════════
+    ipcMain.handle('ping-supabase', async () => {
+        try {
+            // Simple fast query to check connectivity
+            const { error } = await supabase.from('users').select('id').limit(1);
+            if (error) return { connected: false, error: error.message };
+            return { connected: true };
+        } catch (e: any) {
+            return { connected: false, error: e.message };
+        }
+    });
+
+    // ═══ CHAT & PRESENCE ═════════════════════════════════════════════════════
+    ipcMain.handle('update-user-presence', async (_e, userId: number) => {
+        userPresence.set(userId, Date.now());
+        return { success: true };
+    });
+
+    ipcMain.handle('get-online-users', async () => {
+        const now = Date.now();
+        const onlineIds: number[] = [];
+        for (const [uid, lastSeen] of userPresence.entries()) {
+            if (now - lastSeen < 15000) onlineIds.push(uid);
+            else userPresence.delete(uid); // clean up stale
+        }
+        return onlineIds;
+    });
+
+    ipcMain.handle('set-typing-status', async (_e, { senderId, receiverId, isTyping }) => {
+        const key = `${senderId}->${receiverId}`;
+        if (isTyping) userTyping.set(key, Date.now());
+        else userTyping.delete(key);
+        return { success: true };
+    });
+
+    ipcMain.handle('get-typing-status', async (_e, { receiverId }) => {
+        const now = Date.now();
+        const typingIds: number[] = [];
+        for (const [key, lastTyping] of userTyping.entries()) {
+            const [sId, rId] = key.split('->').map(Number);
+            if (rId === receiverId) {
+                if (now - lastTyping < 4000) typingIds.push(sId);
+                else userTyping.delete(key);
+            }
+        }
+        return typingIds;
+    });
+
+    ipcMain.handle('get-chat-messages', async (_e, { senderId, receiverId }) => {
+        const { data, error } = await supabase.from('internal_messages')
+            .select('*')
+            .or(`and(sender_id.eq.${senderId},receiver_id.eq.${receiverId}),and(sender_id.eq.${receiverId},receiver_id.eq.${senderId})`)
+            .order('created_at', { ascending: true });
+        if (error) throw error;
+        return data || [];
+    });
+
+    ipcMain.handle('send-chat-message', async (_e, msg) => {
+        const { senderId, receiverId, messageType, content, fileName } = msg;
+        const { data, error } = await supabase.from('internal_messages').insert({
+            sender_id: senderId, receiver_id: receiverId, message_type: messageType || 'text', content, file_name: fileName || null
+        }).select('id').single();
+        if (error) throw error;
+        return { success: true, id: data.id };
+    });
+
+    // ═══ INTERNAL EMAIL SYSTEM ═══════════════════════════════════════════════
+    ipcMain.handle('email-get-inbox', async (_e, userId: number) => {
+        const { data, error } = await supabase.from('system_emails').select('*, sender:sender_id(full_name, email)').eq('receiver_id', userId).eq('is_deleted_by_receiver', false).order('created_at', { ascending: false });
+        if (error) throw error;
+        return data || [];
+    });
+
+    ipcMain.handle('email-get-sent', async (_e, userId: number) => {
+        const { data, error } = await supabase.from('system_emails').select('*, receiver:receiver_id(full_name, email)').eq('sender_id', userId).eq('is_deleted_by_sender', false).order('created_at', { ascending: false });
+        if (error) throw error;
+        return data || [];
+    });
+
+    ipcMain.handle('email-send', async (_e, emailPayload) => {
+        const { senderId, receiverId, subject, body } = emailPayload;
+        if (!receiverId) return { success: false, error: 'Recipient is required' };
+        const { error } = await supabase.from('system_emails').insert({
+            sender_id: senderId, receiver_id: receiverId, subject: subject || '(No Subject)', body: body || ''
+        });
+        if (error) throw error;
+        return { success: true };
+    });
+
+    ipcMain.handle('email-mark-read', async (_e, emailId: number) => {
+        const { error } = await supabase.from('system_emails').update({ is_read: true }).eq('id', emailId);
+        if (error) throw error;
+        return { success: true };
+    });
+
+    ipcMain.handle('email-delete', async (_e, { emailId, folder }: { emailId: number, folder: 'inbox' | 'sent' }) => {
+        const field = folder === 'inbox' ? 'is_deleted_by_receiver' : 'is_deleted_by_sender';
+        const { error } = await supabase.from('system_emails').update({ [field]: true }).eq('id', emailId);
+        if (error) throw error;
+        return { success: true };
+    });
+
+
 
     // ═══ GROUPS ══════════════════════════════════════════════════════════════════
 
@@ -353,12 +459,12 @@ export function registerHandlers() {
             await supabase.from('bill_items').insert(items.map((item: any) => ({ bill_id: bill.id, product_id: item.product_id, product_name: item.product_name, sku: item.sku || '', quantity: item.quantity, mrp: item.mrp, discount_pct: item.discount_pct || 0, discount_amt: item.discount_amt || 0, price: item.price })));
             for (const item of items) {
                 if (item.product_id && item.quantity) {
-                    await supabase.rpc('decrement_product_qty', { p_id: item.product_id, qty: item.quantity }).catch(() => { });
+                    try { await supabase.rpc('decrement_product_qty', { p_id: item.product_id, qty: item.quantity }); } catch { }
                     syncStockToMySQL(item.product_id, item.quantity);
                 }
             }
         }
-        await supabase.from('billing_customers').update({ total_bills: (supabase as any).sql`total_bills + 1` }).eq('id', customer_id).catch(() => { });
+        try { await supabase.from('billing_customers').update({ total_bills: (supabase as any).sql`total_bills + 1` }).eq('id', customer_id); } catch { }
         return { success: true, id: bill.id, invoice_number: invoiceNumber };
     });
 
@@ -387,7 +493,7 @@ export function registerHandlers() {
         if (auditRows.length) await supabase.from('bill_audit').insert(auditRows);
         // Restore old stock
         for (const oi of (oldItems || [])) {
-            await supabase.from('products').update({ quantity: (supabase as any).sql`quantity + ${oi.quantity}` }).eq('id', oi.product_id).catch(() => { });
+            try { await supabase.from('products').update({ quantity: (supabase as any).sql`quantity + ${oi.quantity}` }).eq('id', oi.product_id); } catch { }
         }
         // Update bill
         await supabase.from('bills').update({ subtotal, discount_total, grand_total }).eq('id', bill_id);
@@ -396,7 +502,7 @@ export function registerHandlers() {
         if (items.length) {
             await supabase.from('bill_items').insert(items.map((i: any) => ({ bill_id, product_id: i.product_id, product_name: i.product_name, sku: i.sku || '', quantity: i.quantity, mrp: i.mrp, discount_pct: i.discount_pct || 0, discount_amt: i.discount_amt || 0, price: i.price })));
             for (const i of items) {
-                await supabase.from('products').update({ quantity: (supabase as any).sql`GREATEST(quantity - ${i.quantity}, 0)` }).eq('id', i.product_id).catch(() => { });
+                try { await supabase.from('products').update({ quantity: (supabase as any).sql`GREATEST(quantity - ${i.quantity}, 0)` }).eq('id', i.product_id); } catch { }
             }
         }
         return { success: true };
@@ -459,23 +565,52 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('create-user', async (_e, user) => {
-        const { username, password, fullName, role, email, phone } = user;
+        const { username, password, fullName, role, groupId, email, phone } = user;
         if (!username?.trim()) return { success: false, error: 'Username is required' };
-        if (!password || password.length < 6) return { success: false, error: 'Password must be at least 6 characters' };
-        const hash = await bcrypt.hash(password, BCRYPT_ROUNDS);
-        const { data, error } = await supabase.from('users').insert({ username: username.trim(), password_hash: hash, full_name: fullName || '', role: role || 'operator', email: email || '', phone: phone || '' }).select('id').single();
-        if (error) return { success: false, error: error.message?.includes('unique') ? 'Username already exists' : error.message };
-        return { success: true, id: data.id };
+        if (!password || password.length < 4) return { success: false, error: 'Password must be at least 4 characters' };
+        if (!supabaseAdmin) return { success: false, error: 'Database Admin Key not configured in settings. Cannot create users.' };
+
+        const emailToUse = username.includes('@') ? username.trim() : `${username.trim()}@lesoft.local`;
+
+        // 1. Create in Supabase Auth
+        const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
+            email: emailToUse,
+            password: password,
+            email_confirm: true,
+            user_metadata: { username: username.trim(), full_name: fullName, role: role || 'operator' }
+        });
+
+        if (authError) return { success: false, error: authError.message };
+
+        // 2. The database trigger automatically creates row in public.users. We update the rest of the fields.
+        const { error: updateErr } = await supabase.from('users').update({
+            group_id: groupId || null,
+            phone: phone || ''
+        }).eq('auth_id', authData.user.id);
+
+        if (updateErr) console.warn('[CREATE USER] Auth created, but public profile update failed', updateErr);
+
+        // Fetch the generated local ID to return
+        const { data: localRow } = await supabase.from('users').select('id').eq('auth_id', authData.user.id).single();
+
+        return { success: true, id: localRow?.id || 0 };
     });
 
     ipcMain.handle('update-user', async (_e, user) => {
         const { id, fullName, role, email, phone, isActive } = user;
         const { error } = await supabase.from('users').update({ full_name: fullName, role, email: email || '', phone: phone || '', is_active: isActive !== undefined ? isActive : 1 }).eq('id', id);
         if (error) throw error;
+
+        // Also update Supabase Auth if necessary, but for now metadata updates aren't strictly required
         return { success: true };
     });
 
     ipcMain.handle('delete-user', async (_e, id: number) => {
+        // Find auth_id
+        const { data: row } = await supabase.from('users').select('auth_id').eq('id', id).single();
+        if (row?.auth_id && supabaseAdmin) {
+            await supabaseAdmin.auth.admin.deleteUser(row.auth_id);
+        }
         const { error } = await supabase.from('users').delete().eq('id', id);
         if (error) throw error;
         return { success: true };
@@ -485,19 +620,33 @@ export function registerHandlers() {
         const username = typeof credentials?.username === 'string' ? credentials.username.trim() : '';
         const password = typeof credentials?.password === 'string' ? credentials.password : '';
         if (!username || !password) return { success: false, error: 'Invalid credentials' };
+
         const bf = checkBruteForce(username);
         if (bf.locked) return { success: false, error: `Too many failed attempts. Try again in ${bf.remaining} minute(s).` };
-        const { data: row } = await supabase.from('users').select('id,username,password_hash,full_name,role,email,is_active').eq('username', username).eq('is_active', 1).maybeSingle();
-        if (!row) { recordFailedLogin(username); await bcrypt.hash('dummy', 4); return { success: false, error: 'Invalid credentials or account disabled' }; }
-        const stored = row.password_hash || '';
-        let valid = stored.startsWith('$2b$') || stored.startsWith('$2a$') ? await bcrypt.compare(password, stored) : stored === password;
-        if (!valid && !(stored.startsWith('$2b$') || stored.startsWith('$2a$')) && stored === password) {
-            const newHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
-            await supabase.from('users').update({ password_hash: newHash }).eq('id', row.id);
-            valid = true;
+
+        // 1. Format username to dummy email if no @ present
+        const emailToUse = username.includes('@') ? username : `${username}@lesoft.local`;
+
+        // 2. Sign in with Supabase Auth (This automatically persists the JWT for subsequent IPC requests)
+        const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+            email: emailToUse,
+            password: password
+        });
+
+        if (authError || !authData.user) {
+            recordFailedLogin(username);
+            return { success: false, error: authError?.message || 'Invalid credentials' };
         }
-        if (!valid) { recordFailedLogin(username); return { success: false, error: 'Invalid credentials or account disabled' }; }
+
         resetLoginAttempts(username);
+
+        // 3. Fetch user profile from public.users to get permissions and roles
+        const { data: row } = await supabase.from('users').select('*').eq('auth_id', authData.user.id).single();
+
+        if (!row) {
+            return { success: false, error: 'User profile mapping not found in database.' };
+        }
+
         const { password_hash: _omit, ...safeUser } = row;
         return { success: true, user: safeUser };
     });
@@ -512,6 +661,25 @@ export function registerHandlers() {
         const { error } = await supabase.from('companies').update({ name: s.name, mailing_name: s.mailingName || '', address: s.address || '', country: s.country || 'Bangladesh', state: s.state || '', phone: s.phone || '', email: s.email || '', financial_year_from: s.financialYearFrom || '', books_begin_from: s.booksBeginFrom || '', base_currency_symbol: s.currencySymbol || '৳' }).eq('id', 1);
         if (error) throw error;
         return { success: true };
+    });
+
+    ipcMain.handle('save-supabase-config', async (_e, newConfig) => {
+        try {
+            const currentConfigPath = path.join(app.getPath('userData'), 'supabase-config.json');
+            let configToSave = {
+                url: 'https://ildkkgjrolcjijwfokek.supabase.co',
+                anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlsZGtrZ2pyb2xjamlqd2Zva2VrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE5MzMzMjQsImV4cCI6MjA4NzUwOTMyNH0.Bn6c-87BOumPXyH5F469P04fQSMnI9SjNDZAwgGyTsM',
+                serviceRoleKey: newConfig.serviceRoleKey || ''
+            };
+            if (fs.existsSync(currentConfigPath)) {
+                const existing = JSON.parse(fs.readFileSync(currentConfigPath, 'utf8'));
+                configToSave = { ...existing, ...configToSave };
+            }
+            fs.writeFileSync(currentConfigPath, JSON.stringify(configToSave, null, 2), 'utf8');
+            return { success: true };
+        } catch (e: any) {
+            return { success: false, error: e.message };
+        }
     });
 
     // ═══ USER GROUPS ══════════════════════════════════════════════════════════
@@ -636,45 +804,6 @@ export function registerHandlers() {
         );
     });
 
-    // ═══ INTERNAL CHAT & PRESENCE ════════════════════════════════════════
-
-    ipcMain.handle('get-chat-messages', async (_e, { senderId, receiverId }) => {
-        const { data, error } = await supabase.from('internal_messages').select('*').or(`and(sender_id.eq.${senderId},receiver_id.eq.${receiverId}),and(sender_id.eq.${receiverId},receiver_id.eq.${senderId})`).order('created_at');
-        if (error) throw error;
-        return data || [];
-    });
-
-    ipcMain.handle('send-chat-message', async (_e, message) => {
-        const { senderId, receiverId, messageType, content, fileName } = message;
-        const { data, error } = await supabase.from('internal_messages').insert({ sender_id: senderId, receiver_id: receiverId, message_type: messageType || 'text', content, file_name: fileName || null }).select('id,created_at').single();
-        if (error) throw error;
-        return { success: true, id: data.id, created_at: data.created_at };
-    });
-
-    ipcMain.handle('update-user-presence', async (_e, userId: number) => {
-        userPresence.set(userId, Date.now());
-        return { success: true };
-    });
-
-    ipcMain.handle('get-online-users', async () => {
-        const now = Date.now();
-        const onlineIds: number[] = [];
-        userPresence.forEach((ts, uid) => { if (now - ts < 15000) onlineIds.push(uid); });
-        return onlineIds;
-    });
-
-    ipcMain.handle('set-typing-status', async (_e, { senderId, receiverId, isTyping }: { senderId: number; receiverId: number; isTyping: boolean }) => {
-        const key = `${senderId}->${receiverId}`;
-        if (isTyping) userTyping.set(key, Date.now()); else userTyping.delete(key);
-        return { success: true };
-    });
-
-    ipcMain.handle('get-typing-status', async (_e, { receiverId }: { receiverId: number }) => {
-        const now = Date.now();
-        const typingUsers: number[] = [];
-        userTyping.forEach((ts, key) => { const [sender, recv] = key.split('->').map(Number); if (recv === receiverId && now - ts < 3000) typingUsers.push(sender); });
-        return typingUsers;
-    });
 
     // ═══ MAKE MODULE ══════════════════════════════════════════════════════
 
@@ -885,7 +1014,7 @@ export function registerHandlers() {
             const backup = JSON.parse(fs.readFileSync(backupPath, 'utf-8'));
             for (const [table, rows] of Object.entries(backup)) {
                 if (!Array.isArray(rows) || rows.length === 0) continue;
-                await supabase.from(table).upsert(rows as any[]).catch(() => { });
+                try { await supabase.from(table).upsert(rows as any[]); } catch { }
             }
             return { success: true, message: 'Cloud data restored from backup.' };
         } catch (e: any) { return { success: false, error: e.message }; }
@@ -964,7 +1093,7 @@ export function registerHandlers() {
     // ═══ DEVICE MONITORING ════════════════════════════════════════════════
 
     ipcMain.handle('get-connected-devices', async () => getConnectedDevices());
-    ipcMain.handle('set-backup-node', async (_e, deviceId: string) => setBackupNode(deviceId));
+    ipcMain.handle('set-backup-node', async (_e, isBackup: boolean) => setBackupNode(isBackup));
     ipcMain.handle('get-device-id', async () => DEVICE_ID);
 
     // ═══ APP / AUTO-UPDATE ════════════════════════════════════════════════
@@ -998,6 +1127,365 @@ export function registerHandlers() {
         const ifaces = os.networkInterfaces();
         for (const name of Object.keys(ifaces)) { for (const iface of ifaces[name] || []) { if (iface.family === 'IPv4' && !iface.internal) return iface.address; } }
         return '127.0.0.1';
+    });
+
+
+    // ═══ MAKE ORDER — PDF ATTACHMENTS ══════════════════════════════════════
+
+    ipcMain.handle('make-upload-pdf', async (_e, { orderId, filePath }: { orderId: number, filePath?: string }) => {
+        let filesToUpload: string[] = [];
+
+        if (filePath) {
+            // Direct upload if filePath is provided (staged files)
+            filesToUpload = [filePath];
+        } else {
+            // Open dialog if filePath is not provided
+            const win = BrowserWindow.getFocusedWindow();
+            if (!win) return { error: 'No window' };
+            const result = await dialog.showOpenDialog(win, {
+                title: 'Select PDF Files',
+                filters: [{ name: 'PDF Files', extensions: ['pdf'] }],
+                properties: ['openFile', 'multiSelections'],
+            });
+            if (result.canceled || result.filePaths.length === 0) return { canceled: true };
+            filesToUpload = result.filePaths;
+        }
+
+        const uploaded: string[] = [];
+        for (const p of filesToUpload) {
+            const fileName = path.basename(p);
+            const fileBuffer = fs.readFileSync(p);
+            const storagePath = `${orderId}/${Date.now()}_${fileName}`;
+            const { error: uploadError } = await supabase.storage
+                .from('make-order-files')
+                .upload(storagePath, fileBuffer, { contentType: 'application/pdf', upsert: false });
+            if (uploadError) return { error: uploadError.message };
+            uploaded.push(storagePath);
+        }
+
+        // Append paths to make_orders.pdf_urls
+        const { data: order } = await supabase.from('make_orders').select('pdf_urls').eq('id', orderId).maybeSingle();
+        const existing: string[] = order?.pdf_urls || [];
+        await supabase.from('make_orders').update({ pdf_urls: [...existing, ...uploaded] }).eq('id', orderId);
+        return { success: true, paths: uploaded };
+    });
+
+    ipcMain.handle('make-get-pdf-urls', async (_e, orderId: number) => {
+        const { data: order } = await supabase.from('make_orders').select('pdf_urls').eq('id', orderId).maybeSingle();
+        const paths: string[] = order?.pdf_urls || [];
+        const signedUrls = await Promise.all(paths.map(async (p) => {
+            const { data } = await supabase.storage.from('make-order-files').createSignedUrl(p, 3600);
+            return { path: p, name: path.basename(p).replace(/^\d+_/, ''), url: data?.signedUrl || '' };
+        }));
+        return signedUrls.filter(u => u.url);
+    });
+
+    ipcMain.handle('make-delete-pdf', async (_e, { orderId, storagePath }: { orderId: number; storagePath: string }) => {
+        await supabase.storage.from('make-order-files').remove([storagePath]);
+        const { data: order } = await supabase.from('make_orders').select('pdf_urls').eq('id', orderId).maybeSingle();
+        const remaining = (order?.pdf_urls || []).filter((p: string) => p !== storagePath);
+        await supabase.from('make_orders').update({ pdf_urls: remaining }).eq('id', orderId);
+        return { success: true };
+    });
+
+    ipcMain.handle('make-download-pdf', async (_e, { url, fileName }: { url: string; fileName: string }) => {
+        try {
+            const https = await import('https');
+            const http = await import('http');
+            const tmpPath = path.join(app.getPath('temp'), fileName);
+            await new Promise<void>((resolve, reject) => {
+                const file = fs.createWriteStream(tmpPath);
+                const protocol = url.startsWith('https') ? https : http;
+                (protocol as any).get(url, (res: any) => { res.pipe(file); file.on('finish', () => { file.close(); resolve(); }); }).on('error', reject);
+            });
+            const { shell } = await import('electron');
+            await shell.openPath(tmpPath);
+            return { success: true, path: tmpPath };
+        } catch (e: any) {
+            return { error: e.message };
+        }
+    });
+
+    // ═══ MAKE ORDER — PARTS / DIMENSIONS ════════════════════════════════════
+
+    ipcMain.handle('make-get-order-parts', async (_e, orderId: number) => {
+        const { data } = await supabase.from('make_order_parts')
+            .select('*').eq('order_id', orderId).order('sort_order').order('id');
+        return data || [];
+    });
+
+    ipcMain.handle('make-upsert-part', async (_e, part: {
+        id?: number; order_id: number; part_name: string;
+        length?: string; width?: string; height?: string; notes?: string; sort_order?: number;
+    }) => {
+        if (part.id) {
+            const { data, error } = await supabase.from('make_order_parts')
+                .update({ part_name: part.part_name, length: part.length, width: part.width, height: part.height, notes: part.notes, sort_order: part.sort_order })
+                .eq('id', part.id).select().maybeSingle();
+            if (error) return { error: error.message };
+            return data;
+        } else {
+            const { data, error } = await supabase.from('make_order_parts')
+                .insert({ order_id: part.order_id, part_name: part.part_name, length: part.length || '', width: part.width || '', height: part.height || '', notes: part.notes || '', sort_order: part.sort_order || 0 })
+                .select().maybeSingle();
+            if (error) return { error: error.message };
+            return data;
+        }
+    });
+
+    ipcMain.handle('make-delete-part', async (_e, partId: number) => {
+        const { error } = await supabase.from('make_order_parts').delete().eq('id', partId);
+        return error ? { error: error.message } : { success: true };
+    });
+
+    // ═══ MAKE ORDER — ROLE-BASED ALTERATION + LOG ═══════════════════════════
+
+    const ALTERABLE_BY_DESIGNER = ['Placed']; // only Placed: designer can alter
+    const ALTERABLE_FIELDS = ['furniture_name', 'description', 'quantity', 'priority'];
+
+    ipcMain.handle('make-alter-order', async (_e, {
+        orderId, changes, alteredBy, userRole
+    }: { orderId: number; changes: Record<string, any>; alteredBy: string; userRole: string }) => {
+        // Fetch current order
+        const { data: current, error: fetchErr } = await supabase
+            .from('make_orders').select('*').eq('id', orderId).maybeSingle();
+        if (fetchErr || !current) return { error: 'Order not found' };
+
+        // Enforce stage restriction
+        const isAdmin = userRole === 'admin';
+        if (!isAdmin && !ALTERABLE_BY_DESIGNER.includes(current.status)) {
+            return { error: `Order is in "${current.status}" stage. Only admins can alter it at this point.` };
+        }
+
+        // Filter to only allowed fields (non-admins restricted to ALTERABLE_FIELDS)
+        const filteredChanges: Record<string, any> = {};
+        for (const [field, newVal] of Object.entries(changes)) {
+            if (isAdmin || ALTERABLE_FIELDS.includes(field)) {
+                if (current[field] !== newVal) filteredChanges[field] = newVal;
+            }
+        }
+        if (Object.keys(filteredChanges).length === 0) return { success: true, message: 'No changes detected' };
+
+        // Write alteration log
+        const logRows = Object.entries(filteredChanges).map(([field, newVal]) => ({
+            order_id: orderId,
+            altered_by: alteredBy,
+            user_role: userRole,
+            field_name: field,
+            old_value: String(current[field] ?? ''),
+            new_value: String(newVal ?? ''),
+        }));
+        await supabase.from('make_order_alteration_log').insert(logRows);
+
+        // Apply changes
+        const { error: updateErr } = await supabase
+            .from('make_orders').update(filteredChanges).eq('id', orderId);
+        if (updateErr) return { error: updateErr.message };
+
+        return { success: true, changed: Object.keys(filteredChanges) };
+    });
+
+    ipcMain.handle('make-get-alteration-log', async (_e, orderId: number) => {
+        const { data } = await supabase.from('make_order_alteration_log')
+            .select('*').eq('order_id', orderId).order('altered_at', { ascending: false });
+        return data || [];
+    });
+
+    // ═══ MAKE DASHBOARD STATS ════════════════════════════════════════════════
+
+    ipcMain.handle('make-get-dashboard-stats', async () => {
+        const { data: allOrders } = await supabase.from('make_orders')
+            .select('status, priority, created_at, furniture_name, designer_name, id')
+            .order('created_at', { ascending: false });
+
+        const orders = allOrders || [];
+        const counts: Record<string, number> = {};
+        for (const o of orders) { counts[o.status] = (counts[o.status] || 0) + 1; }
+
+        return {
+            total: orders.length,
+            pending: (counts['Placed'] || 0) + (counts['In Production'] || 0),
+            inProgress: (counts['Welding'] || 0) + (counts['Painting'] || 0),
+            readyForDispatch: counts['Ready for Dispatch'] || 0,
+            delivered: counts['Delivered'] || 0,
+            byStatus: counts,
+            recent: orders.slice(0, 10),
+            pendingDelivery: orders.filter(o => o.status === 'Ready for Dispatch')
+                .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()),
+        };
+    });
+
+    // ═══ CLOUD LICENSE ════════════════════════════════════════════════════════
+
+    ipcMain.handle('check-license-cloud', async () => {
+        // 1. Check local file first (fast path)
+        const localResult = licenseManager.isLicensed();
+        if (localResult.valid) return { valid: true, source: 'local', machineId: localResult.machineId };
+
+        // 2. Fall back to Supabase cloud license
+        const { data } = await supabase.from('app_license').select('license_key').limit(1).maybeSingle();
+        if (!data?.license_key) return { valid: false, machineId: localResult.machineId };
+
+        const cloudKey = data.license_key;
+        const isValid = licenseManager.validateLicense(localResult.machineId, cloudKey);
+        if (isValid) {
+            // Cache locally so next check is instant
+            licenseManager.saveLicense(cloudKey);
+        }
+        return { valid: isValid, source: 'cloud', machineId: localResult.machineId };
+    });
+
+    ipcMain.handle('activate-license-cloud', async (_e, { key }: { key: string }) => {
+        const machineId = licenseManager.getMachineId();
+        const isValid = licenseManager.validateLicense(machineId, key);
+        if (!isValid) return { success: false, error: 'Invalid license key for this machine' };
+
+        // Save to Supabase (upsert — only one row ever)
+        const { error } = await supabase.from('app_license').upsert({
+            id: 1, // enforce single row
+            license_key: key.replace(/[\s-]/g, '').toUpperCase(),
+            activated_by: machineId,
+            app_version: app.getVersion(),
+            activated_at: new Date().toISOString(),
+        }, { onConflict: 'id' });
+        if (error) return { success: false, error: error.message };
+
+        // Also save locally
+        licenseManager.saveLicense(key);
+        return { success: true };
+    });
+
+
+    // ═══ HRM MODULE ═══════════════════════════════════════════════════════════
+
+    // Employees
+    ipcMain.handle('hrm-get-employees', async () => {
+        const { data, error } = await supabase.from('hrm_employees').select('*').order('name');
+        if (error) throw error;
+        return data || [];
+    });
+
+    ipcMain.handle('hrm-upsert-employee', async (_e, emp) => {
+        if (emp.id) {
+            const { error } = await supabase.from('hrm_employees').update(emp).eq('id', emp.id);
+            if (error) throw error;
+            return { success: true };
+        } else {
+            const { data, error } = await supabase.from('hrm_employees').insert(emp).select('id').single();
+            if (error) throw error;
+            return { success: true, id: data.id };
+        }
+    });
+
+    ipcMain.handle('hrm-delete-employee', async (_e, id) => {
+        const { error } = await supabase.from('hrm_employees').delete().eq('id', id);
+        if (error) throw error;
+        return { success: true };
+    });
+
+    // Attendance
+    ipcMain.handle('hrm-get-attendance', async (_e, { date }: { date?: string }) => {
+        let q = supabase.from('hrm_attendance').select('*, employee:employee_id(name)');
+        if (date) q = q.eq('date', date);
+        const { data, error } = await q.order('date', { ascending: false });
+        if (error) throw error;
+        return data || [];
+    });
+
+    ipcMain.handle('hrm-mark-attendance', async (_e, att) => {
+        const { error } = await supabase.from('hrm_attendance').upsert({
+            employee_id: att.employee_id,
+            date: att.date,
+            status: att.status,
+            check_in: att.check_in || null,
+            check_out: att.check_out || null
+        }, { onConflict: 'employee_id,date' });
+        if (error) throw error;
+        return { success: true };
+    });
+
+    // Leaves
+    ipcMain.handle('hrm-get-leaves', async () => {
+        const { data, error } = await supabase.from('hrm_leaves').select('*, employee:employee_id(name)').order('created_at', { ascending: false });
+        if (error) throw error;
+        return data || [];
+    });
+
+    ipcMain.handle('hrm-request-leave', async (_e, leave) => {
+        const { data, error } = await supabase.from('hrm_leaves').insert(leave).select('id').single();
+        if (error) throw error;
+        return { success: true, id: data.id };
+    });
+
+    ipcMain.handle('hrm-update-leave-status', async (_e, { id, status }) => {
+        const { error } = await supabase.from('hrm_leaves').update({ status }).eq('id', id);
+        if (error) throw error;
+        return { success: true };
+    });
+
+    // Payroll
+    ipcMain.handle('hrm-get-payroll', async (_e, { month, year }) => {
+        let q = supabase.from('hrm_payroll').select('*, employee:employee_id(name)');
+        if (month) q = q.eq('month', month);
+        if (year) q = q.eq('year', year);
+        const { data, error } = await q.order('created_at', { ascending: false });
+        if (error) throw error;
+        return data || [];
+    });
+
+    ipcMain.handle('hrm-generate-payroll', async (_e, pr) => {
+        const net = (parseFloat(pr.basic_salary) || 0) + (parseFloat(pr.bonus) || 0) - (parseFloat(pr.deductions) || 0);
+        const { error } = await supabase.from('hrm_payroll').upsert({
+            employee_id: pr.employee_id,
+            month: pr.month,
+            year: pr.year,
+            basic_salary: pr.basic_salary,
+            bonus: pr.bonus || 0,
+            deductions: pr.deductions || 0,
+            net_salary: net,
+            status: pr.status || 'Pending',
+            payment_date: pr.payment_date || null
+        }, { onConflict: 'employee_id,month,year' });
+        if (error) throw error;
+        return { success: true };
+    });
+
+    ipcMain.handle('hrm-mark-payroll-paid', async (_e, id) => {
+        const { error } = await supabase.from('hrm_payroll').update({ status: 'Paid', payment_date: new Date().toISOString().split('T')[0] }).eq('id', id);
+        if (error) throw error;
+        return { success: true };
+    });
+
+    // ═══ CRM MODULE ═══════════════════════════════════════════════════════════
+
+    ipcMain.handle('crm-get-customers', async () => {
+        const { data, error } = await supabase.from('crm_customers').select('*').order('name');
+        if (error) throw error;
+        return data || [];
+    });
+
+    ipcMain.handle('crm-upsert-customer', async (_e, cust) => {
+        if (cust.id) {
+            const { error } = await supabase.from('crm_customers').update(cust).eq('id', cust.id);
+            if (error) throw error;
+            return { success: true };
+        } else {
+            const { data, error } = await supabase.from('crm_customers').insert(cust).select('id').single();
+            if (error) throw error;
+            return { success: true, id: data.id };
+        }
+    });
+
+    ipcMain.handle('crm-get-tracking-logs', async (_e, { customerId }) => {
+        const { data, error } = await supabase.from('crm_tracking').select('*, user:user_id(full_name)').eq('customer_id', customerId).order('created_at', { ascending: false });
+        if (error) throw error;
+        return data || [];
+    });
+
+    ipcMain.handle('crm-add-tracking-log', async (_e, log) => {
+        const { data, error } = await supabase.from('crm_tracking').insert(log).select('id').single();
+        if (error) throw error;
+        return { success: true, id: data.id };
     });
 
 } // end registerHandlers

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Search, Trash2, Shield, UserCheck, UserX } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { Plus, Search, Trash2, Shield, UserCheck, UserX, Edit2, X, Save } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import DashboardLayout from '../../components/DashboardLayout';
 import '../Accounting/Masters/Masters.css';
 
@@ -10,6 +10,7 @@ const UserList: React.FC = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [users, setUsers] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
+    const [editingUser, setEditingUser] = useState<any>(null);
 
     const fetchUsers = async () => {
         try {
@@ -39,10 +40,36 @@ const UserList: React.FC = () => {
     const toggleActive = async (user: any) => {
         try {
             // @ts-ignore
-            await window.electron.updateUser({ ...user, isActive: user.is_active ? 0 : 1 });
+            await window.electron.updateUser({
+                id: user.id,
+                fullName: user.full_name,
+                role: user.role,
+                email: user.email,
+                phone: user.phone,
+                isActive: user.is_active ? 0 : 1 
+            });
             fetchUsers();
         } catch (error) {
             alert('Failed to update user.');
+        }
+    };
+
+    const handleEditSave = async (e: React.FormEvent) => {
+        e.preventDefault();
+        try {
+            // @ts-ignore
+            await window.electron.updateUser({
+                id: editingUser.id,
+                fullName: editingUser.full_name,
+                role: editingUser.role,
+                email: editingUser.email,
+                phone: editingUser.phone,
+                isActive: editingUser.is_active
+            });
+            setEditingUser(null);
+            fetchUsers();
+        } catch (error) {
+            alert('Failed to update user details.');
         }
     };
 
@@ -114,7 +141,10 @@ const UserList: React.FC = () => {
                                                 </button>
                                             </td>
                                             <td>
-                                                <div className="action-buttons" style={{ justifyContent: 'flex-end' }}>
+                                                <div className="action-buttons" style={{ justifyContent: 'flex-end', gap: '0.5rem' }}>
+                                                    <button onClick={() => setEditingUser({ ...user })} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '30px', height: '30px', borderRadius: '8px', border: 'none', background: 'rgba(59,130,246,0.1)', color: '#3b82f6', cursor: 'pointer' }}>
+                                                        <Edit2 size={16} />
+                                                    </button>
                                                     <button className="delete-btn" onClick={() => handleDelete(user.id)}><Trash2 size={16} /></button>
                                                 </div>
                                             </td>
@@ -126,6 +156,48 @@ const UserList: React.FC = () => {
                     </table>
                 </div>
             </div>
+
+            {/* Edit Modal */}
+            <AnimatePresence>
+                {editingUser && (
+                    <motion.div className="modal-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                        <motion.div className="modal-content" initial={{ y: 50, opacity: 0 }} animate={{ y: 0, opacity: 1 }} style={{ maxWidth: '500px' }}>
+                            <div className="modal-header">
+                                <h3>Edit User: {editingUser.username}</h3>
+                                <button className="close-btn" onClick={() => setEditingUser(null)}><X size={20} /></button>
+                            </div>
+                            <form onSubmit={handleEditSave} className="create-form" style={{ padding: '1.5rem' }}>
+                                <div className="form-group" style={{ marginBottom: '1rem' }}>
+                                    <label>Full Name</label>
+                                    <input value={editingUser.full_name || ''} onChange={e => setEditingUser({...editingUser, full_name: e.target.value})} />
+                                </div>
+                                <div className="form-group" style={{ marginBottom: '1rem' }}>
+                                    <label>Role</label>
+                                    <select value={editingUser.role} onChange={e => setEditingUser({...editingUser, role: e.target.value})}>
+                                        <option value="admin">Admin</option>
+                                        <option value="manager">Manager</option>
+                                        <option value="operator">Operator</option>
+                                    </select>
+                                </div>
+                                <div className="form-group" style={{ marginBottom: '1rem' }}>
+                                    <label>Email</label>
+                                    <input type="email" value={editingUser.email || ''} onChange={e => setEditingUser({...editingUser, email: e.target.value})} />
+                                </div>
+                                <div className="form-group" style={{ marginBottom: '1.5rem' }}>
+                                    <label>Phone</label>
+                                    <input value={editingUser.phone || ''} onChange={e => setEditingUser({...editingUser, phone: e.target.value})} />
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
+                                    <button type="button" onClick={() => setEditingUser(null)} style={{ padding: '0.6rem 1.2rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'transparent', color: 'var(--text-primary)', cursor: 'pointer', fontWeight: 600 }}>Cancel</button>
+                                    <button type="submit" style={{ padding: '0.6rem 1.2rem', borderRadius: '8px', border: 'none', background: 'var(--accent-color)', color: 'white', cursor: 'pointer', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                        <Save size={16} /> Save Changes
+                                    </button>
+                                </div>
+                            </form>
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
         </DashboardLayout>
     );
 };

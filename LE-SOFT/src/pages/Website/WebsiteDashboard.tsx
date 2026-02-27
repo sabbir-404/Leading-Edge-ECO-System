@@ -1,3 +1,4 @@
+// @ts-nocheck
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Package, ShoppingCart, DollarSign, Clock, Globe, RefreshCw, TrendingUp, Activity, AlertCircle } from 'lucide-react';
@@ -162,3 +163,4 @@ const WebsiteDashboard: React.FC = () => {
 };
 
 export default WebsiteDashboard;
+

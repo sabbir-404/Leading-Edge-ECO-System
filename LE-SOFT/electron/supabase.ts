@@ -9,12 +9,14 @@ const CONFIG_PATH = path.join(app.getPath('userData'), 'supabase-config.json');
 interface SupabaseConfig {
     url: string;
     anonKey: string;
+    serviceRoleKey?: string;
 }
 
 // Built-in defaults (your project credentials)
 const DEFAULTS: SupabaseConfig = {
     url: 'https://ildkkgjrolcjijwfokek.supabase.co',
     anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlsZGtrZ2pyb2xjamlqd2Zva2VrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE5MzMzMjQsImV4cCI6MjA4NzUwOTMyNH0.Bn6c-87BOumPXyH5F469P04fQSMnI9SjNDZAwgGyTsM',
+    serviceRoleKey: ''
 };
 
 function loadConfig(): SupabaseConfig {
@@ -48,6 +50,13 @@ export const supabase: SupabaseClient = createClient(config.url, config.anonKey,
         },
     },
 });
+
+export const supabaseAdmin = config.serviceRoleKey ? createClient(config.url, config.serviceRoleKey, {
+    auth: {
+        autoRefreshToken: false,
+        persistSession: false
+    }
+}) : null;
 
 console.log('[SUPABASE] Client initialized →', config.url);
 

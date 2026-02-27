@@ -72,6 +72,8 @@ import ShippingDashboard from './pages/Shipping/ShippingDashboard';
 // MAKE Module
 import PlaceOrder from './pages/Make/PlaceOrder';
 import TrackOrders from './pages/Make/TrackOrders';
+import MakeDashboard from './pages/Make/MakeDashboard';
+
 
 // Reports
 import Reports from './pages/Reports/Reports';
@@ -81,6 +83,18 @@ import ProfitAndLoss from './pages/Reports/ProfitAndLoss';
 import StockSummary from './pages/Reports/StockSummary';
 import DayBook from './pages/Reports/DayBook';
 
+// HRM Module
+import HRMDashboard from './pages/HRM/HRMDashboard';
+import HRMEmployees from './pages/HRM/HRMEmployees';
+import HRMAttendance from './pages/HRM/HRMAttendance';
+import HRMLeaves from './pages/HRM/HRMLeaves';
+import HRMPayroll from './pages/HRM/HRMPayroll';
+
+// CRM Module
+import CRMDirectory from './pages/CRM/CRMDirectory';
+import CRMProgress from './pages/CRM/CRMProgress';
+
+import Email from './pages/Email/Email';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import LicenseGate from './pages/Auth/LicenseGate';
 import UpdateBanner from './components/UpdateBanner';
@@ -193,6 +207,9 @@ function App() {
         {/* Notifications */}
         <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
 
+        {/* Email System */}
+        <Route path="/email" element={<ProtectedRoute><Email /></ProtectedRoute>} />
+
         {/* Settings */}
         <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
 
@@ -200,8 +217,10 @@ function App() {
         <Route path="/website" element={<ProtectedRoute><WebsiteDashboard /></ProtectedRoute>} />
 
         {/* MAKE Module */}
+        <Route path="/make/dashboard" element={<ProtectedRoute><MakeDashboard /></ProtectedRoute>} />
         <Route path="/make/place-order" element={<ProtectedRoute><PlaceOrder /></ProtectedRoute>} />
         <Route path="/make/track" element={<ProtectedRoute><TrackOrders /></ProtectedRoute>} />
+
         <Route path="/website/products" element={<ProtectedRoute><WebsiteProducts /></ProtectedRoute>} />
         <Route path="/website/orders" element={<ProtectedRoute><WebsiteOrders /></ProtectedRoute>} />
         <Route path="/website/categories" element={<ProtectedRoute><WebsiteCategories /></ProtectedRoute>} />
@@ -217,8 +236,19 @@ function App() {
         <Route path="/billing/alter" element={<ProtectedRoute><AlterBill /></ProtectedRoute>} />
         <Route path="/billing/pending-approvals" element={<ProtectedRoute><PendingAlterations /></ProtectedRoute>} />
 
+        {/* HRM Module */}
+        <Route path="/hrm" element={<ProtectedRoute><HRMDashboard /></ProtectedRoute>} />
+        <Route path="/hrm/employees" element={<ProtectedRoute><HRMEmployees /></ProtectedRoute>} />
+        <Route path="/hrm/attendance" element={<ProtectedRoute><HRMAttendance /></ProtectedRoute>} />
+        <Route path="/hrm/leaves" element={<ProtectedRoute><HRMLeaves /></ProtectedRoute>} />
+        <Route path="/hrm/payroll" element={<ProtectedRoute><HRMPayroll /></ProtectedRoute>} />
+
         {/* Shipping */}
         <Route path="/shipping" element={<ProtectedRoute><ShippingDashboard /></ProtectedRoute>} />
+
+        {/* CRM Module (under Billing) */}
+        <Route path="/billing/crm/directory" element={<ProtectedRoute><CRMDirectory /></ProtectedRoute>} />
+        <Route path="/billing/crm/progress" element={<ProtectedRoute><CRMProgress /></ProtectedRoute>} />
 
         {/* Company */}
         <Route path="/company/create" element={<ProtectedRoute><CreateCompany /></ProtectedRoute>} />

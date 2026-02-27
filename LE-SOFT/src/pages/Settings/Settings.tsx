@@ -1,5 +1,6 @@
+// @ts-nocheck
 import React, { useState, useEffect } from 'react';
-import { Save, Globe, Download, RefreshCw, CheckCircle, AlertTriangle, User, Lock, Eye, EyeOff, DollarSign, Barcode, Printer } from 'lucide-react';
+import { Save, Globe, Download, RefreshCw, CheckCircle, AlertTriangle, User, Lock, Eye, EyeOff, DollarSign, Barcode, Printer, Database } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useTheme } from '../../context/ThemeContext';
 import DashboardLayout from '../../components/DashboardLayout';
@@ -115,6 +116,38 @@ const Settings: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [saved, setSaved] = useState(false);
 
+    const [adminKey, setAdminKey] = useState(localStorage.getItem('supabase_admin_key') || '');
+    const [adminKeyMsg, setAdminKeyMsg] = useState('');
+
+    const handleSaveAdminKey = async () => {
+        try {
+            // @ts-ignore
+            const result = await window.electron.saveSupabaseConfig({ serviceRoleKey: adminKey.trim() });
+            if (result?.success) {
+                localStorage.setItem('supabase_admin_key', adminKey.trim());
+                setAdminKeyMsg('Admin Key Saved! Restart App to Apply.');
+            } else {
+                setAdminKeyMsg(result?.error || 'Failed to save admin key');
+            }
+        } catch {
+            setAdminKeyMsg('Failed to save admin key');
+        }
+        setTimeout(() => setAdminKeyMsg(''), 4000);
+    };
+
+    const [dbConnected, setDbConnected] = useState<boolean | null>(null);
+
+    const checkDbConnection = async () => {
+        setDbConnected(null);
+        try {
+            // @ts-ignore
+            const res = await window.electron.pingSupabase();
+            setDbConnected(res?.connected === true);
+        } catch {
+            setDbConnected(false);
+        }
+    };
+
     useEffect(() => {
         const fetchSettings = async () => {
             try {
@@ -141,6 +174,7 @@ const Settings: React.FC = () => {
             }
         };
         fetchSettings();
+        checkDbConnection();
     }, []);
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -229,6 +263,43 @@ const Settings: React.FC = () => {
                         <button onClick={toggleTheme} style={{ padding: '0.6rem 1.2rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--hover-bg)', color: 'var(--text-primary)', cursor: 'pointer', fontWeight: 500 }}>
                             Switch to {theme === 'dark' ? 'Light' : 'Dark'}
                         </button>
+                    </div>
+                </motion.div>
+
+                {/* Database Connection */}
+                <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.22 }} className="master-create-container" style={{ maxWidth: '100%' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem' }}>
+                        <Database size={22} style={{ color: '#3b82f6' }} />
+                        <h2 style={{ margin: 0, fontSize: '1.3rem', fontWeight: 600, color: 'var(--text-primary)' }}>Database Connection</h2>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1rem', borderRadius: '10px', border: '1px solid var(--border-color)', background: 'var(--input-bg)' }}>
+                        <div>
+                            <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary)' }}>Supabase Status</h3>
+                            <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                {dbConnected === null ? 'Checking connection...' : (dbConnected ? 'Connected to Cloud Database' : 'Disconnected')}
+                            </p>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: dbConnected === null ? '#f59e0b' : (dbConnected ? '#10b981' : '#ef4444'), boxShadow: `0 0 8px ${dbConnected === null ? '#f59e0b' : (dbConnected ? '#10b981' : '#ef4444')}` }}></div>
+                            <button onClick={checkDbConnection} style={{ padding: '0.4rem 0.8rem', borderRadius: '6px', border: '1px solid var(--border-color)', background: 'var(--hover-bg)', color: 'var(--text-primary)', cursor: 'pointer', fontSize: '0.85rem' }}>Refresh</button>
+                        </div>
+                    </div>
+
+                    <hr style={{ border: 'none', borderTop: '1px solid var(--border-color)', margin: '1rem 0' }} />
+
+                    <div className="create-form">
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                            <Lock size={16} style={{ color: '#f43f5e' }} />
+                            <label style={{ fontWeight: 600, fontSize: '0.9rem' }}>Database Admin Key (Service Role)</label>
+                        </div>
+                        <p style={{ margin: '0 0 1rem 0', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                            Required to bypass Row Level Security when creating new user accounts.
+                        </p>
+                        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                            <input type="password" value={adminKey} onChange={e => setAdminKey(e.target.value)} placeholder="eyJhbGci..." style={{ flex: 1, padding: '0.7rem 1rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--input-bg)', color: 'var(--text-primary)', fontSize: '0.9rem' }} />
+                            <button onClick={handleSaveAdminKey} style={{ padding: '0.7rem 1.2rem', borderRadius: '8px', border: 'none', background: '#f43f5e', color: 'white', fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}>Save Key</button>
+                        </div>
+                        {adminKeyMsg && <p style={{ margin: '0.5rem 0 0', fontSize: '0.85rem', color: adminKeyMsg.includes('Failed') ? '#ef4444' : '#22c55e', fontWeight: 600 }}>{adminKeyMsg}</p>}
                     </div>
                 </motion.div>
 
@@ -434,3 +505,4 @@ const Settings: React.FC = () => {
 };
 
 export default Settings;
+

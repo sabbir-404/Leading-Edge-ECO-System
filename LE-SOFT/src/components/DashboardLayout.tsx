@@ -29,7 +29,9 @@ import {
   Hammer,
   ClipboardList,
   Truck,
-  ClipboardCheck
+  ClipboardCheck,
+  Target,
+  Calendar
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTheme } from '../context/ThemeContext';
@@ -126,6 +128,8 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
         { icon: <History size={18} />, label: 'Bill History', path: '/billing/history' },
         { icon: <Edit size={18} />, label: 'Alter Bill', path: '/billing/alter' },
         ...(userRole === 'admin' ? [{ icon: <ClipboardCheck size={18} />, label: 'Pending Approvals', path: '/billing/pending-approvals' }] : []),
+        { icon: <Users size={18} />, label: 'CRM Directory', path: '/billing/crm/directory' },
+        { icon: <Target size={18} />, label: 'CRM Progress', path: '/billing/crm/progress' },
       ]
     },
     { icon: <Database size={20} />, label: 'Masters', path: '/masters' },
@@ -141,13 +145,31 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
       ]
     }] : []),
     { 
+      icon: <Users size={20} />, 
+      label: 'HRM', 
+      path: '/hrm',
+      subItems: [
+        { icon: <LayoutDashboard size={18} />, label: 'Overview', path: '/hrm' },
+        { icon: <Users size={18} />, label: 'Employees', path: '/hrm/employees' },
+        { icon: <Calendar size={18} />, label: 'Attendance', path: '/hrm/attendance' },
+        { icon: <Clock size={18} />, label: 'Leave Requests', path: '/hrm/leaves' },
+        { icon: <FileText size={18} />, label: 'Payroll', path: '/hrm/payroll' },
+      ]
+    },
+    { 
       icon: <Hammer size={20} />, 
       label: 'MAKE', 
       path: '/make',
       subItems: [
+        { icon: <LayoutDashboard size={18} />, label: 'Overview', path: '/make/dashboard' },
         { icon: <ClipboardList size={18} />, label: 'Place Order', path: '/make/place-order' },
         { icon: <Clock size={18} />, label: 'Track Orders', path: '/make/track' },
       ]
+    },
+    {
+      icon: <Mail size={20} />,
+      label: 'Email',
+      path: '/email',
     },
     {
       icon: <Truck size={20} />,

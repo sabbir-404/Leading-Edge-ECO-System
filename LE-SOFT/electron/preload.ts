@@ -152,6 +152,7 @@ contextBridge.exposeInMainWorld('electron', {
     // Config
     websiteGetConfig: () => ipcRenderer.invoke('website-get-config'),
     websiteUpdateConfig: (config: any) => ipcRenderer.invoke('website-update-config', config),
+    saveSupabaseConfig: (config: any) => ipcRenderer.invoke('save-supabase-config', config),
 
     // Internal Chat
     getChatMessages: (params: any) => ipcRenderer.invoke('get-chat-messages', params),
@@ -194,6 +195,16 @@ contextBridge.exposeInMainWorld('electron', {
         return () => { ipcRenderer.removeAllListeners('redirect-to'); };
     },
 
+    // Database Health
+    pingSupabase: () => ipcRenderer.invoke('ping-supabase'),
+
+    // ─── EMAIL ───
+    emailGetInbox: (userId: number) => ipcRenderer.invoke('email-get-inbox', userId),
+    emailGetSent: (userId: number) => ipcRenderer.invoke('email-get-sent', userId),
+    emailSend: (data: any) => ipcRenderer.invoke('email-send', data),
+    emailMarkRead: (emailId: number) => ipcRenderer.invoke('email-mark-read', emailId),
+    emailDelete: (data: any) => ipcRenderer.invoke('email-delete', data),
+
     // MAKE Module — Metal Furniture Orders
     getMakeOrders: () => ipcRenderer.invoke('get-make-orders'),
     createMakeOrder: (order: any) => ipcRenderer.invoke('create-make-order', order),
@@ -201,6 +212,24 @@ contextBridge.exposeInMainWorld('electron', {
     getMakeOrderUpdates: (orderId: number) => ipcRenderer.invoke('get-make-order-updates', orderId),
     deleteMakeOrder: (id: number) => ipcRenderer.invoke('delete-make-order', id),
     getMakeFurnitureNames: () => ipcRenderer.invoke('get-make-furniture-names'),
+    // Make — PDF Attachments
+    makeUploadPdf: (data: any) => ipcRenderer.invoke('make-upload-pdf', data),
+    makeGetPdfUrls: (orderId: number) => ipcRenderer.invoke('make-get-pdf-urls', orderId),
+    makeDeletePdf: (data: any) => ipcRenderer.invoke('make-delete-pdf', data),
+    makeDownloadPdf: (data: any) => ipcRenderer.invoke('make-download-pdf', data),
+    // Make — Parts / Dimensions
+    makeGetOrderParts: (orderId: number) => ipcRenderer.invoke('make-get-order-parts', orderId),
+    makeUpsertPart: (part: any) => ipcRenderer.invoke('make-upsert-part', part),
+    makeDeletePart: (partId: number) => ipcRenderer.invoke('make-delete-part', partId),
+    // Make — Alteration
+    makeAlterOrder: (data: any) => ipcRenderer.invoke('make-alter-order', data),
+    makeGetAlterationLog: (orderId: number) => ipcRenderer.invoke('make-get-alteration-log', orderId),
+    // Make — Dashboard
+    makeGetDashboardStats: () => ipcRenderer.invoke('make-get-dashboard-stats'),
+    // License — Cloud
+    checkLicenseCloud: () => ipcRenderer.invoke('check-license-cloud'),
+    activateLicenseCloud: (data: any) => ipcRenderer.invoke('activate-license-cloud', data),
+
 
     // Printing
     getPrinters: () => ipcRenderer.invoke('get-printers'),
@@ -234,5 +263,26 @@ contextBridge.exposeInMainWorld('electron', {
 
     // Database Monitoring
     getDbMonitoring: () => ipcRenderer.invoke('get-db-monitoring'),
-});
 
+    // ─── HRM MODULE ───
+    hrmGetEmployees: () => ipcRenderer.invoke('hrm-get-employees'),
+    hrmUpsertEmployee: (emp: any) => ipcRenderer.invoke('hrm-upsert-employee', emp),
+    hrmDeleteEmployee: (id: number) => ipcRenderer.invoke('hrm-delete-employee', id),
+
+    hrmGetAttendance: (data: any) => ipcRenderer.invoke('hrm-get-attendance', data),
+    hrmMarkAttendance: (att: any) => ipcRenderer.invoke('hrm-mark-attendance', att),
+
+    hrmGetLeaves: () => ipcRenderer.invoke('hrm-get-leaves'),
+    hrmRequestLeave: (leave: any) => ipcRenderer.invoke('hrm-request-leave', leave),
+    hrmUpdateLeaveStatus: (data: any) => ipcRenderer.invoke('hrm-update-leave-status', data),
+
+    hrmGetPayroll: (data: any) => ipcRenderer.invoke('hrm-get-payroll', data),
+    hrmGeneratePayroll: (pr: any) => ipcRenderer.invoke('hrm-generate-payroll', pr),
+    hrmMarkPayrollPaid: (id: number) => ipcRenderer.invoke('hrm-mark-payroll-paid', id),
+
+    // ─── CRM MODULE ───
+    crmGetCustomers: () => ipcRenderer.invoke('crm-get-customers'),
+    crmUpsertCustomer: (cust: any) => ipcRenderer.invoke('crm-upsert-customer', cust),
+    crmGetTrackingLogs: (data: any) => ipcRenderer.invoke('crm-get-tracking-logs', data),
+    crmAddTrackingLog: (log: any) => ipcRenderer.invoke('crm-add-tracking-log', log)
+});

@@ -49,15 +49,15 @@ const UserCreate: React.FC = () => {
         }
         try {
             // @ts-ignore
-            await window.electron.createUser(formData);
+            const res = await window.electron.createUser({ ...formData, groupId: formData.groupId ? Number(formData.groupId) : null });
+            if (!res?.success) {
+                setError(res?.error || 'Failed to create user');
+                return;
+            }
             alert('User Created Successfully!');
             navigate('/users');
         } catch (error: any) {
-            if (error?.message?.includes('UNIQUE')) {
-                setError('Username already exists');
-            } else {
-                setError('Failed to create user');
-            }
+            setError(error?.message || 'Failed to create user');
         }
     };
 

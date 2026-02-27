@@ -127,6 +127,7 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   // Config
   websiteGetConfig: () => import_electron.ipcRenderer.invoke("website-get-config"),
   websiteUpdateConfig: (config) => import_electron.ipcRenderer.invoke("website-update-config", config),
+  saveSupabaseConfig: (config) => import_electron.ipcRenderer.invoke("save-supabase-config", config),
   // Internal Chat
   getChatMessages: (params) => import_electron.ipcRenderer.invoke("get-chat-messages", params),
   sendChatMessage: (msg) => import_electron.ipcRenderer.invoke("send-chat-message", msg),
@@ -165,6 +166,14 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
       import_electron.ipcRenderer.removeAllListeners("redirect-to");
     };
   },
+  // Database Health
+  pingSupabase: () => import_electron.ipcRenderer.invoke("ping-supabase"),
+  // ─── EMAIL ───
+  emailGetInbox: (userId) => import_electron.ipcRenderer.invoke("email-get-inbox", userId),
+  emailGetSent: (userId) => import_electron.ipcRenderer.invoke("email-get-sent", userId),
+  emailSend: (data) => import_electron.ipcRenderer.invoke("email-send", data),
+  emailMarkRead: (emailId) => import_electron.ipcRenderer.invoke("email-mark-read", emailId),
+  emailDelete: (data) => import_electron.ipcRenderer.invoke("email-delete", data),
   // MAKE Module — Metal Furniture Orders
   getMakeOrders: () => import_electron.ipcRenderer.invoke("get-make-orders"),
   createMakeOrder: (order) => import_electron.ipcRenderer.invoke("create-make-order", order),
@@ -172,6 +181,23 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   getMakeOrderUpdates: (orderId) => import_electron.ipcRenderer.invoke("get-make-order-updates", orderId),
   deleteMakeOrder: (id) => import_electron.ipcRenderer.invoke("delete-make-order", id),
   getMakeFurnitureNames: () => import_electron.ipcRenderer.invoke("get-make-furniture-names"),
+  // Make — PDF Attachments
+  makeUploadPdf: (data) => import_electron.ipcRenderer.invoke("make-upload-pdf", data),
+  makeGetPdfUrls: (orderId) => import_electron.ipcRenderer.invoke("make-get-pdf-urls", orderId),
+  makeDeletePdf: (data) => import_electron.ipcRenderer.invoke("make-delete-pdf", data),
+  makeDownloadPdf: (data) => import_electron.ipcRenderer.invoke("make-download-pdf", data),
+  // Make — Parts / Dimensions
+  makeGetOrderParts: (orderId) => import_electron.ipcRenderer.invoke("make-get-order-parts", orderId),
+  makeUpsertPart: (part) => import_electron.ipcRenderer.invoke("make-upsert-part", part),
+  makeDeletePart: (partId) => import_electron.ipcRenderer.invoke("make-delete-part", partId),
+  // Make — Alteration
+  makeAlterOrder: (data) => import_electron.ipcRenderer.invoke("make-alter-order", data),
+  makeGetAlterationLog: (orderId) => import_electron.ipcRenderer.invoke("make-get-alteration-log", orderId),
+  // Make — Dashboard
+  makeGetDashboardStats: () => import_electron.ipcRenderer.invoke("make-get-dashboard-stats"),
+  // License — Cloud
+  checkLicenseCloud: () => import_electron.ipcRenderer.invoke("check-license-cloud"),
+  activateLicenseCloud: (data) => import_electron.ipcRenderer.invoke("activate-license-cloud", data),
   // Printing
   getPrinters: () => import_electron.ipcRenderer.invoke("get-printers"),
   // System Audit Log
@@ -197,5 +223,22 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   listDbBackups: () => import_electron.ipcRenderer.invoke("list-db-backups"),
   restoreDbBackup: (name) => import_electron.ipcRenderer.invoke("restore-db-backup", name),
   // Database Monitoring
-  getDbMonitoring: () => import_electron.ipcRenderer.invoke("get-db-monitoring")
+  getDbMonitoring: () => import_electron.ipcRenderer.invoke("get-db-monitoring"),
+  // ─── HRM MODULE ───
+  hrmGetEmployees: () => import_electron.ipcRenderer.invoke("hrm-get-employees"),
+  hrmUpsertEmployee: (emp) => import_electron.ipcRenderer.invoke("hrm-upsert-employee", emp),
+  hrmDeleteEmployee: (id) => import_electron.ipcRenderer.invoke("hrm-delete-employee", id),
+  hrmGetAttendance: (data) => import_electron.ipcRenderer.invoke("hrm-get-attendance", data),
+  hrmMarkAttendance: (att) => import_electron.ipcRenderer.invoke("hrm-mark-attendance", att),
+  hrmGetLeaves: () => import_electron.ipcRenderer.invoke("hrm-get-leaves"),
+  hrmRequestLeave: (leave) => import_electron.ipcRenderer.invoke("hrm-request-leave", leave),
+  hrmUpdateLeaveStatus: (data) => import_electron.ipcRenderer.invoke("hrm-update-leave-status", data),
+  hrmGetPayroll: (data) => import_electron.ipcRenderer.invoke("hrm-get-payroll", data),
+  hrmGeneratePayroll: (pr) => import_electron.ipcRenderer.invoke("hrm-generate-payroll", pr),
+  hrmMarkPayrollPaid: (id) => import_electron.ipcRenderer.invoke("hrm-mark-payroll-paid", id),
+  // ─── CRM MODULE ───
+  crmGetCustomers: () => import_electron.ipcRenderer.invoke("crm-get-customers"),
+  crmUpsertCustomer: (cust) => import_electron.ipcRenderer.invoke("crm-upsert-customer", cust),
+  crmGetTrackingLogs: (data) => import_electron.ipcRenderer.invoke("crm-get-tracking-logs", data),
+  crmAddTrackingLog: (log) => import_electron.ipcRenderer.invoke("crm-add-tracking-log", log)
 });
