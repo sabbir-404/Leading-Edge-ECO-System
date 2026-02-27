@@ -1,0 +1,14 @@
+Testing login...
+signIn: 333.032ms
+Auth Error (admin): Invalid login credentials
+Found 3 users in public.users table.
+[
+  'sabbir (active: 1, auth_id: null)',
+  'admin (active: 1, auth_id: afa898a8-a61a-4b66-a402-391e3d3c1c05)',
+  'islam (active: 1, auth_id: a9bd2307-5358-484f-a90d-9cfcfaccd9ba)'
+]
+Found 2 users in auth.users.
+[
+  'islam@lesoft.local (confirmed_at: 2026-02-27T13:32:28.562927Z)',
+  'admin@lesoft.local (confirmed_at: 2026-02-27T13:04:50.601933Z)'
+]
