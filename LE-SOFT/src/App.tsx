@@ -3,6 +3,7 @@ import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { ThemeProvider } from './context/ThemeContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import Login from './pages/Auth/Login';
+import SetupScreen from './pages/Auth/SetupScreen';
 import Dashboard from './pages/Dashboard/Dashboard';
 import Masters from './pages/Masters';
 import Vouchers from './pages/Vouchers';
@@ -41,6 +42,7 @@ import UserList from './pages/Users/UserList';
 import UserCreate from './pages/Users/UserCreate';
 import UserGroupList from './pages/Users/UserGroupList';
 import UserGroupCreate from './pages/Users/UserGroupCreate';
+import ActiveUsers from './pages/Users/ActiveUsers';
 
 // Notifications
 import Notifications from './pages/Notifications/Notifications';
@@ -158,6 +160,8 @@ function App() {
       <UpdateBanner />
       <Routes>
         <Route path="/" element={<Login />} />
+        <Route path="/login" element={<Login />} />
+        <Route path="/setup" element={<SetupScreen />} />
         <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
 
         {/* Masters & Sub Routes */}
@@ -203,6 +207,7 @@ function App() {
         <Route path="/users/create" element={<ProtectedRoute><UserCreate /></ProtectedRoute>} />
         <Route path="/users/groups" element={<ProtectedRoute><UserGroupList /></ProtectedRoute>} />
         <Route path="/users/groups/create" element={<ProtectedRoute><UserGroupCreate /></ProtectedRoute>} />
+        <Route path="/users/active" element={<ProtectedRoute><ActiveUsers /></ProtectedRoute>} />
 
         {/* Notifications */}
         <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />

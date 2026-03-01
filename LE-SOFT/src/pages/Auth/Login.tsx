@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Lock, User, Eye, EyeOff, Moon, Sun } from 'lucide-react';
@@ -17,6 +17,14 @@ const Login: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  useEffect(() => {
+    const existingToken = localStorage.getItem('supabase_admin_key');
+    const existingLicense = localStorage.getItem('app_license_key');
+    if (!existingToken || !existingLicense) {
+        navigate('/setup');
+    }
+  }, [navigate]);
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -28,8 +36,14 @@ const Login: React.FC = () => {
       setLoading(false);
       if (result?.success && result.user) {
         localStorage.setItem('user_role', result.user.role);
+        localStorage.setItem('user_permissions', typeof result.user.permissions === 'string' ? result.user.permissions : JSON.stringify(result.user.permissions || {}));
         localStorage.setItem('user_name', result.user.full_name || result.user.username);
         localStorage.setItem('user_id', String(result.user.id));
+        if (result.licenseWarning) {
+            localStorage.setItem('license_warning', result.licenseWarning);
+        } else {
+            localStorage.removeItem('license_warning');
+        }
         navigate('/dashboard');
       } else {
         setError(result?.error || 'Invalid credentials');

@@ -49,6 +49,8 @@ contextBridge.exposeInMainWorld('electron', {
     updateUser: (user: any) => ipcRenderer.invoke('update-user', user),
     deleteUser: (id: number) => ipcRenderer.invoke('delete-user', id),
     authenticateUser: (creds: any) => ipcRenderer.invoke('authenticate-user', creds),
+    getActiveSessions: () => ipcRenderer.invoke('get-active-sessions'),
+    kickUserSession: (userId: number) => ipcRenderer.invoke('kick-user-session', userId),
 
     // User Groups
     getUserGroups: () => ipcRenderer.invoke('get-user-groups'),

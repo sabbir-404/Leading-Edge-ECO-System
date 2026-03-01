@@ -59,6 +59,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
   const userRole = localStorage.getItem('user_role') || '';
   const userName = localStorage.getItem('user_name') || 'Admin';
   const userId = parseInt(localStorage.getItem('user_id') || '0');
+  const licenseWarning = localStorage.getItem('license_warning');
 
   // Notification state
   const [notifications, setNotifications] = useState<any[]>([]);
@@ -486,6 +487,12 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
             </div>
           </div>
         </header>
+
+        {licenseWarning && (
+            <div style={{ background: 'rgba(239, 68, 68, 0.15)', color: '#ef4444', borderBottom: '1px solid rgba(239,68,68,0.3)', padding: '12px 24px', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', zIndex: 10, fontSize: '0.9rem' }}>
+                <Lock size={18} /> {licenseWarning}
+            </div>
+        )}
 
         <main className="content-area">
           {children}

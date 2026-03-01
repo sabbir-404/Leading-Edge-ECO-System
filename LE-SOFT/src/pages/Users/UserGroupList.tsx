@@ -5,7 +5,13 @@ import { motion } from 'framer-motion';
 import DashboardLayout from '../../components/DashboardLayout';
 import '../Accounting/Masters/Masters.css';
 
-const PERMISSION_KEYS = ['masters', 'vouchers', 'inventory', 'users', 'settings', 'website', 'reports'];
+const PERMISSION_KEYS = [
+    'masters', 'vouchers', 'inventory', 'users', 'settings', 'website', 'reports',
+    'can_create_user', 'can_delete_user', 'can_edit_user', 'can_edit_groups',
+    'can_create_bill', 'can_alter_bill', 'can_delete_bill',
+    'can_create_order', 'can_alter_order',
+    'can_view_payroll', 'can_approve_leave'
+];
 
 const UserGroupList: React.FC = () => {
     const navigate = useNavigate();

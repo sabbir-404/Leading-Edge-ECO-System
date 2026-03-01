@@ -20,6 +20,11 @@ const UserCreate: React.FC = () => {
     });
     const [error, setError] = useState('');
 
+    const userRole = localStorage.getItem('user_role') || '';
+    let perms: any = {};
+    try { perms = JSON.parse(localStorage.getItem('user_permissions') || '{}'); } catch {}
+    const canCreateUser = userRole === 'admin' || perms.can_create_user;
+
     useEffect(() => {
         const fetchGroups = async () => {
             try {
@@ -60,6 +65,17 @@ const UserCreate: React.FC = () => {
             setError(error?.message || 'Failed to create user');
         }
     };
+
+    if (!canCreateUser) {
+        return (
+            <DashboardLayout title="Create User">
+                <div style={{ padding: '3rem', textAlign: 'center', color: '#ef4444' }}>
+                    <h2>Unauthorized</h2>
+                    <p>You do not have permission to create users.</p>
+                </div>
+            </DashboardLayout>
+        );
+    }
 
     return (
         <DashboardLayout title="Create User">

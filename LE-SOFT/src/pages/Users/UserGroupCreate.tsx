@@ -12,6 +12,17 @@ const PERMISSION_OPTIONS = [
     { key: 'settings', label: 'Settings', desc: 'Company and app settings' },
     { key: 'website', label: 'Website Admin', desc: 'Manage website products and orders' },
     { key: 'reports', label: 'Reports', desc: 'View reports and analytics' },
+    { key: 'can_create_user', label: 'Add User', desc: 'Allow adding new employee accounts' },
+    { key: 'can_delete_user', label: 'Delete User', desc: 'Allow permanently deleting users' },
+    { key: 'can_edit_user', label: 'Edit User', desc: 'Allow modifying user profiles and roles' },
+    { key: 'can_edit_groups', label: 'Edit Groups', desc: 'Allow changing permission groups' },
+    { key: 'can_create_bill', label: 'Create Bill', desc: 'Allow creating new POS bills' },
+    { key: 'can_alter_bill', label: 'Alter Bill', desc: 'Allow altering existing bills' },
+    { key: 'can_delete_bill', label: 'Delete Bill', desc: 'Allow deleting bills' },
+    { key: 'can_create_order', label: 'Create Order', desc: 'Create MAKE manufacturing orders' },
+    { key: 'can_alter_order', label: 'Alter Order', desc: 'Alter MAKE manufacturing orders' },
+    { key: 'can_view_payroll', label: 'View Payroll', desc: 'View and generate employee payrolls' },
+    { key: 'can_approve_leave', label: 'Approve Leave', desc: 'Approve or Reject staff leave requests' }
 ];
 
 const UserGroupCreate: React.FC = () => {

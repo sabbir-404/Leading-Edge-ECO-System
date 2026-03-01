@@ -12,6 +12,13 @@ const UserList: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [editingUser, setEditingUser] = useState<any>(null);
 
+    const userRole = localStorage.getItem('user_role') || '';
+    let perms: any = {};
+    try { perms = JSON.parse(localStorage.getItem('user_permissions') || '{}'); } catch {}
+    const canCreateUser = userRole === 'admin' || perms.can_create_user;
+    const canEditUser = userRole === 'admin' || perms.can_edit_user;
+    const canDeleteUser = userRole === 'admin' || perms.can_delete_user;
+
     const fetchUsers = async () => {
         try {
             // @ts-ignore
@@ -92,9 +99,11 @@ const UserList: React.FC = () => {
             <div className="master-list-container">
                 <div className="list-header">
                     <h2>Users</h2>
-                    <button className="create-btn" onClick={() => navigate('/users/create')}>
-                        <Plus size={18} /> Add User
-                    </button>
+                    {canCreateUser && (
+                        <button className="create-btn" onClick={() => navigate('/users/create')}>
+                            <Plus size={18} /> Add User
+                        </button>
+                    )}
                 </div>
 
                 <div className="search-bar">
@@ -142,10 +151,14 @@ const UserList: React.FC = () => {
                                             </td>
                                             <td>
                                                 <div className="action-buttons" style={{ justifyContent: 'flex-end', gap: '0.5rem' }}>
-                                                    <button onClick={() => setEditingUser({ ...user })} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '30px', height: '30px', borderRadius: '8px', border: 'none', background: 'rgba(59,130,246,0.1)', color: '#3b82f6', cursor: 'pointer' }}>
-                                                        <Edit2 size={16} />
-                                                    </button>
-                                                    <button className="delete-btn" onClick={() => handleDelete(user.id)}><Trash2 size={16} /></button>
+                                                    {canEditUser && (
+                                                        <button onClick={() => setEditingUser({ ...user })} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '30px', height: '30px', borderRadius: '8px', border: 'none', background: 'rgba(59,130,246,0.1)', color: '#3b82f6', cursor: 'pointer' }}>
+                                                            <Edit2 size={16} />
+                                                        </button>
+                                                    )}
+                                                    {canDeleteUser && (
+                                                        <button className="delete-btn" onClick={() => handleDelete(user.id)}><Trash2 size={16} /></button>
+                                                    )}
                                                 </div>
                                             </td>
                                         </motion.tr>

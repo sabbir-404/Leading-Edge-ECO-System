@@ -641,14 +641,50 @@ export function registerHandlers() {
         resetLoginAttempts(username);
 
         // 3. Fetch user profile from public.users to get permissions and roles
-        const { data: row } = await supabase.from('users').select('*').eq('auth_id', authData.user.id).single();
+        const { data: row } = await supabase.from('users').select(`*, user_groups (permissions)`).eq('auth_id', authData.user.id).single();
 
         if (!row) {
             return { success: false, error: 'User profile mapping not found in database.' };
         }
 
-        const { password_hash: _omit, ...safeUser } = row;
-        return { success: true, user: safeUser };
+        if (row.is_active === 0) {
+            await supabase.auth.signOut();
+            return { success: false, error: 'Your account has been disabled.' };
+        }
+
+        // 4. Check App License Binding
+        const { data: lic } = await supabase.from('app_license').select('*').single();
+        let licenseWarning = null;
+        if (lic) {
+            if (!lic.bound_user_id) {
+                // Bind to this first user
+                await supabase.from('app_license').update({ bound_user_id: row.id }).eq('id', lic.id);
+            } else if (lic.bound_user_id !== row.id) {
+                // Warning
+                licenseWarning = 'WARNING: This software is licensed to another user. Contact your Administrator.';
+            }
+        }
+
+        // 5. Update Session Tracking
+        await supabase.from('users').update({ is_online: true, device_type: 'PC' }).eq('id', row.id);
+
+        const { password_hash: _omit, user_groups, ...safeUser } = row;
+        safeUser.permissions = user_groups?.permissions || '{}';
+        return { success: true, user: safeUser, licenseWarning };
+    });
+
+    // ═══ ACTIVE SESSION KICKING ═══════════════════════════════════════════════
+    ipcMain.handle('get-active-sessions', async () => {
+        const { data, error } = await supabase.from('users').select('*').eq('is_online', true);
+        if (error) return { success: false, error: error.message };
+        return { success: true, data };
+    });
+
+    ipcMain.handle('kick-user-session', async (_e, userId: number) => {
+        if (!supabaseAdmin) return { success: false, error: 'Supabase Admin Key not configured' };
+        const { error } = await supabaseAdmin.from('users').update({ is_online: false, force_logout: true }).eq('id', userId);
+        if (error) return { success: false, error: error.message };
+        return { success: true };
     });
 
     // ═══ SETTINGS ═════════════════════════════════════════════════════════════
