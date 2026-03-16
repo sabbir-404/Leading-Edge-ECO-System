@@ -146,9 +146,8 @@
     flex: 1;
     display: flex;
     flex-direction: column;
-    overflow-y: auto;
+    overflow: hidden;
     min-width: 0;
-    padding-top: 2px;
 }
 
 .top-bar {
@@ -380,8 +379,10 @@
    ═══════════════════════════════════════ */
 .content-area {
     flex: 1;
+    height: 0;
     overflow-y: auto;
     padding: 24px;
+    overflow-x: hidden;
 }
 
 /* ═══════════════════════════════════════

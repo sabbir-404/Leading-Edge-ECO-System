@@ -4,10 +4,10 @@ import { ClipboardList, ChevronDown, ChevronUp, CheckCircle, Trash2, Send, FileT
 import DashboardLayout from '../../components/DashboardLayout';
 import AlterOrder from './AlterOrder';
 
-const STATUSES = ['Placed', 'In Production', 'Welding', 'Painting', 'Ready for Dispatch', 'Delivered'];
+const STATUSES = ['Pending Approval', 'Placed', 'In Production', 'Welding', 'Painting', 'Ready for Dispatch', 'Delivered'];
 
 const statusColors: Record<string, string> = {
-  'Placed': '#6b7280', 'In Production': '#3b82f6', 'Welding': '#f59e0b',
+  'Pending Approval': '#fb923c', 'Placed': '#6b7280', 'In Production': '#3b82f6', 'Welding': '#f59e0b',
   'Painting': '#8b5cf6', 'Ready for Dispatch': '#10b981', 'Delivered': '#059669',
 };
 const priorityColors: Record<string, string> = {
@@ -22,6 +22,10 @@ interface Order {
   designer_name: string;
   status: string;
   priority: string;
+  delivery_date: string | null;
+  salesman_id: number | null;
+  salesman_name?: string;
+  is_approved: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -102,6 +106,18 @@ const TrackOrders: React.FC = () => {
       setUpdates(data || []);
       const nextIdx = STATUSES.indexOf(newStatus);
       if (nextIdx < STATUSES.length - 1) setNewStatus(STATUSES[nextIdx + 1]);
+    } catch (e) { console.error(e); }
+    finally { setUpdating(false); }
+  };
+
+  const handleApprove = async (orderId: number) => {
+    if (!confirm('Approve this order and move it to production?')) return;
+    setUpdating(true);
+    try {
+      // @ts-ignore
+      await window.electron.approveMakeOrder({ orderId, approvedBy: userName });
+      await fetchOrders();
+      if (expandedId === orderId) await loadExpanded(orderId);
     } catch (e) { console.error(e); }
     finally { setUpdating(false); }
   };
@@ -202,15 +218,24 @@ const TrackOrders: React.FC = () => {
                       <span style={chipStyle(statusColors[order.status] || '#6b7280')}>{order.status}</span>
                       <span style={chipStyle(priorityColors[order.priority] || '#6b7280')}>{order.priority}</span>
                     </div>
-                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', gap: '16px' }}>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
                       <span>Qty: {order.quantity}</span>
                       <span>By: {order.designer_name}</span>
+                      <span style={{ color: order.delivery_date ? 'var(--accent-color)' : 'inherit', fontWeight: order.delivery_date ? 600 : 400 }}>
+                        Delivery: {order.delivery_date ? new Date(order.delivery_date).toLocaleDateString() : 'TBD'}
+                      </span>
+                      <span>Salesman: {order.salesman_name || 'Unassigned'}</span>
                       <span>{new Date(order.created_at).toLocaleDateString()}</span>
                     </div>
                   </div>
 
                   {/* Action buttons */}
                   <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }} onClick={e => e.stopPropagation()}>
+                    {order.status === 'Pending Approval' && (
+                      <button onClick={() => handleApprove(order.id)} style={smallBtn('#22c55e')}>
+                        <CheckCircle size={13} /> Approve
+                      </button>
+                    )}
                     {canAlter(order) && (
                       <button onClick={() => setAlterOrder(order)} style={smallBtn('#f97316')}>
                         <Edit2 size={13} /> Alter
@@ -263,6 +288,16 @@ const TrackOrders: React.FC = () => {
                             {order.status === 'Delivered' ? (
                               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#059669', fontSize: '0.9rem', padding: '12px', background: 'rgba(5,150,105,0.08)', borderRadius: '10px' }}>
                                 <CheckCircle size={18} /> Order completed
+                              </div>
+                            ) : order.status === 'Pending Approval' ? (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                <div style={{ background: 'rgba(251,146,60,0.1)', border: '1px solid rgba(251,146,60,0.3)', borderRadius: '10px', padding: '12px', color: '#c2410c', fontSize: '0.85rem' }}>
+                                  This order is awaiting approval from <strong>{order.salesman_name || 'an administrator'}</strong>.
+                                </div>
+                                <motion.button onClick={() => handleApprove(order.id)} disabled={updating} whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }}
+                                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '10px', background: '#22c55e', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 600, fontSize: '0.85rem', cursor: updating ? 'not-allowed' : 'pointer', opacity: updating ? 0.7 : 1 }}>
+                                  <CheckCircle size={14} /> {updating ? 'Approving...' : 'Approve Order Now'}
+                                </motion.button>
                               </div>
                             ) : (
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>

@@ -6,11 +6,22 @@ import DashboardLayout from '../../components/DashboardLayout';
 import '../Accounting/Masters/Masters.css';
 
 const PERMISSION_KEYS = [
-    'masters', 'vouchers', 'inventory', 'users', 'settings', 'website', 'reports',
-    'can_create_user', 'can_delete_user', 'can_edit_user', 'can_edit_groups',
-    'can_create_bill', 'can_alter_bill', 'can_delete_bill',
-    'can_create_order', 'can_alter_order',
-    'can_view_payroll', 'can_approve_leave'
+    // Masters
+    'read_group', 'write_group', 'read_ledger', 'write_ledger', 'read_voucher_type', 'write_voucher_type',
+    'read_currencies', 'write_currencies', 'read_stock_group', 'write_stock_group', 'read_stock_items', 'write_stock_items',
+    'read_units', 'write_units', 'read_products', 'write_products', 'read_godowns', 'write_godowns',
+    // Billing
+    'read_bill', 'write_bill', 'alter_bill', 'delete_bill', 'initiate_exchange',
+    // Accounts
+    'read_accounts', 'write_accounts',
+    // CRM
+    'read_customer', 'write_customer', 'read_quotation', 'write_quotation', 'view_customer_ledger',
+    // MAKE
+    'read_make', 'write_make', 'alter_make',
+    // HRM
+    'read_hrm', 'write_hrm', 'approve_leave', 'view_payroll',
+    // Settings & Security
+    'manage_users', 'manage_groups', 'manage_settings'
 ];
 
 const UserGroupList: React.FC = () => {
@@ -21,8 +32,9 @@ const UserGroupList: React.FC = () => {
     const [editPerms, setEditPerms] = useState<any>({});
 
     const fetchGroups = async () => {
+        const requestingUserId = parseInt(localStorage.getItem('user_id') || '0');
         // @ts-ignore
-        const data = await window.electron.getUserGroups();
+        const data = await window.electron.getUserGroups({ requestingUserId });
         setGroups(data || []);
     };
     useEffect(() => { fetchGroups(); }, []);

@@ -3,13 +3,19 @@ import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Lock, User, Eye, EyeOff, Moon, Sun } from 'lucide-react';
 import { useTheme } from '../../context/ThemeContext';
+import { useToast } from '../../context/ToastContext';
 import logoBlack from '../../assets/logo-black.png';
 import logoWhite from '../../assets/logo-white.png';
 import './Login.css';
 
-const Login: React.FC = () => {
+interface LoginProps {
+  onLoginSuccess?: () => void;
+}
+
+const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
   const navigate = useNavigate();
   const { theme, toggleTheme } = useTheme();
+  const { showToast } = useToast();
   
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -44,7 +50,15 @@ const Login: React.FC = () => {
         } else {
             localStorage.removeItem('license_warning');
         }
+
+        if (result.offlineMode) {
+            showToast('Offline login — limited features', 'warning');
+        } else {
+            showToast('Login successful', 'success');
+        }
+
         navigate('/dashboard');
+        onLoginSuccess?.();
       } else {
         setError(result?.error || 'Invalid credentials');
       }

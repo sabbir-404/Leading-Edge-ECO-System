@@ -13,7 +13,7 @@ export default function CRMProgress() {
   
   const [showLogModal, setShowLogModal] = useState(false);
   const [formData, setFormData] = useState({
-    stage: 'Contacted',
+    stage: 'Lead',
     notes: '',
     next_follow_up: ''
   });
@@ -45,7 +45,21 @@ export default function CRMProgress() {
         ...formData
       });
       setShowLogModal(false);
-      setFormData({ stage: 'Contacted', notes: '', next_follow_up: '' });
+      
+      // Update the unified billing_customers state along with the log!
+      if (selectedCustomer) {
+        // @ts-ignore
+        await window.electron.crmUpsertCustomer({ 
+          ...selectedCustomer, 
+          crm_state: formData.stage,
+          crm_next_appointment: formData.next_follow_up || null
+        });
+        // refresh list to get updated states
+        // @ts-ignore
+        window.electron.crmGetCustomers().then(data => setCustomers(data || []));
+      }
+
+      setFormData({ stage: 'Lead', notes: '', next_follow_up: '' });
       // Refresh logs
       // @ts-ignore
       const newLogs = await window.electron.crmGetTrackingLogs({ customerId: selectedCustomerId });
@@ -58,10 +72,24 @@ export default function CRMProgress() {
 
   const filtered = customers.filter(c => 
     c.name.toLowerCase().includes(search.toLowerCase()) || 
-    (c.company && c.company.toLowerCase().includes(search.toLowerCase()))
+    (c.company && c.company.toLowerCase().includes(search.toLowerCase())) ||
+    (c.crm_state && c.crm_state.toLowerCase().includes(search.toLowerCase()))
   );
 
   const selectedCustomer = customers.find(c => c.id === selectedCustomerId);
+
+  // Reminders logic
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+
+  const reminders = customers.filter(c => {
+    if (!c.crm_next_appointment) return false;
+    const apptDate = new Date(c.crm_next_appointment);
+    apptDate.setHours(0,0,0,0);
+    return apptDate.getTime() === today.getTime() || apptDate.getTime() === tomorrow.getTime() || apptDate.getTime() < today.getTime();
+  });
 
   return (
     <DashboardLayout title="CRM - Progress Tracking">
@@ -84,6 +112,31 @@ export default function CRMProgress() {
           </div>
 
           <div style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '0.5rem', paddingRight: '0.5rem' }}>
+            
+            {reminders.length > 0 && !search && (
+              <div style={{ marginBottom: '1rem' }}>
+                <div style={{ fontSize: '0.8rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: '0.5rem', letterSpacing: '0.5px' }}>Reminders ({reminders.length})</div>
+                {reminders.map(c => (
+                  <div 
+                    key={`rem-${c.id}`} 
+                    onClick={() => setSelectedCustomerId(c.id)}
+                    style={{ 
+                      padding: '1rem', borderRadius: '8px', cursor: 'pointer', marginBottom: '0.5rem',
+                      background: selectedCustomerId === c.id ? 'var(--hover-bg)' : 'rgba(245, 158, 11, 0.05)',
+                      border: `1px solid ${selectedCustomerId === c.id ? 'var(--accent-color)' : 'rgba(245, 158, 11, 0.3)'}`
+                    }}
+                  >
+                    <div style={{ fontWeight: 600, color: 'var(--text-primary)', display: 'flex', justifyContent: 'space-between' }}>
+                      {c.name}
+                      <span style={{ fontSize: '0.75rem', padding: '2px 6px', borderRadius: '8px', background: '#f59e0b', color: 'white' }}>{c.crm_state}</span>
+                    </div>
+                    {c.crm_next_appointment && <div style={{ fontSize: '0.8rem', color: '#d97706', marginTop: '0.4rem', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '4px' }}><Calendar size={12}/> {new Date(c.crm_next_appointment).toLocaleDateString()}</div>}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ fontSize: '0.8rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: '0.5rem', letterSpacing: '0.5px' }}>All Leads</div>
             {filtered.map(c => (
               <div 
                 key={c.id} 
@@ -94,7 +147,10 @@ export default function CRMProgress() {
                   border: `1px solid ${selectedCustomerId === c.id ? 'var(--accent-color)' : 'var(--border-color)'}`
                 }}
               >
-                <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{c.name}</div>
+                <div style={{ fontWeight: 600, color: 'var(--text-primary)', display: 'flex', justifyContent: 'space-between' }}>
+                  {c.name}
+                  {c.crm_state && <span style={{ fontSize: '0.7rem', padding: '2px 6px', borderRadius: '8px', background: 'var(--bg-secondary)', color: 'var(--text-secondary)' }}>{c.crm_state}</span>}
+                </div>
                 {c.company && <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>{c.company}</div>}
               </div>
             ))}
@@ -105,12 +161,36 @@ export default function CRMProgress() {
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
           {selectedCustomer ? (
             <>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border-color)' }}>
-                <div>
-                  <h2 style={{ margin: '0 0 0.5rem 0', color: 'var(--text-primary)' }}>{selectedCustomer.name}</h2>
-                  <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Tracking interactions and deal progress.</div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '2rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border-color)' }}>
+                <div style={{ flex: 1, paddingRight: '2rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '0.5rem' }}>
+                    <h2 style={{ margin: 0, color: 'var(--text-primary)' }}>{selectedCustomer.name}</h2>
+                    {selectedCustomer.crm_state && (
+                      <span style={{ padding: '0.25rem 0.75rem', borderRadius: '20px', fontSize: '0.85rem', background: 'var(--accent-color)', color: 'white', fontWeight: 500 }}>{selectedCustomer.crm_state}</span>
+                    )}
+                  </div>
+                  
+                  {selectedCustomer.crm_interested_products && (
+                     <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.9rem', color: 'var(--text-primary)', background: 'var(--bg-secondary)', padding: '0.4rem 0.8rem', borderRadius: '6px', marginBottom: '0.5rem' }}>
+                       <strong>Interests:</strong> {selectedCustomer.crm_interested_products}
+                     </div>
+                  )}
+
+                  {selectedCustomer.crm_description && (
+                      <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', lineHeight: 1.5, background: 'rgba(59, 130, 246, 0.05)', padding: '0.75rem', borderRadius: '8px', borderLeft: '3px solid #3b82f6' }}>
+                        {selectedCustomer.crm_description}
+                      </div>
+                  )}
+                  {!selectedCustomer.crm_description && !selectedCustomer.crm_interested_products && (
+                      <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Tracking interactions and deal progress.</div>
+                  )}
                 </div>
-                <button onClick={() => setShowLogModal(true)} className="action-button primary" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <button 
+                  onClick={() => {
+                    setFormData({ stage: selectedCustomer.crm_state || 'Lead', notes: '', next_follow_up: '' });
+                    setShowLogModal(true);
+                  }} 
+                  className="action-button primary" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
                   <Plus size={16} /> Log Interaction
                 </button>
               </div>

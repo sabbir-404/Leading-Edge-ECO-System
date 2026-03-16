@@ -44,19 +44,26 @@ contextBridge.exposeInMainWorld('electron', {
     deletePurchaseBill: (id: number) => ipcRenderer.invoke('delete-purchase-bill', id),
 
     // Users
-    getUsers: () => ipcRenderer.invoke('get-users'),
+    getUsers: (opts?: any) => ipcRenderer.invoke('get-users', opts),
     createUser: (user: any) => ipcRenderer.invoke('create-user', user),
     updateUser: (user: any) => ipcRenderer.invoke('update-user', user),
     deleteUser: (id: number) => ipcRenderer.invoke('delete-user', id),
     authenticateUser: (creds: any) => ipcRenderer.invoke('authenticate-user', creds),
     getActiveSessions: () => ipcRenderer.invoke('get-active-sessions'),
     kickUserSession: (userId: number) => ipcRenderer.invoke('kick-user-session', userId),
+    verifyAdminPassword: (data: any) => ipcRenderer.invoke('verify-admin-password', data),
 
     // User Groups
-    getUserGroups: () => ipcRenderer.invoke('get-user-groups'),
+    getUserGroups: (opts?: any) => ipcRenderer.invoke('get-user-groups', opts),
     createUserGroup: (group: any) => ipcRenderer.invoke('create-user-group', group),
     updateUserGroup: (group: any) => ipcRenderer.invoke('update-user-group', group),
     deleteUserGroup: (id: number) => ipcRenderer.invoke('delete-user-group', id),
+
+    // Permission Levels
+    getPermissionLevels: () => ipcRenderer.invoke('get-permission-levels'),
+    createPermissionLevel: (payload: any) => ipcRenderer.invoke('create-permission-level', payload),
+    updatePermissionLevel: (payload: any) => ipcRenderer.invoke('update-permission-level', payload),
+    deletePermissionLevel: (id: number) => ipcRenderer.invoke('delete-permission-level', id),
 
     // Notifications
     getNotifications: (userId: number) => ipcRenderer.invoke('get-notifications', userId),
@@ -155,6 +162,8 @@ contextBridge.exposeInMainWorld('electron', {
     websiteGetConfig: () => ipcRenderer.invoke('website-get-config'),
     websiteUpdateConfig: (config: any) => ipcRenderer.invoke('website-update-config', config),
     saveSupabaseConfig: (config: any) => ipcRenderer.invoke('save-supabase-config', config),
+    getDeviceId: () => ipcRenderer.invoke('get-device-id'),
+    activateLicense: (key: string) => ipcRenderer.invoke('activate-license', key),
 
     // Internal Chat
     getChatMessages: (params: any) => ipcRenderer.invoke('get-chat-messages', params),
@@ -226,6 +235,8 @@ contextBridge.exposeInMainWorld('electron', {
     // Make — Alteration
     makeAlterOrder: (data: any) => ipcRenderer.invoke('make-alter-order', data),
     makeGetAlterationLog: (orderId: number) => ipcRenderer.invoke('make-get-alteration-log', orderId),
+    getSalesmen: () => ipcRenderer.invoke('get-salesmen'),
+    approveMakeOrder: (data: { orderId: number, approvedBy: string }) => ipcRenderer.invoke('approve-make-order', data),
     // Make — Dashboard
     makeGetDashboardStats: () => ipcRenderer.invoke('make-get-dashboard-stats'),
     // License — Cloud
@@ -256,7 +267,6 @@ contextBridge.exposeInMainWorld('electron', {
     // License Key
     getMachineId: () => ipcRenderer.invoke('get-machine-id'),
     checkLicense: () => ipcRenderer.invoke('check-license'),
-    activateLicense: (key: string) => ipcRenderer.invoke('activate-license', key),
 
     // Database Backup
     createDbBackup: () => ipcRenderer.invoke('create-db-backup'),
@@ -286,5 +296,52 @@ contextBridge.exposeInMainWorld('electron', {
     crmGetCustomers: () => ipcRenderer.invoke('crm-get-customers'),
     crmUpsertCustomer: (cust: any) => ipcRenderer.invoke('crm-upsert-customer', cust),
     crmGetTrackingLogs: (data: any) => ipcRenderer.invoke('crm-get-tracking-logs', data),
-    crmAddTrackingLog: (log: any) => ipcRenderer.invoke('crm-add-tracking-log', log)
+    crmAddTrackingLog: (log: any) => ipcRenderer.invoke('crm-add-tracking-log', log),
+
+    // ─── QUOTATION MODULE ───
+    createQuotation: (payload: any) => ipcRenderer.invoke('create-quotation', payload),
+    getQuotations: () => ipcRenderer.invoke('get-quotations'),
+    getQuotation: (id: number) => ipcRenderer.invoke('get-quotation', id),
+    deleteQuotation: (id: number) => ipcRenderer.invoke('delete-quotation', id),
+
+    // ─── CUSTOMER LEDGER & EXCHANGES ───
+    getCustomerLedgerList: () => ipcRenderer.invoke('get-customer-ledger-list'),
+    getCustomerLedgerDetail: (id: number) => ipcRenderer.invoke('get-customer-ledger-detail', id),
+    addCustomerPayment: (payment: any) => ipcRenderer.invoke('add-customer-payment', payment),
+    addCustomerAddress: (address: any) => ipcRenderer.invoke('add-customer-address', address),
+    
+    createExchangeOrder: (exchange: any) => ipcRenderer.invoke('create-exchange-order', exchange),
+    getExchangeOrders: () => ipcRenderer.invoke('get-exchange-orders'),
+    getExchangeDetails: (id: number) => ipcRenderer.invoke('get-exchange-details', id),
+
+    // ─── CACHE & PERFORMANCE ───
+    /** Trigger post-login data preload. Called once after successful login. */
+    preloadCache: () => ipcRenderer.invoke('preload-cache'),
+    /** Subscribe to cache loading progress. Returns unsubscribe function. */
+    onCacheProgress: (callback: (data: { step: string; progress: number; total: number }) => void) => {
+        const handler = (_: any, data: any) => callback(data);
+        ipcRenderer.on('cache-load-progress', handler);
+        return () => ipcRenderer.removeListener('cache-load-progress', handler);
+    },
+    getCacheStats: () => ipcRenderer.invoke('get-cache-stats'),
+
+    // ─── WRITE QUEUE ───
+    /** Poll write queue stats (pending count). */
+    getQueueStats: () => ipcRenderer.invoke('get-queue-stats'),
+    onWriteQueueStatus: (callback: (data: { pending: number }) => void) => {
+        const handler = (_: any, data: any) => callback(data);
+        ipcRenderer.on('write-queue-status', handler);
+        return () => ipcRenderer.removeListener('write-queue-status', handler);
+    },
+
+    // ─── AI MARKET ANALYSIS ───
+    saveAiKey: (key: string) => ipcRenderer.invoke('save-ai-key', key),
+    getAiKey: () => ipcRenderer.invoke('get-ai-key'),
+    // CRUD for competitor URLs
+    getCompetitorUrls: (productId: number) => ipcRenderer.invoke('get-competitor-urls', productId),
+    addCompetitorUrl: (data: any) => ipcRenderer.invoke('add-competitor-url', data),
+    deleteCompetitorUrl: (id: number) => ipcRenderer.invoke('delete-competitor-url', id),
+    // Trigger Agent & History
+    runAutoPriceScan: (productId: number) => ipcRenderer.invoke('run-auto-price-scan', productId),
+    getMarketAnalysisHistory: (productId?: number) => ipcRenderer.invoke('get-market-analysis-history', productId),
 });

@@ -11,6 +11,7 @@ const reportCards = [
     { label: 'Profit & Loss', desc: 'Income vs Expenses summary', path: '/reports/profit-and-loss', icon: TrendingUp, color: '#f97316' },
     { label: 'Stock Summary', desc: 'Product stock levels & valuation', path: '/reports/stock-summary', icon: Package, color: '#ec4899' },
     { label: 'Day Book', desc: 'All voucher entries by date', path: '/reports/day-book', icon: BookOpen, color: '#8b5cf6' },
+    { label: 'Market Analysis', desc: 'AI-powered competitor price & feature comparison', path: '/reports/market-analysis', icon: TrendingUp, color: '#0ea5e9' },
 ];
 
 const Reports: React.FC = () => {

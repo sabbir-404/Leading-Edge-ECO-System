@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import DashboardLayout from '../../components/DashboardLayout';
 import { motion } from 'framer-motion';
-import { Users, Search, Plus, Edit2, Phone, Mail, MapPin, Building } from 'lucide-react';
+import { Users, Search, Plus, Edit2, Phone, Mail, Building } from 'lucide-react';
 
 export default function CRMDirectory() {
   const [customers, setCustomers] = useState<any[]>([]);
@@ -14,7 +14,11 @@ export default function CRMDirectory() {
     company: '',
     email: '',
     phone: '',
-    address: ''
+    address: '',
+    crm_interested_products: '',
+    crm_state: 'Lead',
+    crm_next_appointment: '',
+    crm_description: ''
   });
 
   const fetchCustomers = async () => {
@@ -51,14 +55,21 @@ export default function CRMDirectory() {
       company: c.company || '',
       email: c.email || '',
       phone: c.phone || '',
-      address: c.address || ''
+      address: c.address || '',
+      crm_interested_products: c.crm_interested_products || '',
+      crm_state: c.crm_state || 'Lead',
+      crm_next_appointment: c.crm_next_appointment ? new Date(c.crm_next_appointment).toISOString().split('T')[0] : '',
+      crm_description: c.crm_description || ''
     });
     setShowModal(true);
   };
 
   const openNew = () => {
     setEditingId(null);
-    setFormData({ name: '', company: '', email: '', phone: '', address: '' });
+    setFormData({ 
+      name: '', company: '', email: '', phone: '', address: '',
+      crm_interested_products: '', crm_state: 'Lead', crm_next_appointment: '', crm_description: ''
+    });
     setShowModal(true);
   };
 
@@ -106,12 +117,23 @@ export default function CRMDirectory() {
                 <Edit2 size={16} />
               </button>
               <h3 style={{ margin: '0 0 0.5rem 0', color: 'var(--text-primary)', fontSize: '1.1rem', fontWeight: 600 }}>{c.name}</h3>
+              <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
+                <span style={{ padding: '0.2rem 0.6rem', fontSize: '0.75rem', borderRadius: '12px', background: 'var(--accent-color)', color: 'white' }}>{c.crm_state || 'Lead'}</span>
+                {(c.total_bills > 0) && (
+                  <span style={{ padding: '0.2rem 0.6rem', fontSize: '0.75rem', borderRadius: '12px', background: 'var(--success-color, #10b981)', color: 'white' }}>Sale Made</span>
+                )}
+                {c.crm_next_appointment && (
+                  <span style={{ padding: '0.2rem 0.6rem', fontSize: '0.75rem', borderRadius: '12px', background: 'rgba(245, 158, 11, 0.2)', color: '#d97706', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    Next Appt: {new Date(c.crm_next_appointment).toLocaleDateString()}
+                  </span>
+                )}
+              </div>
               
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
                 {c.company && <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Building size={14} /> {c.company}</div>}
                 {c.phone && <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Phone size={14} /> {c.phone}</div>}
                 {c.email && <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Mail size={14} /> {c.email}</div>}
-                {c.address && <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><MapPin size={14} /> {c.address}</div>}
+                {c.crm_interested_products && <div style={{ fontSize: '0.85rem', marginTop: '0.25rem', padding: '0.5rem', background: 'var(--bg-primary)', borderRadius: '6px' }}><strong>Interests</strong>: {c.crm_interested_products}</div>}
               </div>
             </motion.div>
           ))}
@@ -124,8 +146,8 @@ export default function CRMDirectory() {
       </div>
 
       {showModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div style={{ background: 'var(--bg-primary)', padding: '2rem', borderRadius: '12px', width: '400px', maxWidth: '90vw' }}>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, overflowY: 'auto', padding: '2rem 0' }}>
+          <div style={{ background: 'var(--bg-primary)', padding: '2rem', borderRadius: '12px', width: '500px', maxWidth: '90vw', margin: 'auto' }}>
             <h2 style={{ margin: '0 0 1.5rem 0', color: 'var(--text-primary)' }}>{editingId ? 'Edit Customer' : 'Add Customer'}</h2>
             <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div>
@@ -136,19 +158,49 @@ export default function CRMDirectory() {
                 <label style={{ display: 'block', marginBottom: '0.25rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Company</label>
                 <input value={formData.company} onChange={e => setFormData({ ...formData, company: e.target.value })} style={{ width: '100%', padding: '0.75rem', borderRadius: '6px', border: '1px solid var(--border-color)', background: 'var(--input-bg)', color: 'var(--text-primary)' }} />
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                 <div>
                   <label style={{ display: 'block', marginBottom: '0.25rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Phone</label>
-                  <input value={formData.phone} onChange={e => setFormData({ ...formData, phone: e.target.value })} style={{ width: '100%', padding: '0.75rem', borderRadius: '6px', border: '1px solid var(--border-color)', background: 'var(--input-bg)', color: 'var(--text-primary)' }} />
+                  <input value={formData.phone} onChange={e => setFormData({ ...formData, phone: e.target.value })} style={{ width: '100%', padding: '0.75rem', borderRadius: '6px', border: '1px solid var(--border-color)', background: 'var(--input-bg)', color: 'var(--text-primary)', boxSizing: 'border-box' }} />
                 </div>
                 <div>
                   <label style={{ display: 'block', marginBottom: '0.25rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Email</label>
-                  <input type="email" value={formData.email} onChange={e => setFormData({ ...formData, email: e.target.value })} style={{ width: '100%', padding: '0.75rem', borderRadius: '6px', border: '1px solid var(--border-color)', background: 'var(--input-bg)', color: 'var(--text-primary)' }} />
+                  <input type="email" value={formData.email} onChange={e => setFormData({ ...formData, email: e.target.value })} style={{ width: '100%', padding: '0.75rem', borderRadius: '6px', border: '1px solid var(--border-color)', background: 'var(--input-bg)', color: 'var(--text-primary)', boxSizing: 'border-box' }} />
                 </div>
               </div>
               <div>
                 <label style={{ display: 'block', marginBottom: '0.25rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Address</label>
                 <textarea rows={2} value={formData.address} onChange={e => setFormData({ ...formData, address: e.target.value })} style={{ width: '100%', padding: '0.75rem', borderRadius: '6px', border: '1px solid var(--border-color)', background: 'var(--input-bg)', color: 'var(--text-primary)', resize: 'none' }} />
+              </div>
+
+              {/* NEW CRM FIELDS */}
+              <div style={{ padding: '1rem', background: 'var(--bg-secondary)', borderRadius: '8px', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                <div style={{ display: 'flex', gap: '1rem' }}>
+                    <div style={{ flex: 1 }}>
+                      <label style={{ display: 'block', marginBottom: '0.25rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Current State</label>
+                      <select value={formData.crm_state} onChange={e => setFormData({ ...formData, crm_state: e.target.value })} style={{ width: '100%', padding: '0.75rem', borderRadius: '6px', border: '1px solid var(--border-color)', background: 'var(--input-bg)', color: 'var(--text-primary)' }}>
+                          <option value="Lead">Lead</option>
+                          <option value="Interested">Interested</option>
+                          <option value="Will Contact">Will Contact</option>
+                          <option value="Converted">Converted</option>
+                          <option value="Lost">Lost</option>
+                      </select>
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <label style={{ display: 'block', marginBottom: '0.25rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Next Appointment</label>
+                      <input type="date" value={formData.crm_next_appointment} onChange={e => setFormData({ ...formData, crm_next_appointment: e.target.value })} style={{ width: '100%', padding: '0.75rem', borderRadius: '6px', border: '1px solid var(--border-color)', background: 'var(--input-bg)', color: 'var(--text-primary)' }} />
+                    </div>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.25rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Interested Products</label>
+                  <input placeholder="e.g. Executive Chair, Desk" value={formData.crm_interested_products} onChange={e => setFormData({ ...formData, crm_interested_products: e.target.value })} style={{ width: '100%', padding: '0.75rem', borderRadius: '6px', border: '1px solid var(--border-color)', background: 'var(--input-bg)', color: 'var(--text-primary)' }} />
+                </div>
+                
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.25rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Brief Description</label>
+                  <textarea rows={2} placeholder="Customer requirements..." value={formData.crm_description} onChange={e => setFormData({ ...formData, crm_description: e.target.value })} style={{ width: '100%', padding: '0.75rem', borderRadius: '6px', border: '1px solid var(--border-color)', background: 'var(--input-bg)', color: 'var(--text-primary)', resize: 'none' }} />
+                </div>
               </div>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem', marginTop: '1rem' }}>
                 <button type="button" onClick={() => setShowModal(false)} style={{ padding: '0.5rem 1rem', borderRadius: '6px', border: '1px solid var(--border-color)', background: 'none', color: 'var(--text-primary)', cursor: 'pointer' }}>Cancel</button>

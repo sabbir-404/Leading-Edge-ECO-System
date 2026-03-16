@@ -14,7 +14,7 @@ const UpdateBanner: React.FC = () => {
 
     useEffect(() => {
         // @ts-ignore
-        const cleanup = window.electron.onUpdateStatus?.((data: any) => {
+        const cleanup = window.electron?.onUpdateStatus?.((data: any) => {
             if (data.status === 'available') {
                 setUpdateStatus('available');
                 setUpdateInfo(data.info);

@@ -11,7 +11,12 @@ const LicenseGate: React.FC<{ onActivated: () => void }> = ({ onActivated }) => 
 
     useEffect(() => {
         // @ts-ignore
-        window.electron.getMachineId?.().then((id: string) => setMachineId(id || 'Unknown'));
+        if (window.electron?.getMachineId) {
+            // @ts-ignore
+            window.electron.getMachineId().then((id: string) => setMachineId(id || 'Unknown'));
+        } else {
+            setMachineId('DEV-MACHINE-ID');
+        }
     }, []);
 
     const handleCopy = async () => {
@@ -40,6 +45,12 @@ const LicenseGate: React.FC<{ onActivated: () => void }> = ({ onActivated }) => 
         setStatus('validating');
         setErrorMsg('');
         try {
+            // @ts-ignore
+            if (!window.electron?.activateLicense) {
+                setStatus('error');
+                setErrorMsg('Electron IPC not available in this environment');
+                return;
+            }
             // @ts-ignore
             const result = await window.electron.activateLicense(licenseKey.trim());
             if (result?.success) {

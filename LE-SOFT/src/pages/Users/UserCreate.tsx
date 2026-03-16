@@ -3,10 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Save } from 'lucide-react';
 import { motion } from 'framer-motion';
 import DashboardLayout from '../../components/DashboardLayout';
+import { useToast } from '../../context/ToastContext';
 import '../Accounting/Masters/Masters.css';
 
 const UserCreate: React.FC = () => {
     const navigate = useNavigate();
+    const { showToast } = useToast();
     const [groups, setGroups] = useState<any[]>([]);
     const [formData, setFormData] = useState({
         username: '',
@@ -23,13 +25,14 @@ const UserCreate: React.FC = () => {
     const userRole = localStorage.getItem('user_role') || '';
     let perms: any = {};
     try { perms = JSON.parse(localStorage.getItem('user_permissions') || '{}'); } catch {}
-    const canCreateUser = userRole === 'admin' || perms.can_create_user;
+    const canCreateUser = userRole === 'admin' || userRole === 'superadmin' || perms.can_create_user;
 
     useEffect(() => {
         const fetchGroups = async () => {
             try {
+                const requestingUserId = parseInt(localStorage.getItem('user_id') || '0');
                 // @ts-ignore
-                const data = await window.electron.getUserGroups();
+                const data = await window.electron.getUserGroups({ requestingUserId });
                 setGroups(data || []);
             } catch (e) { console.error(e); }
         };
@@ -59,7 +62,7 @@ const UserCreate: React.FC = () => {
                 setError(res?.error || 'Failed to create user');
                 return;
             }
-            alert('User Created Successfully!');
+            showToast('User Created Successfully!', 'success');
             navigate('/users');
         } catch (error: any) {
             setError(error?.message || 'Failed to create user');

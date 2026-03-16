@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 
 type ShortcutHandler = () => void;
 
@@ -8,19 +8,29 @@ interface ShortcutMap {
 
 /**
  * Global Keyboard Shortcut Hook
- * @param shortcuts - Map of keys to handlers (e.g. { 'Escape': handleBack })
+ * Uses a ref to hold the latest shortcuts so the event listener
+ * is only added/removed ONCE, preventing listener accumulation.
  */
 export const useKeyboardShortcuts = (shortcuts: ShortcutMap) => {
+    // Always hold the latest shortcuts without re-registering the listener
+    const shortcutsRef = useRef<ShortcutMap>(shortcuts);
+    shortcutsRef.current = shortcuts;
+
     useEffect(() => {
         const handleKeyDown = (event: KeyboardEvent) => {
+            const latestShortcuts = shortcutsRef.current;
+
             // Check if user is typing in an input/textarea
             const target = event.target as HTMLElement;
-            const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
+            const isInput =
+                target.tagName === 'INPUT' ||
+                target.tagName === 'TEXTAREA' ||
+                target.isContentEditable;
 
             // Esc should always work to close modals even if in input
             if (event.key === 'Escape') {
-                if (shortcuts['Escape']) {
-                    shortcuts['Escape']();
+                if (latestShortcuts['Escape']) {
+                    latestShortcuts['Escape']();
                 }
                 return;
             }
@@ -35,17 +45,16 @@ export const useKeyboardShortcuts = (shortcuts: ShortcutMap) => {
             if (event.shiftKey) keyStr += 'Shift+';
             keyStr += event.key;
 
-            if (shortcuts[keyStr]) {
+            if (latestShortcuts[keyStr]) {
                 event.preventDefault();
-                shortcuts[keyStr]();
-            } else if (shortcuts[event.key]) {
-                // Also check single keys if no combo matched
+                latestShortcuts[keyStr]();
+            } else if (latestShortcuts[event.key]) {
                 event.preventDefault();
-                shortcuts[event.key]();
+                latestShortcuts[event.key]();
             }
         };
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [shortcuts]);
+    }, []); // Empty deps — register listener ONCE, refs stay current
 };

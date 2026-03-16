@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Printer, Eye, Calendar, X } from 'lucide-react';
+import { Search, Printer, Eye, Calendar, X, Star } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import DashboardLayout from '../../components/DashboardLayout';
 import '../Accounting/Masters/Masters.css';
@@ -13,6 +13,7 @@ interface Bill {
     subtotal: number;
     discount_total: number;
     grand_total: number;
+    is_altered: boolean;
     created_at: string;
 }
 
@@ -131,11 +132,19 @@ const BillHistory: React.FC = () => {
                                     {filtered.map((bill, idx) => (
                                         <tr
                                             key={bill.id}
-                                            style={{ borderBottom: '1px solid #f0f0f0', background: idx % 2 === 0 ? '#fafbfc' : '#fff', cursor: 'pointer' }}
+                                            style={{ 
+                                                borderBottom: '1px solid #f0f0f0', 
+                                                background: bill.is_altered ? 'rgba(249, 115, 22, 0.05)' : (idx % 2 === 0 ? '#fafbfc' : '#fff'), 
+                                                cursor: 'pointer',
+                                                boxShadow: bill.is_altered ? 'inset 4px 0 0 var(--accent-color)' : 'none'
+                                            }}
                                             onClick={() => viewBill(bill.id)}
                                         >
                                             <td style={{ padding: '0.75rem 1rem' }}>
-                                                <span style={{ fontFamily: 'monospace', fontWeight: 600, color: 'var(--accent-color)' }}>{bill.invoice_number}</span>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                    <span style={{ fontFamily: 'monospace', fontWeight: 600, color: 'var(--accent-color)' }}>{bill.invoice_number}</span>
+                                                    {bill.is_altered && <Star size={14} fill="#f97316" color="#f97316" />}
+                                                </div>
                                             </td>
                                             <td style={{ padding: '0.75rem 1rem' }}>
                                                 <div style={{ fontWeight: 600 }}>{bill.customer_name || 'Walk-in'}</div>
@@ -187,7 +196,14 @@ const BillHistory: React.FC = () => {
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem' }}>
                                     <div>
                                         <h2 style={{ fontSize: '1.3rem', fontWeight: 700, marginBottom: '0.25rem' }}>Invoice Details</h2>
-                                        <span style={{ fontFamily: 'monospace', color: 'var(--accent-color)', fontWeight: 600 }}>{selectedBill.invoice_number}</span>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                            <span style={{ fontFamily: 'monospace', color: 'var(--accent-color)', fontWeight: 600 }}>{selectedBill.invoice_number}</span>
+                                            {selectedBill.is_altered && (
+                                                <span style={{ padding: '0.2rem 0.5rem', background: 'rgba(249,115,22,0.1)', color: '#f97316', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                    <Star size={12} fill="#f97316" /> ALTERED
+                                                </span>
+                                            )}
+                                        </div>
                                     </div>
                                     <div style={{ display: 'flex', gap: '0.5rem' }}>
                                         <button onClick={handlePrint} style={{ padding: '0.5rem 1rem', background: 'var(--accent-color)', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.85rem' }}>

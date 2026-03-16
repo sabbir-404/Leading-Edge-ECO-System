@@ -23,6 +23,7 @@ import {
   Clock,
   User,
   Lock,
+  Shield,
   Camera,
   Edit,
   Bell,
@@ -31,13 +32,16 @@ import {
   Truck,
   ClipboardCheck,
   Target,
-  Calendar
+  Calendar,
+  ShieldAlert,
+  ArrowLeftRight
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTheme } from '../context/ThemeContext';
 import logoBlack from '../assets/logo-black.png';
 import logoWhite from '../assets/logo-white.png';
 import '../pages/Dashboard/Dashboard.css';
+import { useNetwork } from '../context/NetworkContext';
 
 interface DashboardLayoutProps {
     children: React.ReactNode;
@@ -48,6 +52,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
   const navigate = useNavigate();
   const location = useLocation();
   const { theme } = useTheme();
+  const { isOnline } = useNetwork();
   const [isSidebarOpen, setSidebarOpen] = useState(true);
   const [expandedMenus, setExpandedMenus] = useState<string[]>([]);
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -60,6 +65,20 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
   const userName = localStorage.getItem('user_name') || 'Admin';
   const userId = parseInt(localStorage.getItem('user_id') || '0');
   const licenseWarning = localStorage.getItem('license_warning');
+  
+  // Parse permissions from localStorage
+  let userPermissions: Record<string, boolean> = {};
+  try {
+      userPermissions = JSON.parse(localStorage.getItem('user_permissions') || '{}');
+  } catch (e) {
+      userPermissions = {};
+  }
+
+  // Helper function to check if user has a specific permission
+  const hasPermission = (key: string) => {
+      if (userRole === 'superadmin') return true; // Superadmins override all
+      return !!userPermissions[key];
+  };
 
   // Notification state
   const [notifications, setNotifications] = useState<any[]>([]);
@@ -120,32 +139,39 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
 
   const navItems = [
     { icon: <LayoutDashboard size={20} />, label: 'Overview', path: '/dashboard' },
-    { 
+    ...(hasPermission('read_bill') || hasPermission('write_bill') || hasPermission('alter_bill') ? [{ 
       icon: <ShoppingCart size={20} />, 
       label: 'Billing / POS', 
       path: '/billing',
       subItems: [
-        { icon: <FileText size={18} />, label: 'New Bill', path: '/billing' },
-        { icon: <History size={18} />, label: 'Bill History', path: '/billing/history' },
-        { icon: <Edit size={18} />, label: 'Alter Bill', path: '/billing/alter' },
-        ...(userRole === 'admin' ? [{ icon: <ClipboardCheck size={18} />, label: 'Pending Approvals', path: '/billing/pending-approvals' }] : []),
-        { icon: <Users size={18} />, label: 'CRM Directory', path: '/billing/crm/directory' },
-        { icon: <Target size={18} />, label: 'CRM Progress', path: '/billing/crm/progress' },
+        ...(hasPermission('write_bill') ? [{ icon: <FileText size={18} />, label: 'New Bill', path: '/billing' }] : []),
+        ...(hasPermission('read_bill') ? [{ icon: <History size={18} />, label: 'Bill History', path: '/billing/history' }] : []),
+        ...(hasPermission('alter_bill') ? [{ icon: <Edit size={18} />, label: 'Alter Bill', path: '/billing/alter' }] : []),
+        ...(userRole === 'admin' || userRole === 'superadmin' ? [{ icon: <ClipboardCheck size={18} />, label: 'Pending Approvals', path: '/billing/pending-approvals' }] : []),
+        ...(hasPermission('read_quotation') || hasPermission('write_quotation') ? [{ icon: <FileText size={18} />, label: 'Quotations', path: '/quotations' }] : []),
+        ...(hasPermission('view_customer_ledger') ? [{ icon: <FileText size={18} />, label: 'Customer Ledger', path: '/crm/ledger' }] : []),
+        ...(hasPermission('initiate_exchange') ? [{ icon: <ArrowLeftRight size={18} />, label: 'Exchanges', path: '/crm/exchanges' }] : []),
+        ...(hasPermission('read_customer') || hasPermission('write_customer') ? [
+            { icon: <Users size={18} />, label: 'CRM Directory', path: '/billing/crm/directory' },
+            { icon: <Target size={18} />, label: 'CRM Progress', path: '/billing/crm/progress' },
+        ] : []),
       ]
-    },
-    { icon: <Database size={20} />, label: 'Masters', path: '/masters' },
-    { icon: <FileText size={20} />, label: 'Vouchers', path: '/vouchers' },
-    { icon: <BarChart2 size={20} />, label: 'Reports', path: '/reports' },
-    ...(userRole === 'admin' ? [{ 
+    }] : []),
+    ...(hasPermission('read_group') || hasPermission('read_ledger') || hasPermission('read_stock_items') ? [{ icon: <Database size={20} />, label: 'Masters', path: '/masters' }] : []),
+    ...(hasPermission('read_accounts') || hasPermission('write_accounts') ? [{ icon: <FileText size={20} />, label: 'Vouchers', path: '/vouchers' }] : []),
+    ...(hasPermission('read_accounts') ? [{ icon: <BarChart2 size={20} />, label: 'Reports', path: '/reports' }] : []),
+    ...(hasPermission('manage_users') || hasPermission('manage_groups') ? [{ 
       icon: <Users size={20} />, 
       label: 'Users', 
       path: '/users',
       subItems: [
-        { icon: <User size={18} />, label: 'User List', path: '/users' },
-        { icon: <Lock size={18} />, label: 'User Groups', path: '/users/groups' },
+        ...(hasPermission('manage_users') ? [{ icon: <User size={18} />, label: 'User List', path: '/users' }] : []),
+        ...(userRole === 'admin' || userRole === 'superadmin' ? [{ icon: <ShieldAlert size={18} />, label: 'Active Sessions', path: '/users/active' }] : []),
+        ...(hasPermission('manage_groups') ? [{ icon: <Lock size={18} />, label: 'User Groups', path: '/users/groups' }] : []),
+        ...(userRole === 'admin' || userRole === 'superadmin' ? [{ icon: <Shield size={18} />, label: 'Permission Levels', path: '/users/permissions' }] : []),
       ]
     }] : []),
-    { 
+    ...(hasPermission('read_hrm') || hasPermission('write_hrm') ? [{ 
       icon: <Users size={20} />, 
       label: 'HRM', 
       path: '/hrm',
@@ -153,20 +179,20 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
         { icon: <LayoutDashboard size={18} />, label: 'Overview', path: '/hrm' },
         { icon: <Users size={18} />, label: 'Employees', path: '/hrm/employees' },
         { icon: <Calendar size={18} />, label: 'Attendance', path: '/hrm/attendance' },
-        { icon: <Clock size={18} />, label: 'Leave Requests', path: '/hrm/leaves' },
-        { icon: <FileText size={18} />, label: 'Payroll', path: '/hrm/payroll' },
+        ...(hasPermission('approve_leave') ? [{ icon: <Clock size={18} />, label: 'Leave Requests', path: '/hrm/leaves' }] : []),
+        ...(hasPermission('view_payroll') ? [{ icon: <FileText size={18} />, label: 'Payroll', path: '/hrm/payroll' }] : []),
       ]
-    },
-    { 
+    }] : []),
+    ...(hasPermission('read_make') || hasPermission('write_make') ? [{ 
       icon: <Hammer size={20} />, 
       label: 'MAKE', 
       path: '/make',
       subItems: [
         { icon: <LayoutDashboard size={18} />, label: 'Overview', path: '/make/dashboard' },
-        { icon: <ClipboardList size={18} />, label: 'Place Order', path: '/make/place-order' },
+        ...(hasPermission('write_make') ? [{ icon: <ClipboardList size={18} />, label: 'Place Order', path: '/make/place-order' }] : []),
         { icon: <Clock size={18} />, label: 'Track Orders', path: '/make/track' },
       ]
-    },
+    }] : []),
     {
       icon: <Mail size={20} />,
       label: 'Email',
@@ -177,7 +203,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
       label: 'Shipping',
       path: '/shipping',
     },
-    { 
+    ...(userRole === 'admin' || userRole === 'superadmin' ? [{ 
       icon: <Globe size={20} />, 
       label: 'Website', 
       path: '/website',
@@ -192,8 +218,8 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
         { icon: <Mail size={18} />, label: 'Newsletter', path: '/website/newsletter' },
         { icon: <Settings size={18} />, label: 'Settings', path: '/website/settings' },
       ]
-    },
-    { icon: <Settings size={20} />, label: 'Settings', path: '/settings' },
+    }] : []),
+    ...(hasPermission('manage_settings') ? [{ icon: <Settings size={20} />, label: 'Settings', path: '/settings' }] : []),
   ];
 
   const handleNavClick = (item: any) => {
@@ -384,6 +410,13 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
               <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>{formatDate(currentTime)}</span>
             </div>
           </div>
+
+          {!isOnline && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(239, 68, 68, 0.15)', color: '#ef4444', padding: '6px 14px', borderRadius: '20px', fontSize: '0.85rem', fontWeight: 700, border: '1px solid rgba(239, 68, 68, 0.4)' }}>
+              <div style={{ width: '8px', height: '8px', background: '#ef4444', borderRadius: '50%', boxShadow: '0 0 8px #ef4444' }} />
+              OFFLINE MODE
+            </div>
+          )}
 
           {/* Notification bell + Profile section */}
           <div className="user-settings" style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>

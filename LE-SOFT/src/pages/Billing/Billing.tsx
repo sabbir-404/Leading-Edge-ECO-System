@@ -76,6 +76,8 @@ const inputStyle: React.CSSProperties = {
     borderRadius: '6px',
     color: 'var(--text-primary)',
     fontSize: '0.9rem',
+    boxSizing: 'border-box',
+    minWidth: 0,
 };
 
 const labelStyle: React.CSSProperties = {
@@ -111,6 +113,10 @@ const Billing: React.FC = () => {
     const [shipTo, setShipTo] = useState({ name: '', address: '', phone: '' });
     const [shipFrom, setShipFrom] = useState({ name: 'Leading Edge', address: 'Dhaka, Bangladesh' });
     const [shippingCharge, setShippingCharge] = useState(0);
+
+    // Installation State
+    const [installationCharge, setInstallationCharge] = useState<number>(0);
+    const [installationNote, setInstallationNote] = useState<string>('');
 
     // Load Products
     useEffect(() => {
@@ -235,7 +241,7 @@ const Billing: React.FC = () => {
     // Totals
     const subtotal = cart.reduce((sum, item) => sum + (item.mrp * item.quantity), 0);
     const discountTotal = cart.reduce((sum, item) => sum + item.discount_amt, 0);
-    const grandTotal = subtotal - discountTotal + (shippingEnabled ? shippingCharge : 0);
+    const grandTotal = subtotal - discountTotal + installationCharge + (shippingEnabled ? shippingCharge : 0);
 
     // Save Bill
     const handleSaveBill = async () => {
@@ -258,6 +264,8 @@ const Billing: React.FC = () => {
                 items: cart,
                 subtotal,
                 discount_total: discountTotal,
+                installation_charge: installationCharge,
+                installation_note: installationNote,
                 grand_total: grandTotal,
             });
 
@@ -301,6 +309,8 @@ const Billing: React.FC = () => {
             String(now.getMonth() + 1).padStart(2, '0') +
             String(now.getDate()).padStart(2, '0');
         setInvoiceNumber(`${dateStr}-XXXX-XXX`);
+        setInstallationCharge(0);
+        setInstallationNote('');
     };
 
     return (
@@ -311,7 +321,7 @@ const Billing: React.FC = () => {
                 <div style={{ background: 'var(--card-bg)', borderRadius: '12px', border: '1px solid var(--border-color)', padding: '1rem 1.25rem' }}>
                     <div style={{ display: 'flex', gap: '1.5rem', alignItems: 'flex-start' }}>
                         {/* Left: Customer Fields */}
-                        <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem 1rem' }}>
+                        <div style={{ flex: 1, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem 1rem', minWidth: 0 }}>
                             <div>
                                 <label style={labelStyle}>Customer Name</label>
                                 <input
@@ -547,7 +557,7 @@ const Billing: React.FC = () => {
                         {shippingEnabled && (
                             <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
                                 style={{ overflow: 'hidden' }}>
-                                <div style={{ marginTop: '1rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                                <div style={{ marginTop: '1rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1rem' }}>
                                     {/* Ship TO */}
                                     <div>
                                         <div style={{ fontWeight: 700, fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.5px', color: '#f97316', marginBottom: '0.5rem' }}>📦 Ship TO (Recipient)</div>
@@ -581,6 +591,30 @@ const Billing: React.FC = () => {
                     </AnimatePresence>
                 </div>
 
+                {/* ── INSTALLATION SECTION ── */}
+                <div style={{ background: 'var(--card-bg)', borderRadius: '12px', border: '1px solid var(--border-color)', padding: '1rem 1.25rem', display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                    <div style={{ flex: 1 }}>
+                        <label style={labelStyle}>Installation / Service Note</label>
+                        <input
+                            style={inputStyle}
+                            placeholder="Brief note about installation (optional)"
+                            value={installationNote}
+                            onChange={e => setInstallationNote(e.target.value)}
+                        />
+                    </div>
+                    <div style={{ width: '200px' }}>
+                        <label style={labelStyle}>Installation Charge (৳)</label>
+                        <input
+                            type="number"
+                            style={{ ...inputStyle, fontWeight: 700 }}
+                            placeholder="0"
+                            min={0}
+                            value={installationCharge || ''}
+                            onChange={e => setInstallationCharge(parseFloat(e.target.value) || 0)}
+                        />
+                    </div>
+                </div>
+
                 {/* ── BOTTOM: TOTALS + ACTIONS ── */}
                 <div style={{ background: 'var(--card-bg)', borderRadius: '12px', border: '1px solid var(--border-color)', padding: '1rem 1.25rem' }}>
 
@@ -604,6 +638,11 @@ const Billing: React.FC = () => {
                                 {shippingEnabled && shippingCharge > 0 && (
                                     <div style={{ fontSize: '0.8rem', color: '#6366f1', marginBottom: '0.25rem' }}>
                                         🚚 Shipping: +৳{shippingCharge.toLocaleString()}
+                                    </div>
+                                )}
+                                {installationCharge > 0 && (
+                                    <div style={{ fontSize: '0.8rem', color: '#8b5cf6', marginBottom: '0.25rem' }}>
+                                        🔧 Installation: +৳{installationCharge.toLocaleString()}
                                     </div>
                                 )}
 

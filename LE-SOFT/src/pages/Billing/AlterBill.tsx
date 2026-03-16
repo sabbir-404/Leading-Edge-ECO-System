@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Edit3, Save, Clock, ChevronDown, ChevronUp, Minus, Plus, Trash2 } from 'lucide-react';
+import { Search, Edit3, Save, Clock, ChevronDown, ChevronUp, Minus, Plus, Trash2, Star } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import DashboardLayout from '../../components/DashboardLayout';
 
@@ -173,12 +173,16 @@ const AlterBill: React.FC = () => {
                                     style={{
                                         padding: '0.75rem 1rem', cursor: 'pointer', borderBottom: '1px solid var(--border-color)',
                                         background: selectedBill?.id === b.id ? 'var(--hover-bg)' : 'transparent',
-                                        transition: 'background 0.15s'
+                                        transition: 'background 0.15s',
+                                        boxShadow: b.is_altered ? 'inset 4px 0 0 var(--accent-color)' : 'none'
                                     }}
                                     onMouseEnter={e => { if (selectedBill?.id !== b.id) (e.currentTarget.style.background = 'var(--hover-bg)'); }}
                                     onMouseLeave={e => { if (selectedBill?.id !== b.id) (e.currentTarget.style.background = 'transparent'); }}
                                 >
-                                    <div style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: '0.85rem', color: 'var(--accent-color)' }}>{b.invoice_number}</div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                        <div style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: '0.85rem', color: 'var(--accent-color)' }}>{b.invoice_number}</div>
+                                        {b.is_altered && <Star size={12} fill="#f97316" color="#f97316" />}
+                                    </div>
                                     <div style={{ fontSize: '0.8rem', color: 'var(--text-primary)', fontWeight: 600 }}>{b.customer_name || 'Walk-in'}</div>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
                                         <span>{formatDate(b.created_at)}</span>
@@ -206,8 +210,13 @@ const AlterBill: React.FC = () => {
                                 style={{ background: 'var(--card-bg)', borderRadius: '12px', border: '1px solid var(--border-color)', padding: '1rem 1.25rem' }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                     <div>
-                                        <div style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: '1.1rem', color: 'var(--accent-color)' }}>
-                                            {selectedBill.invoice_number}
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                                            <div style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: '1.1rem', color: 'var(--accent-color)' }}>
+                                                {selectedBill.invoice_number}
+                                            </div>
+                                            {selectedBill.is_altered && (
+                                                <span style={{ padding: '0.2rem 0.5rem', background: 'rgba(249,115,22,0.1)', color: '#f97316', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 800 }}>ALTERED</span>
+                                            )}
                                         </div>
                                         <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                                             {selectedBill.customer_name || 'Walk-in'} • {formatDate(selectedBill.created_at)} • By: {selectedBill.billed_by}

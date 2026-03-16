@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import DashboardLayout from '../../components/DashboardLayout';
 import { motion } from 'framer-motion';
-import { Calendar, Search, Plus, Check, X, Clock } from 'lucide-react';
+import { Calendar, Search, Plus, Check, X } from 'lucide-react';
 
 export default function HRMLeaves() {
   const [employees, setEmployees] = useState<any[]>([]);

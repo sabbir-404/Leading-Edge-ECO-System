@@ -38,16 +38,24 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   createPurchaseBill: (bill) => import_electron.ipcRenderer.invoke("create-purchase-bill", bill),
   deletePurchaseBill: (id) => import_electron.ipcRenderer.invoke("delete-purchase-bill", id),
   // Users
-  getUsers: () => import_electron.ipcRenderer.invoke("get-users"),
+  getUsers: (opts) => import_electron.ipcRenderer.invoke("get-users", opts),
   createUser: (user) => import_electron.ipcRenderer.invoke("create-user", user),
   updateUser: (user) => import_electron.ipcRenderer.invoke("update-user", user),
   deleteUser: (id) => import_electron.ipcRenderer.invoke("delete-user", id),
   authenticateUser: (creds) => import_electron.ipcRenderer.invoke("authenticate-user", creds),
+  getActiveSessions: () => import_electron.ipcRenderer.invoke("get-active-sessions"),
+  kickUserSession: (userId) => import_electron.ipcRenderer.invoke("kick-user-session", userId),
+  verifyAdminPassword: (data) => import_electron.ipcRenderer.invoke("verify-admin-password", data),
   // User Groups
-  getUserGroups: () => import_electron.ipcRenderer.invoke("get-user-groups"),
+  getUserGroups: (opts) => import_electron.ipcRenderer.invoke("get-user-groups", opts),
   createUserGroup: (group) => import_electron.ipcRenderer.invoke("create-user-group", group),
   updateUserGroup: (group) => import_electron.ipcRenderer.invoke("update-user-group", group),
   deleteUserGroup: (id) => import_electron.ipcRenderer.invoke("delete-user-group", id),
+  // Permission Levels
+  getPermissionLevels: () => import_electron.ipcRenderer.invoke("get-permission-levels"),
+  createPermissionLevel: (payload) => import_electron.ipcRenderer.invoke("create-permission-level", payload),
+  updatePermissionLevel: (payload) => import_electron.ipcRenderer.invoke("update-permission-level", payload),
+  deletePermissionLevel: (id) => import_electron.ipcRenderer.invoke("delete-permission-level", id),
   // Notifications
   getNotifications: (userId) => import_electron.ipcRenderer.invoke("get-notifications", userId),
   sendNotification: (notification) => import_electron.ipcRenderer.invoke("send-notification", notification),
@@ -128,6 +136,8 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   websiteGetConfig: () => import_electron.ipcRenderer.invoke("website-get-config"),
   websiteUpdateConfig: (config) => import_electron.ipcRenderer.invoke("website-update-config", config),
   saveSupabaseConfig: (config) => import_electron.ipcRenderer.invoke("save-supabase-config", config),
+  getDeviceId: () => import_electron.ipcRenderer.invoke("get-device-id"),
+  activateLicense: (key) => import_electron.ipcRenderer.invoke("activate-license", key),
   // Internal Chat
   getChatMessages: (params) => import_electron.ipcRenderer.invoke("get-chat-messages", params),
   sendChatMessage: (msg) => import_electron.ipcRenderer.invoke("send-chat-message", msg),
@@ -193,6 +203,8 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   // Make — Alteration
   makeAlterOrder: (data) => import_electron.ipcRenderer.invoke("make-alter-order", data),
   makeGetAlterationLog: (orderId) => import_electron.ipcRenderer.invoke("make-get-alteration-log", orderId),
+  getSalesmen: () => import_electron.ipcRenderer.invoke("get-salesmen"),
+  approveMakeOrder: (data) => import_electron.ipcRenderer.invoke("approve-make-order", data),
   // Make — Dashboard
   makeGetDashboardStats: () => import_electron.ipcRenderer.invoke("make-get-dashboard-stats"),
   // License — Cloud
@@ -217,7 +229,6 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   // License Key
   getMachineId: () => import_electron.ipcRenderer.invoke("get-machine-id"),
   checkLicense: () => import_electron.ipcRenderer.invoke("check-license"),
-  activateLicense: (key) => import_electron.ipcRenderer.invoke("activate-license", key),
   // Database Backup
   createDbBackup: () => import_electron.ipcRenderer.invoke("create-db-backup"),
   listDbBackups: () => import_electron.ipcRenderer.invoke("list-db-backups"),
@@ -240,5 +251,46 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   crmGetCustomers: () => import_electron.ipcRenderer.invoke("crm-get-customers"),
   crmUpsertCustomer: (cust) => import_electron.ipcRenderer.invoke("crm-upsert-customer", cust),
   crmGetTrackingLogs: (data) => import_electron.ipcRenderer.invoke("crm-get-tracking-logs", data),
-  crmAddTrackingLog: (log) => import_electron.ipcRenderer.invoke("crm-add-tracking-log", log)
+  crmAddTrackingLog: (log) => import_electron.ipcRenderer.invoke("crm-add-tracking-log", log),
+  // ─── QUOTATION MODULE ───
+  createQuotation: (payload) => import_electron.ipcRenderer.invoke("create-quotation", payload),
+  getQuotations: () => import_electron.ipcRenderer.invoke("get-quotations"),
+  getQuotation: (id) => import_electron.ipcRenderer.invoke("get-quotation", id),
+  deleteQuotation: (id) => import_electron.ipcRenderer.invoke("delete-quotation", id),
+  // ─── CUSTOMER LEDGER & EXCHANGES ───
+  getCustomerLedgerList: () => import_electron.ipcRenderer.invoke("get-customer-ledger-list"),
+  getCustomerLedgerDetail: (id) => import_electron.ipcRenderer.invoke("get-customer-ledger-detail", id),
+  addCustomerPayment: (payment) => import_electron.ipcRenderer.invoke("add-customer-payment", payment),
+  addCustomerAddress: (address) => import_electron.ipcRenderer.invoke("add-customer-address", address),
+  createExchangeOrder: (exchange) => import_electron.ipcRenderer.invoke("create-exchange-order", exchange),
+  getExchangeOrders: () => import_electron.ipcRenderer.invoke("get-exchange-orders"),
+  getExchangeDetails: (id) => import_electron.ipcRenderer.invoke("get-exchange-details", id),
+  // ─── CACHE & PERFORMANCE ───
+  /** Trigger post-login data preload. Called once after successful login. */
+  preloadCache: () => import_electron.ipcRenderer.invoke("preload-cache"),
+  /** Subscribe to cache loading progress. Returns unsubscribe function. */
+  onCacheProgress: (callback) => {
+    const handler = (_, data) => callback(data);
+    import_electron.ipcRenderer.on("cache-load-progress", handler);
+    return () => import_electron.ipcRenderer.removeListener("cache-load-progress", handler);
+  },
+  getCacheStats: () => import_electron.ipcRenderer.invoke("get-cache-stats"),
+  // ─── WRITE QUEUE ───
+  /** Poll write queue stats (pending count). */
+  getQueueStats: () => import_electron.ipcRenderer.invoke("get-queue-stats"),
+  onWriteQueueStatus: (callback) => {
+    const handler = (_, data) => callback(data);
+    import_electron.ipcRenderer.on("write-queue-status", handler);
+    return () => import_electron.ipcRenderer.removeListener("write-queue-status", handler);
+  },
+  // ─── AI MARKET ANALYSIS ───
+  saveAiKey: (key) => import_electron.ipcRenderer.invoke("save-ai-key", key),
+  getAiKey: () => import_electron.ipcRenderer.invoke("get-ai-key"),
+  // CRUD for competitor URLs
+  getCompetitorUrls: (productId) => import_electron.ipcRenderer.invoke("get-competitor-urls", productId),
+  addCompetitorUrl: (data) => import_electron.ipcRenderer.invoke("add-competitor-url", data),
+  deleteCompetitorUrl: (id) => import_electron.ipcRenderer.invoke("delete-competitor-url", id),
+  // Trigger Agent & History
+  runAutoPriceScan: (productId) => import_electron.ipcRenderer.invoke("run-auto-price-scan", productId),
+  getMarketAnalysisHistory: (productId) => import_electron.ipcRenderer.invoke("get-market-analysis-history", productId)
 });

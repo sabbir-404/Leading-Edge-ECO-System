@@ -11,6 +11,7 @@ interface Order {
   description: string;
   quantity: number;
   priority: string;
+  delivery_date: string | null;
   status: string;
   designer_name: string;
 }
@@ -36,6 +37,7 @@ const AlterOrder: React.FC<Props> = ({ order, onClose, onSaved }) => {
   const [description, setDescription] = useState(order.description || '');
   const [quantity, setQuantity] = useState(order.quantity);
   const [priority, setPriority] = useState(order.priority);
+  const [deliveryDate, setDeliveryDate] = useState(order.delivery_date || '');
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
   const [log, setLog] = useState<AltLog[]>([]);
@@ -58,7 +60,7 @@ const AlterOrder: React.FC<Props> = ({ order, onClose, onSaved }) => {
       // @ts-ignore
       const res = await window.electron.makeAlterOrder({
         orderId: order.id,
-        changes: { furniture_name: furnitureName.trim(), description, quantity, priority },
+        changes: { furniture_name: furnitureName.trim(), description, quantity, priority, delivery_date: deliveryDate || null },
         alteredBy: userName,
         userRole,
       });
@@ -139,6 +141,10 @@ const AlterOrder: React.FC<Props> = ({ order, onClose, onSaved }) => {
                 {PRIORITIES.map(p => <option key={p} value={p}>{p}</option>)}
               </select>
             </div>
+          </div>
+          <div>
+            <label style={labelStyle}>Estimated Delivery Date</label>
+            <input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} disabled={isBlocked} style={inputStyle} />
           </div>
         </div>
 

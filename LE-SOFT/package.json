@@ -1,27 +1,29 @@
 {
   "name": "le-soft",
   "private": true,
-  "version": "1.1.2",
+  "version": "1.2.4",
   "description": "Leading Edge ECO-System Software",
   "author": "Sabbir <sabbir@example.com>",
   "type": "module",
-  "main": "dist-electron/main.cjs",
+  "main": "core/main.cjs",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "build:check": "tsc && vite build",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
-    "electron:build": "esbuild electron/main.ts --bundle --platform=node --target=node18 --external:electron --external:sqlite3 --external:bcrypt --external:electron-updater --outfile=dist-electron/main.cjs && esbuild electron/preload.ts --bundle --platform=node --target=node18 --external:electron --outfile=dist-electron/preload.cjs && electron .",
+    "electron:build": "esbuild electron/main.ts --bundle --platform=node --target=node18 --external:electron --external:sqlite3 --external:bcrypt --external:electron-updater --outfile=core/main.cjs && esbuild electron/preload.ts --bundle --platform=node --target=node18 --external:electron --outfile=core/preload.cjs && electron .",
     "electron:dev": "concurrently -k \"vite\" \"npm run electron:build\"",
     "rebuild": "electron-rebuild -f -w sqlite3",
     "dist": "node build-electron.cjs && electron-builder --win",
     "dist:publish": "node build-electron.cjs && electron-builder --win -p always"
   },
   "dependencies": {
+    "@google/genai": "^1.45.0",
     "@supabase/supabase-js": "^2.97.0",
     "@types/bcrypt": "^6.0.0",
     "bcrypt": "^6.0.0",
+    "cheerio": "^1.2.0",
     "clsx": "^2.1.1",
     "electron-updater": "^6.8.3",
     "framer-motion": "^12.34.0",
@@ -51,20 +53,21 @@
     "eslint": "^8.57.0",
     "eslint-plugin-react-hooks": "^4.6.0",
     "eslint-plugin-react-refresh": "^0.4.6",
+    "javascript-obfuscator": "^5.3.0",
     "typescript": "^5.2.2",
     "vite": "^5.2.0"
   },
   "build": {
     "appId": "com.leadingedge.lesoft",
-    "productName": "LE-SOFT",
-    "icon": "build/icon.ico",
+    "productName": "LESOFT",
+    "icon": "D:/Code/Leading Edge/icon.ico",
     "npmRebuild": false,
     "directories": {
       "output": "release"
     },
     "files": [
-      "dist/**/*",
-      "dist-electron/**/*"
+      "resource/**/*",
+      "core/**/*"
     ],
     "extraResources": [
       {
@@ -85,16 +88,21 @@
     "afterPack": "./afterPack.cjs",
     "win": {
       "target": "nsis",
-      "icon": "build/icon.ico"
+      "icon": "D:/Code/Leading Edge/icon.ico"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": "always",
       "createStartMenuShortcut": true,
-      "shortcutName": "LE-SOFT",
-      "installerIcon": "build/icon.ico",
-      "uninstallerIcon": "build/icon.ico"
+      "shortcutName": "LESOFT",
+      "installerIcon": "D:/Code/Leading Edge/icon.ico",
+      "uninstallerIcon": "D:/Code/Leading Edge/icon.ico",
+      "installerHeaderIcon": "D:/Code/Leading Edge/header.bmp",
+      "installerSidebar": "D:/Code/Leading Edge/Sidebar Image.bmp",
+      "uninstallerSidebar": "D:/Code/Leading Edge/Sidebar Image.bmp",
+      "license": "LICENSE.txt",
+      "include": "build/uninstall.nsh"
     },
     "mac": {
       "target": "zip"

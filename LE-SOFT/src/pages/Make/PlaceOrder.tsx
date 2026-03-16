@@ -22,6 +22,9 @@ const PlaceOrder: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
+  const [deliveryDate, setDeliveryDate] = useState('');
+  const [salesmen, setSalesmen] = useState<any[]>([]);
+  const [selectedSalesmanId, setSelectedSalesmanId] = useState<string>('');
 
   // Autocomplete
   const [suggestions, setSuggestions] = useState<string[]>([]);
@@ -40,6 +43,10 @@ const PlaceOrder: React.FC = () => {
     // @ts-ignore
     window.electron.getMakeFurnitureNames().then((names: string[]) => {
       setSuggestions(names || []);
+    });
+    // @ts-ignore
+    window.electron.getSalesmen().then((list: any[]) => {
+      setSalesmen(list || []);
     });
   }, []);
 
@@ -99,7 +106,9 @@ const PlaceOrder: React.FC = () => {
         description,
         quantity,
         designer_name: designerName,
-        priority
+        priority,
+        delivery_date: deliveryDate || null,
+        salesman_id: selectedSalesmanId ? parseInt(selectedSalesmanId) : null
       });
 
       const orderId = order?.id;
@@ -123,7 +132,7 @@ const PlaceOrder: React.FC = () => {
       }
 
       setSuccess(true);
-      setFurnitureName(''); setDescription(''); setQuantity(1); setPriority('Normal');
+      setFurnitureName(''); setDescription(''); setQuantity(1); setPriority('Normal'); setDeliveryDate('');
       setStagedPdfs([]); setParts([]);
       // @ts-ignore
       const names = await window.electron.getMakeFurnitureNames();
@@ -230,6 +239,27 @@ const PlaceOrder: React.FC = () => {
                       <select value={priority} onChange={(e) => setPriority(e.target.value)}
                         style={{ ...inputStyle, appearance: 'none', paddingRight: '36px' }}>
                         {PRIORITIES.map(p => <option key={p} value={p}>{p}</option>)}
+                      </select>
+                      <ChevronDown size={16} style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: 'var(--text-secondary)' }} />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Delivery Date */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                  <div>
+                    <label style={labelStyle}>Estimated Delivery Date</label>
+                    <input type="date" value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} style={inputStyle} />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Assign Salesman (For Approval)</label>
+                    <div style={{ position: 'relative' }}>
+                      <select value={selectedSalesmanId} onChange={(e) => setSelectedSalesmanId(e.target.value)}
+                        style={{ ...inputStyle, appearance: 'none', paddingRight: '36px' }}>
+                        <option value="">No Approval Needed (Direct Place)</option>
+                        {salesmen.map(s => (
+                          <option key={s.id} value={s.id}>{s.full_name} ({s.username})</option>
+                        ))}
                       </select>
                       <ChevronDown size={16} style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: 'var(--text-secondary)' }} />
                     </div>

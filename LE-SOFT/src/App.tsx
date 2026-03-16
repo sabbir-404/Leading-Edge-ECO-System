@@ -1,6 +1,5 @@
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
-import { ThemeProvider } from './context/ThemeContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import Login from './pages/Auth/Login';
 import SetupScreen from './pages/Auth/SetupScreen';
@@ -43,6 +42,7 @@ import UserCreate from './pages/Users/UserCreate';
 import UserGroupList from './pages/Users/UserGroupList';
 import UserGroupCreate from './pages/Users/UserGroupCreate';
 import ActiveUsers from './pages/Users/ActiveUsers';
+import PermissionLevels from './pages/Users/PermissionLevels';
 
 // Notifications
 import Notifications from './pages/Notifications/Notifications';
@@ -84,6 +84,7 @@ import BalanceSheet from './pages/Reports/BalanceSheet';
 import ProfitAndLoss from './pages/Reports/ProfitAndLoss';
 import StockSummary from './pages/Reports/StockSummary';
 import DayBook from './pages/Reports/DayBook';
+import MarketAnalysis from './pages/Reports/MarketAnalysis';
 
 // HRM Module
 import HRMDashboard from './pages/HRM/HRMDashboard';
@@ -95,15 +96,62 @@ import HRMPayroll from './pages/HRM/HRMPayroll';
 // CRM Module
 import CRMDirectory from './pages/CRM/CRMDirectory';
 import CRMProgress from './pages/CRM/CRMProgress';
+import CustomerLedgerList from './pages/CRM/CustomerLedgerList';
+import CustomerLedgerDetail from './pages/CRM/CustomerLedgerDetail';
+import ExchangeOrders from './pages/CRM/ExchangeOrders';
+import ExchangeCreate from './pages/CRM/ExchangeCreate';
+
+// Quotation Module
+import QuotationList from './pages/Quotation/QuotationList';
+import QuotationCreate from './pages/Quotation/QuotationCreate';
+import QuotationPreview from './pages/Quotation/QuotationPreview';
 
 import Email from './pages/Email/Email';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import LicenseGate from './pages/Auth/LicenseGate';
 import UpdateBanner from './components/UpdateBanner';
+import { ToastProvider } from './context/ToastContext';
+import { NetworkProvider } from './context/NetworkContext';
+
+import AppLoadingScreen from './components/AppLoadingScreen';
+import { useIdleLogout } from './hooks/useIdleLogout';
+import IdleWarningModal from './components/IdleWarningModal';
+
+// Error Boundary for the whole app
+class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; error: any }> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error: any) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error: any, errorInfo: any) {
+    console.error("App Crash:", error, errorInfo);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ padding: '2rem', background: '#1e293b', color: '#f8fafc', minHeight: '100vh', fontFamily: 'Inter, sans-serif' }}>
+          <h1 style={{ color: '#ef4444' }}>Something went wrong</h1>
+          <pre style={{ background: '#0f172a', padding: '1rem', borderRadius: '8px', overflow: 'auto' }}>
+            {this.state.error?.toString() || 'Unknown Error'}
+          </pre>
+          <button onClick={() => window.location.reload()} style={{ padding: '10px 20px', background: '#3b82f6', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>
+            Reload Application
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 function App() {
   const navigate = useNavigate();
   const location = useLocation();
+
+  const [isAppReady, setIsAppReady] = useState(false);
 
   useKeyboardShortcuts({
     'Escape': () => {
@@ -118,12 +166,27 @@ function App() {
     'Alt+h': () => navigate('/billing/history'),
   });
 
+  const isAuthPage = location.pathname === '/' || location.pathname === '/login' || location.pathname === '/setup';
+
+  // Auto-logout on idle
+  const handleAutoLogout = () => {
+    localStorage.removeItem('user_role');
+    localStorage.removeItem('user_permissions');
+    localStorage.removeItem('user_name');
+    localStorage.removeItem('user_id');
+    localStorage.removeItem('license_warning');
+    navigate('/login');
+  };
+
+  const { showWarning, countdown, stayLoggedIn } = useIdleLogout(handleAutoLogout, !isAuthPage);
+
   useEffect(() => {
     // Listen for redirect signals from main process (e.g., first-launch network setup)
+    if (!(window as any).electron?.onRedirect) return;
     const cleanup = (window as any).electron.onRedirect((path: string) => {
       navigate(path);
     });
-    return () => cleanup();
+    return () => cleanup?.();
   }, [navigate]);
 
   // License gate state
@@ -131,7 +194,13 @@ function App() {
   const [isLicensed, setIsLicensed] = useState(false);
 
   useEffect(() => {
-    (window as any).electron.checkLicense?.().then((result: any) => {
+    if (!(window as any).electron?.checkLicense) {
+        setIsLicensed(true);
+        setLicenseChecked(true);
+        return;
+    }
+
+    (window as any).electron.checkLicense().then((result: any) => {
       setIsLicensed(result?.valid === true);
       setLicenseChecked(true);
     }).catch(() => {
@@ -156,11 +225,20 @@ function App() {
   }
 
   return (
-    <ThemeProvider>
-      <UpdateBanner />
-      <Routes>
-        <Route path="/" element={<Login />} />
-        <Route path="/login" element={<Login />} />
+    <ErrorBoundary>
+      <ToastProvider>
+        <NetworkProvider>
+        <UpdateBanner />
+        <IdleWarningModal show={showWarning} countdown={countdown} onStay={stayLoggedIn} />
+        
+        {/* Render the unified loading screen over the protected routes until the offline cache is fully warmed up */}
+        {location.pathname !== '/' && location.pathname !== '/login' && location.pathname !== '/setup' && !isAppReady && (
+            <AppLoadingScreen onReady={() => setIsAppReady(true)} />
+        )}
+
+        <Routes>
+        <Route path="/" element={<Login onLoginSuccess={() => setIsAppReady(false)} />} />
+        <Route path="/login" element={<Login onLoginSuccess={() => setIsAppReady(false)} />} />
         <Route path="/setup" element={<SetupScreen />} />
         <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
 
@@ -200,6 +278,7 @@ function App() {
             <Route path="profit-and-loss" element={<ProfitAndLoss />} />
             <Route path="stock-summary" element={<StockSummary />} />
             <Route path="day-book" element={<DayBook />} />
+            <Route path="market-analysis" element={<MarketAnalysis />} />
         </Route>
 
         {/* Users */}
@@ -255,13 +334,31 @@ function App() {
         <Route path="/billing/crm/directory" element={<ProtectedRoute><CRMDirectory /></ProtectedRoute>} />
         <Route path="/billing/crm/progress" element={<ProtectedRoute><CRMProgress /></ProtectedRoute>} />
 
+        {/* Customer Ledger */}
+        <Route path="/crm/ledger" element={<ProtectedRoute><CustomerLedgerList /></ProtectedRoute>} />
+        <Route path="/crm/ledger/:id" element={<ProtectedRoute><CustomerLedgerDetail /></ProtectedRoute>} />
+
+        {/* Exchange Orders */}
+        <Route path="/crm/exchanges" element={<ProtectedRoute><ExchangeOrders /></ProtectedRoute>} />
+        <Route path="/crm/exchanges/create" element={<ProtectedRoute><ExchangeCreate /></ProtectedRoute>} />
+
+        {/* Quotation Module */}
+        <Route path="/quotations" element={<ProtectedRoute><QuotationList /></ProtectedRoute>} />
+        <Route path="/quotations/create" element={<ProtectedRoute><QuotationCreate /></ProtectedRoute>} />
+        <Route path="/quotations/preview/:id" element={<ProtectedRoute><QuotationPreview /></ProtectedRoute>} />
+
+        {/* Permission Levels */}
+        <Route path="/users/permissions" element={<ProtectedRoute><PermissionLevels /></ProtectedRoute>} />
+
         {/* Company */}
         <Route path="/company/create" element={<ProtectedRoute><CreateCompany /></ProtectedRoute>} />
 
         {/* Network Setup (Unguarded) */}
 
       </Routes>
-    </ThemeProvider>
+      </NetworkProvider>
+    </ToastProvider>
+    </ErrorBoundary>
   );
 }
 

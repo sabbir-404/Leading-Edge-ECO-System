@@ -8,13 +8,87 @@ import { app, ipcMain, dialog, BrowserWindow } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
+import crypto from 'crypto';
 import bcrypt from 'bcrypt';
 import supabase, { supabaseAdmin } from './supabase';
 import mysql from 'mysql2/promise';
 import * as licenseManager from './license-manager';
 import { getConnectedDevices, setBackupNode, DEVICE_ID } from './device-monitor';
+import { encryptObject, decryptRows, decryptObject } from './field-encryption';
+import { enqueue, getQueueStats } from './write-queue';
+import * as cache from './cache-manager';
+import { saveSession, loadSession, clearSession } from './session-vault';
 
 const BCRYPT_ROUNDS = 12;
+
+// ── Super Admin seeder ───────────────────────────────────────────────────────
+async function checkAndSeedSuperAdmin() {
+    if (!supabaseAdmin) return;
+    try {
+        // Ensure Super Admin group exists
+        // Note: group name is kept as plain text in DB for lookup purposes (it's a structural key)
+        let { data: grp } = await supabase.from('user_groups').select('id').eq('name', 'Super Admin').maybeSingle();
+        let groupId: number;
+        if (!grp) {
+            const allPerms = {
+                can_create_user: true, can_delete_user: true, can_edit_user: true, can_edit_groups: true,
+                can_create_bill: true, can_alter_bill: true, can_delete_bill: true,
+                can_create_order: true, can_alter_order: true, can_view_payroll: true, can_approve_leave: true,
+            };
+            // Encrypt group row (name stays plain — used as lookup key)
+            const groupRow = encryptObject(
+                { description: 'Full administrative access to all features. Super Admin only.' }
+            );
+            const { data: newGrp } = await supabase.from('user_groups')
+                .insert({ name: 'Super Admin', permissions: allPerms, ...groupRow })
+                .select('id').single();
+            groupId = newGrp?.id;
+        } else {
+            groupId = grp.id;
+        }
+
+        const DEFAULT_PASSWORD = '123456';
+        const DEFAULT_HASH = await bcrypt.hash(DEFAULT_PASSWORD, BCRYPT_ROUNDS);
+
+        // Check if the superadmin user exists (username is structural — kept plain)
+        const { data: existing } = await supabase.from('users').select('id,password_hash').eq('username', 'sabbirsuperadmin').maybeSingle();
+        if (!existing) {
+            const email = 'sabbirsuperadmin@lesoft.local';
+            const { data: authUser, error: authErr } = await supabaseAdmin.auth.admin.createUser({
+                email,
+                password: DEFAULT_PASSWORD,
+                email_confirm: true,
+                user_metadata: { username: 'sabbirsuperadmin', full_name: 'Super Admin', role: 'superadmin' }
+            });
+            if (!authErr && authUser?.user) {
+                // Encrypt all profile fields before writing to Supabase
+                const encryptedProfile = encryptObject({
+                    full_name: 'Super Administrator',
+                    email: email,
+                    phone: '',
+                });
+                await supabase.from('users').update({
+                    role: 'superadmin',       // role: not encrypted (structural)
+                    group_id: groupId,
+                    password_hash: DEFAULT_HASH,  // already hashed
+                    is_active: true,
+                    ...encryptedProfile,
+                }).eq('auth_id', authUser.user.id);
+                console.log('[SEED] Super Admin account created with encrypted profile + password hash.');
+            }
+        } else if (!existing.password_hash || !existing.password_hash.startsWith('$2')) {
+            // Fix existing superadmin account that's missing/broken the bcrypt hash
+            await supabase.from('users').update({
+                password_hash: DEFAULT_HASH,
+                group_id: groupId,
+                role: 'superadmin',
+            }).eq('id', existing.id);
+            console.log('[SEED] Super Admin password hash patched.');
+        }
+    } catch (e: any) {
+        console.warn('[SEED] Super Admin seeder skipped:', e.message);
+    }
+}
 
 // ── Brute-force helpers (re-exported from main or duplicated) ────────────────
 const loginAttempts: Map<string, { count: number; lastAttempt: number }> = new Map();
@@ -88,13 +162,36 @@ export function registerHandlers() {
     // ═══ DATABASE HEALTH ═════════════════════════════════════════════════════
     ipcMain.handle('ping-supabase', async () => {
         try {
-            // Simple fast query to check connectivity
             const { error } = await supabase.from('users').select('id').limit(1);
             if (error) return { connected: false, error: error.message };
             return { connected: true };
         } catch (e: any) {
             return { connected: false, error: e.message };
         }
+    });
+
+    // ═══ CACHE & PERFORMANCE ════════════════════════════════════════════════
+    /**
+     * preload-cache — called by the renderer AFTER successful login.
+     * Loads all frequently-used data into memory, decrypted.
+     * Progress events are pushed via 'cache-load-progress'.
+     */
+    ipcMain.handle('preload-cache', async () => {
+        try {
+            await cache.preloadCache();
+            return { success: true, stats: cache.getCacheStats() };
+        } catch (e: any) {
+            return { success: false, error: e.message };
+        }
+    });
+
+    ipcMain.handle('get-cache-stats', async () => {
+        return cache.getCacheStats();
+    });
+
+    // ═══ WRITE QUEUE STATUS ══════════════════════════════════════════════════
+    ipcMain.handle('get-queue-stats', async () => {
+        return getQueueStats();
     });
 
     // ═══ CHAT & PRESENCE ═════════════════════════════════════════════════════
@@ -425,47 +522,104 @@ export function registerHandlers() {
     // ═══ BILLING / POS ═══════════════════════════════════════════════════════════
 
     ipcMain.handle('search-billing-customers', async (_e, query: string) => {
+        // Try cache first for instant response
+        const cached = cache.search('billing_customers', ['name', 'phone'], query);
+        if (cached) return cached.slice(0, 15);
+        // Cache miss — fall back to Supabase (data comes back encrypted, decrypt it)
         const q = `%${query}%`;
-        const { data } = await supabase.from('billing_customers').select('*').or(`phone.ilike.${q},name.ilike.${q}`).order('name').limit(10);
-        return data || [];
+        const { data } = await supabase.from('billing_customers').select('*').or(`phone.ilike.${q},name.ilike.${q}`).order('name').limit(15);
+        return decryptRows(data || []);
     });
 
     ipcMain.handle('create-billing-customer', async (_e, customer) => {
         const { name, phone, email, address } = customer;
+        // Check cache first
         if (phone) {
-            const { data: existing } = await supabase.from('billing_customers').select('*').eq('phone', phone).maybeSingle();
+            const existing = cache.search('billing_customers', ['phone'], phone)?.find(c => c.phone === phone);
             if (existing) {
-                await supabase.from('billing_customers').update({ name: name || existing.name, email: email || existing.email, address: address || existing.address }).eq('id', existing.id);
-                return { ...existing, name: name || existing.name };
+                // Update via queue
+                const updates = { name: name || existing.name, email: email || existing.email, address: address || existing.address };
+                enqueue({ table: 'billing_customers', operation: 'update', data: updates, filter: [{ column: 'id', value: existing.id }] });
+                cache.updateOne('billing_customers', r => r.id === existing.id, updates);
+                return { ...existing, ...updates };
             }
         }
-        const { data, error } = await supabase.from('billing_customers').insert({ name, phone: phone || null, email: email || '', address: address || '', total_bills: 0 }).select('*').single();
-        if (error) throw error;
-        return data;
+        // Assign local ID-like reference, add to cache immediately
+        const newCustomer = { name, phone: phone || null, email: email || '', address: address || '', total_bills: 0 };
+        enqueue({ table: 'billing_customers', operation: 'insert', data: newCustomer });
+        cache.addOne('billing_customers', { ...newCustomer, id: Date.now() });
+        return newCustomer;
     });
 
     ipcMain.handle('create-bill', async (_e, billData) => {
-        const { customer_id, billed_by, items, subtotal, discount_total, grand_total } = billData;
+        const { customer_id, billed_by, items, subtotal, discount_total, installation_charge, installation_note, grand_total } = billData;
         const now = new Date();
-        const dateStr = now.getFullYear().toString() + String(now.getMonth() + 1).padStart(2, '0') + String(now.getDate()).padStart(2, '0');
-        const { data: cust } = await supabase.from('billing_customers').select('phone').eq('id', customer_id).maybeSingle();
-        const phoneLast4 = cust?.phone ? cust.phone.slice(-4) : '0000';
-        const { count } = await supabase.from('bills').select('id', { count: 'exact', head: true }).ilike('invoice_number', `${dateStr}%`);
-        const serial = String((count || 0) + 1).padStart(3, '0');
+        const dateStr = now.getFullYear().toString() +
+            String(now.getMonth() + 1).padStart(2, '0') +
+            String(now.getDate()).padStart(2, '0');
+
+        // Generate invoice number locally — no waiting for Supabase
+        const serial = String(Math.floor(Math.random() * 9000) + 1000); // fast local serial
+        const phoneLast4 = String(customer_id || '0').slice(-4).padStart(4, '0');
         const invoiceNumber = `${dateStr}-${phoneLast4}-${serial}`;
-        const { data: bill, error: bErr } = await supabase.from('bills').insert({ invoice_number: invoiceNumber, customer_id, billed_by: billed_by || 'Admin', subtotal, discount_total, grand_total }).select('id').single();
-        if (bErr) throw bErr;
-        if (items.length > 0) {
-            await supabase.from('bill_items').insert(items.map((item: any) => ({ bill_id: bill.id, product_id: item.product_id, product_name: item.product_name, sku: item.sku || '', quantity: item.quantity, mrp: item.mrp, discount_pct: item.discount_pct || 0, discount_amt: item.discount_amt || 0, price: item.price })));
-            for (const item of items) {
-                if (item.product_id && item.quantity) {
-                    try { await supabase.rpc('decrement_product_qty', { p_id: item.product_id, qty: item.quantity }); } catch { }
-                    syncStockToMySQL(item.product_id, item.quantity);
+
+        const billRow = {
+            invoice_number: invoiceNumber,
+            customer_id,
+            billed_by: billed_by || 'Admin',
+            subtotal,
+            discount_total,
+            installation_charge: installation_charge || 0,
+            installation_note: installation_note || '',
+            grand_total,
+        };
+
+        // Enqueue the bill insert — returns immediately to user
+        enqueue({
+            table: 'bills',
+            operation: 'insert',
+            data: billRow,
+            onSuccess: async (res) => {
+                // After bill is saved, enqueue items write
+                if (items && items.length > 0) {
+                    // We need the real bill ID — re-fetch from Supabase by invoice number
+                    const { data: savedBill } = await supabase
+                        .from('bills').select('id').eq('invoice_number', invoiceNumber).maybeSingle();
+                    if (savedBill?.id) {
+                        const billItems = items.map((item: any) => ({
+                            bill_id: savedBill.id,
+                            product_id: item.product_id,
+                            product_name: item.product_name,
+                            sku: item.sku || '',
+                            quantity: item.quantity,
+                            mrp: item.mrp,
+                            discount_pct: item.discount_pct || 0,
+                            discount_amt: item.discount_amt || 0,
+                            price: item.price,
+                        }));
+                        enqueue({ table: 'bill_items', operation: 'insert', data: billItems });
+                        // Decrement stock per item
+                        for (const item of items) {
+                            if (item.product_id && item.quantity) {
+                                enqueue({
+                                    table: 'products',
+                                    operation: 'update',
+                                    data: {},
+                                    filter: [{ column: 'id', value: item.product_id }],
+                                    onSuccess: async () => {
+                                        try { await supabase.rpc('decrement_product_qty', { p_id: item.product_id, qty: item.quantity }); } catch { }
+                                        syncStockToMySQL(item.product_id, item.quantity);
+                                    },
+                                } as any);
+                            }
+                        }
+                    }
                 }
-            }
-        }
-        try { await supabase.from('billing_customers').update({ total_bills: (supabase as any).sql`total_bills + 1` }).eq('id', customer_id); } catch { }
-        return { success: true, id: bill.id, invoice_number: invoiceNumber };
+            },
+        });
+
+        // Return success immediately — bill is queued for background save
+        return { success: true, invoice_number: invoiceNumber, queued: true };
     });
 
     ipcMain.handle('get-bills', async () => {
@@ -482,7 +636,7 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('update-bill', async (_e, billData: any) => {
-        const { bill_id, items, subtotal, discount_total, grand_total, changed_by } = billData;
+        const { bill_id, items, subtotal, discount_total, installation_charge, installation_note, grand_total, changed_by } = billData;
         const { data: oldBill } = await supabase.from('bills').select('*').eq('id', bill_id).maybeSingle();
         if (!oldBill) return { success: false, error: 'Bill not found' };
         const { data: oldItems } = await supabase.from('bill_items').select('*').eq('bill_id', bill_id);
@@ -496,7 +650,7 @@ export function registerHandlers() {
             try { await supabase.from('products').update({ quantity: (supabase as any).sql`quantity + ${oi.quantity}` }).eq('id', oi.product_id); } catch { }
         }
         // Update bill
-        await supabase.from('bills').update({ subtotal, discount_total, grand_total }).eq('id', bill_id);
+        await supabase.from('bills').update({ subtotal, discount_total, installation_charge: installation_charge || 0, installation_note: installation_note || '', grand_total }).eq('id', bill_id);
         // Replace items
         await supabase.from('bill_items').delete().eq('bill_id', bill_id);
         if (items.length) {
@@ -546,22 +700,73 @@ export function registerHandlers() {
         const id = Number(data?.id);
         const currentPassword = typeof data?.currentPassword === 'string' ? data.currentPassword : '';
         const newPassword = typeof data?.newPassword === 'string' ? data.newPassword : '';
-        if (!id || !currentPassword || newPassword.length < 6) return { success: false, error: 'New password must be at least 6 characters' };
-        const { data: row } = await supabase.from('users').select('id,password_hash').eq('id', id).maybeSingle();
+        if (!id || !currentPassword || newPassword.length < 4) return { success: false, error: 'New password must be at least 4 characters' };
+
+        // 1. Fetch user to see if they are managed by Auth or have a local hash
+        const { data: row } = await supabase.from('users').select('id, password_hash, email, username').eq('id', id).maybeSingle();
         if (!row) return { success: false, error: 'User not found' };
+
         const stored = row.password_hash || '';
-        let matches = stored.startsWith('$2b$') || stored.startsWith('$2a$') ? await bcrypt.compare(currentPassword, stored) : stored === currentPassword;
+        let matches = false;
+
+        if (stored === 'managed_by_supabase_auth') {
+            // Verify with Supabase Auth via temporary sign-in
+            const emailToUse = row.email || (row.username?.includes('@') ? row.username : `${row.username}@lesoft.local`);
+            const { error: authErr } = await supabase.auth.signInWithPassword({
+                email: emailToUse,
+                password: currentPassword
+            });
+            matches = !authErr;
+        } else {
+            // Verify with local bcrypt hash
+            matches = (stored.startsWith('$2b$') || stored.startsWith('$2a$')) 
+                ? await bcrypt.compare(currentPassword, stored) 
+                : stored === currentPassword;
+        }
+
         if (!matches) return { success: false, error: 'Incorrect current password' };
+
+        // 2. Hash new password and update BOTH local profile and Auth
         const newHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
-        await supabase.from('users').update({ password_hash: newHash }).eq('id', id);
+        
+        // Update local users table (RLS might block if not using Admin client, but ipc handlers usually use it for sensitive ops if needed)
+        // Here we use the regular 'supabase' client which should work if the user is authenticated, 
+        // but for password changes on ANY user (admin list), we might need supabaseAdmin.
+        const client = supabaseAdmin || supabase;
+        const { error: dbErr } = await client.from('users').update({ password_hash: newHash }).eq('id', id);
+        if (dbErr) throw dbErr;
+
+        // Sync to Auth if auth_id exists
+        try {
+            const { data: prof } = await client.from('users').select('auth_id').eq('id', id).single();
+            if (prof?.auth_id && supabaseAdmin) {
+                await supabaseAdmin.auth.admin.updateUserById(prof.auth_id, { password: newPassword });
+            }
+        } catch (e) {
+            console.error("Auth password sync failed during profile change-password", e);
+        }
+
         return { success: true };
     });
 
+    // Seed superadmin on first load (non-blocking)
+    checkAndSeedSuperAdmin().catch(() => { });
+
     // ═══ USERS ════════════════════════════════════════════════════════════════
-    ipcMain.handle('get-users', async () => {
-        const { data, error } = await supabase.from('users').select('id,username,full_name,role,email,phone,is_active,created_at').order('created_at', { ascending: false });
+    ipcMain.handle('get-users', async (_e, opts?: { requestingUserId?: number }) => {
+        const { data, error } = await supabase.from('users').select('id,username,full_name,role,email,phone,is_active,created_at,group_id').order('created_at', { ascending: false });
         if (error) throw error;
-        return data || [];
+
+        // Determine if requesting user is superadmin
+        let isSuperAdmin = false;
+        if (opts?.requestingUserId) {
+            const { data: reqUser } = await supabase.from('users').select('role').eq('id', opts.requestingUserId).maybeSingle();
+            isSuperAdmin = reqUser?.role === 'superadmin';
+        }
+
+        // Filter out superadmin accounts from non-superadmin viewers
+        const filtered = (data || []).filter(u => isSuperAdmin || u.role !== 'superadmin');
+        return filtered;
     });
 
     ipcMain.handle('create-user', async (_e, user) => {
@@ -570,7 +775,7 @@ export function registerHandlers() {
         if (!password || password.length < 4) return { success: false, error: 'Password must be at least 4 characters' };
         if (!supabaseAdmin) return { success: false, error: 'Database Admin Key not configured in settings. Cannot create users.' };
 
-        const emailToUse = username.includes('@') ? username.trim() : `${username.trim()}@lesoft.local`;
+        const emailToUse = email?.trim() || (username.includes('@') ? username.trim() : `${username.trim()}@lesoft.local`);
 
         // 1. Create in Supabase Auth
         const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
@@ -583,9 +788,11 @@ export function registerHandlers() {
         if (authError) return { success: false, error: authError.message };
 
         // 2. The database trigger automatically creates row in public.users. We update the rest of the fields.
-        const { error: updateErr } = await supabase.from('users').update({
+        // Use supabaseAdmin bypass RLS safely
+        const { error: updateErr } = await supabaseAdmin.from('users').update({
             group_id: groupId || null,
-            phone: phone || ''
+            phone: phone || '',
+            email: emailToUse
         }).eq('auth_id', authData.user.id);
 
         if (updateErr) console.warn('[CREATE USER] Auth created, but public profile update failed', updateErr);
@@ -597,21 +804,49 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('update-user', async (_e, user) => {
-        const { id, fullName, role, email, phone, isActive } = user;
-        const { error } = await supabase.from('users').update({ full_name: fullName, role, email: email || '', phone: phone || '', is_active: isActive !== undefined ? isActive : 1 }).eq('id', id);
-        if (error) throw error;
+        const { id, fullName, role, email, phone, isActive, password, groupId } = user;
+        // Coerce isActive to integer (0 or 1) for Postgres compatibility
+        const isActiveValue = (isActive === undefined || isActive === null) ? 1 : (Number(isActive) ? 1 : 0);
+        
+        if (!supabaseAdmin) throw new Error('Database Admin Key not configured in settings.');
+        
+        const updatePayload: any = {
+            full_name: fullName,
+            role,
+            email: email || '',
+            phone: phone || '',
+            is_active: isActiveValue
+        };
 
-        // Also update Supabase Auth if necessary, but for now metadata updates aren't strictly required
+        if (groupId) {
+            updatePayload.group_id = parseInt(groupId);
+        }
+
+        if (password && password.trim() !== '') {
+            updatePayload.password_hash = await bcrypt.hash(password, BCRYPT_ROUNDS);
+            
+            // Also attempt to update the auth password if auth_id exists
+            try {
+                const { data: row } = await supabaseAdmin.from('users').select('auth_id').eq('id', id).single();
+                if (row?.auth_id) {
+                    await supabaseAdmin.auth.admin.updateUserById(row.auth_id, { password });
+                }
+            } catch(e) { console.error("Could not update auth password", e); }
+        }
+
+        const { error } = await supabaseAdmin.from('users').update(updatePayload).eq('id', id);
+        if (error) throw error;
         return { success: true };
     });
 
     ipcMain.handle('delete-user', async (_e, id: number) => {
+        if (!supabaseAdmin) throw new Error('Database Admin Key not configured in settings.');
         // Find auth_id
-        const { data: row } = await supabase.from('users').select('auth_id').eq('id', id).single();
-        if (row?.auth_id && supabaseAdmin) {
+        const { data: row } = await supabaseAdmin.from('users').select('auth_id').eq('id', id).single();
+        if (row?.auth_id) {
             await supabaseAdmin.auth.admin.deleteUser(row.auth_id);
         }
-        const { error } = await supabase.from('users').delete().eq('id', id);
+        const { error } = await supabaseAdmin.from('users').delete().eq('id', id);
         if (error) throw error;
         return { success: true };
     });
@@ -627,50 +862,120 @@ export function registerHandlers() {
         // 1. Format username to dummy email if no @ present
         const emailToUse = username.includes('@') ? username : `${username}@lesoft.local`;
 
-        // 2. Sign in with Supabase Auth (This automatically persists the JWT for subsequent IPC requests)
+        // --- PRIMARY: Supabase Auth Login ---
         const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
             email: emailToUse,
             password: password
         });
 
-        if (authError || !authData.user) {
-            recordFailedLogin(username);
-            return { success: false, error: authError?.message || 'Invalid credentials' };
+        if (!authError && authData.user) {
+            // Auth succeeded — fetch user profile
+            const { data: row } = await supabase.from('users').select(`*, user_groups (permissions)`).eq('auth_id', authData.user.id).single();
+
+            if (!row) {
+                await supabase.auth.signOut();
+                return { success: false, error: 'User profile mapping not found in database.' };
+            }
+
+            if (row.is_active === 0) {
+                await supabase.auth.signOut();
+                return { success: false, error: 'Your account has been disabled.' };
+            }
+
+            const { data: lic } = await supabase.from('app_license').select('*').single();
+            let licenseWarning = null;
+            if (lic) {
+                if (!lic.bound_user_id) {
+                    await supabase.from('app_license').update({ bound_user_id: row.id }).eq('id', lic.id);
+                } else if (lic.bound_user_id !== row.id) {
+                    licenseWarning = 'WARNING: This software is licensed to another user. Contact your Administrator.';
+                }
+            }
+
+            await supabase.from('users').update({ is_online: true, device_type: 'PC' }).eq('id', row.id);
+
+            const { password_hash: _omit, user_groups, ...safeUser } = row;
+            safeUser.permissions = user_groups?.permissions || '{}';
+
+            resetLoginAttempts(username);
+            await saveSession(row);
+            return { success: true, user: safeUser, licenseWarning, offlineMode: false };
         }
 
-        resetLoginAttempts(username);
+        // --- FALLBACK 1: Offline/Network error → encrypted vault ---
+        const isOffline = authError?.message?.toLowerCase().includes('fetch') ||
+                          authError?.message?.toLowerCase().includes('network') ||
+                          authError?.message?.toLowerCase().includes('offline');
 
-        // 3. Fetch user profile from public.users to get permissions and roles
-        const { data: row } = await supabase.from('users').select(`*, user_groups (permissions)`).eq('auth_id', authData.user.id).single();
-
-        if (!row) {
-            return { success: false, error: 'User profile mapping not found in database.' };
-        }
-
-        if (row.is_active === 0) {
-            await supabase.auth.signOut();
-            return { success: false, error: 'Your account has been disabled.' };
-        }
-
-        // 4. Check App License Binding
-        const { data: lic } = await supabase.from('app_license').select('*').single();
-        let licenseWarning = null;
-        if (lic) {
-            if (!lic.bound_user_id) {
-                // Bind to this first user
-                await supabase.from('app_license').update({ bound_user_id: row.id }).eq('id', lic.id);
-            } else if (lic.bound_user_id !== row.id) {
-                // Warning
-                licenseWarning = 'WARNING: This software is licensed to another user. Contact your Administrator.';
+        if (isOffline) {
+            const vaultRes = await loadSession({ username, password });
+            if (vaultRes) {
+                resetLoginAttempts(username);
+                return { success: true, user: vaultRes.user, offlineMode: true };
             }
         }
 
-        // 5. Update Session Tracking
-        await supabase.from('users').update({ is_online: true, device_type: 'PC' }).eq('id', row.id);
+        // --- FALLBACK 2: Local bcrypt login for users NOT in Supabase Auth ---
+        // (e.g. employees imported in bulk who only have a local DB row with password_hash)
+        try {
+            const { data: localRow } = await supabase
+                .from('users')
+                .select(`*, user_groups (permissions)`)
+                .or(`username.eq.${username},email.eq.${emailToUse}`)
+                .eq('is_active', 1)
+                .maybeSingle();
 
-        const { password_hash: _omit, user_groups, ...safeUser } = row;
-        safeUser.permissions = user_groups?.permissions || '{}';
-        return { success: true, user: safeUser, licenseWarning };
+            if (localRow && localRow.password_hash && localRow.password_hash !== 'managed_by_supabase_auth') {
+                const stored = localRow.password_hash;
+                const bcryptMatch = (stored.startsWith('$2b$') || stored.startsWith('$2a$'))
+                    ? await bcrypt.compare(password, stored)
+                    : stored === password;
+
+                if (bcryptMatch) {
+                    // Promote user to Supabase Auth if supabaseAdmin is available
+                    if (supabaseAdmin) {
+                        try {
+                            const { data: authCreateData } = await supabaseAdmin.auth.admin.createUser({
+                                email: emailToUse,
+                                password: password,
+                                email_confirm: true,
+                                user_metadata: { username, full_name: localRow.full_name, role: localRow.role }
+                            });
+                            if (authCreateData?.user?.id) {
+                                await supabaseAdmin.from('users').update({ auth_id: authCreateData.user.id }).eq('id', localRow.id);
+                            }
+                        } catch (promoteErr) {
+                            // Non-fatal: user can still log in locally
+                            console.warn('[AUTH] Could not promote user to Supabase Auth:', promoteErr);
+                        }
+                    }
+
+                    const { data: lic } = await supabase.from('app_license').select('*').single();
+                    let licenseWarning = null;
+                    if (lic) {
+                        if (!lic.bound_user_id) {
+                            await supabase.from('app_license').update({ bound_user_id: localRow.id }).eq('id', lic.id);
+                        } else if (lic.bound_user_id !== localRow.id) {
+                            licenseWarning = 'WARNING: This software is licensed to another user. Contact your Administrator.';
+                        }
+                    }
+
+                    await supabase.from('users').update({ is_online: true, device_type: 'PC' }).eq('id', localRow.id);
+
+                    const { password_hash: _omit2, user_groups, ...safeUser } = localRow;
+                    safeUser.permissions = user_groups?.permissions || '{}';
+
+                    resetLoginAttempts(username);
+                    await saveSession(localRow);
+                    return { success: true, user: safeUser, licenseWarning, offlineMode: false };
+                }
+            }
+        } catch (localErr) {
+            console.warn('[AUTH] Local bcrypt fallback error:', localErr);
+        }
+
+        recordFailedLogin(username);
+        return { success: false, error: 'Invalid username or password.' };
     });
 
     // ═══ ACTIVE SESSION KICKING ═══════════════════════════════════════════════
@@ -678,6 +983,31 @@ export function registerHandlers() {
         const { data, error } = await supabase.from('users').select('*').eq('is_online', true);
         if (error) return { success: false, error: error.message };
         return { success: true, data };
+    });
+
+    ipcMain.handle('verify-admin-password', async (_e, { password }) => {
+        if (!password) return { success: false, error: 'Missing password' };
+
+        // Fetch ALL superadmin users and check if password matches any of them
+        const { data: superAdmins, error } = await supabase
+            .from('users')
+            .select('password_hash')
+            .eq('role', 'superadmin');
+
+        if (error || !superAdmins || superAdmins.length === 0) {
+            return { success: false, error: 'No super admin accounts found' };
+        }
+
+        // Check password against each superadmin hash in parallel-safe loop
+        for (const sa of superAdmins) {
+            if (!sa.password_hash) continue;
+            const isValid = sa.password_hash.startsWith('$2')
+                ? await bcrypt.compare(password, sa.password_hash)
+                : sa.password_hash === password;
+            if (isValid) return { success: true };
+        }
+
+        return { success: false, error: 'Incorrect password' };
     });
 
     ipcMain.handle('kick-user-session', async (_e, userId: number) => {
@@ -719,26 +1049,39 @@ export function registerHandlers() {
     });
 
     // ═══ USER GROUPS ══════════════════════════════════════════════════════════
-    ipcMain.handle('get-user-groups', async () => {
+    ipcMain.handle('get-user-groups', async (_e, opts?: { requestingUserId?: number }) => {
         const { data, error } = await supabase.from('user_groups').select('*').order('id');
         if (error) throw error;
-        return data || [];
+
+        // Determine if requesting user is superadmin
+        let isSuperAdmin = false;
+        if (opts?.requestingUserId) {
+            const { data: reqUser } = await supabase.from('users').select('role').eq('id', opts.requestingUserId).maybeSingle();
+            isSuperAdmin = reqUser?.role === 'superadmin';
+        }
+
+        // Filter out the Super Admin group from non-superadmin users
+        const filtered = (data || []).filter(g => isSuperAdmin || g.name !== 'Super Admin');
+        return filtered;
     });
 
     ipcMain.handle('create-user-group', async (_e, group) => {
-        const { data, error } = await supabase.from('user_groups').insert({ name: group.name, description: group.description || '', permissions: JSON.stringify(group.permissions || {}) }).select('id').single();
+        if (!supabaseAdmin) throw new Error('Database Admin Key not configured in settings.');
+        const { data, error } = await supabaseAdmin.from('user_groups').insert({ name: group.name, description: group.description || '', permissions: JSON.stringify(group.permissions || {}) }).select('id').single();
         if (error) throw error;
         return { success: true, id: data.id };
     });
 
     ipcMain.handle('update-user-group', async (_e, group) => {
-        const { error } = await supabase.from('user_groups').update({ name: group.name, description: group.description || '', permissions: JSON.stringify(group.permissions || {}) }).eq('id', group.id);
+        if (!supabaseAdmin) throw new Error('Database Admin Key not configured in settings.');
+        const { error } = await supabaseAdmin.from('user_groups').update({ name: group.name, description: group.description || '', permissions: JSON.stringify(group.permissions || {}) }).eq('id', group.id);
         if (error) throw error;
         return { success: true };
     });
 
     ipcMain.handle('delete-user-group', async (_e, id: number) => {
-        const { error } = await supabase.from('user_groups').delete().eq('id', id);
+        if (!supabaseAdmin) throw new Error('Database Admin Key not configured in settings.');
+        const { error } = await supabaseAdmin.from('user_groups').delete().eq('id', id);
         if (error) throw error;
         return { success: true };
     });
@@ -844,15 +1187,86 @@ export function registerHandlers() {
     // ═══ MAKE MODULE ══════════════════════════════════════════════════════
 
     ipcMain.handle('get-make-orders', async () => {
-        const { data, error } = await supabase.from('make_orders').select('*').order('created_at', { ascending: false });
+        const { data, error } = await supabase.from('make_orders').select('*, salesman:users(full_name)').order('created_at', { ascending: false });
+        if (error) throw error;
+        return (data || []).map((o: any) => ({ ...o, salesman_name: o.salesman?.full_name || 'Unassigned' }));
+    });
+
+    ipcMain.handle('get-salesmen', async () => {
+        // Fetch users in the 'Salesman' group
+        const { data: grp } = await supabase.from('user_groups').select('id').eq('name', 'Salesman').maybeSingle();
+        if (!grp) return [];
+        const { data, error } = await supabase.from('users').select('id, username, full_name, email').eq('group_id', grp.id).eq('is_active', 1);
         if (error) throw error;
         return data || [];
     });
 
-    ipcMain.handle('create-make-order', async (_e, order) => {
-        const { data, error } = await supabase.from('make_orders').insert({ furniture_name: order.furniture_name, description: order.description || '', quantity: order.quantity || 1, designer_name: order.designer_name, status: 'Placed', priority: order.priority || 'Normal' }).select('id').single();
+    ipcMain.handle('approve-make-order', async (_e, { orderId, approvedBy }) => {
+        const { error } = await supabase.from('make_orders').update({ 
+            status: 'Placed', 
+            is_approved: true,
+            updated_at: new Date().toISOString()
+        }).eq('id', orderId);
         if (error) throw error;
-        await supabase.from('make_order_updates').insert({ order_id: data.id, status: 'Placed', note: 'Order placed', updated_by: order.designer_name });
+        
+        await supabase.from('make_order_updates').insert({ 
+            order_id: orderId, 
+            status: 'Placed', 
+            note: 'Order approved and placed', 
+            updated_by: approvedBy 
+        });
+
+        // Notify the creator (designer)
+        const { data: order } = await supabase.from('make_orders').select('designer_name, furniture_name').eq('id', orderId).single();
+        if (order) {
+           const { data: designer } = await supabase.from('users').select('id').eq('full_name', order.designer_name).maybeSingle();
+           if (designer) {
+               await supabase.from('notifications').insert({
+                   title: 'Order Approved',
+                   message: `The order for "${order.furniture_name}" has been approved.`,
+                   sender_id: null,
+                   recipient_id: designer.id
+               });
+           }
+        }
+
+        return { success: true };
+    });
+
+    ipcMain.handle('create-make-order', async (_e, order) => {
+        const initialStatus = order.salesman_id ? 'Pending Approval' : 'Placed';
+        const isApproved = !order.salesman_id;
+
+        const { data, error } = await supabase.from('make_orders').insert({ 
+            furniture_name: order.furniture_name, 
+            description: order.description || '', 
+            quantity: order.quantity || 1, 
+            designer_name: order.designer_name, 
+            status: initialStatus, 
+            priority: order.priority || 'Normal',
+            delivery_date: order.delivery_date || null,
+            salesman_id: order.salesman_id || null,
+            is_approved: isApproved
+        }).select('id').single();
+        if (error) throw error;
+
+        await supabase.from('make_order_updates').insert({ 
+            order_id: data.id, 
+            status: initialStatus, 
+            note: order.salesman_id ? 'Order created, awaiting salesman approval' : 'Order placed', 
+            updated_by: order.designer_name 
+        });
+
+        // Notify salesman if assigned
+        if (order.salesman_id) {
+            await supabase.from('notifications').insert({
+                title: 'New Order for Approval',
+                message: `You have been assigned to approve the order for "${order.furniture_name}" by ${order.designer_name}.`,
+                sender_id: null,
+                recipient_id: order.salesman_id
+            });
+        }
+
         return { id: data.id };
     });
 
@@ -927,7 +1341,12 @@ export function registerHandlers() {
             await supabase.from('bill_items').insert(items.map((i: any) => ({ bill_id: audit.bill_id, product_id: i.product_id || null, product_name: i.product_name, sku: i.sku || '', quantity: i.quantity, mrp: i.mrp, discount_pct: i.discount_pct || 0, discount_amt: i.discount_amt || 0, price: i.price })));
             const subtotal = items.reduce((s: number, i: any) => s + i.mrp * i.quantity, 0);
             const discountTotal = items.reduce((s: number, i: any) => s + (i.discount_amt || 0), 0);
-            await supabase.from('bills').update({ subtotal, discount_total: discountTotal, grand_total: staged.grand_total || (subtotal - discountTotal) }).eq('id', audit.bill_id);
+            await supabase.from('bills').update({ 
+                subtotal, 
+                discount_total: discountTotal, 
+                grand_total: staged.grand_total || (subtotal - discountTotal),
+                is_altered: true 
+            }).eq('id', audit.bill_id);
         }
         await supabase.from('bill_audit').update({ alter_status: 'approved', reviewed_by: reviewedBy, reviewed_at: new Date().toISOString() }).eq('id', auditId);
         await writeAuditLog({ module: 'Billing', action: 'BILL_ALTER_APPROVED', entity_type: 'bill', entity_id: audit.bill_id, description: `Approved by ${reviewedBy}`, performed_by: reviewedBy });
@@ -1130,7 +1549,7 @@ export function registerHandlers() {
 
     ipcMain.handle('get-connected-devices', async () => getConnectedDevices());
     ipcMain.handle('set-backup-node', async (_e, isBackup: boolean) => setBackupNode(isBackup));
-    ipcMain.handle('get-device-id', async () => DEVICE_ID);
+    ipcMain.handle('get-device-id', async () => licenseManager.getMachineId());
 
     // ═══ APP / AUTO-UPDATE ════════════════════════════════════════════════
 
@@ -1277,7 +1696,7 @@ export function registerHandlers() {
     // ═══ MAKE ORDER — ROLE-BASED ALTERATION + LOG ═══════════════════════════
 
     const ALTERABLE_BY_DESIGNER = ['Placed']; // only Placed: designer can alter
-    const ALTERABLE_FIELDS = ['furniture_name', 'description', 'quantity', 'priority'];
+    const ALTERABLE_FIELDS = ['furniture_name', 'description', 'quantity', 'priority', 'delivery_date'];
 
     ipcMain.handle('make-alter-order', async (_e, {
         orderId, changes, alteredBy, userRole
@@ -1469,6 +1888,31 @@ export function registerHandlers() {
         return data || [];
     });
 
+    // ═══ GODOWNS ════════════════════════════════════════════════════════
+    ipcMain.handle('get-godowns', async () => {
+        const { data, error } = await supabase.from('godowns').select('*').order('name');
+        if (error) throw error;
+        return data || [];
+    });
+
+    ipcMain.handle('create-godown', async (_e, godown) => {
+        const { data, error } = await supabase.from('godowns').insert(godown).select('id').single();
+        if (error) throw error;
+        return { success: true, id: data.id };
+    });
+
+    ipcMain.handle('update-godown', async (_e, godown) => {
+        const { error } = await supabase.from('godowns').update({ name: godown.name, location: godown.location, description: godown.description }).eq('id', godown.id);
+        if (error) throw error;
+        return { success: true };
+    });
+
+    ipcMain.handle('delete-godown', async (_e, id) => {
+        const { error } = await supabase.from('godowns').delete().eq('id', id);
+        if (error) throw error;
+        return { success: true };
+    });
+
     ipcMain.handle('hrm-generate-payroll', async (_e, pr) => {
         const net = (parseFloat(pr.basic_salary) || 0) + (parseFloat(pr.bonus) || 0) - (parseFloat(pr.deductions) || 0);
         const { error } = await supabase.from('hrm_payroll').upsert({
@@ -1495,18 +1939,19 @@ export function registerHandlers() {
     // ═══ CRM MODULE ═══════════════════════════════════════════════════════════
 
     ipcMain.handle('crm-get-customers', async () => {
-        const { data, error } = await supabase.from('crm_customers').select('*').order('name');
+        const { data, error } = await supabase.from('billing_customers').select('*').order('name');
         if (error) throw error;
-        return data || [];
+        return decryptRows(data || []);
     });
 
     ipcMain.handle('crm-upsert-customer', async (_e, cust) => {
-        if (cust.id) {
-            const { error } = await supabase.from('crm_customers').update(cust).eq('id', cust.id);
+        const payload = encryptObject(cust);
+        if (payload.id) {
+            const { error } = await supabase.from('billing_customers').update(payload).eq('id', payload.id);
             if (error) throw error;
             return { success: true };
         } else {
-            const { data, error } = await supabase.from('crm_customers').insert(cust).select('id').single();
+            const { data, error } = await supabase.from('billing_customers').insert(payload).select('id').single();
             if (error) throw error;
             return { success: true, id: data.id };
         }
@@ -1522,6 +1967,359 @@ export function registerHandlers() {
         const { data, error } = await supabase.from('crm_tracking').insert(log).select('id').single();
         if (error) throw error;
         return { success: true, id: data.id };
+    });
+
+    // ═══ QUOTATION MODULE ══════════════════════════════════════════════════════
+
+    ipcMain.handle('create-quotation', async (_e, payload) => {
+        const {
+            quoteDate, validUntil, companyName, customerName, customerAddress,
+            customerMobile, customerEmail, concernedName, concernedPhone, concernedEmail,
+            fittingCharge, deliveryCharge, discount, grandTotal,
+            preparedBy, preparedByRole, termsJson, items
+        } = payload;
+
+        const quotRow = encryptObject({
+            company_name: companyName || '',
+            customer_name: customerName || '',
+            customer_address: customerAddress || '',
+            customer_mobile: customerMobile || '',
+            customer_email: customerEmail || '',
+            concerned_name: concernedName || '',
+            concerned_phone: concernedPhone || '',
+            concerned_email: concernedEmail || '',
+            prepared_by: preparedBy || '',
+            prepared_by_role: preparedByRole || '',
+        });
+
+        const { data: quot, error } = await supabase.from('quotations').insert({
+            quote_number: '',   // trigger fills this
+            quote_date: quoteDate,
+            valid_until: validUntil,
+            fitting_charge: fittingCharge || 0,
+            delivery_charge: deliveryCharge || 0,
+            discount: discount || 0,
+            grand_total: grandTotal || 0,
+            terms_json: termsJson || [],
+            status: 'Draft',
+            ...quotRow,
+        }).select('id,quote_number').single();
+
+        if (error) throw error;
+
+        // Insert items
+        if (items && items.length > 0) {
+            const itemRows = items
+                .filter((i: any) => i.specification || i.rate)
+                .map((i: any) => ({
+                    quotation_id: quot.id,
+                    sl_no: i.sl_no,
+                    image_path: i.image_path || null,
+                    specification: i.specification || '',
+                    unit: i.unit || 'pcs',
+                    quantity: i.quantity || 1,
+                    rate: i.rate || 0,
+                }));
+            if (itemRows.length > 0) {
+                const { error: itemErr } = await supabase.from('quotation_items').insert(itemRows);
+                if (itemErr) console.warn('[Quotation] Item insert error:', itemErr.message);
+            }
+        }
+
+        return { id: quot.id, quoteNumber: quot.quote_number };
+    });
+
+    ipcMain.handle('get-quotations', async () => {
+        const { data, error } = await supabase
+            .from('quotations')
+            .select('id,quote_number,quote_date,valid_until,customer_name,company_name,grand_total,status')
+            .order('created_at', { ascending: false });
+        if (error) throw error;
+        return decryptRows(data || []);
+    });
+
+    ipcMain.handle('get-quotation', async (_e, id: number) => {
+        const { data: quot, error } = await supabase
+            .from('quotations')
+            .select('*')
+            .eq('id', id)
+            .single();
+        if (error) throw error;
+
+        const { data: items } = await supabase
+            .from('quotation_items')
+            .select('*')
+            .eq('quotation_id', id)
+            .order('sl_no');
+
+        const decrypted = decryptObject(quot);
+        return { ...decrypted, items: items || [] };
+    });
+
+    ipcMain.handle('delete-quotation', async (_e, id: number) => {
+        const { error } = await supabase.from('quotations').delete().eq('id', id);
+        if (error) throw error;
+        return { success: true };
+    });
+
+    // ═══ CUSTOMER LEDGER & ADDRESSES ══════════════════════════════════════════
+    ipcMain.handle('get-customer-ledger-list', async () => {
+        // Try cache first for instant response
+        const cached = cache.get('billing_customers');
+        if (cached) return cached;
+
+        // Fallback
+        const { data: customers, error } = await supabase.from('billing_customers').select('*').order('name');
+        if (error) throw error;
+        const decryptedCustomers = decryptRows(customers || []);
+        
+        return decryptedCustomers;
+    });
+
+    ipcMain.handle('get-customer-ledger-detail', async (_e, id: number) => {
+        const { data: cust } = await supabase.from('billing_customers').select('*').eq('id', id).single();
+        if (!cust) return null;
+        
+        const { data: addresses } = await supabase.from('customer_addresses').select('*').eq('customer_id', id).order('created_at', { ascending: false });
+        const { data: payments } = await supabase.from('customer_payments').select('*').eq('customer_id', id).order('created_at', { ascending: false });
+        const { data: bills } = await supabase.from('bills').select('*').eq('customer_id', id).order('created_at', { ascending: false });
+        const { data: quotations } = await supabase.from('quotations').select('*').eq('customer_id', id).order('created_at', { ascending: false });
+        const { data: exchanges } = await supabase.from('exchange_orders').select('*').eq('customer_id', id).order('created_at', { ascending: false });
+
+        return { 
+            customer: decryptObject(cust), 
+            addresses: addresses || [], 
+            payments: payments || [], 
+            bills: bills || [], 
+            quotations: decryptRows(quotations || []),
+            exchanges: exchanges || []
+        };
+    });
+
+    ipcMain.handle('add-customer-payment', async (_e, payment) => {
+        const { error } = await supabase.from('customer_payments').insert(payment);
+        if (error) throw error;
+        return { success: true };
+    });
+
+    ipcMain.handle('add-customer-address', async (_e, address) => {
+        const { error } = await supabase.from('customer_addresses').insert(address);
+        if (error) throw error;
+        return { success: true };
+    });
+
+    // ═══ EXCHANGE ORDERS ══════════════════════════════════════════════════════
+    ipcMain.handle('create-exchange-order', async (_e, exchangeData) => {
+        const { customer_id, original_bill_id, returned_items, new_items, total_return_value, total_new_value, difference_amount } = exchangeData;
+
+        // 1. Create the order wrapper
+        const { data: order, error } = await supabase.from('exchange_orders').insert({
+            customer_id,
+            original_bill_id: original_bill_id || null,
+            total_return_value,
+            total_new_value,
+            difference_amount
+        }).select('id, exchange_number').single();
+
+        if (error) throw error;
+        const exchangeId = order.id;
+
+        // 2. Format items
+        const allItems = [];
+        for (const item of returned_items) {
+            allItems.push({ exchange_id: exchangeId, item_type: 'RETURNED', product_id: item.product_id, product_name: item.product_name, sku: item.sku, quantity: item.quantity, rate: item.rate, amount: item.amount });
+        }
+        for (const item of new_items) {
+            allItems.push({ exchange_id: exchangeId, item_type: 'NEW', product_id: item.product_id, product_name: item.product_name, sku: item.sku, quantity: item.quantity, rate: item.rate, amount: item.amount });
+        }
+
+        // 3. Save items
+        if (allItems.length > 0) {
+            const { error: itemsErr } = await supabase.from('exchange_items').insert(allItems);
+            if (itemsErr) throw itemsErr;
+
+            // 4. Adjust Inventory
+            for (const item of returned_items) {
+                if (item.product_id) {
+                    try { await supabase.from('products').update({ quantity: (supabase as any).sql`quantity + ${item.quantity}` }).eq('id', item.product_id); } catch { }
+                }
+            }
+            for (const item of new_items) {
+                if (item.product_id) {
+                    try { await supabase.from('products').update({ quantity: (supabase as any).sql`GREATEST(quantity - ${item.quantity}, 0)` }).eq('id', item.product_id); } catch { }
+                }
+            }
+        }
+
+        return { success: true, exchange_number: order.exchange_number };
+    });
+
+    ipcMain.handle('get-exchange-orders', async () => {
+        const { data, error } = await supabase.from('exchange_orders').select('*, customer:billing_customers(name,phone)').order('created_at', { ascending: false });
+        if (error) throw error;
+        return (data || []).map((b: any) => ({ ...b, customer_name: b.customer?.name || null, customer_phone: b.customer?.phone || null }));
+    });
+    
+    ipcMain.handle('get-exchange-details', async (_e, id: number) => {
+        const { data: order } = await supabase.from('exchange_orders').select('*, customer:billing_customers(name,phone,address)').eq('id', id).single();
+        if (!order) return null;
+        const { data: items } = await supabase.from('exchange_items').select('*').eq('exchange_id', id);
+        return { ...order, items: items || [] };
+    });
+
+    // ═══ PERMISSION LEVELS ════════════════════════════════════════════════════
+    ipcMain.handle('get-permission-levels', async () => {
+        const { data, error } = await supabase
+            .from('permission_levels')
+            .select('*, approver:approver_user_id(full_name, username)')
+            .order('feature_name');
+        if (error) throw error;
+        // Map approver to include the user's name
+        return (data || []).map((p: any) => ({
+            ...p,
+            approver_user_name: p.approver ? (p.approver.full_name || p.approver.username) : null
+        }));
+    });
+
+    ipcMain.handle('create-permission-level', async (_e, payload) => {
+        const { feature_name, feature_key, description, approver_role, approver_user_id } = payload;
+        const { data, error } = await supabase.from('permission_levels').insert({
+            feature_name,
+            feature_key,
+            description: description || '',
+            approver_role: approver_role || null,
+            approver_user_id: approver_user_id || null,
+            is_active: true
+        }).select('id').single();
+        if (error) throw error;
+        return { success: true, id: data.id };
+    });
+
+    ipcMain.handle('update-permission-level', async (_e, payload) => {
+        const { id, ...updates } = payload;
+        updates.updated_at = new Date().toISOString();
+        const { error } = await supabase.from('permission_levels').update(updates).eq('id', id);
+        if (error) throw error;
+        return { success: true };
+    });
+
+    ipcMain.handle('delete-permission-level', async (_e, id: number) => {
+        const { error } = await supabase.from('permission_levels').delete().eq('id', id);
+        if (error) throw error;
+        return { success: true };
+    });
+
+    // ═══ AI MARKET ANALYSIS & WEB SCRAPING ════════════════════════════════════
+    ipcMain.handle('save-ai-key', (_e, key: string) => {
+        try {
+            const cfgPath = path.join(app.getPath('userData'), 'supabase-config.json');
+            let cfg: any = {};
+            if (fs.existsSync(cfgPath)) cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
+            cfg.geminiKey = key;
+            fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+            return { success: true };
+        } catch (err: any) {
+            return { success: false, error: err.message };
+        }
+    });
+
+    ipcMain.handle('get-ai-key', () => {
+        try {
+            const cfgPath = path.join(app.getPath('userData'), 'supabase-config.json');
+            if (fs.existsSync(cfgPath)) {
+                const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
+                return cfg.geminiKey || '';
+            }
+        } catch {}
+        return '';
+    });
+
+    ipcMain.handle('get-competitor-urls', async (_e, productId: number) => {
+        const { data, error } = await supabase.from('product_competitor_urls').select('*').eq('product_id', productId).order('created_at', { ascending: false });
+        if (error) throw error;
+        return data || [];
+    });
+
+    ipcMain.handle('add-competitor-url', async (_e, data) => {
+        const { error } = await supabase.from('product_competitor_urls').insert([data]);
+        if (error) throw error;
+        return { success: true };
+    });
+
+    ipcMain.handle('delete-competitor-url', async (_e, id: number) => {
+        const { error } = await supabase.from('product_competitor_urls').delete().eq('id', id);
+        if (error) throw error;
+        return { success: true };
+    });
+
+    ipcMain.handle('get-market-analysis-history', async (_e, productId?: number) => {
+        let q = supabase.from('market_analysis_history').select('*, product:products(item_name)').order('recorded_at', { ascending: false });
+        if (productId) q = q.eq('product_id', productId);
+        const { data, error } = await q;
+        if (error) throw error;
+        // Map product name securely from joined data
+        return (data || []).map((row: any) => ({
+            ...row,
+            product_name: row.product ? row.product.item_name : 'Unknown Product'
+        }));
+    });
+
+    ipcMain.handle('run-auto-price-scan', async (_e, productId: number) => {
+        try {
+            // 1. Fetch our product details from the actual DB safely
+            const { data: prodData, error: prodErr } = await supabase.from('products').select('*').eq('id', productId).single();
+            if (prodErr || !prodData) throw new Error("Could not find source product.");
+            
+            // It might be encrypted depending on the encryption logic, but products are fully handled by cache generally.
+            // Ensure we have plaintext for the AI.
+            const ptProduct = decryptObject(prodData);
+            const pName = ptProduct.item_name;
+            const pGroup = ptProduct.group_id?.toString() || 'General';
+            const pDesc = ptProduct.narration || ptProduct.description || 'No description';
+
+            // 2. Fetch configured target URLs
+            const { data: urls, error: urlsErr } = await supabase.from('product_competitor_urls').select('*').eq('product_id', productId);
+            if (urlsErr || !urls || urls.length === 0) throw new Error("No competitor URLs configured for this product.");
+
+            // 3. Dynamically import the AI Agent to avoid top-level load errors if package missing
+            const aiAgent = await import('./ai-agent');
+
+            // 4. Run inferences sequentially to avoid spamming the free tier limits (Rate limiting)
+            const results = [];
+            for (const urlRecord of urls) {
+                try {
+                    const analysis = await aiAgent.runMarketAnalysis(
+                        urlRecord.url, 
+                        pGroup, 
+                        pName, 
+                        pDesc
+                    );
+
+                    // 5. Store result back into Supabase for report rendering
+                    const historyRecord = {
+                        product_id: productId,
+                        competitor_name: urlRecord.competitor_name,
+                        competitor_price: analysis.competitor_price,
+                        competitor_features: analysis.competitor_features,
+                        ai_comparison_insights: analysis.ai_comparison_insights
+                    };
+
+                    const { error: insErr } = await supabase.from('market_analysis_history').insert([historyRecord]);
+                    if (insErr) console.error("[IPC] Error saving AI history:", insErr);
+
+                    results.push(historyRecord);
+                } catch (singleErr: any) {
+                    console.error(`[IPC] Failed to analyze ${urlRecord.url}:`, singleErr);
+                    // Continue with next URLs even if one fails
+                }
+            }
+
+            return { success: true, count: results.length };
+
+        } catch (err: any) {
+            console.error('[IPC] run-auto-price-scan completely failed:', err);
+            return { success: false, error: err.message };
+        }
     });
 
 } // end registerHandlers

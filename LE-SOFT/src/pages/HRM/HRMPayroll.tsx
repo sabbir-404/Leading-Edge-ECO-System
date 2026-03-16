@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import DashboardLayout from '../../components/DashboardLayout';
 import { motion } from 'framer-motion';
-import { Settings, Search, Plus, DollarSign, CheckCircle } from 'lucide-react';
+import { Settings, Search, DollarSign, CheckCircle } from 'lucide-react';
 
 export default function HRMPayroll() {
   const [employees, setEmployees] = useState<any[]>([]);

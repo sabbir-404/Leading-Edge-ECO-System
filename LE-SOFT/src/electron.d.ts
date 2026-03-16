@@ -40,14 +40,14 @@ export interface ElectronAPI {
     deletePurchaseBill: (id: number) => Promise<any>;
 
     // Users
-    getUsers: () => Promise<any[]>;
+    getUsers: (opts?: any) => Promise<any[]>;
     createUser: (user: any) => Promise<any>;
     updateUser: (user: any) => Promise<any>;
     deleteUser: (id: number) => Promise<any>;
     authenticateUser: (creds: any) => Promise<any>;
 
     // User Groups
-    getUserGroups: () => Promise<any[]>;
+    getUserGroups: (opts?: any) => Promise<any[]>;
     createUserGroup: (group: any) => Promise<any>;
     updateUserGroup: (group: any) => Promise<any>;
     deleteUserGroup: (id: number) => Promise<any>;
@@ -143,6 +143,15 @@ export interface ElectronAPI {
     installUpdate: () => Promise<any>;
     getAppVersion: () => Promise<string>;
     onUpdateStatus: (callback: (data: any) => void) => () => void;
+
+    // AI Market Analysis
+    saveAiKey: (key: string) => Promise<any>;
+    getAiKey: () => Promise<string>;
+    getCompetitorUrls: (productId: number) => Promise<any[]>;
+    addCompetitorUrl: (data: any) => Promise<any>;
+    deleteCompetitorUrl: (id: number) => Promise<any>;
+    runAutoPriceScan: (productId: number) => Promise<any>;
+    getMarketAnalysisHistory: (productId?: number) => Promise<any[]>;
 }
 
 declare global {

@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import DashboardLayout from '../../components/DashboardLayout';
 import { motion } from 'framer-motion';
-import { Calendar, Search, Clock, CheckCircle } from 'lucide-react';
+import { Calendar, Search } from 'lucide-react';
 
 export default function HRMAttendance() {
   const [employees, setEmployees] = useState<any[]>([]);
