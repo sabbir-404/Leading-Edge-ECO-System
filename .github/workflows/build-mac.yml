@@ -10,6 +10,10 @@ jobs:
   build:
     runs-on: macos-latest
 
+    defaults:
+      run:
+        working-directory: LE-SOFT
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -19,6 +23,7 @@ jobs:
         with:
           node-version: 18
           cache: 'npm'
+          cache-dependency-path: LE-SOFT/package-lock.json
 
       - name: Install Dependencies
         run: npm install
@@ -33,5 +38,5 @@ jobs:
         with:
           name: LESOFT-macOS
           path: |
-            release/*.dmg
-            release/*.zip
+            LE-SOFT/release/*.dmg
+            LE-SOFT/release/*.zip

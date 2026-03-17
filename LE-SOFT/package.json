@@ -61,7 +61,7 @@
   "build": {
     "appId": "com.leadingedge.lesoft",
     "productName": "LESOFT",
-    "icon": "D:/Code/Leading Edge/icon.ico",
+    "icon": "../icon.ico",
     "npmRebuild": false,
     "directories": {
       "output": "release"
@@ -89,7 +89,7 @@
     "afterPack": "./afterPack.cjs",
     "win": {
       "target": "nsis",
-      "icon": "D:/Code/Leading Edge/icon.ico"
+      "icon": "../icon.ico"
     },
     "nsis": {
       "oneClick": false,
@@ -97,11 +97,11 @@
       "createDesktopShortcut": "always",
       "createStartMenuShortcut": true,
       "shortcutName": "LESOFT",
-      "installerIcon": "D:/Code/Leading Edge/icon.ico",
-      "uninstallerIcon": "D:/Code/Leading Edge/icon.ico",
-      "installerHeaderIcon": "D:/Code/Leading Edge/header.bmp",
-      "installerSidebar": "D:/Code/Leading Edge/Sidebar Image.bmp",
-      "uninstallerSidebar": "D:/Code/Leading Edge/Sidebar Image.bmp",
+      "installerIcon": "../icon.ico",
+      "uninstallerIcon": "../icon.ico",
+      "installerHeaderIcon": "../header.bmp",
+      "installerSidebar": "../Sidebar Image.bmp",
+      "uninstallerSidebar": "../Sidebar Image.bmp",
       "license": "LICENSE.txt",
       "include": "build/uninstall.nsh"
     },
