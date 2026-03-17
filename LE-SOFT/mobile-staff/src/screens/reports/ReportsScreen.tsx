@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, ScrollView, RefreshControl, SafeAreaView, StyleSheet } from 'react-native';
 import { supabase } from '../../lib/supabase';
-import { TrendingUp, ShoppingBag, Package, DollarSign } from 'lucide-react-native';
+import { TrendingUp, ShoppingBag, Package, DollarSign, Tag } from 'lucide-react-native';
 
 export default function ReportsScreen() {
   const [stats, setStats] = useState({
@@ -32,13 +32,21 @@ export default function ReportsScreen() {
     const { data: topItems } = await supabase.from('bill_items').select('product_name, quantity')
       .gte('created_at', monthAgo).order('quantity', { ascending: false }).limit(5);
 
+    const [recentBills, recentVouchers] = await Promise.all([
+      supabase.from('bills').select('id, bill_number, grand_total, created_at').order('created_at', { ascending: false }).limit(5),
+      supabase.from('vouchers').select('id, voucher_number, voucher_type, total_amount, date').order('created_at', { ascending: false }).limit(5),
+    ]);
+
     setStats({
       todaySales: sum(todayRes.data || []), weekSales: sum(weekRes.data || []), monthSales: sum(monthRes.data || []),
       todayBills: (todayRes.data || []).length, weekBills: (weekRes.data || []).length, monthBills: (monthRes.data || []).length,
       lowStockItems: lowStock || 0, totalProducts: totalProd || 0,
     });
     setTopProducts(topItems || []);
+    setDayBook([...(recentBills.data || []).map(b => ({ ...b, type: 'Sale' })), ...(recentVouchers.data || []).map(v => ({ ...v, type: v.voucher_type }))]);
   };
+
+  const [dayBook, setDayBook] = useState<any[]>([]);
 
   useEffect(() => { fetchData(); }, []);
   const onRefresh = useCallback(async () => { setRefreshing(true); await fetchData(); setRefreshing(false); }, []);
@@ -83,6 +91,22 @@ export default function ReportsScreen() {
             </View>
           </>
         )}
+
+        <Text style={s.section}>Day Book (Recent Activities)</Text>
+        <View style={s.listCard}>
+          {dayBook.sort((a,b) => new Date(b.created_at || b.date).getTime() - new Date(a.created_at || a.date).getTime()).slice(0, 8).map((item, i) => (
+            <View key={i} style={s.topRow}>
+              <View style={[s.typeIcon, { backgroundColor: item.type === 'Sale' ? '#10b98122' : '#8b5cf622' }]}>
+                {item.type === 'Sale' ? <DollarSign size={14} color="#10b981" /> : <Tag size={14} color="#8b5cf6" />}
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={s.topName}>{item.bill_number || item.voucher_number}</Text>
+                <Text style={s.cardSub}>{item.type} · {new Date(item.created_at || item.date).toLocaleDateString()}</Text>
+              </View>
+              <Text style={[s.topQty, { color: '#fff' }]}>৳{(item.grand_total || item.total_amount || 0).toLocaleString()}</Text>
+            </View>
+          ))}
+        </View>
         <View style={{ height: 24 }} />
       </ScrollView>
     </SafeAreaView>
@@ -105,4 +129,5 @@ const s = StyleSheet.create({
   topRank: { color: '#6b7280', fontSize: 13, width: 28 },
   topName: { color: '#fff', fontWeight: '600', flex: 1 },
   topQty: { color: '#10b981', fontWeight: '700', fontSize: 13 },
+  typeIcon: { width: 32, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center', marginRight: 12 },
 });

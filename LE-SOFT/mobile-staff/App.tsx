@@ -4,8 +4,10 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { View, ActivityIndicator, TouchableOpacity, Text } from 'react-native';
-import { Home, CreditCard, Users, LayoutGrid } from 'lucide-react-native';
+import { Home, CreditCard, Users, LayoutGrid, Receipt } from 'lucide-react-native';
 import { ThemeProvider, useTheme } from './src/lib/ThemeContext';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { StatusBar } from 'expo-status-bar';
 
 import { supabase } from './src/lib/supabase';
 import AuthScreen from './src/screens/AuthScreen';
@@ -22,31 +24,36 @@ import AttendanceScreen from './src/screens/hrm/AttendanceScreen';
 import LeavesScreen from './src/screens/hrm/LeavesScreen';
 import PayrollScreen from './src/screens/hrm/PayrollScreen';
 
-// More
+// Accounting
+import AccountingScreen from './src/screens/accounting/AccountingScreen';
+import VoucherEntryScreen from './src/screens/accounting/VoucherEntryScreen';
+import VoucherListScreen from './src/screens/accounting/VoucherListScreen';
+
+// More Modules
 import StockSearchScreen from './src/screens/stock/StockSearchScreen';
 import MakeScreen from './src/screens/make/MakeScreen';
 import ShippingScreen from './src/screens/shipping/ShippingScreen';
 import ReportsScreen from './src/screens/reports/ReportsScreen';
 import UsersScreen from './src/screens/users/UsersScreen';
 
+// CRM
+import CRMDirectoryScreen from './src/screens/crm/CRMDirectoryScreen';
+import CustomerLedgerScreen from './src/screens/crm/CustomerLedgerScreen';
+
+// Quotation
+import QuotationListScreen from './src/screens/quotation/QuotationListScreen';
+import QuotationCreateScreen from './src/screens/quotation/QuotationCreateScreen';
+
 const Tab = createBottomTabNavigator();
 const BillingStack = createNativeStackNavigator();
 const HRMStack = createNativeStackNavigator();
+const AccountingStack = createNativeStackNavigator();
 const MoreStack = createNativeStackNavigator();
 
-const tabBarStyle = {
-  backgroundColor: '#0d0d0d',
-  borderTopColor: '#1a1a1a',
-  borderTopWidth: 1,
-  paddingBottom: 6,
-  paddingTop: 4,
-  height: 60,
-};
-const tabBarLabelStyle = { fontSize: 11, fontWeight: '600' as const };
-
-function BillingStackNav({ navigation }: any) {
+function BillingStackNav() {
+  const { theme } = useTheme();
   return (
-    <BillingStack.Navigator screenOptions={{ headerStyle: { backgroundColor: '#0d0d0d' }, headerTintColor: '#fff', headerTitleStyle: { fontWeight: '800' } }}>
+    <BillingStack.Navigator screenOptions={{ headerStyle: { backgroundColor: theme.bg }, headerTintColor: theme.textPrimary, headerTitleStyle: { fontWeight: '800' } }}>
       <BillingStack.Screen name="BillingMain" component={BillingScreen} options={{ headerShown: false }} />
       <BillingStack.Screen name="BillHistory" component={BillHistoryScreen} options={{ title: 'Bill History' }} />
     </BillingStack.Navigator>
@@ -54,8 +61,9 @@ function BillingStackNav({ navigation }: any) {
 }
 
 function HRMStackNav() {
+  const { theme } = useTheme();
   return (
-    <HRMStack.Navigator screenOptions={{ headerStyle: { backgroundColor: '#0d0d0d' }, headerTintColor: '#fff', headerTitleStyle: { fontWeight: '800' } }}>
+    <HRMStack.Navigator screenOptions={{ headerStyle: { backgroundColor: theme.bg }, headerTintColor: theme.textPrimary, headerTitleStyle: { fontWeight: '800' } }}>
       <HRMStack.Screen name="HRMHome" component={HRMScreen} options={{ headerShown: false }} />
       <HRMStack.Screen name="Attendance" component={AttendanceScreen} options={{ title: 'Attendance' }} />
       <HRMStack.Screen name="Leaves" component={LeavesScreen} options={{ title: 'Leave Requests' }} />
@@ -64,14 +72,28 @@ function HRMStackNav() {
   );
 }
 
-function MoreStackNav() {
+function AccountingStackNav() {
+  const { theme } = useTheme();
   return (
-    <MoreStack.Navigator
-      screenOptions={{ headerStyle: { backgroundColor: '#0d0d0d' }, headerTintColor: '#fff', headerTitleStyle: { fontWeight: '800' } }}
-    >
+    <AccountingStack.Navigator screenOptions={{ headerStyle: { backgroundColor: theme.bg }, headerTintColor: theme.textPrimary, headerTitleStyle: { fontWeight: '800' }, headerShadowVisible: false }}>
+      <AccountingStack.Screen name="AccountingMain" component={AccountingScreen} options={{ headerShown: false }} />
+      <AccountingStack.Screen name="VoucherEntry" component={VoucherEntryScreen} options={({ route }: any) => ({ title: `${route.params?.type || 'Voucher'} Entry` })} />
+      <AccountingStack.Screen name="VoucherList" component={VoucherListScreen} options={{ title: 'Voucher History' }} />
+    </AccountingStack.Navigator>
+  );
+}
+
+function MoreStackNav() {
+  const { theme } = useTheme();
+  return (
+    <MoreStack.Navigator screenOptions={{ headerStyle: { backgroundColor: theme.bg }, headerTintColor: theme.textPrimary, headerTitleStyle: { fontWeight: '800' } }}>
       <MoreStack.Screen name="MoreHome" component={MoreHomeScreen} options={{ title: 'More' }} />
       <MoreStack.Screen name="Stock" component={StockSearchScreen} options={{ title: 'Stock Search' }} />
       <MoreStack.Screen name="Make" component={MakeScreen} options={{ title: 'Make / Production' }} />
+      <MoreStack.Screen name="CRM" component={CRMDirectoryScreen} options={{ title: 'CRM Directory' }} />
+      <MoreStack.Screen name="CustomerLedger" component={CustomerLedgerScreen} options={({ route }: any) => ({ title: route.params?.customerName || 'Ledger' })} />
+      <MoreStack.Screen name="Quotations" component={QuotationListScreen} options={{ title: 'Quotations' }} />
+      <MoreStack.Screen name="QuotationCreate" component={QuotationCreateScreen} options={{ title: 'New Quotation' }} />
       <MoreStack.Screen name="Shipping" component={ShippingScreen} options={{ title: 'Shipping' }} />
       <MoreStack.Screen name="Reports" component={ReportsScreen} options={{ title: 'Reports' }} />
       <MoreStack.Screen name="Users" component={UsersScreen} options={{ title: 'User Management' }} />
@@ -83,9 +105,11 @@ function MoreStackNav() {
 const moreItems = [
   { label: 'Stock Search', screen: 'Stock', color: '#f59e0b' },
   { label: 'Make / Track', screen: 'Make', color: '#8b5cf6' },
+  { label: 'CRM Directory', screen: 'CRM', color: '#10b981' },
+  { label: 'Quotations', screen: 'Quotations', color: '#3b82f6' },
   { label: 'Shipping', screen: 'Shipping', color: '#ef4444' },
   { label: 'Reports', screen: 'Reports', color: '#06b6d4' },
-  { label: 'Users (Admin)', screen: 'Users', color: '#10b981' },
+  { label: 'Users (Admin)', screen: 'Users', color: '#6366f1' },
   { label: 'Settings', screen: 'Settings', color: '#6b7280' },
 ];
 
@@ -125,14 +149,17 @@ export default function App() {
   }, []);
 
   return (
-    <ThemeProvider>
-      <AppInner session={session} loading={loading} />
-    </ThemeProvider>
+    <SafeAreaProvider>
+      <ThemeProvider>
+        <AppInner session={session} loading={loading} />
+      </ThemeProvider>
+    </SafeAreaProvider>
   );
 }
 
 function AppInner({ session, loading }: { session: any; loading: boolean }) {
-  const { theme } = useTheme();
+  const { theme, isDark } = useTheme();
+  const insets = useSafeAreaInsets();
 
   if (loading) {
     return (
@@ -142,41 +169,59 @@ function AppInner({ session, loading }: { session: any; loading: boolean }) {
     );
   }
 
-  if (!session) return <AuthScreen onAuth={() => {}} />;
+  if (!session) return (
+    <View style={{ flex: 1, backgroundColor: theme.bg }}>
+      <StatusBar style={isDark ? 'light' : 'dark'} />
+      <AuthScreen onAuth={() => {}} />
+    </View>
+  );
 
   return (
-    <NavigationContainer>
-      <Tab.Navigator
-        screenOptions={{
-          headerShown: false,
-          tabBarStyle: { backgroundColor: theme.tabBar, borderTopColor: theme.tabBarBorder, borderTopWidth: 1, paddingBottom: 6, paddingTop: 4, height: 60 },
-          tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
-          tabBarActiveTintColor: theme.accent,
-          tabBarInactiveTintColor: theme.textMuted,
-        }}
-      >
-
-        <Tab.Screen
-          name="HomeTab"
-          component={DashboardScreen}
-          options={{ title: 'Home', tabBarIcon: ({ color, size }) => <Home color={color} size={size} /> }}
-        />
-        <Tab.Screen
-          name="BillingTab"
-          component={BillingStackNav}
-          options={{ title: 'Billing', tabBarIcon: ({ color, size }) => <CreditCard color={color} size={size} /> }}
-        />
-        <Tab.Screen
-          name="HRMTab"
-          component={HRMStackNav}
-          options={{ title: 'HRM', tabBarIcon: ({ color, size }) => <Users color={color} size={size} /> }}
-        />
-        <Tab.Screen
-          name="MoreTab"
-          component={MoreStackNav}
-          options={{ title: 'More', tabBarIcon: ({ color, size }) => <LayoutGrid color={color} size={size} /> }}
-        />
-      </Tab.Navigator>
-    </NavigationContainer>
+    <View style={{ flex: 1, backgroundColor: theme.bg }}>
+      <StatusBar style={isDark ? 'light' : 'dark'} />
+      <NavigationContainer>
+        <Tab.Navigator
+          screenOptions={{
+            headerShown: false,
+            tabBarStyle: { 
+              backgroundColor: theme.tabBar, 
+              borderTopColor: theme.tabBarBorder, 
+              borderTopWidth: 1, 
+              paddingBottom: insets.bottom > 0 ? insets.bottom : 6, 
+              height: insets.bottom > 0 ? 60 + insets.bottom : 60 
+            },
+            tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
+            tabBarActiveTintColor: theme.accent,
+            tabBarInactiveTintColor: theme.textMuted,
+          }}
+        >
+          <Tab.Screen
+            name="HomeTab"
+            component={DashboardScreen}
+            options={{ title: 'Home', tabBarIcon: ({ color, size }) => <Home color={color} size={size} /> }}
+          />
+          <Tab.Screen
+            name="BillingTab"
+            component={BillingStackNav}
+            options={{ title: 'Billing', tabBarIcon: ({ color, size }) => <CreditCard color={color} size={size} /> }}
+          />
+          <Tab.Screen
+            name="AccountingTab"
+            component={AccountingStackNav}
+            options={{ title: 'Accounts', tabBarIcon: ({ color, size }) => <Receipt color={color} size={size} /> }}
+          />
+          <Tab.Screen
+            name="HRMTab"
+            component={HRMStackNav}
+            options={{ title: 'HRM', tabBarIcon: ({ color, size }) => <Users color={color} size={size} /> }}
+          />
+          <Tab.Screen
+            name="MoreTab"
+            component={MoreStackNav}
+            options={{ title: 'More', tabBarIcon: ({ color, size }) => <LayoutGrid color={color} size={size} /> }}
+          />
+        </Tab.Navigator>
+      </NavigationContainer>
+    </View>
   );
 }

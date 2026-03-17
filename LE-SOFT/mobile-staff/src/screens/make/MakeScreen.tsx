@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, FlatList, SafeAreaView, RefreshControl, StyleSheet, TouchableOpacity, Modal, ScrollView } from 'react-native';
+import { View, Text, FlatList, SafeAreaView, RefreshControl, StyleSheet, TouchableOpacity, Modal, ScrollView, Alert } from 'react-native';
 import { supabase } from '../../lib/supabase';
-import { Briefcase, X } from 'lucide-react-native';
+import { Briefcase, X, Check } from 'lucide-react-native';
 
 export default function MakeScreen() {
   const [orders, setOrders] = useState<any[]>([]);
@@ -19,6 +19,13 @@ export default function MakeScreen() {
 
   useEffect(() => { fetchOrders(); }, []);
   const onRefresh = useCallback(async () => { setRefreshing(true); await fetchOrders(); setRefreshing(false); }, []);
+
+  const updateStatus = async (id: number, newStatus: string) => {
+    const { error } = await supabase.from('make_orders').update({ status: newStatus }).eq('id', id);
+    if (error) return Alert.alert('Error', error.message);
+    setSelected((prev: any) => ({ ...prev, status: newStatus }));
+    fetchOrders();
+  };
 
   const statusColor = (s: string) => ({ Placed: '#3b82f6', 'In Production': '#f59e0b', Delivered: '#10b981', Cancelled: '#ef4444' }[s] || '#6b7280');
 
@@ -73,6 +80,19 @@ export default function MakeScreen() {
                   ))}
                 </>
               )}
+
+              <Text style={[s.sectionLabel, { marginTop: 24 }]}>Update Status</Text>
+              <View style={s.statusGrid}>
+                {['Placed', 'In Production', 'Delivered', 'Cancelled'].map(st => (
+                  <TouchableOpacity
+                    key={st}
+                    style={[s.statusBtn, selected?.status === st && { backgroundColor: statusColor(st) }]}
+                    onPress={() => updateStatus(selected.id, st)}
+                  >
+                    <Text style={[s.statusBtnText, selected?.status === st && { color: '#fff' }]}>{st}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
             </ScrollView>
           </View>
         </View>
@@ -103,4 +123,7 @@ const s = StyleSheet.create({
   partRow: { backgroundColor: '#1a1a1a', borderRadius: 10, padding: 12, marginBottom: 6 },
   partName: { color: '#fff', fontWeight: '600' },
   partMeta: { color: '#6b7280', fontSize: 12, marginTop: 2 },
+  statusGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8, marginBottom: 40 },
+  statusBtn: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 10, borderWidth: 1, borderColor: '#333', minWidth: '48%' },
+  statusBtnText: { color: '#9ca3af', fontWeight: '700', fontSize: 13, textAlign: 'center' },
 });

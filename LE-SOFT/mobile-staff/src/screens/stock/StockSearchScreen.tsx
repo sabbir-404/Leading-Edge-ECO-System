@@ -2,15 +2,17 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, FlatList, SafeAreaView, StyleSheet, TouchableOpacity, Modal, ScrollView } from 'react-native';
 import { supabase } from '../../lib/supabase';
 import { Search, Package, X } from 'lucide-react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function StockSearchScreen() {
+  const insets = useSafeAreaInsets();
   const [items, setItems] = useState<any[]>([]);
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<any>(null);
 
   useEffect(() => {
     const load = async () => {
-      const { data } = await supabase.from('stock_items').select('*').order('name');
+      const { data } = await supabase.from('products').select('*').order('name');
       setItems(data || []);
     };
     load();
@@ -31,7 +33,7 @@ export default function StockSearchScreen() {
   };
 
   return (
-    <SafeAreaView style={s.safe}>
+    <View style={[s.safe, { paddingTop: insets.top }]}>
       <View style={s.header}>
         <Text style={s.title}>Stock Search</Text>
       </View>
@@ -95,7 +97,7 @@ export default function StockSearchScreen() {
           </View>
         </View>
       </Modal>
-    </SafeAreaView>
+    </View>
   );
 }
 

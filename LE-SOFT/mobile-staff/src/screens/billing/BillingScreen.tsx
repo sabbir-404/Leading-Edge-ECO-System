@@ -1,28 +1,51 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, TextInput, TouchableOpacity, FlatList, Alert, ActivityIndicator, StyleSheet, Modal } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, FlatList, Alert, ActivityIndicator, StyleSheet, Modal, ScrollView } from 'react-native';
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../../lib/ThemeContext';
 import KeyboardAwareContainer from '../../components/KeyboardAwareContainer';
-import { Search, Plus, Minus, Trash2, Save, User, X } from 'lucide-react-native';
+import { Search, Plus, Minus, Trash2, Save, User, X, Scan, Camera } from 'lucide-react-native';
+import { CameraView, useCameraPermissions } from 'expo-camera';
+import { Picker } from '@react-native-picker/picker';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface Product { id: number; name: string; sku: string; selling_price: number; }
 interface CartItem extends Product { quantity: number; discount_pct: number; }
+interface PaymentMethod { id: number; name: string; }
 
 export default function BillingScreen({ navigation }: any) {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
   const [products, setProducts] = useState<Product[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [search, setSearch] = useState('');
   const [showDrop, setShowDrop] = useState(false);
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
-  const [saving, setSaving] = useState(false);
   const [billedBy, setBilledBy] = useState('Staff');
+  const [saving, setSaving] = useState(false);
+
+  // New Fields
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
+  const [selectedMethod, setSelectedMethod] = useState<number | null>(null);
+  const [paymentRef, setPaymentRef] = useState('');
+  const [shippingAddress, setShippingAddress] = useState('');
+  const [shippingNote, setShippingNote] = useState('');
+  const [installationCharge, setInstallationCharge] = useState('0');
+  
+  // Barcode Scanning
+  const [permission, requestPermission] = useCameraPermissions();
+  const [scanned, setScanned] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
 
   useEffect(() => {
     const load = async () => {
-      const { data } = await supabase.from('stock_items').select('id, name, sku, selling_price').order('name');
-      setProducts(data || []);
+      const { data: prodData } = await supabase.from('products').select('id, name, sku, selling_price').order('name');
+      setProducts(prodData || []);
+      
+      const { data: pmData } = await supabase.from('payment_methods').select('id, name').eq('is_active', true);
+      setPaymentMethods(pmData || []);
+      if (pmData && pmData.length > 0) setSelectedMethod(pmData[0].id);
+
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
         const { data: p } = await supabase.from('users').select('full_name').eq('auth_id', user.id).single();
@@ -31,6 +54,18 @@ export default function BillingScreen({ navigation }: any) {
     };
     load();
   }, []);
+
+  const startScanning = async () => {
+    if (!permission) {
+      const res = await requestPermission();
+      if (!res.granted) return Alert.alert('Permission denied', 'Camera access is required for scanning.');
+    } else if (!permission.granted) {
+      const res = await requestPermission();
+      if (!res.granted) return Alert.alert('Permission denied', 'Camera access is required for scanning.');
+    }
+    setScanned(false);
+    setIsScanning(true);
+  };
 
   const filtered = products.filter(p =>
     p.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -44,12 +79,29 @@ export default function BillingScreen({ navigation }: any) {
       return [...prev, { ...p, quantity: 1, discount_pct: 0 }];
     });
     setSearch(''); setShowDrop(false);
+    setIsScanning(false);
+  };
+
+  const handleBarCodeScanned = ({ data }: any) => {
+    if (scanned) return;
+    setScanned(true);
+    const prod = products.find(p => p.sku === data || p.name === data);
+    if (prod) {
+      addToCart(prod);
+      Alert.alert('Success', `Added ${prod.name}`);
+    } else {
+      Alert.alert('Not Found', `Product with SKU/Barcode ${data} not found.`);
+      setScanned(false);
+    }
   };
 
   const updateQty = (id: number, delta: number) =>
     setCart(prev => prev.map(i => i.id === id ? { ...i, quantity: Math.max(1, i.quantity + delta) } : i));
   const removeItem = (id: number) => setCart(prev => prev.filter(i => i.id !== id));
-  const getTotal = () => cart.reduce((s, i) => s + i.selling_price * i.quantity * (1 - i.discount_pct / 100), 0);
+  
+  const getSubtotal = () => cart.reduce((s, i) => s + i.selling_price * i.quantity, 0);
+  const getDiscount = () => cart.reduce((s, i) => s + i.selling_price * i.quantity * (i.discount_pct / 100), 0);
+  const getTotal = () => getSubtotal() - getDiscount() + parseFloat(installationCharge || '0');
 
   const saveBill = async () => {
     if (cart.length === 0) return Alert.alert('Error', 'Cart is empty');
@@ -65,94 +117,172 @@ export default function BillingScreen({ navigation }: any) {
         const { data: nc } = await supabase.from('billing_customers').insert({ name: customerName, phone: customerPhone || '' }).select('id').single();
         custId = nc?.id || null;
       }
-      const subtotal = cart.reduce((s, i) => s + i.selling_price * i.quantity, 0);
-      const discountTotal = cart.reduce((s, i) => s + i.selling_price * i.quantity * (i.discount_pct / 100), 0);
-      const grand = subtotal - discountTotal;
-      const { data: bill, error } = await supabase.from('bills').insert({ customer_id: custId, billed_by: billedBy, subtotal, discount_total: discountTotal, grand_total: grand }).select('id, invoice_number').single();
+      
+      const subtotal = getSubtotal();
+      const discountTotal = getDiscount();
+      const grand = getTotal();
+      
+      const { data: bill, error } = await supabase.from('bills').insert({ 
+        customer_id: custId, 
+        billed_by: billedBy, 
+        subtotal, 
+        discount_total: discountTotal, 
+        grand_total: grand,
+        payment_method_id: selectedMethod,
+        payment_ref: paymentRef,
+        shipping_address: shippingAddress,
+        shipping_note: shippingNote,
+        installation_charge: parseFloat(installationCharge || '0')
+      }).select('id, invoice_number').single();
+      
       if (error) throw error;
-      await supabase.from('bill_items').insert(cart.map(i => ({ bill_id: bill.id, product_id: i.id, product_name: i.name, sku: i.sku || '', quantity: i.quantity, mrp: i.selling_price, discount_pct: i.discount_pct, discount_amt: i.selling_price * i.quantity * (i.discount_pct / 100), price: i.selling_price * i.quantity * (1 - i.discount_pct / 100) })));
+      await supabase.from('bill_items').insert(cart.map(i => ({ 
+        bill_id: bill.id, 
+        product_id: i.id, 
+        product_name: i.name, 
+        sku: i.sku || '', 
+        quantity: i.quantity, 
+        mrp: i.selling_price, 
+        discount_pct: i.discount_pct, 
+        discount_amt: i.selling_price * i.quantity * (i.discount_pct / 100), 
+        price: i.selling_price * i.quantity * (1 - i.discount_pct / 100) 
+      })));
+      
       Alert.alert('✅ Bill Saved', `Invoice: ${bill.invoice_number}\nTotal: ৳${grand.toFixed(2)}`);
-      setCart([]); setCustomerName(''); setCustomerPhone('');
+      setCart([]); setCustomerName(''); setCustomerPhone(''); setPaymentRef(''); setShippingAddress(''); setShippingNote(''); setInstallationCharge('0');
     } catch (e: any) { Alert.alert('Error', e.message); }
     finally { setSaving(false); }
   };
 
   const s = makeStyles(theme);
 
-  return (
-    <View style={s.root}>
-      <KeyboardAwareContainer>
-        {/* Header */}
-        <View style={s.header}>
-          <Text style={s.title}>Billing / POS</Text>
-          <TouchableOpacity onPress={() => navigation.navigate('BillHistory')} style={s.outlineBtn}>
-            <Text style={s.outlineBtnText}>History</Text>
+  if (isScanning) {
+    return (
+      <View style={s.scannerRoot}>
+        <CameraView
+          onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
+          barcodeScannerSettings={{
+            barcodeTypes: ["qr", "ean13", "code128", "code39", "upc_a"],
+          }}
+          style={StyleSheet.absoluteFillObject}
+        />
+        <View style={s.scannerOverlay}>
+          <Text style={s.scannerTitle}>Scan Product Barcode</Text>
+          <TouchableOpacity style={s.closeScanner} onPress={() => setIsScanning(false)}>
+            <X color="#fff" size={24} />
           </TouchableOpacity>
         </View>
+      </View>
+    );
+  }
 
-        {/* Customer */}
-        <View style={s.section}>
-          <Text style={s.sectionLabel}>Customer Details</Text>
-          <Text style={s.fieldLabel}>Name *</Text>
-          <View style={s.inputRow}>
-            <User color={theme.textMuted} size={16} />
-            <TextInput style={s.input} value={customerName} onChangeText={setCustomerName}
-              placeholder="Customer name..." placeholderTextColor={theme.textMuted} returnKeyType="next" />
+  return (
+    <View style={[s.root, { paddingTop: insets.top }]}>
+      <KeyboardAwareContainer>
+        <ScrollView showsVerticalScrollIndicator={false}>
+          {/* Header */}
+          <View style={s.header}>
+            <Text style={s.title}>Billing / POS</Text>
+            <TouchableOpacity onPress={() => navigation.navigate('BillHistory')} style={s.outlineBtn}>
+              <Text style={s.outlineBtnText}>History</Text>
+            </TouchableOpacity>
           </View>
-          <Text style={[s.fieldLabel, { marginTop: 10 }]}>Phone</Text>
-          <View style={s.inputRow}>
-            <TextInput style={s.input} value={customerPhone} onChangeText={setCustomerPhone}
-              placeholder="+880..." placeholderTextColor={theme.textMuted} keyboardType="phone-pad" />
-          </View>
-        </View>
 
-        {/* Product Search */}
-        <View style={s.section}>
-          <Text style={s.sectionLabel}>Add Product</Text>
-          <View style={s.inputRow}>
-            <Search color={theme.textMuted} size={16} />
-            <TextInput style={s.input} value={search}
-              onChangeText={t => { setSearch(t); setShowDrop(t.length > 0); }}
-              placeholder="Search name or SKU..." placeholderTextColor={theme.textMuted} returnKeyType="search" />
-            {search.length > 0 && (
-              <TouchableOpacity onPress={() => { setSearch(''); setShowDrop(false); }}><X color={theme.textMuted} size={16} /></TouchableOpacity>
-            )}
+          {/* Customer */}
+          <View style={s.section}>
+            <Text style={s.sectionLabel}>Customer Details</Text>
+            <View style={s.inputRow}>
+              <User color={theme.textMuted} size={16} />
+              <TextInput style={s.input} value={customerName} onChangeText={setCustomerName}
+                placeholder="Customer Name *" placeholderTextColor={theme.textMuted} />
+            </View>
+            <View style={[s.inputRow, { marginTop: 10 }]}>
+              <TextInput style={s.input} value={customerPhone} onChangeText={setCustomerPhone}
+                placeholder="Phone / Mobile" placeholderTextColor={theme.textMuted} keyboardType="phone-pad" />
+            </View>
           </View>
-          {showDrop && (
-            <View style={s.dropdown}>
-              {filtered.length === 0
-                ? <Text style={s.emptyDrop}>No products found</Text>
-                : filtered.map(p => (
+
+          {/* Product Search */}
+          <View style={s.section}>
+            <Text style={s.sectionLabel}>Inventory</Text>
+            <View style={s.searchRow}>
+              <View style={[s.inputRow, { flex: 1 }]}>
+                <Search color={theme.textMuted} size={16} />
+                <TextInput style={s.input} value={search}
+                  onChangeText={t => { setSearch(t); setShowDrop(t.length > 0); }}
+                  placeholder="Items or SKU..." placeholderTextColor={theme.textMuted} />
+              </View>
+              <TouchableOpacity style={s.scanBtn} onPress={startScanning}>
+                <Scan color={theme.accent} size={20} />
+              </TouchableOpacity>
+            </View>
+            {showDrop && (
+              <View style={s.dropdown}>
+                {filtered.map(p => (
                   <TouchableOpacity key={p.id} style={s.dropItem} onPress={() => addToCart(p)}>
                     <Text style={s.dropName}>{p.name}</Text>
                     <Text style={[s.dropPrice, { color: theme.accent }]}>৳{p.selling_price}</Text>
                   </TouchableOpacity>
-                ))
-              }
+                ))}
+              </View>
+            )}
+          </View>
+
+          {/* Cart */}
+          {cart.length > 0 && (
+            <View style={s.section}>
+              <Text style={s.sectionLabel}>Items Bag</Text>
+              {cart.map(item => (
+                <View key={item.id} style={s.cartItem}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.cartName}>{item.name}</Text>
+                    <Text style={s.cartMeta}>৳{item.selling_price} × {item.quantity}</Text>
+                  </View>
+                  <View style={s.qtyRow}>
+                    <TouchableOpacity onPress={() => updateQty(item.id, -1)} style={s.qBtn}><Minus color={theme.textPrimary} size={14} /></TouchableOpacity>
+                    <Text style={s.qtyText}>{item.quantity}</Text>
+                    <TouchableOpacity onPress={() => updateQty(item.id, 1)} style={s.qBtn}><Plus color={theme.textPrimary} size={14} /></TouchableOpacity>
+                    <TouchableOpacity onPress={() => removeItem(item.id)} style={[s.qBtn, { backgroundColor: theme.dangerLight }]}><Trash2 color={theme.danger} size={14} /></TouchableOpacity>
+                  </View>
+                </View>
+              ))}
             </View>
           )}
-        </View>
 
-        {/* Cart */}
-        {cart.length > 0 && (
+          {/* Shipping & Payment */}
           <View style={s.section}>
-            <Text style={s.sectionLabel}>Cart · {cart.length} item{cart.length > 1 ? 's' : ''}</Text>
-            {cart.map(item => (
-              <View key={item.id} style={s.cartItem}>
-                <View style={{ flex: 1 }}>
-                  <Text style={s.cartName}>{item.name}</Text>
-                  <Text style={s.cartMeta}>৳{item.selling_price} × {item.quantity} = ৳{(item.selling_price * item.quantity).toFixed(2)}</Text>
-                </View>
-                <View style={s.qtyRow}>
-                  <TouchableOpacity onPress={() => updateQty(item.id, -1)} style={[s.qBtn, { backgroundColor: theme.bgElevated }]}><Minus color={theme.textPrimary} size={13} /></TouchableOpacity>
-                  <Text style={s.qtyText}>{item.quantity}</Text>
-                  <TouchableOpacity onPress={() => updateQty(item.id, 1)} style={[s.qBtn, { backgroundColor: theme.bgElevated }]}><Plus color={theme.textPrimary} size={13} /></TouchableOpacity>
-                  <TouchableOpacity onPress={() => removeItem(item.id)} style={[s.qBtn, { backgroundColor: theme.dangerLight }]}><Trash2 color={theme.danger} size={13} /></TouchableOpacity>
-                </View>
-              </View>
-            ))}
+            <Text style={s.sectionLabel}>Shipping & Payment</Text>
+            <Text style={s.fieldLabel}>Payment Method</Text>
+            <View style={s.pickerContainer}>
+              <Picker
+                selectedValue={selectedMethod}
+                onValueChange={(v) => setSelectedMethod(v)}
+                style={{ color: theme.textPrimary }}
+                dropdownIconColor={theme.textMuted}
+              >
+                {paymentMethods.map(m => <Picker.Item key={m.id} label={m.name} value={m.id} />)}
+              </Picker>
+            </View>
+            
+            <Text style={[s.fieldLabel, { marginTop: 12 }]}>Transaction Ref / Note</Text>
+            <View style={s.inputRow}>
+              <TextInput style={s.input} value={paymentRef} onChangeText={setPaymentRef}
+                placeholder="Ref number or ID..." placeholderTextColor={theme.textMuted} />
+            </View>
+
+            <Text style={[s.fieldLabel, { marginTop: 12 }]}>Installation Charge (৳)</Text>
+            <View style={s.inputRow}>
+              <TextInput style={s.input} value={installationCharge} onChangeText={setInstallationCharge}
+                keyboardType="numeric" placeholder="0.00" placeholderTextColor={theme.textMuted} />
+            </View>
+
+            <Text style={[s.fieldLabel, { marginTop: 12 }]}>Shipping Address</Text>
+            <View style={[s.inputRow, { alignItems: 'flex-start', minHeight: 80 }]}>
+              <TextInput style={[s.input, { textAlignVertical: 'top' }]} value={shippingAddress} onChangeText={setShippingAddress}
+                placeholder="House, Area, City..." placeholderTextColor={theme.textMuted} multiline />
+            </View>
           </View>
-        )}
+        </ScrollView>
       </KeyboardAwareContainer>
 
       {/* Footer */}
@@ -178,25 +308,31 @@ const makeStyles = (theme: any) => StyleSheet.create({
   title: { color: theme.textPrimary, fontSize: 22, fontWeight: '800' },
   outlineBtn: { backgroundColor: theme.bgCard, borderRadius: 10, paddingVertical: 7, paddingHorizontal: 14, borderWidth: 1, borderColor: theme.border },
   outlineBtnText: { color: theme.accent, fontWeight: '700', fontSize: 13 },
-  section: { backgroundColor: theme.bgCard, borderRadius: 16, marginHorizontal: 16, marginBottom: 12, padding: 16, borderWidth: 1, borderColor: theme.border },
-  sectionLabel: { color: theme.textSecondary, fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 12 },
-  fieldLabel: { color: theme.textSecondary, fontSize: 12, fontWeight: '600', marginBottom: 6 },
-  inputRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: theme.bgInput, borderRadius: 10, paddingHorizontal: 12, borderWidth: 1, borderColor: theme.border, gap: 8 },
-  input: { flex: 1, color: theme.textPrimary, paddingVertical: 11, fontSize: 15 },
-  dropdown: { backgroundColor: theme.bgCard, borderRadius: 10, marginTop: 6, borderWidth: 1, borderColor: theme.border, maxHeight: 200, overflow: 'hidden' },
-  dropItem: { flexDirection: 'row', justifyContent: 'space-between', padding: 12, borderBottomWidth: 1, borderBottomColor: theme.border },
+  section: { backgroundColor: theme.bgCard, borderRadius: 16, marginHorizontal: 16, marginBottom: 16, padding: 16, borderWidth: 1, borderColor: theme.border },
+  sectionLabel: { color: theme.textSecondary, fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 },
+  fieldLabel: { color: theme.textSecondary, fontSize: 12, fontWeight: '600', marginBottom: 4 },
+  inputRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: theme.bgInput, borderRadius: 12, paddingHorizontal: 12, borderWidth: 1, borderColor: theme.border, gap: 8 },
+  input: { flex: 1, color: theme.textPrimary, paddingVertical: 12, fontSize: 15 },
+  searchRow: { flexDirection: 'row', gap: 10, alignItems: 'center' },
+  scanBtn: { backgroundColor: theme.bgElevated, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: theme.border },
+  dropdown: { backgroundColor: theme.bgCard, borderRadius: 10, marginTop: 6, borderWidth: 1, borderColor: theme.border, maxHeight: 200 },
+  dropItem: { flexDirection: 'row', justifyContent: 'space-between', padding: 14, borderBottomWidth: 1, borderBottomColor: theme.border },
   dropName: { color: theme.textPrimary, fontWeight: '500', flex: 1 },
   dropPrice: { fontWeight: '700' },
-  emptyDrop: { color: theme.textMuted, textAlign: 'center', padding: 12 },
-  cartItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: theme.border },
-  cartName: { color: theme.textPrimary, fontWeight: '600', fontSize: 14 },
-  cartMeta: { color: theme.textMuted, fontSize: 12, marginTop: 2 },
-  qtyRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  qBtn: { borderRadius: 8, padding: 6 },
-  qtyText: { color: theme.textPrimary, fontWeight: '700', minWidth: 22, textAlign: 'center', fontSize: 14 },
-  footer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, backgroundColor: theme.bgCard, borderTopWidth: 1, borderTopColor: theme.border },
-  totalLabel: { color: theme.textMuted, fontSize: 12 },
-  totalValue: { fontSize: 22, fontWeight: '800' },
-  saveBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 12, paddingVertical: 12, paddingHorizontal: 22 },
-  saveBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  cartItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: theme.border },
+  cartName: { color: theme.textPrimary, fontWeight: '600', fontSize: 15 },
+  cartMeta: { color: theme.textMuted, fontSize: 13, marginTop: 2 },
+  qtyRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  qBtn: { backgroundColor: theme.bgElevated, borderRadius: 8, padding: 8 },
+  qtyText: { color: theme.textPrimary, fontWeight: '700', minWidth: 24, textAlign: 'center', fontSize: 16 },
+  pickerContainer: { backgroundColor: theme.bgInput, borderRadius: 12, borderWidth: 1, borderColor: theme.border, overflow: 'hidden' },
+  footer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 20, backgroundColor: theme.bgCard, borderTopWidth: 1, borderTopColor: theme.border, paddingBottom: 30 },
+  totalLabel: { color: theme.textMuted, fontSize: 13 },
+  totalValue: { fontSize: 24, fontWeight: '900' },
+  saveBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 14, paddingVertical: 14, paddingHorizontal: 24 },
+  saveBtnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
+  scannerRoot: { flex: 1, backgroundColor: '#000' },
+  scannerOverlay: { position: 'absolute', top: 0, left: 0, right: 0, paddingTop: 60, paddingHorizontal: 20, alignItems: 'center' },
+  scannerTitle: { color: '#fff', fontSize: 18, fontWeight: '700', textShadowColor: 'rgba(0,0,0,0.7)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 4 },
+  closeScanner: { position: 'absolute', top: 55, right: 20, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 20, padding: 8 },
 });

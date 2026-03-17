@@ -1,9 +1,9 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, FlatList, RefreshControl } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, FlatList, RefreshControl, Image } from 'react-native';
 import { supabase } from '../lib/supabase';
 import { useTheme } from '../lib/ThemeContext';
 import KeyboardAwareContainer from '../components/KeyboardAwareContainer';
-import { CreditCard, Users, Search, Truck, LogOut, Briefcase, TrendingUp, ShoppingBag, Activity, BarChart2 } from 'lucide-react-native';
+import { CreditCard, Users, Search, Truck, LogOut, Briefcase, TrendingUp, ShoppingBag, Activity, BarChart2, Receipt } from 'lucide-react-native';
 
 interface Stats {
   todaySales: number; totalBills: number; activeSessions: number; pendingOrders: number;
@@ -40,10 +40,10 @@ export default function DashboardScreen({ navigation }: any) {
 
   const quickActions = [
     { title: 'Billing / POS', icon: <CreditCard color={theme.accent} size={26} />, bg: theme.accentLight, tab: 'BillingTab' },
-    { title: 'HRM Actions', icon: <Users color={theme.success} size={26} />, bg: theme.successLight, tab: 'HRMTab' },
+    { title: 'Accounting', icon: <Receipt color={theme.success} size={26} />, bg: theme.successLight, tab: 'AccountingTab' },
+    { title: 'HRM Actions', icon: <Users color={theme.purple} size={26} />, bg: theme.purpleLight, tab: 'HRMTab' },
     { title: 'Stock Search', icon: <Search color={theme.warning} size={26} />, bg: theme.warningLight, tab: 'MoreTab', screen: 'Stock' },
-    { title: 'Make / Track', icon: <Briefcase color={theme.purple} size={26} />, bg: theme.purpleLight, tab: 'MoreTab', screen: 'Make' },
-    { title: 'Shipping', icon: <Truck color={theme.danger} size={26} />, bg: theme.dangerLight, tab: 'MoreTab', screen: 'Shipping' },
+    { title: 'Make / Track', icon: <Briefcase color="#8b5cf6" size={26} />, bg: theme.isDark ? '#2d1b6e' : '#f3e8ff', tab: 'MoreTab', screen: 'Make' },
     { title: 'Reports', icon: <BarChart2 color="#06b6d4" size={26} />, bg: theme.isDark ? '#0b2d38' : '#e0f7fa', tab: 'MoreTab', screen: 'Reports' },
   ];
 

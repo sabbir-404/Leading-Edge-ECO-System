@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, Alert, Platform, KeyboardAvoidingView, SafeAreaView, StyleSheet } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, Alert, Platform, KeyboardAvoidingView, SafeAreaView, StyleSheet, Image } from 'react-native';
 import { supabase } from '../lib/supabase';
 import { useTheme } from '../lib/ThemeContext';
 import { Lock, User, Sun, Moon } from 'lucide-react-native';
@@ -37,10 +37,11 @@ export default function AuthScreen({ onAuth }: { onAuth: () => void }) {
         </TouchableOpacity>
 
         <View style={s.logo}>
-          <View style={s.logoIcon}>
-            <Text style={s.logoText}>LE</Text>
-          </View>
-          <Text style={s.appName}>LE<Text style={{ color: theme.accent }}>SOFT</Text></Text>
+          <Image 
+            source={isDark ? require('../../assets/logo-white.png') : require('../../assets/logo-black.png')} 
+            style={s.logoImg} 
+            resizeMode="contain"
+          />
           <Text style={s.tagline}>Internal Staff Portal</Text>
         </View>
 
@@ -91,10 +92,8 @@ const makeStyles = (theme: any) => StyleSheet.create({
   kav: { flex: 1, justifyContent: 'center', paddingHorizontal: 24 },
   themeBtn: { position: 'absolute', top: 16, right: 0, padding: 10, backgroundColor: theme.bgCard, borderRadius: 12, borderWidth: 1, borderColor: theme.border },
   logo: { alignItems: 'center', marginBottom: 32 },
-  logoIcon: { width: 72, height: 72, backgroundColor: theme.accent, borderRadius: 20, alignItems: 'center', justifyContent: 'center', marginBottom: 12, shadowColor: theme.accent, shadowOpacity: 0.4, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
-  logoText: { color: '#fff', fontSize: 24, fontWeight: '900' },
-  appName: { fontSize: 28, fontWeight: '900', color: theme.textPrimary, letterSpacing: 1 },
-  tagline: { color: theme.textMuted, fontSize: 14, marginTop: 4 },
+  logoImg: { width: 180, height: 60, marginBottom: 8 },
+  tagline: { color: theme.textMuted, fontSize: 13, marginTop: 4, fontWeight: '600', letterSpacing: 0.5 },
   card: { backgroundColor: theme.bgCard, borderRadius: 24, padding: 24, borderWidth: 1, borderColor: theme.border, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 16, shadowOffset: { width: 0, height: 4 } },
   cardTitle: { color: theme.textPrimary, fontSize: 20, fontWeight: '800', marginBottom: 20 },
   inputGroup: { marginBottom: 16 },
