@@ -1,0 +1,176 @@
+/**
+ * offline-db.ts
+ *
+ * Local SQLite fallback database for LE-SOFT.
+ * Provides a reliable local cache of Supabase data and a persistent queue for offline writes.
+ */
+
+import sqlite3 from 'sqlite3';
+import path from 'path';
+import { app } from 'electron';
+import fs from 'fs';
+
+// Promisified sqlite3 wrapper
+class SQLiteDB {
+    private db: sqlite3.Database;
+
+    constructor(dbPath: string) {
+        this.db = new sqlite3.Database(dbPath);
+    }
+
+    run(sql: string, params: any[] = []): Promise<sqlite3.RunResult> {
+        return new Promise((resolve, reject) => {
+            this.db.run(sql, params, function (err) {
+                if (err) reject(err);
+                else resolve(this);
+            });
+        });
+    }
+
+    get(sql: string, params: any[] = []): Promise<any> {
+        return new Promise((resolve, reject) => {
+            this.db.get(sql, params, (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+    }
+
+    all(sql: string, params: any[] = []): Promise<any[]> {
+        return new Promise((resolve, reject) => {
+            this.db.all(sql, params, (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows);
+            });
+        });
+    }
+
+    close(): Promise<void> {
+        return new Promise((resolve, reject) => {
+            this.db.close(err => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+    }
+}
+
+let db: SQLiteDB | null = null;
+
+export async function initOfflineDB(): Promise<void> {
+    if (db) return;
+
+    const dbPath = path.join(app.getPath('userData'), 'lesoft_offline.db');
+    db = new SQLiteDB(dbPath);
+
+    // 1. Table cache (stores entire tables as JSON blobs for offline reads)
+    await db.run(`
+        CREATE TABLE IF NOT EXISTS table_cache (
+            table_name TEXT PRIMARY KEY,
+            data_json TEXT NOT NULL,
+            updated_at INTEGER NOT NULL
+        )
+    `);
+
+    // 2. Sync queue (stores pending operations when offline)
+    await db.run(`
+        CREATE TABLE IF NOT EXISTS sync_queue (
+            id TEXT PRIMARY KEY,
+            table_name TEXT NOT NULL,
+            operation TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            retry_count INTEGER DEFAULT 0
+        )
+    `);
+
+    console.log('[OfflineDB] Initialized at:', dbPath);
+}
+
+// ── Cache Operations (Reads) ──────────────────────────────────────────────────
+
+export async function saveTableCache(tableName: string, rows: any[]): Promise<void> {
+    if (!db) return;
+    try {
+        const json = JSON.stringify(rows);
+        await db.run(
+            `INSERT INTO table_cache (table_name, data_json, updated_at) 
+             VALUES (?, ?, ?) 
+             ON CONFLICT(table_name) DO UPDATE SET data_json=excluded.data_json, updated_at=excluded.updated_at`,
+            [tableName, json, Date.now()]
+        );
+    } catch (e: any) {
+        console.error(`[OfflineDB] Failed to save cache for ${tableName}:`, e.message);
+    }
+}
+
+export async function loadTableCache(tableName: string): Promise<any[]> {
+    if (!db) return [];
+    try {
+        const row = await db.get(`SELECT data_json FROM table_cache WHERE table_name = ?`, [tableName]);
+        if (row && row.data_json) {
+            return JSON.parse(row.data_json);
+        }
+    } catch (e: any) {
+        console.error(`[OfflineDB] Failed to load cache for ${tableName}:`, e.message);
+    }
+    return [];
+}
+
+export async function clearTableCache(): Promise<void> {
+    if (!db) return;
+    await db.run(`DELETE FROM table_cache`);
+}
+
+// ── Queue Operations (Writes) ─────────────────────────────────────────────────
+
+export interface SyncOperation {
+    id: string;
+    table: string;
+    operation: 'insert' | 'update' | 'upsert' | 'delete';
+    payload: any;
+    created_at?: number;
+    retry_count?: number;
+}
+
+export async function enqueueOfflineWrite(op: SyncOperation): Promise<void> {
+    if (!db) return;
+    try {
+        await db.run(
+            `INSERT INTO sync_queue (id, table_name, operation, payload_json, created_at, retry_count) 
+             VALUES (?, ?, ?, ?, ?, 0)`,
+            [op.id, op.table, op.operation, JSON.stringify(op.payload), Date.now()]
+        );
+        console.log(`[OfflineDB] Enqueued offline write: ${op.operation} on ${op.table}`);
+    } catch (e: any) {
+        console.error(`[OfflineDB] Failed to enqueue offline write:`, e.message);
+    }
+}
+
+export async function getPendingWrites(): Promise<SyncOperation[]> {
+    if (!db) return [];
+    try {
+        const rows = await db.all(`SELECT * FROM sync_queue ORDER BY created_at ASC`);
+        return rows.map(r => ({
+            id: r.id,
+            table: r.table_name,
+            operation: r.operation as any,
+            payload: JSON.parse(r.payload_json),
+            created_at: r.created_at,
+            retry_count: r.retry_count
+        }));
+    } catch (e: any) {
+        console.error(`[OfflineDB] Failed to get pending writes:`, e.message);
+        return [];
+    }
+}
+
+export async function removePendingWrite(id: string): Promise<void> {
+    if (!db) return;
+    await db.run(`DELETE FROM sync_queue WHERE id = ?`, [id]);
+}
+
+export async function incrementRetryCount(id: string): Promise<void> {
+    if (!db) return;
+    await db.run(`UPDATE sync_queue SET retry_count = retry_count + 1 WHERE id = ?`, [id]);
+}

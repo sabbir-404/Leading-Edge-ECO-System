@@ -1,0 +1,9 @@
+Logic Engine v1.2.4
+Licensed by Leading Edge (leadingedge.com.bd)
+
+Proprietary Software Notice:
+This software and all associated files are the exclusive property of Leading Edge. 
+Use of this software by any unauthorized party is strictly prohibited. 
+You may not decompile, reverse engineer, or redistribute this software without express written permission from Leading Edge.
+
+Copyright © 2026 Leading Edge. All rights reserved.
