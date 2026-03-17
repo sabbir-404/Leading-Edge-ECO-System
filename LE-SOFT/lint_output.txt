@@ -1,0 +1,4 @@
+
+> le-soft@1.1.8 lint
+> eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0
+
