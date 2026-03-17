@@ -344,4 +344,11 @@ contextBridge.exposeInMainWorld('electron', {
     // Trigger Agent & History
     runAutoPriceScan: (productId: number) => ipcRenderer.invoke('run-auto-price-scan', productId),
     getMarketAnalysisHistory: (productId?: number) => ipcRenderer.invoke('get-market-analysis-history', productId),
+
+    // ─── PAYMENT METHODS ───
+    getPaymentMethods: () => ipcRenderer.invoke('get-payment-methods'),
+    createPaymentMethod: (method: any) => ipcRenderer.invoke('create-payment-method', method),
+    updatePaymentMethod: (method: any) => ipcRenderer.invoke('update-payment-method', method),
+    deletePaymentMethod: (id: number) => ipcRenderer.invoke('delete-payment-method', id),
+    verifyBillPayment: (data: any) => ipcRenderer.invoke('verify-bill-payment', data),
 });

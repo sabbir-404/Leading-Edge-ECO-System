@@ -2322,4 +2322,37 @@ export function registerHandlers() {
         }
     });
 
+    // ═══ PAYMENT METHODS ══════════════════════════════════════════════════════════
+    ipcMain.handle('get-payment-methods', async () => {
+        const { data, error } = await supabase.from('payment_methods').select('*').order('name');
+        if (error) throw error;
+        return data || [];
+    });
+
+    ipcMain.handle('create-payment-method', async (_e, method) => {
+        const { data, error } = await supabase.from('payment_methods').insert([method]).select('id').single();
+        if (error) throw error;
+        return { success: true, id: data.id };
+    });
+
+    ipcMain.handle('update-payment-method', async (_e, method) => {
+        const { id, ...updates } = method;
+        const { error } = await supabase.from('payment_methods').update(updates).eq('id', id);
+        if (error) throw error;
+        return { success: true };
+    });
+
+    ipcMain.handle('delete-payment-method', async (_e, id: number) => {
+        const { error } = await supabase.from('payment_methods').delete().eq('id', id);
+        if (error) throw error;
+        return { success: true };
+    });
+
+    ipcMain.handle('verify-bill-payment', async (_e, { paymentRef, status }) => {
+        // Special handler for external automation software to verify payments
+        const { error } = await supabase.from('bills').update({ payment_status: status }).eq('payment_ref', paymentRef);
+        if (error) throw error;
+        return { success: true };
+    });
+
 } // end registerHandlers

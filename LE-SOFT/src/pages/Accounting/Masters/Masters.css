@@ -170,6 +170,76 @@
     color: var(--text-primary);
 }
 
+/* Filter Bar */
+.filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    margin-bottom: 2rem;
+    align-items: center;
+}
+
+.search-input-wrapper {
+    flex: 1;
+    min-width: 250px;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    background: var(--input-bg);
+    padding: 0.75rem 1rem;
+    border-radius: 10px;
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+}
+
+.search-input-wrapper input {
+    border: none;
+    background: transparent;
+    outline: none;
+    flex: 1;
+    font-size: 1rem;
+    color: var(--text-primary);
+}
+
+.filters-row {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.filters-row select {
+    padding: 0.75rem 1rem;
+    border-radius: 10px;
+    border: 1px solid var(--border-color);
+    background: var(--input-bg);
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    outline: none;
+    cursor: pointer;
+    min-width: 150px;
+}
+
+.filters-row select:focus {
+    border-color: var(--accent-color);
+}
+
+.clear-filters {
+    padding: 0.6rem 1rem;
+    border-radius: 8px;
+    background: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.clear-filters:hover {
+    background: #ef4444;
+    color: white;
+}
+
 /* Table */
 .table-container {
     overflow-x: auto;
@@ -181,14 +251,19 @@
 }
 
 .master-table th {
+    position: sticky;
+    top: -2rem; /* Offsets the parent .master-list-container padding: 2rem */
+    z-index: 10;
+    background: var(--card-bg);
     text-align: left;
     padding: 1rem;
-    border-bottom: 1px solid var(--border-color);
+    border-bottom: 2px solid var(--border-color);
     color: var(--text-secondary);
     font-weight: 600;
     font-size: 0.9rem;
     text-transform: uppercase;
     letter-spacing: 0.05em;
+    box-shadow: 0 2px 4px -2px rgba(0, 0, 0, 0.1);
 }
 
 .master-table td {

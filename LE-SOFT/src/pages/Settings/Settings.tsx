@@ -11,11 +11,12 @@ import DashboardLayout from '../../components/DashboardLayout';
 import { useToast } from '../../context/ToastContext';
 import '../Accounting/Masters/Masters.css';
 
-type SettingsTab = 'profile' | 'system_hardware' | 'database_api' | 'about';
+type SettingsTab = 'profile' | 'system_hardware' | 'payment_methods' | 'database_api' | 'about';
 
-const TAB_LIST: { id: SettingsTab; label: string; icon: React.ReactNode }[] = [
+const TAB_LIST: { id: SettingsTab; label: string; icon: React.ReactNode; adminOnly?: boolean }[] = [
     { id: 'profile',          label: 'Profile',             icon: <User size={18} />       },
     { id: 'system_hardware',  label: 'System & Hardware',    icon: <SettingsIcon size={18} />},
+    { id: 'payment_methods',  label: 'Payment Methods',      icon: <DollarSign size={18} />, adminOnly: true },
     { id: 'database_api',     label: 'Database & API',      icon: <Database size={18} />   },
     { id: 'about',            label: 'About',               icon: <Info size={18} />       },
 ];
@@ -96,6 +97,27 @@ const Settings: React.FC = () => {
     const [unlockPassword, setUnlockPassword] = useState('');
     const [unlockError, setUnlockError] = useState('');
     const [adminKeyMsg, setAdminKeyMsg] = useState('');
+
+    // ── Payment Methods ───────────────────────────────────────────────────────
+    const [paymentMethods, setPaymentMethods] = useState<any[]>([]);
+    const [loadingMethods, setLoadingMethods] = useState(false);
+
+    const fetchPaymentMethods = async () => {
+        setLoadingMethods(true);
+        try {
+            const data = await window.electron.getPaymentMethods();
+            setPaymentMethods(data || []);
+        } catch (e) {
+            showToast('Failed to load payment methods', 'error');
+        }
+        setLoadingMethods(false);
+    };
+
+    useEffect(() => {
+        if (activeTab === 'payment_methods') {
+            fetchPaymentMethods();
+        }
+    }, [activeTab]);
 
     useEffect(() => {
         window.electron.getAppVersion?.().then((v: string) => setAppVersion(v || '1.0.0')).catch(() => {});
@@ -254,7 +276,7 @@ const Settings: React.FC = () => {
 
                 {/* Tab strip */}
                 <div style={{ display: 'flex', gap: '0.35rem', overflowX: 'auto', marginBottom: '1.5rem', padding: '4px', background: 'var(--input-bg)', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
-                    {TAB_LIST.map(tab => (
+                    {TAB_LIST.filter(t => !t.adminOnly || (localStorage.getItem('user_role') === 'superadmin')).map(tab => (
                         <button
                             key={tab.id}
                             onClick={() => setActiveTab(tab.id)}
@@ -274,6 +296,93 @@ const Settings: React.FC = () => {
 
                 <AnimatePresence mode="wait">
                     <motion.div key={activeTab} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}>
+
+                        {/* ── PAYMENT METHODS TAB ─────────────────────────────── */}
+                        {activeTab === 'payment_methods' && (
+                            <>
+                                <div style={card}>
+                                    <div style={cardHeader}>
+                                        <div style={iconBox('#10b981', 'rgba(16,185,129,0.12)')}><DollarSign size={20} /></div>
+                                        <div>
+                                            <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>Payment Options</h2>
+                                            <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-secondary)' }}>Manage available payment methods during billing</p>
+                                        </div>
+                                    </div>
+
+                                    <div style={{ marginBottom: '1.5rem', padding: '1rem', background: 'var(--input-bg)', borderRadius: '10px', border: '1px solid var(--border-color)' }}>
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 150px', gap: '1rem', alignItems: 'flex-end' }}>
+                                            <div>
+                                                <span style={label}>Method Name</span>
+                                                <input style={input} placeholder="e.g. bKash Personal" 
+                                                    id="new-method-name" />
+                                            </div>
+                                            <div>
+                                                <span style={label}>Provider / Type</span>
+                                                <select style={input} id="new-method-provider">
+                                                    <option value="Cash">Cash</option>
+                                                    <option value="bKash">bKash (Mobile Banking)</option>
+                                                    <option value="Nagad">Nagad (Mobile Banking)</option>
+                                                    <option value="Card">Card</option>
+                                                    <option value="Bank">Bank Transfer</option>
+                                                </select>
+                                            </div>
+                                            <button onClick={async () => {
+                                                const name = document.getElementById('new-method-name').value;
+                                                const provider = document.getElementById('new-method-provider').value;
+                                                if(!name) return showToast('Enter a name', 'error');
+                                                const res = await window.electron.createPaymentMethod({
+                                                    name, provider, type: provider === 'Cash' ? 'manual' : 'automated', is_active: true
+                                                });
+                                                if(res.success) {
+                                                    document.getElementById('new-method-name').value = '';
+                                                    showToast('Method added!', 'success');
+                                                    fetchPaymentMethods();
+                                                }
+                                            }} style={btn('var(--accent-color)')}>Add Method</button>
+                                        </div>
+                                    </div>
+
+                                    <div style={{ overflow: 'hidden', borderRadius: '10px', border: '1px solid var(--border-color)' }}>
+                                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
+                                            <thead style={{ background: 'var(--input-bg)' }}>
+                                                <tr>
+                                                    <th style={{ padding: '0.75rem 1rem', textAlign: 'left', borderBottom: '1px solid var(--border-color)' }}>Name</th>
+                                                    <th style={{ padding: '0.75rem 1rem', textAlign: 'left', borderBottom: '1px solid var(--border-color)' }}>Type</th>
+                                                    <th style={{ padding: '0.75rem 1rem', textAlign: 'right', borderBottom: '1px solid var(--border-color)' }}>Actions</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {paymentMethods.length === 0 ? (
+                                                    <tr><td colSpan={3} style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>No payment methods added yet.</td></tr>
+                                                ) : (
+                                                    paymentMethods.map(m => (
+                                                        <tr key={m.id} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                                                            <td style={{ padding: '0.75rem 1rem' }}>
+                                                                <div style={{ fontWeight: 600 }}>{m.name}</div>
+                                                                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{m.provider}</div>
+                                                            </td>
+                                                            <td style={{ padding: '0.75rem 1rem' }}>
+                                                                <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: '4px', background: m.type === 'automated' ? 'rgba(59,130,246,0.1)' : 'rgba(100,116,139,0.1)', color: m.type === 'automated' ? '#3b82f6' : '#64748b' }}>
+                                                                    {m.type.toUpperCase()}
+                                                                </span>
+                                                            </td>
+                                                            <td style={{ padding: '0.75rem 1rem', textAlign: 'right' }}>
+                                                                <button onClick={async () => {
+                                                                    if(confirm('Delete this method?')) {
+                                                                        await window.electron.deletePaymentMethod(m.id);
+                                                                        fetchPaymentMethods();
+                                                                    }
+                                                                }} style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer' }}><RefreshCw size={14} /></button>
+                                                            </td>
+                                                        </tr>
+                                                    ))
+                                                )}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </>
+                        )}
 
                         {/* ── PROFILE TAB ─────────────────────────────────────── */}
                         {activeTab === 'profile' && (

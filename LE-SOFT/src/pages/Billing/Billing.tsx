@@ -118,14 +118,30 @@ const Billing: React.FC = () => {
     const [installationCharge, setInstallationCharge] = useState<number>(0);
     const [installationNote, setInstallationNote] = useState<string>('');
 
-    // Load Products
+    // Payment State
+    const [paymentMethods, setPaymentMethods] = useState<any[]>([]);
+    const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<number | null>(null);
+    const [paymentRef, setPaymentRef] = useState('');
+
+    // Load Products & Payment Methods
     useEffect(() => {
-        const loadProducts = async () => {
-            // @ts-ignore
-            const data = await window.electron.getProducts();
-            setProducts(data || []);
+        const loadInitialData = async () => {
+            try {
+                // @ts-ignore
+                const [prods, methods] = await Promise.all([
+                    window.electron.getProducts(),
+                    window.electron.getPaymentMethods()
+                ]);
+                setProducts(prods || []);
+                setPaymentMethods(methods || []);
+                // Default to Cash if available
+                const cash = (methods || []).find((m: any) => m.provider === 'Cash');
+                if (cash) setSelectedPaymentMethod(cash.id);
+            } catch (e) {
+                console.error('Failed to load initial data:', e);
+            }
         };
-        loadProducts();
+        loadInitialData();
 
         // Generate preview invoice number
         const now = new Date();
@@ -267,6 +283,8 @@ const Billing: React.FC = () => {
                 installation_charge: installationCharge,
                 installation_note: installationNote,
                 grand_total: grandTotal,
+                payment_method_id: selectedPaymentMethod,
+                payment_ref: paymentRef,
             });
 
             if (result.success) {
@@ -311,6 +329,8 @@ const Billing: React.FC = () => {
         setInvoiceNumber(`${dateStr}-XXXX-XXX`);
         setInstallationCharge(0);
         setInstallationNote('');
+        setPaymentRef('');
+        // Keep selectedPaymentMethod as Cash if it was
     };
 
     return (
@@ -612,6 +632,36 @@ const Billing: React.FC = () => {
                             value={installationCharge || ''}
                             onChange={e => setInstallationCharge(parseFloat(e.target.value) || 0)}
                         />
+                    </div>
+                </div>
+
+                {/* ── PAYMENT SECTION ── */}
+                <div style={{ background: 'var(--card-bg)', borderRadius: '12px', border: '1px solid var(--border-color)', padding: '1rem 1.25rem' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(200px, 1fr) 2fr', gap: '1.5rem', alignItems: 'flex-end' }}>
+                        <div>
+                            <label style={labelStyle}>Payment Method</label>
+                            <select 
+                                style={{ ...inputStyle, fontWeight: 700 }}
+                                value={selectedPaymentMethod || ''}
+                                onChange={e => setSelectedPaymentMethod(parseInt(e.target.value) || null)}
+                            >
+                                <option value="">Select Method</option>
+                                {paymentMethods.map(m => (
+                                    <option key={m.id} value={m.id}>{m.name} ({m.provider})</option>
+                                ))}
+                            </select>
+                        </div>
+                        {selectedPaymentMethod && paymentMethods.find(m => m.id === selectedPaymentMethod)?.provider !== 'Cash' && (
+                            <motion.div initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} style={{ flex: 1 }}>
+                                <label style={labelStyle}>Transaction ID / Reference (Required for {paymentMethods.find(m => m.id === selectedPaymentMethod)?.provider})</label>
+                                <input 
+                                    style={{ ...inputStyle, border: paymentRef ? '1px solid var(--border-color)' : '1px solid #ef4444' }}
+                                    placeholder="Enter Trans ID or Reference"
+                                    value={paymentRef}
+                                    onChange={e => setPaymentRef(e.target.value)}
+                                />
+                            </motion.div>
+                        )}
                     </div>
                 </div>
 

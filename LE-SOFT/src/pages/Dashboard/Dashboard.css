@@ -6,6 +6,7 @@
     color: var(--text-primary);
     transition: background-color 0.3s;
     overflow: hidden;
+    position: relative;
 }
 
 /* Sidebar */

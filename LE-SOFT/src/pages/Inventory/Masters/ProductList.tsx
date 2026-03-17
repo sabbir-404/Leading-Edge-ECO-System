@@ -8,6 +8,9 @@ import '../../Accounting/Masters/Masters.css';
 const ProductList: React.FC = () => {
     const navigate = useNavigate();
     const [searchTerm, setSearchTerm] = useState('');
+    const [categoryFilter, setCategoryFilter] = useState('All');
+    const [groupFilter, setGroupFilter] = useState('All');
+    const [stockStatus, setStockStatus] = useState('All');
     const [products, setProducts] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
 
@@ -17,6 +20,9 @@ const ProductList: React.FC = () => {
         width: (localStorage.getItem('barcode_sticker_size') || '50x30') as StickerSize,
         printer: localStorage.getItem('barcode_printer') || '',
     }));
+
+    const categories = ['All', ...Array.from(new Set(products.map(p => p.category || 'Uncategorized'))).sort()];
+    const groups = ['All', ...Array.from(new Set(products.map(p => p.group_name || 'No Group'))).sort()];
 
     const fetchProducts = async () => {
         try {
@@ -43,11 +49,19 @@ const ProductList: React.FC = () => {
         }
     };
 
-    const filtered = products.filter(p =>
-        p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (p.sku || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (p.category || '').toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    const filtered = products.filter(p => {
+        const matchesSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            (p.sku || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+            (p.category || '').toLowerCase().includes(searchTerm.toLowerCase());
+        
+        const matchesCategory = categoryFilter === 'All' || (p.category || 'Uncategorized') === categoryFilter;
+        const matchesGroup = groupFilter === 'All' || (p.group_name || 'No Group') === groupFilter;
+        const matchesStock = stockStatus === 'All' || 
+            (stockStatus === 'In Stock' && (p.quantity || 0) > 0) ||
+            (stockStatus === 'Out of Stock' && (p.quantity || 0) <= 0);
+
+        return matchesSearch && matchesCategory && matchesGroup && matchesStock;
+    });
 
     return (
         <div className="master-list-container">
@@ -58,9 +72,38 @@ const ProductList: React.FC = () => {
                 </button>
             </div>
 
-            <div className="search-bar">
-                <Search size={18} />
-                <input type="text" placeholder="Search products by name, SKU, category..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+            <div className="filter-bar">
+                <div className="search-input-wrapper">
+                    <Search size={18} />
+                    <input type="text" placeholder="Search products..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                </div>
+                
+                <div className="filters-row">
+                    <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
+                        <option value="All">All Categories</option>
+                        {categories.filter(c => c !== 'All').map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+
+                    <select value={groupFilter} onChange={(e) => setGroupFilter(e.target.value)}>
+                        <option value="All">All Groups</option>
+                        {groups.filter(g => g !== 'All').map(g => <option key={g} value={g}>{g}</option>)}
+                    </select>
+
+                    <select value={stockStatus} onChange={(e) => setStockStatus(e.target.value)}>
+                        <option value="All">All Stock</option>
+                        <option value="In Stock">In Stock</option>
+                        <option value="Out of Stock">Out of Stock</option>
+                    </select>
+
+                    { (searchTerm || categoryFilter !== 'All' || groupFilter !== 'All' || stockStatus !== 'All') && (
+                        <button className="clear-filters" onClick={() => {
+                            setSearchTerm('');
+                            setCategoryFilter('All');
+                            setGroupFilter('All');
+                            setStockStatus('All');
+                        }}>Clear</button>
+                    )}
+                </div>
             </div>
 
             <div className="table-container">
