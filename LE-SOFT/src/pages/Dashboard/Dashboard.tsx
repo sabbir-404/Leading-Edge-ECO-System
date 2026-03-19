@@ -39,6 +39,7 @@ const Dashboard: React.FC = () => {
 
     // Chat
     const [chatUsers, setChatUsers] = useState<any[]>([]);
+    const [chatUserSearch, setChatUserSearch] = useState('');
     const [selectedChatUser, setSelectedChatUser] = useState<any>(null);
     const [messages, setMessages] = useState<any[]>([]);
     const [newMessage, setNewMessage] = useState('');
@@ -134,7 +135,47 @@ const Dashboard: React.FC = () => {
         return () => clearTimeout(timeout);
     }, [searchQuery]);
 
-    // ─── Chat Messages ───
+    // ─── Chat Realtime Subscription ───
+    useEffect(() => {
+        if (!selectedChatUser || !currentUser) return;
+        
+        let channel: any;
+
+        const setupRealtime = async () => {
+            try {
+                // @ts-ignore
+                const config = await window.electron.getSupabaseConfig();
+                // @ts-ignore
+                const { createClient } = await import('@supabase/supabase-js');
+                const sb = createClient(config.url, config.anonKey);
+
+                channel = sb.channel(`chat:${currentUser.id}-${selectedChatUser.id}`)
+                    .on('postgres_changes', 
+                        { event: 'INSERT', schema: 'public', table: 'internal_messages' }, 
+                        (payload: any) => {
+                            const msg = payload.new;
+                            // Update local state if it belongs to this conversation
+                            if ((msg.sender_id === currentUser.id && msg.receiver_id === selectedChatUser.id) ||
+                                (msg.sender_id === selectedChatUser.id && msg.receiver_id === currentUser.id)) {
+                                // @ts-ignore
+                                window.electron.getChatMessages({ senderId: currentUser.id, receiverId: selectedChatUser.id })
+                                    .then((msgs: any) => setMessages(msgs || []));
+                            }
+                        }
+                    ).subscribe();
+            } catch (e) {
+                console.error('Realtime setup failed:', e);
+            }
+        };
+
+        setupRealtime();
+
+        return () => {
+            if (channel) channel.unsubscribe();
+        };
+    }, [selectedChatUser, currentUser]);
+
+    // Initial message fetch
     useEffect(() => {
         if (!selectedChatUser || !currentUser) return;
         const fetchMessages = async () => {
@@ -145,8 +186,6 @@ const Dashboard: React.FC = () => {
             } catch (e) { console.error(e); }
         };
         fetchMessages();
-        const interval = setInterval(fetchMessages, 3000);
-        return () => clearInterval(interval);
     }, [selectedChatUser, currentUser]);
 
     useEffect(() => {
@@ -358,21 +397,34 @@ const Dashboard: React.FC = () => {
 
                     {/* ── RIGHT COLUMN: Chat Panel ── */}
                     <div className="chat-panel">
-                        <div className="chat-panel-header">
-                            <h3>
+                        <div className="chat-panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px', flex: 1 }}>
                                 <MessageCircle size={18} />
                                 {selectedChatUser ? (
-                                    <div>
-                                        <span>{selectedChatUser.full_name}</span>
-                                        <div className="header-subtitle">
+                                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                        <span style={{ fontSize: '0.95rem' }}>{selectedChatUser.full_name}</span>
+                                        <div className="header-subtitle" style={{ fontSize: '0.65rem' }}>
                                             {isUserTyping(selectedChatUser.id) ? 'typing...' : isUserOnline(selectedChatUser.id) ? 'online' : 'offline'}
                                         </div>
                                     </div>
                                 ) : (
-                                    <span>Staff Chat</span>
+                                    <span style={{ fontSize: '0.95rem' }}>Staff Chat</span>
                                 )}
                             </h3>
-                            {selectedChatUser && (
+                            
+                            {!selectedChatUser ? (
+                                <div style={{ position: 'relative', flex: 1, maxWidth: '140px', marginLeft: '10px' }}>
+                                    <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', opacity: 0.6, color: '#333' }} />
+                                    <input
+                                        value={chatUserSearch}
+                                        onChange={e => setChatUserSearch(e.target.value)}
+                                        placeholder="Search staff..."
+                                        style={{ width: '100%', boxSizing: 'border-box', padding: '5px 10px 5px 30px', borderRadius: '20px', border: 'none', background: 'rgba(255,255,255,0.9)', fontSize: '0.75rem', color: '#111', outline: 'none', transition: 'background 0.2s', boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.1)' }}
+                                        onFocus={e => e.target.style.background = '#fff'}
+                                        onBlur={e => e.target.style.background = 'rgba(255,255,255,0.9)'}
+                                    />
+                                </div>
+                            ) : (
                                 <button onClick={() => { setSelectedChatUser(null); setMessages([]); }} style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', padding: '4px' }}>
                                     <ArrowLeft size={18} />
                                 </button>
@@ -383,27 +435,29 @@ const Dashboard: React.FC = () => {
                             {!selectedChatUser ? (
                                 /* ── User List ── */
                                 <div className="chat-user-list">
-                                    {chatUsers.length === 0 ? (
-                                        <div className="chat-empty-state">
-                                            <MessageSquare size={32} />
-                                            <p>No other users found.</p>
-                                        </div>
-                                    ) : (
-                                        chatUsers.map(u => (
-                                            <div key={u.id} className="chat-user-item" onClick={() => setSelectedChatUser(u)}>
-                                                <div className="chat-user-avatar">
-                                                    {u.full_name?.charAt(0) || u.username?.charAt(0)}
-                                                    <span className={isUserOnline(u.id) ? 'online-dot' : 'offline-dot'} />
-                                                </div>
-                                                <div className="chat-user-info">
-                                                    <div className="chat-user-name">{u.full_name || u.username}</div>
-                                                    <div className={`chat-user-status ${isUserTyping(u.id) ? 'typing' : isUserOnline(u.id) ? 'online' : ''}`}>
-                                                        {isUserTyping(u.id) ? 'typing...' : isUserOnline(u.id) ? 'Online' : u.role}
+                                    <div style={{ overflowY: 'auto', flex: 1 }}>
+                                        {chatUsers.filter(u => (u.full_name || u.username || '').toLowerCase().includes(chatUserSearch.toLowerCase())).length === 0 ? (
+                                            <div className="chat-empty-state">
+                                                <MessageSquare size={32} />
+                                                <p>No other users found.</p>
+                                            </div>
+                                        ) : (
+                                            chatUsers.filter(u => (u.full_name || u.username || '').toLowerCase().includes(chatUserSearch.toLowerCase())).map(u => (
+                                                <div key={u.id} className="chat-user-item" onClick={() => setSelectedChatUser(u)}>
+                                                    <div className="chat-user-avatar">
+                                                        {u.full_name?.charAt(0) || u.username?.charAt(0)}
+                                                        <span className={isUserOnline(u.id) ? 'online-dot' : 'offline-dot'} />
+                                                    </div>
+                                                    <div className="chat-user-info">
+                                                        <div className="chat-user-name">{u.full_name || u.username}</div>
+                                                        <div className={`chat-user-status ${isUserTyping(u.id) ? 'typing' : isUserOnline(u.id) ? 'online' : ''}`}>
+                                                            {isUserTyping(u.id) ? 'typing...' : isUserOnline(u.id) ? 'Online' : u.role}
+                                                        </div>
                                                     </div>
                                                 </div>
-                                            </div>
-                                        ))
-                                    )}
+                                            ))
+                                        )}
+                                    </div>
                                 </div>
                             ) : (
                                 /* ── Conversation View ── */

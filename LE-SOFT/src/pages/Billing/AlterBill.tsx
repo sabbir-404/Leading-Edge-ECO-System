@@ -1,7 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Edit3, Save, Clock, ChevronDown, ChevronUp, Minus, Plus, Trash2, Star } from 'lucide-react';
+import { Search, Edit3, Save, Clock, ChevronDown, ChevronUp, Minus, Plus, Trash2, Star, Package } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import DashboardLayout from '../../components/DashboardLayout';
+
+// Graceful fallback if Electron main hasn't been restarted with decryption fix
+const safeDecrypt = (val: any): string => {
+    if (!val || typeof val !== 'string') return String(val || '');
+    if (val.startsWith('e1:') || val.startsWith('e2:')) return '🔒 [encrypted]';
+    return val;
+};
 
 interface BillItem {
     product_id: number;
@@ -180,10 +187,10 @@ const AlterBill: React.FC = () => {
                                     onMouseLeave={e => { if (selectedBill?.id !== b.id) (e.currentTarget.style.background = 'transparent'); }}
                                 >
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                                        <div style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: '0.85rem', color: 'var(--accent-color)' }}>{b.invoice_number}</div>
+                                        <div style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: '0.85rem', color: 'var(--accent-color)' }}>{safeDecrypt(b.invoice_number)}</div>
                                         {b.is_altered && <Star size={12} fill="#f97316" color="#f97316" />}
                                     </div>
-                                    <div style={{ fontSize: '0.8rem', color: 'var(--text-primary)', fontWeight: 600 }}>{b.customer_name || 'Walk-in'}</div>
+                                    <div style={{ fontSize: '0.8rem', color: 'var(--text-primary)', fontWeight: 600 }}>{safeDecrypt(b.customer_name) || 'Walk-in'}</div>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
                                         <span>{formatDate(b.created_at)}</span>
                                         <span style={{ fontWeight: 700 }}>৳{(b.grand_total || 0).toLocaleString()}</span>
@@ -212,14 +219,14 @@ const AlterBill: React.FC = () => {
                                     <div>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
                                             <div style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: '1.1rem', color: 'var(--accent-color)' }}>
-                                                {selectedBill.invoice_number}
+                                                {safeDecrypt(selectedBill.invoice_number)}
                                             </div>
                                             {selectedBill.is_altered && (
                                                 <span style={{ padding: '0.2rem 0.5rem', background: 'rgba(249,115,22,0.1)', color: '#f97316', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 800 }}>ALTERED</span>
                                             )}
                                         </div>
                                         <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                            {selectedBill.customer_name || 'Walk-in'} • {formatDate(selectedBill.created_at)} • By: {selectedBill.billed_by}
+                                            {safeDecrypt(selectedBill.customer_name) || 'Walk-in'} • {formatDate(selectedBill.created_at)} • By: {safeDecrypt(selectedBill.billed_by)}
                                         </div>
                                     </div>
                                     <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
@@ -276,7 +283,7 @@ const AlterBill: React.FC = () => {
                                                                 <td style={{ padding: '0.3rem 0.5rem' }}>{a.changed_by}</td>
                                                                 <td style={{ padding: '0.3rem 0.5rem', whiteSpace: 'nowrap' }}>{a.changed_at}</td>
                                                             </tr>
-                                                        ))}
+                                                    ))}
                                                     </tbody>
                                                 </table>
                                             )}
@@ -301,8 +308,16 @@ const AlterBill: React.FC = () => {
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {items.map((item, idx) => (
-                                                <tr key={item.product_id} style={{ borderBottom: '1px solid #f0f0f0', background: idx % 2 === 0 ? '#fafbfc' : '#fff' }}>
+                                            {items.length === 0 ? (
+                                            <tr><td colSpan={7}>
+                                                <div style={{ padding: '2.5rem', textAlign: 'center', opacity: 0.45, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem' }}>
+                                                    <Package size={36} />
+                                                    <p>No items found for this bill.</p>
+                                                    <p style={{ fontSize: '0.78rem' }}>This may be an older bill with no item records.</p>
+                                                </div>
+                                            </td></tr>
+                                         ) : items.map((item, idx) => (
+                                                <tr key={item.product_id ?? idx} style={{ borderBottom: '1px solid #f0f0f0', background: idx % 2 === 0 ? '#fafbfc' : '#fff' }}>
                                                     <td style={{ padding: '0.6rem 1rem', textAlign: 'center', fontWeight: 600, color: '#888' }}>{String(idx + 1).padStart(2, '0')}.</td>
                                                     <td style={{ padding: '0.6rem 1rem' }}>
                                                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -310,8 +325,8 @@ const AlterBill: React.FC = () => {
                                                                 <img src={`file://${item.image_path}`} alt="" style={{ width: '32px', height: '32px', borderRadius: '4px', objectFit: 'cover', border: '1px solid #eee' }} />
                                                             )}
                                                             <div>
-                                                                <div style={{ fontWeight: 600 }}>{item.product_name}</div>
-                                                                <div style={{ fontSize: '0.75rem', color: '#888' }}>SKU: {item.sku || 'N/A'}</div>
+                                                                <div style={{ fontWeight: 600 }}>{safeDecrypt(item.product_name)}</div>
+                                                                <div style={{ fontSize: '0.75rem', color: '#888' }}>SKU: {safeDecrypt(item.sku) || 'N/A'}</div>
                                                             </div>
                                                         </div>
                                                     </td>

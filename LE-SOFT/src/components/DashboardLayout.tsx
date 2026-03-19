@@ -9,6 +9,8 @@ import {
   LogOut,
   Menu,
   X,
+  Minus,
+  Square,
   ChevronRight,
   ChevronDown,
   Users,
@@ -392,39 +394,43 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
       {/* Main Content */}
       <div className="main-content">
         <header className="top-bar">
-          {/* Mobile hamburger */}
-          <button className="mobile-menu-btn" onClick={() => setSidebarOpen(!isSidebarOpen)}>
-            <Menu size={22} />
-          </button>
-
-          <div className="page-title">
-            <h1>{title}</h1>
-            <p className="breadcrumb">Leading Edge Software / {title}</p>
-          </div>
-
-          {/* Live Clock — center */}
-          <div className="topbar-clock">
-            <Clock size={16} style={{ opacity: 0.5, marginRight: '6px' }} />
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: 1.3 }}>
-              <span style={{ fontSize: '0.9rem', fontWeight: 600, fontFamily: 'monospace', letterSpacing: '0.5px' }}>{formatTime(currentTime)}</span>
-              <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>{formatDate(currentTime)}</span>
+          {/* Left Side: Title */}
+          <div className="top-bar-left" style={{ display: 'flex', alignItems: 'center', gap: '1rem', WebkitAppRegion: 'no-drag' } as any}>
+            <button className="mobile-menu-btn" onClick={() => setSidebarOpen(!isSidebarOpen)}>
+              <Menu size={22} />
+            </button>
+            <div className="page-title" style={{ WebkitAppRegion: 'drag' } as any}>
+              <h1 style={{ fontSize: '1.2rem', fontWeight: 600 }}>{title}</h1>
+              <p className="breadcrumb" style={{ fontSize: '0.8rem', opacity: 0.6 }}>Leading Edge Software / {title}</p>
             </div>
           </div>
 
-          {!isOnline && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(239, 68, 68, 0.15)', color: '#ef4444', padding: '6px 14px', borderRadius: '20px', fontSize: '0.85rem', fontWeight: 700, border: '1px solid rgba(239, 68, 68, 0.4)' }}>
-              <div style={{ width: '8px', height: '8px', background: '#ef4444', borderRadius: '50%', boxShadow: '0 0 8px #ef4444' }} />
-              OFFLINE MODE
+          {/* Right Side: Tools & Profile */}
+          <div className="top-bar-right" style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', WebkitAppRegion: 'no-drag' } as any}>
+            
+            {/* Live Clock */}
+            <div className="topbar-clock" style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '6px 14px', background: 'rgba(0,0,0,0.04)', borderRadius: '10px' }}>
+              <Clock size={16} style={{ color: 'var(--accent-color)' }} />
+              <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.2 }}>
+                <span style={{ fontSize: '0.85rem', fontWeight: 700, fontFamily: 'monospace', letterSpacing: '0.5px' }}>{formatTime(currentTime)}</span>
+                <span style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>{formatDate(currentTime)}</span>
+              </div>
             </div>
-          )}
 
-          {/* Notification bell + Profile section */}
-          <div className="user-settings" style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+            {!isOnline && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', padding: '6px 16px', borderRadius: '20px', fontSize: '0.8rem', fontWeight: 700 }}>
+                <div style={{ width: '8px', height: '8px', background: '#ef4444', borderRadius: '50%', boxShadow: '0 0 8px #ef4444' }} />
+                OFFLINE
+              </div>
+            )}
+
+            <div style={{ width: '1px', height: '24px', background: 'var(--border-color)', opacity: 0.5 }}></div>
+
             {/* Notification Bell */}
             <div ref={notifRef} style={{ position: 'relative' }}>
               <div
                 onClick={() => setShowNotifDropdown(!showNotifDropdown)}
-                style={{ position: 'relative', cursor: 'pointer', padding: '6px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: showNotifDropdown ? 'var(--hover-bg)' : 'transparent', transition: 'background 0.15s ease' }}
+                style={{ cursor: 'pointer', padding: '8px', borderRadius: '10px', background: showNotifDropdown ? 'var(--hover-bg)' : 'transparent', transition: 'all 0.2s', position: 'relative' }}
               >
                 <Bell size={20} style={{ color: unreadCount > 0 ? 'var(--accent-color)' : 'var(--text-secondary)' }} />
                 {unreadCount > 0 && (

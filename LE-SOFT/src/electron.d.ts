@@ -150,8 +150,10 @@ export interface ElectronAPI {
     getCompetitorUrls: (productId: number) => Promise<any[]>;
     addCompetitorUrl: (data: any) => Promise<any>;
     deleteCompetitorUrl: (id: number) => Promise<any>;
-    runAutoPriceScan: (productId: number) => Promise<any>;
     getMarketAnalysisHistory: (productId?: number) => Promise<any[]>;
+    
+    // Window Controls
+    setTheme: (theme: string) => Promise<void>;
 }
 
 declare global {

@@ -33,6 +33,11 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   createProduct: (product) => import_electron.ipcRenderer.invoke("create-product", product),
   updateProduct: (product) => import_electron.ipcRenderer.invoke("update-product", product),
   deleteProduct: (id) => import_electron.ipcRenderer.invoke("delete-product", id),
+  // Godowns / Warehouses
+  getGodowns: () => import_electron.ipcRenderer.invoke("get-godowns"),
+  createGodown: (godown) => import_electron.ipcRenderer.invoke("create-godown", godown),
+  updateGodown: (godown) => import_electron.ipcRenderer.invoke("update-godown", godown),
+  deleteGodown: (id) => import_electron.ipcRenderer.invoke("delete-godown", id),
   // Purchase Bills
   getPurchaseBills: () => import_electron.ipcRenderer.invoke("get-purchase-bills"),
   createPurchaseBill: (bill) => import_electron.ipcRenderer.invoke("create-purchase-bill", bill),
@@ -138,6 +143,7 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   saveSupabaseConfig: (config) => import_electron.ipcRenderer.invoke("save-supabase-config", config),
   getDeviceId: () => import_electron.ipcRenderer.invoke("get-device-id"),
   activateLicense: (key) => import_electron.ipcRenderer.invoke("activate-license", key),
+  getSupabaseConfig: () => import_electron.ipcRenderer.invoke("get-supabase-config"),
   // Internal Chat
   getChatMessages: (params) => import_electron.ipcRenderer.invoke("get-chat-messages", params),
   sendChatMessage: (msg) => import_electron.ipcRenderer.invoke("send-chat-message", msg),
@@ -298,5 +304,7 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   createPaymentMethod: (method) => import_electron.ipcRenderer.invoke("create-payment-method", method),
   updatePaymentMethod: (method) => import_electron.ipcRenderer.invoke("update-payment-method", method),
   deletePaymentMethod: (id) => import_electron.ipcRenderer.invoke("delete-payment-method", id),
-  verifyBillPayment: (data) => import_electron.ipcRenderer.invoke("verify-bill-payment", data)
+  verifyBillPayment: (data) => import_electron.ipcRenderer.invoke("verify-bill-payment", data),
+  // ─── WINDOW CONTROLS ───
+  setTheme: (theme) => import_electron.ipcRenderer.invoke("set-theme", theme)
 });

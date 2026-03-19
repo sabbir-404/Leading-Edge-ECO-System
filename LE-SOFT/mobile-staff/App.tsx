@@ -1,13 +1,16 @@
+import 'react-native-gesture-handler';
 import React from 'react';
 import './global.css';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { View, ActivityIndicator, TouchableOpacity, Text } from 'react-native';
-import { Home, CreditCard, Users, LayoutGrid, Receipt } from 'lucide-react-native';
+import { View, ActivityIndicator, TouchableOpacity, Text, Image } from 'react-native';
+import { Home, CreditCard, Users, Truck, Briefcase, Settings as SettingsIcon, Menu, LayoutGrid, Receipt, MessageSquare, Package, User as UserIcon, FileText } from 'lucide-react-native';
 import { ThemeProvider, useTheme } from './src/lib/ThemeContext';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
+import { createDrawerNavigator, DrawerContentScrollView, DrawerItemList, DrawerItem } from '@react-navigation/drawer';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { supabase } from './src/lib/supabase';
 import AuthScreen from './src/screens/AuthScreen';
@@ -44,16 +47,93 @@ import CustomerLedgerScreen from './src/screens/crm/CustomerLedgerScreen';
 import QuotationListScreen from './src/screens/quotation/QuotationListScreen';
 import QuotationCreateScreen from './src/screens/quotation/QuotationCreateScreen';
 
+// Chat
+import ChatListScreen from './src/screens/chat/ChatListScreen';
+import ChatRoomScreen from './src/screens/chat/ChatRoomScreen';
+
 const Tab = createBottomTabNavigator();
+const Drawer = createDrawerNavigator();
 const BillingStack = createNativeStackNavigator();
 const HRMStack = createNativeStackNavigator();
+const MakeStack = createNativeStackNavigator();
+const ShippingStack = createNativeStackNavigator();
+const SettingsStack = createNativeStackNavigator();
+
+// Additional Modules for Drawer
 const AccountingStack = createNativeStackNavigator();
 const MoreStack = createNativeStackNavigator();
+
+function AccountingStackNav() {
+  const { theme } = useTheme();
+  return (
+    <AccountingStack.Navigator screenOptions={{ animation: 'fade', headerStyle: { backgroundColor: theme.bg }, headerTintColor: theme.textPrimary, headerTitleStyle: { fontWeight: '800' }, headerShadowVisible: false }}>
+      <AccountingStack.Screen name="AccountingMain" component={AccountingScreen} options={{ headerShown: false }} />
+      <AccountingStack.Screen name="VoucherEntry" component={VoucherEntryScreen} options={({ route }: any) => ({ title: `${route.params?.type || 'Voucher'} Entry` })} />
+      <AccountingStack.Screen name="VoucherList" component={VoucherListScreen} options={{ title: 'Voucher History' }} />
+    </AccountingStack.Navigator>
+  );
+}
+
+function CustomDrawerContent(props: any) {
+  const { theme } = useTheme();
+  const sessionUser = props.session?.user;
+  const dbUser = props.dbUser;
+
+  return (
+    <DrawerContentScrollView {...props} style={{ backgroundColor: theme.bgCard }}>
+      <View style={{ padding: 20, borderBottomWidth: 1, borderBottomColor: theme.border, marginBottom: 10 }}>
+        
+        {/* LE-SOFT Logo */}
+        <Image 
+          source={theme.isDark ? require('./assets/logo-white.png') : require('./assets/logo-black.png')}
+          style={{ width: 140, height: 40, resizeMode: 'contain', marginBottom: 20 }}
+        />
+
+        <View style={{ width: 60, height: 60, borderRadius: 30, backgroundColor: theme.accent + '33', alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
+          <UserIcon color={theme.accent} size={30} />
+        </View>
+        <Text style={{ color: theme.textPrimary, fontSize: 18, fontWeight: '800' }}>{dbUser?.full_name || 'Staff Member'}</Text>
+        <Text style={{ color: theme.textSecondary, fontSize: 13, marginTop: 2 }}>{sessionUser?.email || 'No email'}</Text>
+        <Text style={{ color: theme.accent, fontSize: 11, fontWeight: '700', marginTop: 6, textTransform: 'uppercase', letterSpacing: 1 }}>{dbUser?.role || 'STAFF'}</Text>
+      </View>
+      <DrawerItemList {...props} />
+    </DrawerContentScrollView>
+  );
+}
+
+function MainTabNavigator() {
+  const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
+  return (
+    <Tab.Navigator
+      screenOptions={{
+        headerShown: false,
+        tabBarStyle: { 
+          backgroundColor: theme.tabBar, 
+          borderTopColor: theme.tabBarBorder, 
+          borderTopWidth: 1, 
+          paddingBottom: insets.bottom > 0 ? insets.bottom : 6, 
+          height: insets.bottom > 0 ? 60 + insets.bottom : 60 
+        },
+        tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
+        tabBarActiveTintColor: theme.accent,
+        tabBarInactiveTintColor: theme.textMuted,
+      }}
+    >
+      <Tab.Screen name="HomeTab" component={DashboardScreen} options={{ title: 'Dashboard', tabBarIcon: ({ color, size }) => <Home color={color} size={size} /> }} />
+      <Tab.Screen name="BillingTab" component={BillingStackNav} options={{ title: 'Billing', tabBarIcon: ({ color, size }) => <CreditCard color={color} size={size} /> }} />
+      <Tab.Screen name="HRMTab" component={HRMStackNav} options={{ title: 'HRM', tabBarIcon: ({ color, size }) => <Users color={color} size={size} /> }} />
+      <Tab.Screen name="MakeTab" component={MakeStackNav} options={{ title: 'MAKE', tabBarIcon: ({ color, size }) => <Briefcase color={color} size={size} /> }} />
+      <Tab.Screen name="ShippingTab" component={ShippingStackNav} options={{ title: 'Shipping', tabBarIcon: ({ color, size }) => <Truck color={color} size={size} /> }} />
+      <Tab.Screen name="SettingsTab" component={SettingsStackNav} options={{ title: 'Settings', tabBarIcon: ({ color, size }) => <SettingsIcon color={color} size={size} /> }} />
+    </Tab.Navigator>
+  );
+}
 
 function BillingStackNav() {
   const { theme } = useTheme();
   return (
-    <BillingStack.Navigator screenOptions={{ headerStyle: { backgroundColor: theme.bg }, headerTintColor: theme.textPrimary, headerTitleStyle: { fontWeight: '800' } }}>
+    <BillingStack.Navigator screenOptions={{ animation: 'fade', headerStyle: { backgroundColor: theme.bg }, headerTintColor: theme.textPrimary, headerTitleStyle: { fontWeight: '800' } }}>
       <BillingStack.Screen name="BillingMain" component={BillingScreen} options={{ headerShown: false }} />
       <BillingStack.Screen name="BillHistory" component={BillHistoryScreen} options={{ title: 'Bill History' }} />
     </BillingStack.Navigator>
@@ -63,7 +143,7 @@ function BillingStackNav() {
 function HRMStackNav() {
   const { theme } = useTheme();
   return (
-    <HRMStack.Navigator screenOptions={{ headerStyle: { backgroundColor: theme.bg }, headerTintColor: theme.textPrimary, headerTitleStyle: { fontWeight: '800' } }}>
+    <HRMStack.Navigator screenOptions={{ animation: 'fade', headerStyle: { backgroundColor: theme.bg }, headerTintColor: theme.textPrimary, headerTitleStyle: { fontWeight: '800' } }}>
       <HRMStack.Screen name="HRMHome" component={HRMScreen} options={{ headerShown: false }} />
       <HRMStack.Screen name="Attendance" component={AttendanceScreen} options={{ title: 'Attendance' }} />
       <HRMStack.Screen name="Leaves" component={LeavesScreen} options={{ title: 'Leave Requests' }} />
@@ -72,69 +152,34 @@ function HRMStackNav() {
   );
 }
 
-function AccountingStackNav() {
+function MakeStackNav() {
   const { theme } = useTheme();
   return (
-    <AccountingStack.Navigator screenOptions={{ headerStyle: { backgroundColor: theme.bg }, headerTintColor: theme.textPrimary, headerTitleStyle: { fontWeight: '800' }, headerShadowVisible: false }}>
-      <AccountingStack.Screen name="AccountingMain" component={AccountingScreen} options={{ headerShown: false }} />
-      <AccountingStack.Screen name="VoucherEntry" component={VoucherEntryScreen} options={({ route }: any) => ({ title: `${route.params?.type || 'Voucher'} Entry` })} />
-      <AccountingStack.Screen name="VoucherList" component={VoucherListScreen} options={{ title: 'Voucher History' }} />
-    </AccountingStack.Navigator>
+    <MakeStack.Navigator screenOptions={{ animation: 'fade', headerStyle: { backgroundColor: theme.bg }, headerTintColor: theme.textPrimary, headerTitleStyle: { fontWeight: '800' } }}>
+      <MakeStack.Screen name="MakeMain" component={MakeScreen} options={{ title: 'Make / Production' }} />
+    </MakeStack.Navigator>
   );
 }
 
-function MoreStackNav() {
+function ShippingStackNav() {
   const { theme } = useTheme();
   return (
-    <MoreStack.Navigator screenOptions={{ headerStyle: { backgroundColor: theme.bg }, headerTintColor: theme.textPrimary, headerTitleStyle: { fontWeight: '800' } }}>
-      <MoreStack.Screen name="MoreHome" component={MoreHomeScreen} options={{ title: 'More' }} />
-      <MoreStack.Screen name="Stock" component={StockSearchScreen} options={{ title: 'Stock Search' }} />
-      <MoreStack.Screen name="Make" component={MakeScreen} options={{ title: 'Make / Production' }} />
-      <MoreStack.Screen name="CRM" component={CRMDirectoryScreen} options={{ title: 'CRM Directory' }} />
-      <MoreStack.Screen name="CustomerLedger" component={CustomerLedgerScreen} options={({ route }: any) => ({ title: route.params?.customerName || 'Ledger' })} />
-      <MoreStack.Screen name="Quotations" component={QuotationListScreen} options={{ title: 'Quotations' }} />
-      <MoreStack.Screen name="QuotationCreate" component={QuotationCreateScreen} options={{ title: 'New Quotation' }} />
-      <MoreStack.Screen name="Shipping" component={ShippingScreen} options={{ title: 'Shipping' }} />
-      <MoreStack.Screen name="Reports" component={ReportsScreen} options={{ title: 'Reports' }} />
-      <MoreStack.Screen name="Users" component={UsersScreen} options={{ title: 'User Management' }} />
-      <MoreStack.Screen name="Settings" component={SettingsScreen} options={{ title: 'Settings' }} />
-    </MoreStack.Navigator>
+    <ShippingStack.Navigator screenOptions={{ animation: 'fade', headerStyle: { backgroundColor: theme.bg }, headerTintColor: theme.textPrimary, headerTitleStyle: { fontWeight: '800' } }}>
+      <ShippingStack.Screen name="ShippingMain" component={ShippingScreen} options={{ title: 'Shipping' }} />
+    </ShippingStack.Navigator>
   );
 }
 
-const moreItems = [
-  { label: 'Stock Search', screen: 'Stock', color: '#f59e0b' },
-  { label: 'Make / Track', screen: 'Make', color: '#8b5cf6' },
-  { label: 'CRM Directory', screen: 'CRM', color: '#10b981' },
-  { label: 'Quotations', screen: 'Quotations', color: '#3b82f6' },
-  { label: 'Shipping', screen: 'Shipping', color: '#ef4444' },
-  { label: 'Reports', screen: 'Reports', color: '#06b6d4' },
-  { label: 'Users (Admin)', screen: 'Users', color: '#6366f1' },
-  { label: 'Settings', screen: 'Settings', color: '#6b7280' },
-];
-
-function MoreHomeScreen({ navigation }: any) {
+function SettingsStackNav() {
   const { theme } = useTheme();
   return (
-    <View style={{ flex: 1, backgroundColor: theme.bg, padding: 16 }}>
-      {moreItems.map((item) => (
-        <TouchableOpacity
-          key={item.screen}
-          onPress={() => navigation.navigate(item.screen)}
-          style={{
-            flexDirection: 'row', alignItems: 'center',
-            backgroundColor: theme.bgCard, borderRadius: 14, padding: 16,
-            marginBottom: 10, borderWidth: 1, borderColor: theme.border,
-          }}
-        >
-          <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: item.color, marginRight: 14 }} />
-          <Text style={{ color: theme.textPrimary, fontWeight: '600', fontSize: 15, flex: 1 }}>{item.label}</Text>
-          <Text style={{ color: theme.textMuted, fontSize: 18 }}>›</Text>
-        </TouchableOpacity>
-      ))}
-    </View>
+    <SettingsStack.Navigator screenOptions={{ animation: 'fade', headerStyle: { backgroundColor: theme.bg }, headerTintColor: theme.textPrimary, headerTitleStyle: { fontWeight: '800' } }}>
+      <SettingsStack.Screen name="SettingsMain" component={SettingsScreen} options={{ title: 'Settings' }} />
+    </SettingsStack.Navigator>
   );
 }
+
+
 
 export default function App() {
   const [session, setSession] = React.useState<any>(null);
@@ -159,7 +204,14 @@ export default function App() {
 
 function AppInner({ session, loading }: { session: any; loading: boolean }) {
   const { theme, isDark } = useTheme();
-  const insets = useSafeAreaInsets();
+  const [dbUser, setDbUser] = React.useState<any>(null);
+
+  React.useEffect(() => {
+    if (session?.user) {
+      supabase.from('users').select('*').eq('auth_id', session.user.id).single()
+        .then(({ data }) => setDbUser(data));
+    }
+  }, [session]);
 
   if (loading) {
     return (
@@ -177,51 +229,59 @@ function AppInner({ session, loading }: { session: any; loading: boolean }) {
   );
 
   return (
-    <View style={{ flex: 1, backgroundColor: theme.bg }}>
-      <StatusBar style={isDark ? 'light' : 'dark'} />
-      <NavigationContainer>
-        <Tab.Navigator
-          screenOptions={{
-            headerShown: false,
-            tabBarStyle: { 
-              backgroundColor: theme.tabBar, 
-              borderTopColor: theme.tabBarBorder, 
-              borderTopWidth: 1, 
-              paddingBottom: insets.bottom > 0 ? insets.bottom : 6, 
-              height: insets.bottom > 0 ? 60 + insets.bottom : 60 
-            },
-            tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
-            tabBarActiveTintColor: theme.accent,
-            tabBarInactiveTintColor: theme.textMuted,
-          }}
-        >
-          <Tab.Screen
-            name="HomeTab"
-            component={DashboardScreen}
-            options={{ title: 'Home', tabBarIcon: ({ color, size }) => <Home color={color} size={size} /> }}
-          />
-          <Tab.Screen
-            name="BillingTab"
-            component={BillingStackNav}
-            options={{ title: 'Billing', tabBarIcon: ({ color, size }) => <CreditCard color={color} size={size} /> }}
-          />
-          <Tab.Screen
-            name="AccountingTab"
-            component={AccountingStackNav}
-            options={{ title: 'Accounts', tabBarIcon: ({ color, size }) => <Receipt color={color} size={size} /> }}
-          />
-          <Tab.Screen
-            name="HRMTab"
-            component={HRMStackNav}
-            options={{ title: 'HRM', tabBarIcon: ({ color, size }) => <Users color={color} size={size} /> }}
-          />
-          <Tab.Screen
-            name="MoreTab"
-            component={MoreStackNav}
-            options={{ title: 'More', tabBarIcon: ({ color, size }) => <LayoutGrid color={color} size={size} /> }}
-          />
-        </Tab.Navigator>
-      </NavigationContainer>
-    </View>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <View style={{ flex: 1, backgroundColor: theme.bg }}>
+        <StatusBar style={isDark ? 'light' : 'dark'} />
+        <NavigationContainer>
+          <Drawer.Navigator
+            drawerContent={(props) => <CustomDrawerContent {...props} session={session} dbUser={dbUser} />}
+            screenOptions={{
+              headerShown: false,
+              drawerStyle: { backgroundColor: theme.bgCard, width: 280 },
+              drawerActiveBackgroundColor: theme.accent + '22',
+              drawerActiveTintColor: theme.accent,
+              drawerInactiveTintColor: theme.textPrimary,
+              drawerLabelStyle: { fontWeight: '700', fontSize: 15, marginLeft: -10 }
+            }}
+          >
+            <Drawer.Screen 
+              name="MainTabs" 
+              component={MainTabNavigator} 
+              options={{ title: 'Dashboard', drawerIcon: ({ color, size }) => <Home color={color} size={size} /> }} 
+            />
+            <Drawer.Screen 
+              name="Accounting" 
+              component={AccountingStackNav} 
+              options={{ title: 'Accounting', drawerIcon: ({ color, size }) => <Receipt color={color} size={size} /> }} 
+            />
+            <Drawer.Screen 
+              name="CRMDirectory" 
+              component={CRMDirectoryScreen} 
+              options={{ title: 'CRM Directory', drawerIcon: ({ color, size }) => <Users color={color} size={size} /> }} 
+            />
+            <Drawer.Screen 
+              name="Quotations" 
+              component={QuotationListScreen} 
+              options={{ title: 'Quotations', drawerIcon: ({ color, size }) => <FileText color={color} size={size} /> }} 
+            />
+            <Drawer.Screen 
+              name="StockSearch" 
+              component={StockSearchScreen} 
+              options={{ title: 'Stock Search', drawerIcon: ({ color, size }) => <Package color={color} size={size} /> }} 
+            />
+            <Drawer.Screen 
+              name="ChatList" 
+              component={ChatListScreen} 
+              options={{ title: 'Messages', drawerIcon: ({ color, size }) => <MessageSquare color={color} size={size} /> }} 
+            />
+            <Drawer.Screen 
+              name="UsersAdmin" 
+              component={UsersScreen} 
+              options={{ title: 'Manage Users', drawerIcon: ({ color, size }) => <SettingsIcon color={color} size={size} /> }} 
+            />
+          </Drawer.Navigator>
+        </NavigationContainer>
+      </View>
+    </GestureHandlerRootView>
   );
 }

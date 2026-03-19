@@ -14,7 +14,7 @@ import supabase, { supabaseAdmin } from './supabase';
 import mysql from 'mysql2/promise';
 import * as licenseManager from './license-manager';
 import { getConnectedDevices, setBackupNode, DEVICE_ID } from './device-monitor';
-import { encryptObject, decryptRows, decryptObject } from './field-encryption';
+import { encryptObject, decryptRows, decryptObject, decryptField } from './field-encryption';
 import { enqueue, getQueueStats } from './write-queue';
 import * as cache from './cache-manager';
 import { saveSession, loadSession, clearSession } from './session-vault';
@@ -236,15 +236,32 @@ export function registerHandlers() {
             .or(`and(sender_id.eq.${senderId},receiver_id.eq.${receiverId}),and(sender_id.eq.${receiverId},receiver_id.eq.${senderId})`)
             .order('created_at', { ascending: true });
         if (error) throw error;
-        return data || [];
+        return decryptRows(data || []);
     });
 
     ipcMain.handle('send-chat-message', async (_e, msg) => {
         const { senderId, receiverId, messageType, content, fileName } = msg;
+
+        // Encrypt message content if it's not a file path (though file paths could be encrypted too)
+        const encrypted = encryptObject({ content, file_name: fileName || null });
+
         const { data, error } = await supabase.from('internal_messages').insert({
-            sender_id: senderId, receiver_id: receiverId, message_type: messageType || 'text', content, file_name: fileName || null
+            sender_id: senderId, 
+            receiver_id: receiverId, 
+            message_type: messageType || 'text', 
+            ...encrypted
         }).select('id').single();
+
         if (error) throw error;
+
+        // Autogenerate a system notification so the recipient gets alerted immediately
+        await supabase.from('notifications').insert({
+            title: 'New Chat Message',
+            message: messageType === 'text' ? (content.substring(0, 50) + (content.length > 50 ? '...' : '')) : 'Sent you an attachment',
+            sender_id: senderId,
+            recipient_id: receiverId
+        });
+
         return { success: true, id: data.id };
     });
 
@@ -473,6 +490,45 @@ export function registerHandlers() {
 
     // ═══ PRODUCTS ════════════════════════════════════════════════════════════════
 
+    ipcMain.handle('get-godowns', async () => {
+        const { data, error } = await supabase.from('godowns').select('*').order('name');
+        if (error) throw error;
+        return data || [];
+    });
+
+    ipcMain.handle('create-godown', async (_e, g) => {
+        const { error } = await supabase.from('godowns').insert({ 
+            name: g.name, 
+            location: g.location || '', 
+            description: g.description || '', 
+            total_rows: g.totalRows || 0,
+            racks_per_row: g.racksPerRow || 0,
+            bins_per_rack: g.binsPerRack || 0,
+            company_id: 1 
+        });
+        if (error) throw error;
+        return { success: true };
+    });
+
+    ipcMain.handle('update-godown', async (_e, g) => {
+        const { error } = await supabase.from('godowns').update({ 
+            name: g.name, 
+            location: g.location || '', 
+            description: g.description || '',
+            total_rows: g.totalRows || 0,
+            racks_per_row: g.racksPerRow || 0,
+            bins_per_rack: g.binsPerRack || 0
+        }).eq('id', g.id);
+        if (error) throw error;
+        return { success: true };
+    });
+
+    ipcMain.handle('delete-godown', async (_e, id: number) => {
+        const { error } = await supabase.from('godowns').delete().eq('id', id);
+        if (error) throw error;
+        return { success: true };
+    });
+
     ipcMain.handle('get-products', async () => {
         const { data, error } = await supabase.from('products').select('*, unit:units(name,symbol), group:stock_groups(name)').order('name');
         if (error) throw error;
@@ -487,20 +543,20 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('create-product', async (_e, product) => {
-        const { name, sku, category, purchasePrice, sellingPrice, taxRate, hsnCode, description, unit, stockGroup, imagePath, quantity } = product;
+        const { name, sku, category, purchasePrice, sellingPrice, taxRate, hsnCode, description, unit, stockGroup, imagePath, quantity, locationRow, locationRack, locationBin } = product;
         const { data: uRow } = await supabase.from('units').select('id').eq('name', unit).maybeSingle();
         const { data: gRow } = await supabase.from('stock_groups').select('id').eq('name', stockGroup).maybeSingle();
-        const { data, error } = await supabase.from('products').insert({ name, sku: sku || '', category: category || '', purchase_price: purchasePrice || 0, selling_price: sellingPrice || 0, tax_rate: taxRate || 0, hsn_code: hsnCode || '', description: description || '', unit_id: uRow?.id || null, stock_group_id: gRow?.id || null, company_id: 1, image_path: imagePath || '', quantity: quantity || 0 }).select('id').single();
+        const { data, error } = await supabase.from('products').insert({ name, sku: sku || '', category: category || '', purchase_price: purchasePrice || 0, selling_price: sellingPrice || 0, tax_rate: taxRate || 0, hsn_code: hsnCode || '', description: description || '', unit_id: uRow?.id || null, stock_group_id: gRow?.id || null, company_id: 1, image_path: imagePath || '', quantity: quantity || 0, location_row: locationRow || null, location_rack: locationRack || null, location_bin: locationBin || null }).select('id').single();
         if (error) throw error;
         syncProductToMySQL({ localId: data.id, name, sku: sku || '', category: category || '', sellingPrice: sellingPrice || 0, description: description || '', imagePath: imagePath || '', quantity: quantity || 0 });
         return { success: true, id: data.id };
     });
 
     ipcMain.handle('update-product', async (_e, product) => {
-        const { id, name, sku, category, purchasePrice, sellingPrice, taxRate, hsnCode, description, unit, stockGroup, imagePath, quantity } = product;
+        const { id, name, sku, category, purchasePrice, sellingPrice, taxRate, hsnCode, description, unit, stockGroup, imagePath, quantity, locationRow, locationRack, locationBin } = product;
         const { data: uRow } = await supabase.from('units').select('id').eq('name', unit).maybeSingle();
         const { data: gRow } = await supabase.from('stock_groups').select('id').eq('name', stockGroup).maybeSingle();
-        const { error } = await supabase.from('products').update({ name, sku: sku || '', category: category || '', purchase_price: purchasePrice || 0, selling_price: sellingPrice || 0, tax_rate: taxRate || 0, hsn_code: hsnCode || '', description: description || '', unit_id: uRow?.id || null, stock_group_id: gRow?.id || null, image_path: imagePath || '', quantity: quantity || 0 }).eq('id', id);
+        const { error } = await supabase.from('products').update({ name, sku: sku || '', category: category || '', purchase_price: purchasePrice || 0, selling_price: sellingPrice || 0, tax_rate: taxRate || 0, hsn_code: hsnCode || '', description: description || '', unit_id: uRow?.id || null, stock_group_id: gRow?.id || null, image_path: imagePath || '', quantity: quantity || 0, location_row: locationRow || null, location_rack: locationRack || null, location_bin: locationBin || null }).eq('id', id);
         if (error) throw error;
         syncProductToMySQL({ localId: id, name, sku: sku || '', category: category || '', sellingPrice: sellingPrice || 0, description: description || '', imagePath: imagePath || '', quantity: quantity || 0 });
         return { success: true };
@@ -625,14 +681,30 @@ export function registerHandlers() {
     ipcMain.handle('get-bills', async () => {
         const { data, error } = await supabase.from('bills').select('*, customer:billing_customers(name,phone)').order('created_at', { ascending: false });
         if (error) throw error;
-        return (data || []).map((b: any) => ({ ...b, customer_name: b.customer?.name || null, customer_phone: b.customer?.phone || null }));
+        return (data || []).map((b: any) => {
+            const dec = decryptObject(b);
+            // Decrypt nested customer fields if encrypted
+            const custName = b.customer?.name ? decryptField(b.customer.name) : null;
+            const custPhone = b.customer?.phone ? decryptField(b.customer.phone) : null;
+            return { ...dec, customer_name: custName, customer_phone: custPhone };
+        });
     });
 
     ipcMain.handle('get-bill-details', async (_e, billId: number) => {
         const { data: bill } = await supabase.from('bills').select('*, customer:billing_customers(name,phone,email,address)').eq('id', billId).maybeSingle();
         if (!bill) return null;
         const { data: items } = await supabase.from('bill_items').select('*, product:products(image_path)').eq('bill_id', billId);
-        return { ...bill, customer_name: bill.customer?.name, customer_phone: bill.customer?.phone, customer_email: bill.customer?.email, customer_address: bill.customer?.address, items: (items || []).map((i: any) => ({ ...i, image_path: i.product?.image_path || null })) };
+        const decBill = decryptObject(bill);
+        // Decrypt nested customer fields
+        const cust = bill.customer || {};
+        return { 
+            ...decBill, 
+            customer_name: decryptField(cust.name) || null, 
+            customer_phone: decryptField(cust.phone) || null, 
+            customer_email: decryptField(cust.email) || null, 
+            customer_address: decryptField(cust.address) || null, 
+            items: (items || []).map((i: any) => ({ ...i, image_path: i.product?.image_path || null })) 
+        };
     });
 
     ipcMain.handle('update-bill', async (_e, billData: any) => {
@@ -766,7 +838,9 @@ export function registerHandlers() {
 
         // Filter out superadmin accounts from non-superadmin viewers
         const filtered = (data || []).filter(u => isSuperAdmin || u.role !== 'superadmin');
-        return filtered;
+        
+        // Decrypt profile data
+        return decryptRows(filtered);
     });
 
     ipcMain.handle('create-user', async (_e, user) => {
@@ -1027,6 +1101,19 @@ export function registerHandlers() {
         const { error } = await supabase.from('companies').update({ name: s.name, mailing_name: s.mailingName || '', address: s.address || '', country: s.country || 'Bangladesh', state: s.state || '', phone: s.phone || '', email: s.email || '', financial_year_from: s.financialYearFrom || '', books_begin_from: s.booksBeginFrom || '', base_currency_symbol: s.currencySymbol || '৳' }).eq('id', 1);
         if (error) throw error;
         return { success: true };
+    });
+
+    ipcMain.handle('get-supabase-config', async () => {
+        try {
+            const cfgPath = path.join(app.getPath('userData'), 'supabase-config.json');
+            if (fs.existsSync(cfgPath)) {
+                return JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
+            }
+        } catch (e) {}
+        return { 
+            url: 'https://ildkkgjrolcjijwfokek.supabase.co', 
+            anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlsZGtrZ2pyb2xjamlqd2Zva2VrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE5MzMzMjQsImV4cCI6MjA4NzUwOTMyNH0.Bn6c-87BOumPXyH5F469P04fQSMnI9SjNDZAwgGyTsM' 
+        };
     });
 
     ipcMain.handle('save-supabase-config', async (_e, newConfig) => {
@@ -1328,7 +1415,11 @@ export function registerHandlers() {
     ipcMain.handle('get-pending-alterations', async () => {
         const { data, error } = await supabase.from('bill_audit').select('*, bill:bills(invoice_number, customer:billing_customers(name))').eq('alter_status', 'pending_approval').order('changed_at', { ascending: false });
         if (error) throw error;
-        return (data || []).map((r: any) => ({ ...r, invoice_number: r.bill?.invoice_number, customer_name: r.bill?.customer?.name }));
+        return (data || []).map((r: any) => ({ 
+            ...r, 
+            invoice_number: decryptField(r.bill?.invoice_number) || r.bill?.invoice_number, 
+            customer_name: decryptField(r.bill?.customer?.name) || r.bill?.customer?.name 
+        }));
     });
 
     ipcMain.handle('approve-alteration', async (_e, { auditId, reviewedBy }: any) => {
@@ -1380,7 +1471,13 @@ export function registerHandlers() {
         if (status) q = q.eq('status', status);
         const { data, error } = await q;
         if (error) throw error;
-        return (data || []).map((s: any) => ({ ...s, invoice_number: s.bill?.invoice_number, bill_date: s.bill?.created_at, customer_name: s.bill?.customer?.name, customer_phone: s.bill?.customer?.phone }));
+        return (data || []).map((s: any) => ({ 
+            ...decryptObject(s), 
+            invoice_number: decryptField(s.bill?.invoice_number) || s.bill?.invoice_number, 
+            bill_date: s.bill?.created_at, 
+            customer_name: decryptField(s.bill?.customer?.name) || s.bill?.customer?.name, 
+            customer_phone: decryptField(s.bill?.customer?.phone) || s.bill?.customer?.phone 
+        }));
     });
 
     ipcMain.handle('get-shipment-history', async (_e, shipmentId: number) => {
@@ -2155,16 +2252,28 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('get-exchange-orders', async () => {
-        const { data, error } = await supabase.from('exchange_orders').select('*, customer:billing_customers(name,phone)').order('created_at', { ascending: false });
+        const { data, error } = await supabase.from('exchange_orders').select('*, customer:billing_customers(name,phone), bill:bills(invoice_number)').order('created_at', { ascending: false });
         if (error) throw error;
-        return (data || []).map((b: any) => ({ ...b, customer_name: b.customer?.name || null, customer_phone: b.customer?.phone || null }));
+        return (data || []).map((b: any) => ({ 
+            ...b, 
+            customer_name: decryptField(b.customer?.name) || b.customer?.name || null, 
+            customer_phone: decryptField(b.customer?.phone) || b.customer?.phone || null,
+            original_invoice_number: decryptField(b.bill?.invoice_number) || b.bill?.invoice_number || null
+        }));
     });
     
     ipcMain.handle('get-exchange-details', async (_e, id: number) => {
-        const { data: order } = await supabase.from('exchange_orders').select('*, customer:billing_customers(name,phone,address)').eq('id', id).single();
+        const { data: order } = await supabase.from('exchange_orders').select('*, customer:billing_customers(name,phone,address), bill:bills(invoice_number, created_at)').eq('id', id).single();
         if (!order) return null;
         const { data: items } = await supabase.from('exchange_items').select('*').eq('exchange_id', id);
-        return { ...order, items: items || [] };
+        return { 
+            ...order, 
+            customer_name: decryptField(order.customer?.name) || order.customer?.name || null,
+            customer_phone: decryptField(order.customer?.phone) || order.customer?.phone || null,
+            customer_address: decryptField(order.customer?.address) || order.customer?.address || null,
+            original_invoice_number: decryptField(order.bill?.invoice_number) || order.bill?.invoice_number || null,
+            items: items || [] 
+        };
     });
 
     // ═══ PERMISSION LEVELS ════════════════════════════════════════════════════
@@ -2353,6 +2462,19 @@ export function registerHandlers() {
         const { error } = await supabase.from('bills').update({ payment_status: status }).eq('payment_ref', paymentRef);
         if (error) throw error;
         return { success: true };
+    });
+
+    // ═══ NATIVE WINDOW CONTROLS ═══════════════════════════════════════════════════
+    ipcMain.handle('set-theme', (event, theme: string) => {
+        const win = BrowserWindow.fromWebContents(event.sender);
+        if (!win) return;
+        
+        // Dynamically style the native Windows controls over the React web contents
+        if (theme === 'dark') {
+            win.setTitleBarOverlay({ color: '#141414', symbolColor: '#f5f5f5' });
+        } else {
+            win.setTitleBarOverlay({ color: '#c0c0c0', symbolColor: '#111111' });
+        }
     });
 
 } // end registerHandlers

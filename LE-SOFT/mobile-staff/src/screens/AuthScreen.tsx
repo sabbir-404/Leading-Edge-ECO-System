@@ -18,11 +18,16 @@ export default function AuthScreen({ onAuth }: { onAuth: () => void }) {
     setLoading(false);
     if (error) return Alert.alert('Login Failed', error.message);
     if (data.user) {
-      const { data: userRow } = await supabase.from('users').select('is_active').eq('auth_id', data.user.id).single();
+      const { data: userRow } = await supabase.from('users').select('*, user_groups(name, permissions)').eq('auth_id', data.user.id).single();
       if (!userRow || !userRow.is_active) {
         await supabase.auth.signOut();
         Alert.alert('Access Denied', 'Your account is disabled or missing.');
-      } else { onAuth(); }
+      } else {
+        // Save user info for chat and other modules
+        const { AsyncStorage } = require('@react-native-async-storage/async-storage');
+        await AsyncStorage.setItem('user_profile', JSON.stringify(userRow));
+        onAuth(); 
+      }
     }
   };
 

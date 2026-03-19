@@ -40,7 +40,12 @@ function createWindow() {
         backgroundColor: '#f5f6fa',
         show: false,
         frame: true,
-        titleBarStyle: 'default',
+        titleBarStyle: 'hidden',
+        titleBarOverlay: {
+            color: '#c0c0c0', 
+            symbolColor: '#111111',
+            height: 64
+        },
     });
 
     // Block DevTools in production
@@ -136,44 +141,53 @@ function createWindow() {
 // Disable hardware acceleration to resolve GPU/Blank screen issues on some systems
 app.disableHardwareAcceleration();
 
-app.whenReady().then(async () => {
+app.whenReady().then(() => {
     const logPath = path.join(app.getPath('userData'), 'app.log');
     const log = (msg: string) => fs.appendFileSync(logPath, `[${new Date().toISOString()}] ${msg}\n`);
 
     log('App starting...');
     
-    // 1. Initialise encryption key
-    try {
-        initEncryptionKey();
-        log('Encryption key initialized');
-    } catch (e: any) {
-        log(`Encryption failed: ${e.message}`);
-    }
-
-    // 2. Verify Supabase connectivity and setup offline DB
-    try {
-        log('Initializing DB...');
-        await initDB();
-        log('Cloud DB ready');
-        await initOfflineDB();
-        log('Offline DB ready');
-    } catch (e: any) {
-        log(`DB Init error: ${e.message}`);
-    }
-
-    // 3. Start the universal async write queue
-    startQueue();
-
-    // 4. Register device heartbeat
-    registerDevice();
-    startHeartbeat(60_000);
-
-    // 5. Register IPC handlers
-    registerHandlers();
-
-    // 6. Open main window
+    // 1. Open main window immediately so the app is visibly running
     createWindow();
     log('Window created call done');
+
+    // 2. Initialize subsystems asynchronously without blocking UI
+    (async () => {
+        try {
+            initEncryptionKey();
+            log('Encryption key initialized');
+        } catch (e: any) {
+            log(`Encryption failed: ${e.message}`);
+        }
+
+        try {
+            log('Initializing DB...');
+            // Add a timeout fallback so it doesn't hang forever implicitly
+            await Promise.race([
+                initDB(),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Supabase init timed out')), 15000))
+            ]);
+            log('Cloud DB ready');
+
+            await Promise.race([
+                initOfflineDB(),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Offline SQLite init timed out')), 15000))
+            ]);
+            log('Offline DB ready');
+        } catch (e: any) {
+            log(`DB Init error: ${e.message}`);
+        }
+
+        try {
+            startQueue();
+            registerDevice();
+            startHeartbeat(60_000);
+            registerHandlers();
+            log('Background services registered');
+        } catch (e: any) {
+            log(`Service start error: ${e.message}`);
+        }
+    })();
 
     app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) {

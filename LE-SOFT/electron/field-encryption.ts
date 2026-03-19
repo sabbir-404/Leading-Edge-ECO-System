@@ -30,14 +30,6 @@ const PREFIX = 'e1:';
 // ── Key derivation ─────────────────────────────────────────────────────────────
 let _key: Buffer | null = null;
 
-function getMachineFingerprint(): string {
-    const cpus = os.cpus();
-    const cpu = cpus?.[0]?.model || 'cpu';
-    const hostname = os.hostname();
-    const platform = os.platform();
-    return `${cpu}|${hostname}|${platform}`;
-}
-
 function getLicenseKey(): string {
     try {
         const cfgPath = path.join(app.getPath('userData'), 'supabase-config.json');
@@ -50,13 +42,12 @@ function getLicenseKey(): string {
 }
 
 export function initEncryptionKey(): void {
-    const fingerprint = getMachineFingerprint();
     const licenseKey = getLicenseKey();
     const salt = crypto.createHash('sha256').update('lesoft-e2e-salt-v1').digest();
-    // HKDF-like derivation using HMAC-SHA256
-    const ikm = licenseKey + '|' + fingerprint;
+    // Portable derivation: License Key only
+    const ikm = licenseKey;
     _key = crypto.createHmac('sha256', salt).update(ikm).digest();
-    console.log('[Encryption] Key derived. Field encryption active.');
+    console.log('[Encryption] Portable Key derived.');
 }
 
 function getKey(): Buffer {
@@ -66,36 +57,61 @@ function getKey(): Buffer {
 
 // ── Core encrypt / decrypt ─────────────────────────────────────────────────────
 
-export function encryptField(value: string): string {
+export function encryptField(text: string): string {
+    if (!text) return text || '';
+    const key = getKey();
     try {
-        const key = getKey();
-        const iv = crypto.randomBytes(IV_LEN);
-        const cipher = crypto.createCipheriv(CIPHER, key, iv);
-        const encrypted = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
-        const tag = cipher.getAuthTag();
-        const combined = Buffer.concat([iv, tag, encrypted]);
-        return PREFIX + combined.toString('base64');
-    } catch (e: any) {
-        console.error('[Encryption] encryptField failed:', e.message);
-        return value; // fallback: return plaintext (should not happen)
+        const iv = crypto.randomBytes(16);
+        const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
+        let encrypted = cipher.update(text, 'utf8', 'hex');
+        encrypted += cipher.final('hex');
+        return `e2:${iv.toString('hex')}:${encrypted}`;
+    } catch (e) {
+        console.error('Encryption failed:', e);
+        return text;
     }
 }
 
-export function decryptField(value: string): string {
-    if (!value || !value.startsWith(PREFIX)) return value; // already plaintext or null
-    try {
-        const key = getKey();
-        const combined = Buffer.from(value.slice(PREFIX.length), 'base64');
-        const iv = combined.subarray(0, IV_LEN);
-        const tag = combined.subarray(IV_LEN, IV_LEN + TAG_LEN);
-        const ciphertext = combined.subarray(IV_LEN + TAG_LEN);
-        const decipher = crypto.createDecipheriv(CIPHER, key, iv);
-        decipher.setAuthTag(tag);
-        return decipher.update(ciphertext) + decipher.final('utf8');
-    } catch (e: any) {
-        console.warn('[Encryption] decryptField failed (returning as-is):', e.message);
-        return value;
+export function decryptField(encryptedText: string | null): string {
+    if (!encryptedText || typeof encryptedText !== 'string') {
+        return encryptedText || '';
     }
+    const key = getKey();
+
+    // ── Handle NEW format: e2:iv:ciphertext (AES-256-CBC) ─────────────────────
+    if (encryptedText.startsWith('e2:')) {
+        try {
+            const parts = encryptedText.split(':');
+            if (parts.length !== 3) return encryptedText;
+            const iv = Buffer.from(parts[1], 'hex');
+            const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
+            let decrypted = decipher.update(parts[2], 'hex', 'utf8');
+            decrypted += decipher.final('utf8');
+            return decrypted;
+        } catch (e) {
+            console.error('[Decrypt e2] Failed:', (e as Error).message);
+            return encryptedText;
+        }
+    }
+
+    // ── Handle LEGACY format: e1:<base64(iv[12]+tag[16]+ciphertext)> (AES-256-GCM) ─
+    if (encryptedText.startsWith('e1:')) {
+        try {
+            const combined = Buffer.from(encryptedText.slice(3), 'base64');
+            const iv = combined.subarray(0, 12);
+            const tag = combined.subarray(12, 28);
+            const ciphertext = combined.subarray(28);
+            const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+            decipher.setAuthTag(tag);
+            return decipher.update(ciphertext) + decipher.final('utf8');
+        } catch {
+            // If GCM fails (key mismatch from old machineId-based key), return as-is 
+            // — this prevents crashes on data encrypted by a different machine.
+            return encryptedText;
+        }
+    }
+
+    return encryptedText;
 }
 
 // ── Columns that must NEVER be encrypted (structural) ─────────────────────────
@@ -140,7 +156,7 @@ export function decryptObject(obj: Record<string, any>): Record<string, any> {
     for (const [k, v] of Object.entries(obj)) {
         if (v === null || v === undefined || SKIP_KEYS.has(k)) {
             result[k] = v;
-        } else if (typeof v === 'string' && v.startsWith(PREFIX)) {
+        } else if (typeof v === 'string' && (v.startsWith('e1:') || v.startsWith('e2:'))) {
             const plain = decryptField(v);
             // Try to re-parse JSONB fields
             if (plain.startsWith('{') || plain.startsWith('[')) {

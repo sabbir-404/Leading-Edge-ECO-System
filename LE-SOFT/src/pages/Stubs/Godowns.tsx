@@ -9,6 +9,9 @@ interface Godown {
     name: string;
     location: string;
     description: string;
+    total_rows?: number;
+    racks_per_row?: number;
+    bins_per_rack?: number;
 }
 
 interface Product {
@@ -42,12 +45,19 @@ const Godowns: React.FC = () => {
     const handleSave = async (e: React.FormEvent) => {
         e.preventDefault();
         try {
-            if (editingGodown?.id) {
+            if (!editingGodown) return;
+            const payload = { 
+                ...editingGodown, 
+                totalRows: editingGodown.total_rows || 0, 
+                racksPerRow: editingGodown.racks_per_row || 0, 
+                binsPerRack: editingGodown.bins_per_rack || 0 
+            };
+            if (editingGodown.id) {
                 // @ts-ignore
-                await window.electron.updateGodown(editingGodown);
+                await window.electron.updateGodown(payload);
             } else {
                 // @ts-ignore
-                await window.electron.createGodown(editingGodown);
+                await window.electron.createGodown(payload);
             }
             setEditingGodown(null);
             fetchGodowns();
@@ -87,7 +97,7 @@ const Godowns: React.FC = () => {
                         <button onClick={() => navigate('/masters')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit' }}><ArrowLeft size={20} /></button>
                         <h2 style={{ fontWeight: 700 }}>Godowns / Warehouses</h2>
                     </div>
-                    <button className="create-btn" onClick={() => setEditingGodown({ name: '', location: '', description: '' })}>
+                    <button className="create-btn" onClick={() => setEditingGodown({ name: '', location: '', description: '', total_rows: 0, racks_per_row: 0, bins_per_rack: 0 })}>
                         <Plus size={18} /> Create Godown
                     </button>
                 </div>
@@ -111,8 +121,16 @@ const Godowns: React.FC = () => {
                                     </div>
                                 </div>
                                 
-                                <div style={{ fontSize: '0.85rem', opacity: 0.7, marginBottom: '1.25rem', minHeight: '2.5rem' }}>
+                                <div style={{ fontSize: '0.85rem', opacity: 0.7, marginBottom: '0.75rem', minHeight: '1.5rem' }}>
                                     {g.description || 'No description provided.'}
+                                </div>
+
+                                <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.25rem', padding: '0.6rem', background: 'var(--hover-bg)', borderRadius: '8px', fontSize: '0.8rem' }}>
+                                    <div><strong>{g.total_rows || 0}</strong> Rows</div>
+                                    <div style={{ width: '1px', background: 'var(--border-color)' }} />
+                                    <div><strong>{g.racks_per_row || 0}</strong> Racks / Row</div>
+                                    <div style={{ width: '1px', background: 'var(--border-color)' }} />
+                                    <div><strong>{g.bins_per_rack || 0}</strong> Bins / Rack</div>
                                 </div>
 
                                 <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -149,6 +167,20 @@ const Godowns: React.FC = () => {
                                 <div className="form-group" style={{ marginBottom: '1rem' }}>
                                     <label>Location</label>
                                     <input value={editingGodown.location || ''} onChange={e => setEditingGodown({...editingGodown, location: e.target.value})} placeholder="e.g. Dhaka, Bangladesh" />
+                                </div>
+                                <div className="form-row" style={{ gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr) minmax(0,1fr)', marginBottom: '1rem' }}>
+                                    <div className="form-group">
+                                        <label>Total Rows</label>
+                                        <input type="number" min="0" value={editingGodown.total_rows || 0} onChange={e => setEditingGodown({...editingGodown, total_rows: parseInt(e.target.value) || 0})} />
+                                    </div>
+                                    <div className="form-group">
+                                        <label>Racks per Row</label>
+                                        <input type="number" min="0" value={editingGodown.racks_per_row || 0} onChange={e => setEditingGodown({...editingGodown, racks_per_row: parseInt(e.target.value) || 0})} />
+                                    </div>
+                                    <div className="form-group">
+                                        <label>Bins per Rack</label>
+                                        <input type="number" min="0" value={editingGodown.bins_per_rack || 0} onChange={e => setEditingGodown({...editingGodown, bins_per_rack: parseInt(e.target.value) || 0})} />
+                                    </div>
                                 </div>
                                 <div className="form-group" style={{ marginBottom: '1.5rem' }}>
                                     <label>Description</label>

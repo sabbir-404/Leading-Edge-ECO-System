@@ -38,6 +38,12 @@ contextBridge.exposeInMainWorld('electron', {
     updateProduct: (product: any) => ipcRenderer.invoke('update-product', product),
     deleteProduct: (id: number) => ipcRenderer.invoke('delete-product', id),
 
+    // Godowns / Warehouses
+    getGodowns: () => ipcRenderer.invoke('get-godowns'),
+    createGodown: (godown: any) => ipcRenderer.invoke('create-godown', godown),
+    updateGodown: (godown: any) => ipcRenderer.invoke('update-godown', godown),
+    deleteGodown: (id: number) => ipcRenderer.invoke('delete-godown', id),
+
     // Purchase Bills
     getPurchaseBills: () => ipcRenderer.invoke('get-purchase-bills'),
     createPurchaseBill: (bill: any) => ipcRenderer.invoke('create-purchase-bill', bill),
@@ -164,6 +170,7 @@ contextBridge.exposeInMainWorld('electron', {
     saveSupabaseConfig: (config: any) => ipcRenderer.invoke('save-supabase-config', config),
     getDeviceId: () => ipcRenderer.invoke('get-device-id'),
     activateLicense: (key: string) => ipcRenderer.invoke('activate-license', key),
+    getSupabaseConfig: () => ipcRenderer.invoke('get-supabase-config'),
 
     // Internal Chat
     getChatMessages: (params: any) => ipcRenderer.invoke('get-chat-messages', params),
@@ -351,4 +358,7 @@ contextBridge.exposeInMainWorld('electron', {
     updatePaymentMethod: (method: any) => ipcRenderer.invoke('update-payment-method', method),
     deletePaymentMethod: (id: number) => ipcRenderer.invoke('delete-payment-method', id),
     verifyBillPayment: (data: any) => ipcRenderer.invoke('verify-bill-payment', data),
+
+    // ─── WINDOW CONTROLS ───
+    setTheme: (theme: string) => ipcRenderer.invoke('set-theme', theme),
 });

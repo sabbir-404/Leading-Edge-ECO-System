@@ -41,6 +41,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
       const result = await window.electron.authenticateUser({ username: email, password });
       setLoading(false);
       if (result?.success && result.user) {
+        localStorage.setItem('user', JSON.stringify(result.user));
         localStorage.setItem('user_role', result.user.role);
         localStorage.setItem('user_permissions', typeof result.user.permissions === 'string' ? result.user.permissions : JSON.stringify(result.user.permissions || {}));
         localStorage.setItem('user_name', result.user.full_name || result.user.username);

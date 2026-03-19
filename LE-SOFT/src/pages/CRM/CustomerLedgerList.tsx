@@ -5,6 +5,12 @@ import { motion } from 'framer-motion';
 import DashboardLayout from '../../components/DashboardLayout';
 import '../Accounting/Masters/Masters.css';
 
+const safeDecrypt = (val: any): string => {
+    if (!val || typeof val !== 'string') return String(val || '');
+    if (val.startsWith('e1:') || val.startsWith('e2:')) return '🔒 [encrypted]';
+    return val;
+};
+
 interface Customer {
     id: number;
     name: string;
@@ -104,9 +110,9 @@ const CustomerLedgerList: React.FC = () => {
                                             onClick={() => viewLedger(customer.id)}
                                             whileHover={{ backgroundColor: '#f8fafc' }}
                                         >
-                                            <td style={{ padding: '0.75rem 1rem', fontWeight: 600 }}>{customer.name}</td>
-                                            <td style={{ padding: '0.75rem 1rem' }}>{customer.phone || 'N/A'}</td>
-                                            <td style={{ padding: '0.75rem 1rem', color: '#666' }}>{customer.email || 'N/A'}</td>
+                                            <td style={{ padding: '0.75rem 1rem', fontWeight: 600 }}>{safeDecrypt(customer.name)}</td>
+                                            <td style={{ padding: '0.75rem 1rem' }}>{safeDecrypt(customer.phone) || 'N/A'}</td>
+                                            <td style={{ padding: '0.75rem 1rem', color: '#666' }}>{safeDecrypt(customer.email) || 'N/A'}</td>
                                             <td style={{ padding: '0.75rem 1rem', textAlign: 'center' }}>
                                                 <span style={{ padding: '2px 8px', background: '#e0f2fe', color: '#0369a1', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 600 }}>
                                                     {customer.total_bills || 0}

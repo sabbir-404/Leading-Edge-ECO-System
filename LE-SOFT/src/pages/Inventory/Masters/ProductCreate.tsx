@@ -28,15 +28,22 @@ const ProductCreate: React.FC = () => {
         unit:          editProduct?.unit_name       || '',
         stockGroup:    editProduct?.group_name      || '',
         quantity:      editProduct?.quantity        ?? 0,
+        godownId:      editProduct?.godown_id       || '',
+        locationRow:   editProduct?.location_row    || '',
+        locationRack:  editProduct?.location_rack   || '',
+        locationBin:   editProduct?.location_bin    || '',
     });
+
+    const [godowns, setGodowns] = useState<any[]>([]);
 
     useEffect(() => {
         const fetchData = async () => {
             try {
                 // @ts-ignore
-                const [u, sg] = await Promise.all([window.electron.getUnits(), window.electron.getStockGroups()]);
+                const [u, sg, g] = await Promise.all([window.electron.getUnits(), window.electron.getStockGroups(), window.electron.getGodowns()]);
                 setUnits(u || []);
                 setStockGroups(sg || []);
+                setGodowns(g || []);
             } catch (e) { console.error(e); }
         };
         fetchData();
@@ -161,6 +168,49 @@ const ProductCreate: React.FC = () => {
                             {units.map(u => <option key={u.id} value={u.name}>{u.name} ({u.symbol})</option>)}
                         </select>
                     </div>
+                </div>
+
+                <div className="section-divider">Storage Location</div>
+
+                <div className="form-row" style={{ gridTemplateColumns: '1fr 1fr 1fr 1fr' }}>
+                    <div className="form-group">
+                        <label>Godown / Warehouse</label>
+                        <select name="godownId" value={formData.godownId} onChange={e => setFormData(p => ({ ...p, godownId: e.target.value, locationRow: '', locationRack: '', locationBin: '' }))}>
+                            <option value="">— Select Godown —</option>
+                            {godowns.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                        </select>
+                    </div>
+                    {formData.godownId && godowns.find(g => g.id === Number(formData.godownId))?.total_rows > 0 && (
+                        <>
+                            <div className="form-group">
+                                <label>Row Number</label>
+                                <select name="locationRow" value={formData.locationRow} onChange={e => setFormData(p => ({ ...p, locationRow: e.target.value, locationRack: '', locationBin: '' }))}>
+                                    <option value="">— Row —</option>
+                                    {Array.from({ length: godowns.find(g => g.id === Number(formData.godownId)).total_rows }).map((_, i) => (
+                                        <option key={i+1} value={i+1}>Row {i+1}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div className="form-group">
+                                <label>Rack Level</label>
+                                <select name="locationRack" value={formData.locationRack} onChange={e => setFormData(p => ({ ...p, locationRack: e.target.value, locationBin: '' }))} disabled={!formData.locationRow}>
+                                    <option value="">— Rack —</option>
+                                    {Array.from({ length: godowns.find(g => g.id === Number(formData.godownId)).racks_per_row }).map((_, i) => (
+                                        <option key={i+1} value={i+1}>Rack {i+1}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div className="form-group">
+                                <label>Bin Number</label>
+                                <select name="locationBin" value={formData.locationBin} onChange={handleChange} disabled={!formData.locationRack}>
+                                    <option value="">— Bin —</option>
+                                    {Array.from({ length: godowns.find(g => g.id === Number(formData.godownId)).bins_per_rack }).map((_, i) => (
+                                        <option key={i+1} value={i+1}>Bin {i+1}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        </>
+                    )}
                 </div>
 
                 <div className="section-divider">Pricing</div>
