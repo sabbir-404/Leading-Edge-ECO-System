@@ -17,6 +17,11 @@ import AuthScreen from './src/screens/AuthScreen';
 import DashboardScreen from './src/screens/DashboardScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 
+// ZegoCloud VoIP
+import ZegoUIKitPrebuiltCallService, { ZegoCallInvitationDialog } from '@zegocloud/zego-uikit-prebuilt-call-rn';
+import * as ZIM from 'zego-zim-react-native';
+import * as ZPNs from 'zego-zpns-react-native';
+
 // Billing
 import BillingScreen from './src/screens/billing/BillingScreen';
 import BillHistoryScreen from './src/screens/billing/BillHistoryScreen';
@@ -58,6 +63,7 @@ const HRMStack = createNativeStackNavigator();
 const MakeStack = createNativeStackNavigator();
 const ShippingStack = createNativeStackNavigator();
 const SettingsStack = createNativeStackNavigator();
+const ChatStack = createNativeStackNavigator();
 
 // Additional Modules for Drawer
 const AccountingStack = createNativeStackNavigator();
@@ -179,6 +185,16 @@ function SettingsStackNav() {
   );
 }
 
+function ChatStackNav() {
+  const { theme } = useTheme();
+  return (
+    <ChatStack.Navigator screenOptions={{ animation: 'fade', headerStyle: { backgroundColor: theme.bg }, headerTintColor: theme.textPrimary, headerTitleStyle: { fontWeight: '800' }, headerShadowVisible: false }}>
+      <ChatStack.Screen name="ChatListMain" component={ChatListScreen} options={{ headerShown: false }} />
+      <ChatStack.Screen name="ChatRoom" component={ChatRoomScreen} options={{ headerShown: false }} />
+    </ChatStack.Navigator>
+  );
+}
+
 
 
 export default function App() {
@@ -209,7 +225,26 @@ function AppInner({ session, loading }: { session: any; loading: boolean }) {
   React.useEffect(() => {
     if (session?.user) {
       supabase.from('users').select('*').eq('auth_id', session.user.id).single()
-        .then(({ data }) => setDbUser(data));
+        .then(({ data }) => {
+            setDbUser(data);
+            
+            // Init ZegoCloud Call Engine
+            if (data?.id) {
+                ZegoUIKitPrebuiltCallService.init(
+                    0, // TODO: REPLACE_ME_ZegoCloud_AppID
+                    "REPLACE_ME_ZegoCloud_AppSign", // TODO: REPLACE_ME_ZegoCloud_AppSign
+                    data.id.toString(),
+                    data.full_name || data.username || 'Staff',
+                    [ZIM, ZPNs],
+                    {
+                        notifyWhenAppRunningInBackgroundOrQuit: true,
+                        isIOSSandboxEnvironment: true,
+                    }
+                );
+            }
+        });
+    } else {
+        ZegoUIKitPrebuiltCallService.uninit();
     }
   }, [session]);
 
@@ -233,6 +268,7 @@ function AppInner({ session, loading }: { session: any; loading: boolean }) {
       <View style={{ flex: 1, backgroundColor: theme.bg }}>
         <StatusBar style={isDark ? 'light' : 'dark'} />
         <NavigationContainer>
+          <ZegoCallInvitationDialog />
           <Drawer.Navigator
             drawerContent={(props) => <CustomDrawerContent {...props} session={session} dbUser={dbUser} />}
             screenOptions={{
@@ -270,8 +306,8 @@ function AppInner({ session, loading }: { session: any; loading: boolean }) {
               options={{ title: 'Stock Search', drawerIcon: ({ color, size }) => <Package color={color} size={size} /> }} 
             />
             <Drawer.Screen 
-              name="ChatList" 
-              component={ChatListScreen} 
+              name="ChatStack" 
+              component={ChatStackNav} 
               options={{ title: 'Messages', drawerIcon: ({ color, size }) => <MessageSquare color={color} size={size} /> }} 
             />
             <Drawer.Screen 

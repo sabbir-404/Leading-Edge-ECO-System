@@ -8,6 +8,7 @@ import { supabase } from '../../lib/supabase';
 import { useTheme } from '../../lib/ThemeContext';
 import { decryptField, encryptField } from '../../lib/encryption';
 import { Send, Paperclip, ChevronLeft, User } from 'lucide-react-native';
+import { ZegoSendCallInvitationButton } from '@zegocloud/zego-uikit-prebuilt-call-rn';
 
 export default function ChatRoomScreen({ route, navigation }: any) {
     const { receiver, receiverName } = route.params;
@@ -121,14 +122,31 @@ export default function ChatRoomScreen({ route, navigation }: any) {
                 keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
             >
                 {/* Custom Header */}
-                <View style={s.header}>
-                    <TouchableOpacity onPress={() => navigation.goBack()} style={s.backBtn}>
-                        <ChevronLeft color={theme.textPrimary} size={24} />
-                    </TouchableOpacity>
-                    <View style={s.headerInfo}>
-                        <Text style={s.headerName}>{receiverName}</Text>
-                        <Text style={s.headerStatus}>{receiver.is_online ? 'Online' : 'Offline'}</Text>
+                <View style={[s.header, { justifyContent: 'space-between' }]}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        <TouchableOpacity onPress={() => navigation.goBack()} style={s.backBtn}>
+                            <ChevronLeft color={theme.textPrimary} size={24} />
+                        </TouchableOpacity>
+                        <View style={s.headerInfo}>
+                            <Text style={s.headerName}>{receiverName}</Text>
+                            <Text style={s.headerStatus}>{receiver.is_online ? 'Online' : 'Offline'}</Text>
+                        </View>
                     </View>
+                    
+                    {currentUser && (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 6, gap: 10 }}>
+                            <ZegoSendCallInvitationButton
+                                invitees={[{ userID: receiver.id.toString(), userName: receiverName }]}
+                                isVideoCall={false}
+                                resourceID={"zego_audio_call"}
+                            />
+                            <ZegoSendCallInvitationButton
+                                invitees={[{ userID: receiver.id.toString(), userName: receiverName }]}
+                                isVideoCall={true}
+                                resourceID={"zego_video_call"}
+                            />
+                        </View>
+                    )}
                 </View>
 
                 {loading ? (

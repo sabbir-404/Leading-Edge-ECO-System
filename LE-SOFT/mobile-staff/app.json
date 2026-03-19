@@ -12,7 +12,11 @@
       "backgroundColor": "#000000"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "Allow Leading Edge to access your camera for video calls.",
+        "NSMicrophoneUsageDescription": "Allow Leading Edge to access your microphone for voice calls."
+      }
     },
     "android": {
       "package": "com.leadingedge.staff",
