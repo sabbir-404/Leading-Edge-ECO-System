@@ -118,6 +118,15 @@ async function processEntry(entry: QueueEntry): Promise<void> {
         // Remove from SQLite offline queue on success
         await removePendingWrite(entry.id).catch(() => {});
         entry.onSuccess?.({ success: true });
+
+        // Broadcast data update to frontend to trigger silent auto-refresh
+        try {
+            BrowserWindow.getAllWindows().forEach(win => {
+                if (!win.isDestroyed()) {
+                    win.webContents.send('data-updated', entry.table);
+                }
+            });
+        } catch { }
     } catch (err: any) {
         entry.retries++;
         await incrementRetryCount(entry.id).catch(() => {});

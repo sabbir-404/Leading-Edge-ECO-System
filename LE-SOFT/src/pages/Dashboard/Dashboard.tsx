@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
+import { useAutoRefresh } from '../../hooks/useAutoRefresh';
 import DashboardLayout from '../../components/DashboardLayout';
 import './Dashboard.css';
 
@@ -50,34 +51,38 @@ const Dashboard: React.FC = () => {
     const typingTimeoutRef = useRef<any>(null);
 
     // ─── Initial Data ───
+    const fetchData = useCallback(async () => {
+        try {
+            // @ts-ignore
+            const result = await window.electron.getDashboardStats();
+            setStats(result || {});
+            // @ts-ignore
+            const users = await window.electron.getUsers();
+            const user = JSON.parse(localStorage.getItem('user') || 'null');
+            setChatUsers(users.filter((u: any) => u.id !== user?.id));
+        } catch (e) { console.error(e); }
+        setLoading(false);
+    }, []);
+
+    const fetchNotifs = useCallback(async () => {
+        const userId = parseInt(localStorage.getItem('user_id') || '0');
+        if (!userId) return;
+        try {
+            // @ts-ignore
+            const data = await window.electron.getNotifications(userId);
+            setNotifications(data || []);
+        } catch {}
+    }, []);
+
     useEffect(() => {
         const user = JSON.parse(localStorage.getItem('user') || 'null');
         setCurrentUser(user);
-
-        const fetchData = async () => {
-            try {
-                // @ts-ignore
-                const result = await window.electron.getDashboardStats();
-                setStats(result || {});
-                // @ts-ignore
-                const users = await window.electron.getUsers();
-                setChatUsers(users.filter((u: any) => u.id !== user?.id));
-            } catch (e) { console.error(e); }
-            setLoading(false);
-        };
         fetchData();
-
-        // Fetch notifications
-        const userId = parseInt(localStorage.getItem('user_id') || '0');
-        const fetchNotifs = async () => {
-            try {
-                // @ts-ignore
-                const data = await window.electron.getNotifications(userId);
-                setNotifications(data || []);
-            } catch {}
-        };
         fetchNotifs();
-    }, []);
+    }, [fetchData, fetchNotifs]);
+
+    useAutoRefresh(['bills', 'vouchers', 'products', 'stock_items', 'users'], fetchData);
+    useAutoRefresh(['notifications'], fetchNotifs);
 
     // ─── Presence Heartbeat (every 10s) ───
     useEffect(() => {

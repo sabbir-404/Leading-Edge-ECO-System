@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../components/DashboardLayout';
 import { motion } from 'framer-motion';
 import { Plus, Eye, Trash2, FileText } from 'lucide-react';
+import { useAutoRefresh } from '../../hooks/useAutoRefresh';
 import './Quotation.css';
 
 export default function QuotationList() {
@@ -22,6 +23,8 @@ export default function QuotationList() {
   };
 
   useEffect(() => { fetchQuotations(); }, []);
+
+  useAutoRefresh(['quotations'], fetchQuotations);
 
   const handleDelete = async (id: number) => {
     if (!confirm('Delete this quotation? This cannot be undone.')) return;

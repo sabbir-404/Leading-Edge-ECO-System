@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Search, Trash2 } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { useAutoRefresh } from '../../../hooks/useAutoRefresh';
 import '../Masters/Masters.css';
 
 const VoucherList: React.FC = () => {
@@ -23,6 +24,8 @@ const VoucherList: React.FC = () => {
     };
 
     useEffect(() => { fetchVouchers(); }, []);
+
+    useAutoRefresh(['vouchers'], fetchVouchers);
 
     const handleDelete = async (id: number) => {
         if (!confirm('Delete this voucher? This action cannot be undone.')) return;

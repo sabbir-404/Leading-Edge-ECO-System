@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { MapPin, CreditCard, FileText, ArrowLeftRight, FileCheck, Phone, Mail, Plus } from 'lucide-react';
+import { ArrowLeftRight, FileCheck, Phone, Mail, Plus, MapPin, CreditCard, FileText } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useAutoRefresh } from '../../hooks/useAutoRefresh';
 import DashboardLayout from '../../components/DashboardLayout';
 import '../Accounting/Masters/Masters.css';
 
@@ -28,7 +29,8 @@ const CustomerLedgerDetail: React.FC = () => {
     const [paymentNote, setPaymentNote] = useState('');
 
     useEffect(() => {
-        if (id) fetchDetail();
+        if (!id) return;
+        fetchDetail();
     }, [id]);
 
     const fetchDetail = async () => {
@@ -40,6 +42,10 @@ const CustomerLedgerDetail: React.FC = () => {
         } catch (e) { console.error(e); }
         setLoading(false);
     };
+
+    useAutoRefresh(['bills', 'customer_payments', 'exchange_orders', 'quotations'], () => {
+        if (id) fetchDetail();
+    });
 
     const handleSavePayment = async () => {
         if (!paymentAmount || Number(paymentAmount) <= 0) return alert('Enter a valid amount');

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import DashboardLayout from '../../components/DashboardLayout';
 import { motion } from 'framer-motion';
 import { Settings, Search, DollarSign, CheckCircle } from 'lucide-react';
+import { useAutoRefresh } from '../../hooks/useAutoRefresh';
 
 export default function HRMPayroll() {
   const [employees, setEmployees] = useState<any[]>([]);
@@ -36,6 +37,8 @@ export default function HRMPayroll() {
   useEffect(() => {
     fetchData();
   }, [month, year]);
+
+  useAutoRefresh(['hrm_employees', 'hrm_payroll'], fetchData);
 
   const handleGenerate = async (e: React.FormEvent) => {
     e.preventDefault();

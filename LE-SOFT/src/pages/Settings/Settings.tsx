@@ -11,11 +11,12 @@ import DashboardLayout from '../../components/DashboardLayout';
 import { useToast } from '../../context/ToastContext';
 import '../Accounting/Masters/Masters.css';
 
-type SettingsTab = 'profile' | 'system_hardware' | 'payment_methods' | 'database_api' | 'about';
+type SettingsTab = 'profile' | 'system_hardware' | 'payment_methods' | 'database_api' | 'policy' | 'about';
 
 const TAB_LIST: { id: SettingsTab; label: string; icon: React.ReactNode; adminOnly?: boolean }[] = [
     { id: 'profile',          label: 'Profile',             icon: <User size={18} />       },
     { id: 'system_hardware',  label: 'System & Hardware',    icon: <SettingsIcon size={18} />},
+    { id: 'policy',           label: 'Policy',              icon: <Lock size={18} />, adminOnly: true },
     { id: 'payment_methods',  label: 'Payment Methods',      icon: <DollarSign size={18} />, adminOnly: true },
     { id: 'database_api',     label: 'Database & API',      icon: <Database size={18} />   },
     { id: 'about',            label: 'About',               icon: <Info size={18} />       },
@@ -53,6 +54,7 @@ const Settings: React.FC = () => {
     const [settings, setSettings] = useState({
         name: '', mailingName: '', address: '', country: 'Bangladesh',
         state: '', phone: '', email: '', financialYearFrom: '', booksBeginFrom: '', currencySymbol: '৳',
+        maxExchangesPerBill: 1,
     });
     const [settingsLoading, setSettingsLoading] = useState(true);
     const [settingsSaved, setSettingsSaved] = useState(false);
@@ -143,6 +145,7 @@ const Settings: React.FC = () => {
                 state: result.state || '', phone: result.phone || '', email: result.email || '',
                 financialYearFrom: result.financial_year_from || '', booksBeginFrom: result.books_begin_from || '',
                 currencySymbol: result.base_currency_symbol || '৳',
+                maxExchangesPerBill: result.max_exchanges_per_bill || 1,
             });
         }).catch(() => {}).finally(() => setSettingsLoading(false));
         checkDbConnection();
@@ -674,6 +677,42 @@ const Settings: React.FC = () => {
                                             </p>
                                         </div>
                                     </div>
+                                </div>
+                            </>
+                        )}
+
+                        {/* ── POLICY TAB ────────────────────────────────────────── */}
+                        {activeTab === 'policy' && (
+                            <>
+                                <div style={card}>
+                                    <div style={cardHeader}>
+                                        <div style={iconBox('#ef4444', 'rgba(239,68,68,0.12)')}><Lock size={20} /></div>
+                                        <div>
+                                            <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>Business Policies</h2>
+                                            <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-secondary)' }}>Set guardrails for business operations</p>
+                                        </div>
+                                    </div>
+
+                                    <div style={{ marginBottom: '1.5rem' }}>
+                                        <span style={label}>Max Exchanges per Bill</span>
+                                        <p style={{ margin: '0 0 0.75rem', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                                            Limit how many times an exchange can be processed against a single original invoice.
+                                        </p>
+                                        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                                            <input 
+                                                type="number" 
+                                                style={{ ...input, width: '120px' }} 
+                                                value={settings.maxExchangesPerBill} 
+                                                onChange={e => setSettings(p => ({ ...p, maxExchangesPerBill: parseInt(e.target.value) || 1 }))}
+                                                min={1} 
+                                            />
+                                            <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>times</span>
+                                        </div>
+                                    </div>
+
+                                    <button onClick={handleSystemSave} style={btn('var(--accent-color)')}>
+                                        <Save size={15} /> Save Policy Settings
+                                    </button>
                                 </div>
                             </>
                         )}

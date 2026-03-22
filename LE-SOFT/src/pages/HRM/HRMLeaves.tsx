@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import DashboardLayout from '../../components/DashboardLayout';
 import { motion } from 'framer-motion';
 import { Calendar, Search, Plus, Check, X } from 'lucide-react';
+import { useAutoRefresh } from '../../hooks/useAutoRefresh';
 
 export default function HRMLeaves() {
   const [employees, setEmployees] = useState<any[]>([]);
@@ -34,6 +35,8 @@ export default function HRMLeaves() {
   useEffect(() => {
     fetchData();
   }, []);
+
+  useAutoRefresh(['hrm_employees', 'hrm_leaves'], fetchData);
 
   const handleApply = async (e: React.FormEvent) => {
     e.preventDefault();

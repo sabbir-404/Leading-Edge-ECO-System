@@ -1,9 +1,9 @@
 {
   "name": "le-soft",
   "private": true,
-  "version": "1.2.7",
+  "version": "1.2.8",
   "description": "Leading Edge ECO-System Software",
-  "author": "Sabbir <sabbir@example.com>",
+  "author": "Leading Edge <leadingedge.com.bd>",
   "type": "module",
   "main": "core/main.cjs",
   "scripts": {

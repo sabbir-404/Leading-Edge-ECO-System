@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ClipboardList, ChevronDown, ChevronUp, CheckCircle, Trash2, Send, FileText, Download, Eye, X, Edit2, Ruler } from 'lucide-react';
 import DashboardLayout from '../../components/DashboardLayout';
+import { useAutoRefresh } from '../../hooks/useAutoRefresh';
 import AlterOrder from './AlterOrder';
 
 const STATUSES = ['Pending Approval', 'Placed', 'In Production', 'Welding', 'Painting', 'Ready for Dispatch', 'Delivered'];
@@ -67,6 +68,8 @@ const TrackOrders: React.FC = () => {
   };
 
   useEffect(() => { fetchOrders(); }, []);
+
+  useAutoRefresh(['make_orders', 'make_order_updates'], fetchOrders);
 
   const loadExpanded = async (orderId: number) => {
     if (expandedId === orderId) { setExpandedId(null); return; }

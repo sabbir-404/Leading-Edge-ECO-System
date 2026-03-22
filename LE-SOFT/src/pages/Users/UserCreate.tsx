@@ -33,7 +33,11 @@ const UserCreate: React.FC = () => {
                 const requestingUserId = parseInt(localStorage.getItem('user_id') || '0');
                 // @ts-ignore
                 const data = await window.electron.getUserGroups({ requestingUserId });
-                setGroups(data || []);
+                const uRole = localStorage.getItem('user_role') || '';
+                const filteredGroups = (data || []).filter((g: any) => 
+                    uRole === 'superadmin' || g.name?.toLowerCase() !== 'superadmin'
+                );
+                setGroups(filteredGroups);
             } catch (e) { console.error(e); }
         };
         fetchGroups();
@@ -57,7 +61,7 @@ const UserCreate: React.FC = () => {
         }
         try {
             // @ts-ignore
-            const res = await window.electron.createUser({ ...formData, groupId: formData.groupId ? Number(formData.groupId) : null });
+            const res = await window.electron.createUser({ ...formData, groupId: formData.groupId ? Number(formData.groupId) : null, requestingUserRole: userRole });
             if (!res?.success) {
                 setError(res?.error || 'Failed to create user');
                 return;
@@ -121,6 +125,7 @@ const UserCreate: React.FC = () => {
                         <div className="form-group">
                             <label>Role</label>
                             <select name="role" value={formData.role} onChange={handleChange}>
+                                {userRole === 'superadmin' && <option value="superadmin">Super Admin</option>}
                                 <option value="admin">Admin</option>
                                 <option value="manager">Manager</option>
                                 <option value="operator">Operator</option>

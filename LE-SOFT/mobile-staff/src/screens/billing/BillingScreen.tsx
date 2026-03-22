@@ -6,7 +6,7 @@ import KeyboardAwareContainer from '../../components/KeyboardAwareContainer';
 import { Search, Plus, Minus, Trash2, Save, User, X, Scan, Camera } from 'lucide-react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Picker } from '@react-native-picker/picker';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface Product { id: number; name: string; sku: string; selling_price: number; }
 interface CartItem extends Product { quantity: number; discount_pct: number; }
@@ -23,6 +23,7 @@ export default function BillingScreen({ navigation }: any) {
   const [customerPhone, setCustomerPhone] = useState('');
   const [billedBy, setBilledBy] = useState('Staff');
   const [saving, setSaving] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   // New Fields
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
@@ -125,6 +126,7 @@ export default function BillingScreen({ navigation }: any) {
       const { data: bill, error } = await supabase.from('bills').insert({ 
         customer_id: custId, 
         billed_by: billedBy, 
+        platform: 'mobile',
         subtotal, 
         discount_total: discountTotal, 
         grand_total: grand,
@@ -177,34 +179,35 @@ export default function BillingScreen({ navigation }: any) {
   }
 
   return (
-    <View style={[s.root, { paddingTop: insets.top }]}>
+    <SafeAreaView style={s.root} edges={['top', 'left', 'right']}>
+      {/* Fixed Top Bar */}
+      <View style={s.header}>
+        <Text style={s.title}>Billing / POS</Text>
+        <TouchableOpacity onPress={() => navigation.navigate('BillHistory')} style={s.outlineBtn}>
+          <Text style={s.outlineBtnText}>History</Text>
+        </TouchableOpacity>
+      </View>
+
       <KeyboardAwareContainer>
         <ScrollView showsVerticalScrollIndicator={false}>
-          {/* Header */}
-          <View style={s.header}>
-            <Text style={s.title}>Billing / POS</Text>
-            <TouchableOpacity onPress={() => navigation.navigate('BillHistory')} style={s.outlineBtn}>
-              <Text style={s.outlineBtnText}>History</Text>
-            </TouchableOpacity>
-          </View>
 
           {/* Customer */}
-          <View style={s.section}>
-            <Text style={s.sectionLabel}>Customer Details</Text>
-            <View style={s.inputRow}>
+          <View style={[s.section, { padding: 12, marginBottom: 12 }]}>
+            <Text style={[s.sectionLabel, { marginBottom: 8 }]}>Customer Details</Text>
+            <View style={[s.inputRow, { paddingVertical: 2 }]}>
               <User color={theme.textMuted} size={16} />
-              <TextInput style={s.input} value={customerName} onChangeText={setCustomerName}
+              <TextInput style={[s.input, { paddingVertical: 8 }]} value={customerName} onChangeText={setCustomerName}
                 placeholder="Customer Name *" placeholderTextColor={theme.textMuted} />
             </View>
-            <View style={[s.inputRow, { marginTop: 10 }]}>
-              <TextInput style={s.input} value={customerPhone} onChangeText={setCustomerPhone}
+            <View style={[s.inputRow, { marginTop: 6, paddingVertical: 2 }]}>
+              <TextInput style={[s.input, { paddingVertical: 8 }]} value={customerPhone} onChangeText={setCustomerPhone}
                 placeholder="Phone / Mobile" placeholderTextColor={theme.textMuted} keyboardType="phone-pad" />
             </View>
           </View>
 
           {/* Product Search */}
-          <View style={s.section}>
-            <Text style={s.sectionLabel}>Inventory</Text>
+          <View style={[s.section, { padding: 12, marginBottom: 12 }]}>
+            <Text style={[s.sectionLabel, { marginBottom: 8 }]}>Inventory</Text>
             <View style={s.searchRow}>
               <View style={[s.inputRow, { flex: 1 }]}>
                 <Search color={theme.textMuted} size={16} />
@@ -250,37 +253,48 @@ export default function BillingScreen({ navigation }: any) {
           )}
 
           {/* Shipping & Payment */}
-          <View style={s.section}>
-            <Text style={s.sectionLabel}>Shipping & Payment</Text>
-            <Text style={s.fieldLabel}>Payment Method</Text>
-            <View style={s.pickerContainer}>
+          <View style={[s.section, { padding: 12, marginBottom: 12 }]}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <Text style={[s.sectionLabel, { marginBottom: 0 }]}>Payment Setup</Text>
+              <TouchableOpacity onPress={() => setShowAdvanced(!showAdvanced)}>
+                <Text style={{ fontSize: 12, color: theme.accent, fontWeight: '600' }}>
+                  {showAdvanced ? 'Hide Advanced' : 'Show Shipping & Extras'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+            
+            <View style={[s.pickerContainer, { marginBottom: 4 }]}>
               <Picker
                 selectedValue={selectedMethod}
                 onValueChange={(v) => setSelectedMethod(v)}
-                style={{ color: theme.textPrimary }}
+                style={{ color: theme.textPrimary, height: 44 }}
                 dropdownIconColor={theme.textMuted}
               >
                 {paymentMethods.map(m => <Picker.Item key={m.id} label={m.name} value={m.id} />)}
               </Picker>
             </View>
             
-            <Text style={[s.fieldLabel, { marginTop: 12 }]}>Transaction Ref / Note</Text>
-            <View style={s.inputRow}>
-              <TextInput style={s.input} value={paymentRef} onChangeText={setPaymentRef}
-                placeholder="Ref number or ID..." placeholderTextColor={theme.textMuted} />
-            </View>
+            {showAdvanced && (
+              <View>
+                <Text style={[s.fieldLabel, { marginTop: 12 }]}>Transaction Ref / Note</Text>
+                <View style={[s.inputRow, { paddingVertical: 2 }]}>
+                  <TextInput style={[s.input, { paddingVertical: 8 }]} value={paymentRef} onChangeText={setPaymentRef}
+                    placeholder="Ref number or ID..." placeholderTextColor={theme.textMuted} />
+                </View>
 
-            <Text style={[s.fieldLabel, { marginTop: 12 }]}>Installation Charge (৳)</Text>
-            <View style={s.inputRow}>
-              <TextInput style={s.input} value={installationCharge} onChangeText={setInstallationCharge}
-                keyboardType="numeric" placeholder="0.00" placeholderTextColor={theme.textMuted} />
-            </View>
+                <Text style={[s.fieldLabel, { marginTop: 12 }]}>Installation Charge (৳)</Text>
+                <View style={[s.inputRow, { paddingVertical: 2 }]}>
+                  <TextInput style={[s.input, { paddingVertical: 8 }]} value={installationCharge} onChangeText={setInstallationCharge}
+                    keyboardType="numeric" placeholder="0.00" placeholderTextColor={theme.textMuted} />
+                </View>
 
-            <Text style={[s.fieldLabel, { marginTop: 12 }]}>Shipping Address</Text>
-            <View style={[s.inputRow, { alignItems: 'flex-start', minHeight: 80 }]}>
-              <TextInput style={[s.input, { textAlignVertical: 'top' }]} value={shippingAddress} onChangeText={setShippingAddress}
-                placeholder="House, Area, City..." placeholderTextColor={theme.textMuted} multiline />
-            </View>
+                <Text style={[s.fieldLabel, { marginTop: 12 }]}>Shipping Address</Text>
+                <View style={[s.inputRow, { alignItems: 'flex-start', minHeight: 60, paddingVertical: 2 }]}>
+                  <TextInput style={[s.input, { textAlignVertical: 'top', paddingVertical: 8 }]} value={shippingAddress} onChangeText={setShippingAddress}
+                    placeholder="House, Area, City..." placeholderTextColor={theme.textMuted} multiline />
+                </View>
+              </View>
+            )}
           </View>
         </ScrollView>
       </KeyboardAwareContainer>
@@ -298,7 +312,7 @@ export default function BillingScreen({ navigation }: any) {
           )}
         </TouchableOpacity>
       </View>
-    </View>
+    </SafeAreaView>
   );
 }
 

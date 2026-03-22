@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, Eye, UserSearch } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { useAutoRefresh } from '../../hooks/useAutoRefresh';
 import DashboardLayout from '../../components/DashboardLayout';
 import '../Accounting/Masters/Masters.css';
 
@@ -40,6 +41,8 @@ const CustomerLedgerList: React.FC = () => {
         } catch (e) { console.error(e); }
         setLoading(false);
     };
+
+    useAutoRefresh(['billing_customers', 'bills', 'customer_payments'], fetchCustomers);
 
     const viewLedger = (id: number) => {
         navigate(`/crm/ledger/${id}`);

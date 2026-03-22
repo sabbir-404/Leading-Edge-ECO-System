@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Search, Trash2 } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { useAutoRefresh } from '../../../hooks/useAutoRefresh';
 import '../Masters/Masters.css';
 
 const PurchaseBillList: React.FC = () => {
@@ -23,6 +24,8 @@ const PurchaseBillList: React.FC = () => {
     };
 
     useEffect(() => { fetchBills(); }, []);
+
+    useAutoRefresh(['purchase_bills'], fetchBills);
 
     const handleDelete = async (id: number) => {
         if (!confirm('Delete this purchase bill?')) return;

@@ -19,6 +19,7 @@ const PERMISSION_GROUPS = [
             { key: 'read_stock_items', label: 'Read Stock Items' }, { key: 'write_stock_items', label: 'Write Stock Items' },
             { key: 'read_units', label: 'Read Units' }, { key: 'write_units', label: 'Write Units' },
             { key: 'read_products', label: 'Read Products' }, { key: 'write_products', label: 'Write Products' },
+            { key: 'delete_products', label: 'Delete Products' },
             { key: 'read_godowns', label: 'Read Godowns' }, { key: 'write_godowns', label: 'Write Godowns' },
         ]
     },
@@ -78,6 +79,16 @@ const PERMISSION_GROUPS = [
             { key: 'manage_users', label: 'Manage User Accounts' },
             { key: 'manage_groups', label: 'Manage Permission Groups' },
             { key: 'manage_settings', label: 'Manage Application Settings' }
+        ]
+    },
+    {
+        category: 'Reports',
+        desc: 'Analytics, Summaries, and Data Exports',
+        perms: [
+            { key: 'read_sales_report', label: 'Read Sales Reports' },
+            { key: 'read_inventory_report', label: 'Read Inventory Reports' },
+            { key: 'read_financial_report', label: 'Read Financial Reports' },
+            { key: 'read_product_history', label: 'Read Product History' }
         ]
     }
 ];

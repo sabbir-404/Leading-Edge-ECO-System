@@ -6,6 +6,7 @@ import {
     User, AlertCircle
 } from 'lucide-react';
 import DashboardLayout from '../../components/DashboardLayout';
+import { useAutoRefresh } from '../../hooks/useAutoRefresh';
 import '../Accounting/Masters/Masters.css';
 
 // ── Status metadata ────────────────────────────────────────────────────────
@@ -155,6 +156,8 @@ const ShippingDashboard: React.FC = () => {
     };
 
     useEffect(() => { load(); }, [filter]);
+
+    useAutoRefresh(['shipment_status_history', 'bills'], load);
 
     const loadHistory = async (shipmentId: number) => {
         setHistoryLoading(true);

@@ -85,6 +85,7 @@ import ProfitAndLoss from './pages/Reports/ProfitAndLoss';
 import StockSummary from './pages/Reports/StockSummary';
 import DayBook from './pages/Reports/DayBook';
 import MarketAnalysis from './pages/Reports/MarketAnalysis';
+import ProductHistoryReport from './pages/Reports/ProductHistoryReport';
 
 // HRM Module
 import HRMDashboard from './pages/HRM/HRMDashboard';
@@ -279,6 +280,7 @@ function App() {
             <Route path="stock-summary" element={<StockSummary />} />
             <Route path="day-book" element={<DayBook />} />
             <Route path="market-analysis" element={<MarketAnalysis />} />
+            <Route path="product-history" element={<ProductHistoryReport />} />
         </Route>
 
         {/* Users */}

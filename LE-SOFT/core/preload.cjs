@@ -30,6 +30,7 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   // Products
   getProducts: () => import_electron.ipcRenderer.invoke("get-products"),
   getProduct: (id) => import_electron.ipcRenderer.invoke("get-product", id),
+  getProductPriceHistory: () => import_electron.ipcRenderer.invoke("get-product-price-history"),
   createProduct: (product) => import_electron.ipcRenderer.invoke("create-product", product),
   updateProduct: (product) => import_electron.ipcRenderer.invoke("update-product", product),
   deleteProduct: (id) => import_electron.ipcRenderer.invoke("delete-product", id),
@@ -288,6 +289,11 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
     const handler = (_, data) => callback(data);
     import_electron.ipcRenderer.on("write-queue-status", handler);
     return () => import_electron.ipcRenderer.removeListener("write-queue-status", handler);
+  },
+  onDataUpdated: (callback) => {
+    const handler = (_, table) => callback(table);
+    import_electron.ipcRenderer.on("data-updated", handler);
+    return () => import_electron.ipcRenderer.removeListener("data-updated", handler);
   },
   // ─── AI MARKET ANALYSIS ───
   saveAiKey: (key) => import_electron.ipcRenderer.invoke("save-ai-key", key),

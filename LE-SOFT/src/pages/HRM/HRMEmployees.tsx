@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import DashboardLayout from '../../components/DashboardLayout';
 import { motion } from 'framer-motion';
 import { Users, Search, Plus, Edit2, Phone, Mail, BadgeCheck, XCircle } from 'lucide-react';
+import { useAutoRefresh } from '../../hooks/useAutoRefresh';
 
 export default function HRMEmployees() {
   const [employees, setEmployees] = useState<any[]>([]);
@@ -32,6 +33,8 @@ export default function HRMEmployees() {
   useEffect(() => {
     fetchEmployees();
   }, []);
+
+  useAutoRefresh(['hrm_employees'], fetchEmployees);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();

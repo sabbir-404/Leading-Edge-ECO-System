@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useToast } from '../../context/ToastContext';
+import { useAutoRefresh } from '../../hooks/useAutoRefresh';
 
 const MarketAnalysis: React.FC = () => {
     const { showToast } = useToast();
@@ -49,6 +50,11 @@ const MarketAnalysis: React.FC = () => {
             showToast('Failed to load competitor details', 'error');
         }
     };
+
+    useAutoRefresh(['products'], loadProducts);
+    useAutoRefresh(['market_analysis', 'competitor_urls'], () => {
+        if (selectedProduct) loadProductDetails(selectedProduct);
+    });
 
     const handleAddUrl = async () => {
         if (!newCompName || !newCompUrl) return showToast('Fill all fields', 'error');

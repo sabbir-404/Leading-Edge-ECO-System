@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, Plus, Eye, ArrowLeftRight } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { useAutoRefresh } from '../../hooks/useAutoRefresh';
 import DashboardLayout from '../../components/DashboardLayout';
 import '../Accounting/Masters/Masters.css';
 
@@ -26,6 +27,8 @@ const ExchangeOrders: React.FC = () => {
     useEffect(() => {
         fetchOrders();
     }, []);
+
+    useAutoRefresh(['exchange_orders'], fetchOrders);
 
     const fetchOrders = async () => {
         setLoading(true);

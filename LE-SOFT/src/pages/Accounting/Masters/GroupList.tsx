@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Search, Edit2, Trash2 } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { useAutoRefresh } from '../../../hooks/useAutoRefresh';
 import './Masters.css';
 
 const GroupList: React.FC = () => {
@@ -23,6 +24,8 @@ const GroupList: React.FC = () => {
     };
 
     useEffect(() => { fetchGroups(); }, []);
+
+    useAutoRefresh(['groups'], fetchGroups);
 
     const handleDelete = async (id: number) => {
         if (!confirm('Are you sure you want to delete this group?')) return;

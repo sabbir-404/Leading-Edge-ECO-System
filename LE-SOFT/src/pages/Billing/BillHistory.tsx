@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Search, Printer, Eye, Calendar, X, Star, Filter, ChevronDown, ChevronUp, Package } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useAutoRefresh } from '../../hooks/useAutoRefresh';
 import DashboardLayout from '../../components/DashboardLayout';
 import '../Accounting/Masters/Masters.css';
 
@@ -61,7 +62,9 @@ const BillHistory: React.FC = () => {
     const [filterBilledBy, setFilterBilledBy] = useState('');
     const [filterAlteredOnly, setFilterAlteredOnly] = useState(false);
 
-    useEffect(() => { fetchBills(); }, []);
+    useEffect(() => { 
+        fetchBills(); 
+    }, []);
 
     const fetchBills = async () => {
         setLoading(true);
@@ -72,6 +75,8 @@ const BillHistory: React.FC = () => {
         } catch (e) { console.error(e); }
         setLoading(false);
     };
+
+    useAutoRefresh(['bills', 'bill_items', 'billing_customers'], fetchBills);
 
     const viewBill = async (id: number) => {
         try {

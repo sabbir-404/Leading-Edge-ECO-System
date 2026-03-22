@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Search, Trash2, Edit2 } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { useAutoRefresh } from '../../../hooks/useAutoRefresh';
 import '../../Accounting/Masters/Masters.css';
 
 const UnitList: React.FC = () => {
@@ -23,6 +24,8 @@ const UnitList: React.FC = () => {
     };
 
     useEffect(() => { fetchUnits(); }, []);
+
+    useAutoRefresh(['units'], fetchUnits);
 
     const handleDelete = async (id: number) => {
         if (!confirm('Delete this unit?')) return;

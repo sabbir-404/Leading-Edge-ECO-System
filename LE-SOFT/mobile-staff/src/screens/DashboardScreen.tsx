@@ -2,8 +2,9 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, FlatList, RefreshControl, Image, TextInput, Animated, Keyboard, Dimensions } from 'react-native';
 import { supabase } from '../lib/supabase';
 import { useTheme } from '../lib/ThemeContext';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { User, Search, Package, X, LogOut, ArrowRight, Activity, ShoppingBag, Menu } from 'lucide-react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { User, Search, Package, X, LogOut, Activity, ShoppingBag, Menu, AlertTriangle, Users } from 'lucide-react-native';
+import { useDebounce } from 'use-debounce';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -13,17 +14,20 @@ interface Stats {
 
 export default function DashboardScreen({ navigation }: any) {
   const { theme } = useTheme();
-  const insets = useSafeAreaInsets();
   const [user, setUser] = useState<any>(null);
   const [stats, setStats] = useState<Stats>({ todaySales: 0, totalBills: 0 });
   const [refreshing, setRefreshing] = useState(false);
   
   // Search State
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedQuery] = useDebounce(searchQuery, 300);
   const [isSearching, setIsSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<any[]>([]);
-  const [allProducts, setAllProducts] = useState<any[]>([]);
+  const [searchingDB, setSearchingDB] = useState(false);
   
+  const [totalCustomers, setTotalCustomers] = useState(0);
+  const [lowStockCount, setLowStockCount] = useState(0);
+
   // Animation
   const searchAnim = useRef(new Animated.Value(0)).current;
 
@@ -33,40 +37,56 @@ export default function DashboardScreen({ navigation }: any) {
     const { data: profile } = await supabase.from('users').select('*').eq('auth_id', authUser.id).single();
     setUser(profile);
     
-    const today = new Date().toISOString().split('T')[0];
-    const { data: bills } = await supabase.from('bills').select('grand_total').gte('created_at', today);
-    const todaySales = (bills || []).reduce((s: number, b: any) => s + (b.grand_total || 0), 0);
-    
-    setStats({ todaySales, totalBills: (bills || []).length });
-    
-    const { data: products } = await supabase.from('products').select('*');
-    if (products) setAllProducts(products);
+    // Only load global sales if Admin or Owner (to protect sensitive financial data)
+    if (profile?.role === 'ADMIN' || profile?.role === 'OWNER') {
+      const today = new Date().toISOString().split('T')[0];
+      const { data: bills } = await supabase.from('bills').select('grand_total').gte('created_at', today);
+      const todaySales = (bills || []).reduce((s: number, b: any) => s + (b.grand_total || 0), 0);
+      setStats({ todaySales, totalBills: (bills || []).length });
+    }
+
+    // Load general summary tiles
+    const { count: cCount } = await supabase.from('billing_customers').select('*', { count: 'exact', head: true });
+    if (cCount) setTotalCustomers(cCount);
+
+    const { count: sCount } = await supabase.from('products').select('*', { count: 'exact', head: true }).lt('quantity', 5);
+    if (sCount) setLowStockCount(sCount);
   };
 
   useEffect(() => { fetchData(); }, []);
   
+  useEffect(() => {
+    const searchDB = async () => {
+      if (!debouncedQuery) {
+        setSearchResults([]);
+        return;
+      }
+      setSearchingDB(true);
+      const { data } = await supabase
+        .from('products')
+        .select('*')
+        .or(`name.ilike.%${debouncedQuery}%,sku.ilike.%${debouncedQuery}%`)
+        .limit(20);
+      setSearchResults(data || []);
+      setSearchingDB(false);
+    };
+    searchDB();
+  }, [debouncedQuery]);
+
   const onRefresh = useCallback(async () => {
     setRefreshing(true); await fetchData(); setRefreshing(false);
   }, []);
 
   const handleSearchFocus = () => {
     setIsSearching(true);
-    Animated.timing(searchAnim, {
-      toValue: 1,
-      duration: 300,
-      useNativeDriver: true,
-    }).start();
+    Animated.timing(searchAnim, { toValue: 1, duration: 300, useNativeDriver: true }).start();
   };
 
   const handleSearchBlur = () => {
     if (searchQuery.length === 0) {
       Keyboard.dismiss();
       setIsSearching(false);
-      Animated.timing(searchAnim, {
-        toValue: 0,
-        duration: 300,
-        useNativeDriver: true,
-      }).start();
+      Animated.timing(searchAnim, { toValue: 0, duration: 300, useNativeDriver: true }).start();
     }
   };
   
@@ -74,24 +94,8 @@ export default function DashboardScreen({ navigation }: any) {
     setSearchQuery('');
     Keyboard.dismiss();
     setIsSearching(false);
-    Animated.timing(searchAnim, {
-      toValue: 0,
-      duration: 300,
-      useNativeDriver: true,
-    }).start();
+    Animated.timing(searchAnim, { toValue: 0, duration: 300, useNativeDriver: true }).start();
   };
-
-  useEffect(() => {
-    if (searchQuery.length > 0) {
-      const q = searchQuery.toLowerCase();
-      setSearchResults(allProducts.filter(p => 
-        (p.name && p.name.toLowerCase().includes(q)) || 
-        (p.sku && p.sku.toLowerCase().includes(q))
-      ).slice(0, 20));
-    } else {
-      setSearchResults([]);
-    }
-  }, [searchQuery, allProducts]);
 
   const s = makeStyles(theme);
 
@@ -104,26 +108,21 @@ export default function DashboardScreen({ navigation }: any) {
     inputRange: [0, 1],
     outputRange: [0, -165], // Hover to top
   });
-
-  const searchWidth = searchAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ['0%', '100%'], // Minor width expansion if needed, though padding is better
-  });
   
   const backdropOpacity = searchAnim.interpolate({
     inputRange: [0, 1],
     outputRange: [0, 1],
   });
 
+  const isAdmin = user?.role === 'ADMIN' || user?.role === 'OWNER';
+
   return (
-    <View style={[s.root, { paddingTop: insets.top }]}>
-      
-      {/* Background Overlay for search mode */}
+    <SafeAreaView style={s.root} edges={['top', 'left', 'right']}>
       <Animated.View style={[s.searchBackdrop, { opacity: backdropOpacity }]} pointerEvents={isSearching ? 'auto' : 'none'} />
 
       <Animated.View style={{ flex: 1, transform: [{ translateY: headerTranslateY }] }}>
         
-        {/* Top Header Profile Area */}
+        {/* Top Header */}
         <View style={s.topProfileArea}>
           <TouchableOpacity onPress={() => navigation.openDrawer()} style={s.menuBtn}>
             <Menu color={theme.textPrimary} size={28} />
@@ -143,15 +142,17 @@ export default function DashboardScreen({ navigation }: any) {
           </TouchableOpacity>
         </View>
 
-        {/* Dashboard Summary (Hero) */}
-        <View style={s.heroBox}>
-          <Text style={s.heroLabel}>Today's Total Bills</Text>
-          <Text style={s.heroAmount}>৳{stats.todaySales.toLocaleString()}</Text>
-          <View style={s.heroSub}>
-            <ShoppingBag color={theme.accent} size={14} />
-            <Text style={s.heroSubText}>{stats.totalBills} Bills generated today</Text>
+        {/* Admin Secret Dashboard Summary */}
+        {isAdmin && (
+          <View style={s.heroBox}>
+            <Text style={s.heroLabel}>Today's Total Bills</Text>
+            <Text style={s.heroAmount}>৳{stats.todaySales.toLocaleString()}</Text>
+            <View style={s.heroSub}>
+              <ShoppingBag color={theme.accent} size={14} />
+              <Text style={s.heroSubText}>{stats.totalBills} Bills generated today</Text>
+            </View>
           </View>
-        </View>
+        )}
 
       </Animated.View>
 
@@ -176,8 +177,8 @@ export default function DashboardScreen({ navigation }: any) {
         </View>
       </Animated.View>
 
-      {/* Content Below Search (Rest of Dashboard / Search Results) */}
-      <View style={{ flex: 1, marginTop: isSearching ? -200 + insets.top + 70 : 10 }}>
+      {/* Content Below Search */}
+      <View style={{ flex: 1, marginTop: isSearching ? -200 + 70 : 10 }}>
         {isSearching ? (
           <FlatList
             keyboardShouldPersistTaps="handled"
@@ -185,7 +186,7 @@ export default function DashboardScreen({ navigation }: any) {
             keyExtractor={item => item.id.toString()}
             contentContainerStyle={s.listContent}
             renderItem={({ item }) => (
-              <TouchableOpacity style={s.resultCard} onPress={() => { closeSearch(); /* Optional: navigate to details */ }}>
+              <TouchableOpacity style={s.resultCard} onPress={() => { closeSearch(); }}>
                 <View style={[s.iconBox, { backgroundColor: theme.bgElevated }]}>
                   <Package color={theme.accent} size={20} />
                 </View>
@@ -197,7 +198,9 @@ export default function DashboardScreen({ navigation }: any) {
               </TouchableOpacity>
             )}
             ListEmptyComponent={
-              searchQuery.length > 0 ? (
+              searchingDB ? (
+                <View style={s.empty}><Text style={{ color: theme.textMuted }}>Querying Database...</Text></View>
+              ) : searchQuery.length > 0 ? (
                 <View style={s.empty}><Text style={{ color: theme.textMuted }}>No stock found.</Text></View>
               ) : (
                 <View style={s.empty}><Text style={{ color: theme.textMuted }}>Type above to search inventory.</Text></View>
@@ -213,18 +216,33 @@ export default function DashboardScreen({ navigation }: any) {
             contentContainerStyle={s.dashScroll}
             renderItem={() => (
               <View>
-                <Text style={s.sectionTitle}>Quick Overview</Text>
-                <View style={s.placeholderCard}>
-                  <Activity color={theme.textMuted} size={32} />
-                  <Text style={s.placeText}>More dashboard metrics can go here.</Text>
+                <Text style={s.sectionTitle}>Overview & Metrics</Text>
+                <View style={s.gridRow}>
+                   <View style={s.gridTile}>
+                     <View style={[s.tileIcon, { backgroundColor: theme.accent + '22' }]}><Users color={theme.accent} size={24} /></View>
+                     <Text style={s.tileTitle}>Customers</Text>
+                     <Text style={s.tileValue}>{totalCustomers}</Text>
+                   </View>
+                   <View style={s.gridTile}>
+                     <View style={[s.tileIcon, { backgroundColor: theme.danger + '22' }]}><AlertTriangle color={theme.danger} size={24} /></View>
+                     <Text style={s.tileTitle}>Low Stock</Text>
+                     <Text style={s.tileValue}>{lowStockCount}</Text>
+                   </View>
                 </View>
+
+                {isAdmin && (
+                  <View style={[s.placeholderCard, { marginTop: 16 }]}>
+                    <Activity color={theme.textMuted} size={32} />
+                    <Text style={s.placeText}>More advanced admin charts can go here later.</Text>
+                  </View>
+                )}
               </View>
             )}
           />
         )}
       </View>
       
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -262,4 +280,10 @@ const makeStyles = (theme: any) => StyleSheet.create({
   sectionTitle: { color: theme.textPrimary, fontSize: 18, fontWeight: '800', marginTop: 10, marginBottom: 16 },
   placeholderCard: { backgroundColor: theme.bgCard, borderRadius: 20, padding: 30, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: theme.border, borderStyle: 'dashed' },
   placeText: { color: theme.textMuted, fontSize: 14, fontWeight: '500', marginTop: 10 },
+
+  gridRow: { flexDirection: 'row', gap: 12 },
+  gridTile: { flex: 1, backgroundColor: theme.bgCard, borderRadius: 20, padding: 20, borderWidth: 1, borderColor: theme.border },
+  tileIcon: { width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
+  tileTitle: { color: theme.textMuted, fontSize: 14, fontWeight: '600', marginBottom: 6 },
+  tileValue: { color: theme.textPrimary, fontSize: 26, fontWeight: '800' },
 });

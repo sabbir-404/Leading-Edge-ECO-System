@@ -98,6 +98,8 @@ const Billing: React.FC = () => {
     const billedBy = localStorage.getItem('user_name') || 'Admin';
     const [editingPriceId, setEditingPriceId] = useState<number | null>(null);
     const [saving, setSaving] = useState(false);
+    const [searching, setSearching] = useState(false);
+    const [detailedResults, setDetailedResults] = useState<Product[]>([]);
 
     // Shipping
     const [shippingEnabled, setShippingEnabled] = useState(false);
@@ -139,6 +141,33 @@ const Billing: React.FC = () => {
         window.addEventListener('keydown', h);
         return () => window.removeEventListener('keydown', h);
     }, []);
+
+    // Real-time product search (Debounced)
+    useEffect(() => {
+        if (searchTerm.length < 1) {
+            setDetailedResults([]);
+            setSearching(false);
+            return;
+        }
+
+        // Barcode check (if it looks like a barcode/exact SKU, we might not want to search yet)
+        // but for now, we search everything.
+        
+        const timeout = setTimeout(async () => {
+            setSearching(true);
+            try {
+                // @ts-ignore
+                const results = await window.electron.searchProductsDetailed(searchTerm);
+                setDetailedResults(results || []);
+            } catch (e) {
+                console.error('Search error:', e);
+            } finally {
+                setSearching(false);
+            }
+        }, 300);
+
+        return () => clearTimeout(timeout);
+    }, [searchTerm]);
 
     // Customer search
     const searchCustomers = useCallback(async (q: string) => {
@@ -207,8 +236,9 @@ const Billing: React.FC = () => {
         }));
     };
 
-    // Filtered products for dropdown
-    const filteredProducts = products.filter(p =>
+    // Filtered products for dropdown (Local fallback + Detailed)
+    // We prioritize detailedResults from backend
+    const displayProducts = detailedResults.length > 0 ? detailedResults : products.filter(p =>
         p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
         (p.sku || '').toLowerCase().includes(searchTerm.toLowerCase())
     );
@@ -325,7 +355,21 @@ const Billing: React.FC = () => {
 
                         {/* Search bar */}
                         <div style={{ padding: '0.7rem 0.9rem', borderBottom: '1px solid var(--border-color)', display: 'flex', gap: '0.5rem' }}>
-                            <form onSubmit={e => { e.preventDefault(); const t = searchTerm.trim().toLowerCase(); if (!t) return; const ex = products.find(p => (p.sku || '').toLowerCase() === t); if (ex) addToCart(ex); else setShowProductDropdown(true); }} style={{ flex: 1, position: 'relative' }}>
+                            <form onSubmit={e => { 
+                                e.preventDefault(); 
+                                const t = searchTerm.trim().toLowerCase(); 
+                                if (!t) return; 
+                                // Check local state first (fast)
+                                let ex = products.find(p => (p.sku || '').toLowerCase() === t);
+                                // Fallback to detailed results if not in local yet (e.g. still loading chunks)
+                                if (!ex) ex = detailedResults.find(p => (p.sku || '').toLowerCase() === t);
+                                
+                                if (ex) {
+                                    addToCart(ex);
+                                } else {
+                                    setShowProductDropdown(true); 
+                                }
+                            }} style={{ flex: 1, position: 'relative' }}>
                                 <Search size={15} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
                                 <input ref={barcodeInputRef} type="text"
                                     placeholder="Scan Barcode (F2) or search product name / SKU..."
@@ -336,10 +380,24 @@ const Billing: React.FC = () => {
                                     style={{ ...inp, paddingLeft: '2.2rem', height: '36px' }} />
 
                                 <AnimatePresence>
-                                    {showProductDropdown && filteredProducts.length > 0 && (
+                                    {showProductDropdown && (searchTerm.length > 0) && (
                                         <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
-                                            style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50, background: '#fff', border: '1px solid var(--border-color)', borderRadius: '0 0 10px 10px', boxShadow: '0 8px 24px rgba(0,0,0,0.12)', maxHeight: '260px', overflowY: 'auto' }}>
-                                            {filteredProducts.slice(0, 15).map(p => (
+                                            style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50, background: '#fff', border: '1px solid var(--border-color)', borderRadius: '0 0 10px 10px', boxShadow: '0 8px 24px rgba(0,0,0,0.12)', maxHeight: '320px', overflowY: 'auto' }}>
+                                            
+                                            {searching && (
+                                                <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                                                    Searching...
+                                                </div>
+                                            )}
+
+                                            {!searching && displayProducts.length === 0 && (
+                                                <div style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                                                    <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>No products found</div>
+                                                    <div style={{ fontSize: '0.75rem' }}>Try a different name or SKU</div>
+                                                </div>
+                                            )}
+
+                                            {!searching && displayProducts.slice(0, 30).map(p => (
                                                 <div key={p.id} onMouseDown={() => addToCart(p)}
                                                     style={{ padding: '0.55rem 0.9rem', cursor: 'pointer', borderBottom: '1px solid #f5f5f5', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
                                                     onMouseEnter={e => (e.currentTarget.style.background = '#f0f9ff')}

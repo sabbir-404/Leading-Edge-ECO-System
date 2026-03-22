@@ -80,14 +80,21 @@ const ExchangeCreate: React.FC = () => {
     const [showNewDropdown, setShowNewDropdown] = useState(false);
 
     const [saving, setSaving] = useState(false);
+    const [maxExchanges, setMaxExchanges] = useState(1);
 
     useEffect(() => {
-        const loadProducts = async () => {
+        const loadInitialData = async () => {
             // @ts-ignore
-            const data = await window.electron?.getProducts?.();
-            setProducts(data || []);
+            const [pData, sData] = await Promise.all([
+                window.electron?.getProducts?.(),
+                window.electron?.getSettings?.()
+            ]);
+            setProducts(pData || []);
+            if (sData?.max_exchanges_per_bill) {
+                setMaxExchanges(sData.max_exchanges_per_bill);
+            }
         };
-        loadProducts();
+        loadInitialData();
     }, []);
 
     // Customer phone search
@@ -119,13 +126,20 @@ const ExchangeCreate: React.FC = () => {
     const loadCustomerBills = async (customerId?: number) => {
         setBillSearchLoading(true);
         try {
-            // @ts-ignore
-            const allBills: Bill[] = await window.electron?.getBills?.() || [];
+            let bills: Bill[] = [];
+            if (customerId) {
+                // @ts-ignore
+                bills = await window.electron?.getCustomerBills?.(customerId) || [];
+            } else {
+                // @ts-ignore
+                const allBills: Bill[] = await window.electron?.getBills?.() || [];
+                bills = allBills;
+            }
+
             const q = billSearchQuery.toLowerCase().trim();
-            const filtered = allBills.filter(b => {
+            const filtered = bills.filter(b => {
                 const invMatch = safeDecrypt(b.invoice_number).toLowerCase().includes(q);
                 const custMatch = safeDecrypt(b.customer_name || '').toLowerCase().includes(q);
-                if (customerId) return (b as any).customer_id === customerId || invMatch;
                 return invMatch || custMatch || q === '';
             });
             setBillSearchResults(filtered.slice(0, 30));
@@ -155,6 +169,13 @@ const ExchangeCreate: React.FC = () => {
 
     const selectBill = async (bill: Bill) => {
         try {
+            // @ts-ignore
+            const count = await window.electron?.getBillExchangeCount?.(bill.id) || 0;
+            if (count >= maxExchanges) {
+                alert(`Policy Restriction: This bill has already been exchanged ${count} time(s). The current limit is ${maxExchanges}.`);
+                return;
+            }
+
             // @ts-ignore
             const detail = await window.electron?.getBillDetails?.(bill.id);
             setLinkedBill({ ...bill, items: detail?.items || [] });

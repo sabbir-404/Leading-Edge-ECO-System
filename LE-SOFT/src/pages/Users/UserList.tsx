@@ -124,6 +124,7 @@ const UserList: React.FC = () => {
                 isActive: editingUser.is_active,
                 groupId: editingUser.group_id,
                 password: editingUser.new_password,
+                requestingUserRole: userRole,
                 ...(editingUser.new_username?.trim() ? { username: editingUser.new_username.trim() } : {})
             });
             showToast('User updated successfully.', 'success');
@@ -261,6 +262,7 @@ const UserList: React.FC = () => {
                                     <div className="form-group">
                                         <label>Role</label>
                                         <select value={editingUser.role} onChange={e => setEditingUser({...editingUser, role: e.target.value})}>
+                                            {isSuperAdmin && <option value="superadmin">Super Admin</option>}
                                             <option value="admin">Admin</option>
                                             <option value="manager">Manager</option>
                                             <option value="operator">Operator</option>

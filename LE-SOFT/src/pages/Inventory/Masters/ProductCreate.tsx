@@ -70,9 +70,10 @@ const ProductCreate: React.FC = () => {
         e.preventDefault();
         setSaving(true);
         try {
+            const userName = localStorage.getItem('user_name') || 'Admin';
             if (isEdit) {
                 // @ts-ignore
-                await window.electron.updateProduct({ ...formData, id: editProduct.id, imagePath });
+                await window.electron.updateProduct({ ...formData, id: editProduct.id, imagePath, changedBy: userName });
                 alert('Product updated successfully!');
             } else {
                 // @ts-ignore

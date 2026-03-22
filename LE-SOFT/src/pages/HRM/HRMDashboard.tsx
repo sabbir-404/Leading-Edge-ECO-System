@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import DashboardLayout from '../../components/DashboardLayout';
 import { motion } from 'framer-motion';
 import { Users, UserCheck, UserX, Clock, Calendar } from 'lucide-react';
+import { useAutoRefresh } from '../../hooks/useAutoRefresh';
 
 export default function HRMDashboard() {
   const [stats, setStats] = useState({
@@ -10,26 +11,29 @@ export default function HRMDashboard() {
     onLeave: 0
   });
 
+  const fetchStats = async () => {
+    try {
+      // @ts-ignore
+      const employees = await window.electron.hrmGetEmployees();
+      const today = new Date().toISOString().split('T')[0];
+      // @ts-ignore
+      const attendance = await window.electron.hrmGetAttendance({ date: today });
+      
+      setStats({
+        totalEmployees: employees.filter((e: any) => e.status === 'Active').length,
+        presentToday: attendance.filter((a: any) => a.status === 'Present' || a.status === 'Half Day').length,
+        onLeave: attendance.filter((a: any) => a.status === 'Leave').length
+      });
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   useEffect(() => {
-    const fetchStats = async () => {
-      try {
-        // @ts-ignore
-        const employees = await window.electron.hrmGetEmployees();
-        const today = new Date().toISOString().split('T')[0];
-        // @ts-ignore
-        const attendance = await window.electron.hrmGetAttendance({ date: today });
-        
-        setStats({
-          totalEmployees: employees.filter((e: any) => e.status === 'Active').length,
-          presentToday: attendance.filter((a: any) => a.status === 'Present' || a.status === 'Half Day').length,
-          onLeave: attendance.filter((a: any) => a.status === 'Leave').length
-        });
-      } catch (err) {
-        console.error(err);
-      }
-    };
     fetchStats();
   }, []);
+
+  useAutoRefresh(['hrm_employees', 'hrm_attendance'], fetchStats);
 
   return (
     <DashboardLayout title="HRM - Dashboard">

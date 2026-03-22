@@ -7,8 +7,7 @@ import {
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../../lib/ThemeContext';
 import { decryptField, encryptField } from '../../lib/encryption';
-import { Send, Paperclip, ChevronLeft, User } from 'lucide-react-native';
-import { ZegoSendCallInvitationButton } from '@zegocloud/zego-uikit-prebuilt-call-rn';
+import { Send, Paperclip, ChevronLeft, Phone, Video } from 'lucide-react-native';
 
 export default function ChatRoomScreen({ route, navigation }: any) {
     const { receiver, receiverName } = route.params;
@@ -135,16 +134,34 @@ export default function ChatRoomScreen({ route, navigation }: any) {
                     
                     {currentUser && (
                         <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 6, gap: 10 }}>
-                            <ZegoSendCallInvitationButton
-                                invitees={[{ userID: receiver.id.toString(), userName: receiverName }]}
-                                isVideoCall={false}
-                                resourceID={"zego_audio_call"}
-                            />
-                            <ZegoSendCallInvitationButton
-                                invitees={[{ userID: receiver.id.toString(), userName: receiverName }]}
-                                isVideoCall={true}
-                                resourceID={"zego_video_call"}
-                            />
+                            <TouchableOpacity
+                                style={{ padding: 8, backgroundColor: theme.accent + '22', borderRadius: 20 }}
+                                onPress={() => {
+                                    supabase.from('notifications').insert({
+                                        title: '📞 Incoming Voice Call',
+                                        message: `${currentUser.full_name || currentUser.username} is calling you (voice)`,
+                                        sender_id: currentUser.id,
+                                        recipient_id: receiver.id
+                                    });
+                                    alert('Voice call invite sent! (Native WebRTC integration requires Android Studio build tools)');
+                                }}
+                            >
+                                <Phone color={theme.accent} size={20} />
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={{ padding: 8, backgroundColor: theme.accent + '22', borderRadius: 20 }}
+                                onPress={() => {
+                                    supabase.from('notifications').insert({
+                                        title: '📹 Incoming Video Call',
+                                        message: `${currentUser.full_name || currentUser.username} is calling you (video)`,
+                                        sender_id: currentUser.id,
+                                        recipient_id: receiver.id
+                                    });
+                                    alert('Video call invite sent! (Native WebRTC integration requires Android Studio build tools)');
+                                }}
+                            >
+                                <Video color={theme.accent} size={20} />
+                            </TouchableOpacity>
                         </View>
                     )}
                 </View>

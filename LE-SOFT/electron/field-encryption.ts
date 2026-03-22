@@ -122,8 +122,17 @@ const SKIP_KEYS = new Set([
     'from_date', 'to_date', 'month', 'delivery_date', 'paid_at', 'invoice_date',
     'is_active', 'email_confirm', 'is_read', 'is_online', 'is_visible',
     'password_hash', // already hashed
-    'permissions',   // JSONB — needs to stay as object for Supabase
+    'permissions',   // JSONB
     'le_local_id',   // mysql sync key
+
+    // ── NEW: Linkages and Search keys (PlainText for reliability) ──
+    'invoice_number',
+    'sku',
+    'name',
+    'phone',
+    'email',
+    'product_name',
+    'customer_name'
 ]);
 
 // ── Bulk object encrypt / decrypt ──────────────────────────────────────────────
@@ -154,9 +163,9 @@ export function decryptObject(obj: Record<string, any>): Record<string, any> {
     if (!obj || typeof obj !== 'object') return obj;
     const result: Record<string, any> = {};
     for (const [k, v] of Object.entries(obj)) {
-        if (v === null || v === undefined || SKIP_KEYS.has(k)) {
-            result[k] = v;
-        } else if (typeof v === 'string' && (v.startsWith('e1:') || v.startsWith('e2:'))) {
+        // ALWAYS try to decrypt if it looks like ciphertext, 
+        // regardless of whether the key is now in SKIP_KEYS.
+        if (typeof v === 'string' && (v.startsWith('e1:') || v.startsWith('e2:'))) {
             const plain = decryptField(v);
             // Try to re-parse JSONB fields
             if (plain.startsWith('{') || plain.startsWith('[')) {

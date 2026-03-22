@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Search, Edit3, Save, Clock, ChevronDown, ChevronUp, Minus, Plus, Trash2, Star, Package } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useAutoRefresh } from '../../hooks/useAutoRefresh';
 import DashboardLayout from '../../components/DashboardLayout';
 
 // Graceful fallback if Electron main hasn't been restarted with decryption fix
@@ -42,6 +43,11 @@ const AlterBill: React.FC = () => {
     const [showAudit, setShowAudit] = useState(false);
     const [saving, setSaving] = useState(false);
     const [saveMsg, setSaveMsg] = useState('');
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+    const [deleteReason, setDeleteReason] = useState('');
+
+    const user = JSON.parse(localStorage.getItem('user') || '{}');
+    const canDelete = user.role === 'Superadmin' || (user.permissions && user.permissions.includes('delete_bill'));
 
     useEffect(() => {
         fetchBills();
@@ -56,6 +62,8 @@ const AlterBill: React.FC = () => {
         } catch (e) { console.error(e); }
         setLoading(false);
     };
+
+    useAutoRefresh(['bills', 'bill_items', 'billing_customers'], fetchBills);
 
     const selectBill = async (bill: any) => {
         try {
@@ -106,7 +114,6 @@ const AlterBill: React.FC = () => {
         if (!selectedBill) return;
         setSaving(true);
         try {
-            const user = JSON.parse(localStorage.getItem('user') || '{}');
             // @ts-ignore
             const result = await window.electron.updateBill({
                 bill_id: selectedBill.id,
@@ -131,6 +138,30 @@ const AlterBill: React.FC = () => {
         }
         setSaving(false);
         setTimeout(() => setSaveMsg(''), 4000);
+    };
+
+    const handleDelete = async () => {
+        if (!selectedBill || !canDelete) return;
+        try {
+            // @ts-ignore
+            const res = await window.electron.deleteBill({
+                billId: selectedBill.id,
+                reason: deleteReason,
+                deletedBy: user.full_name || user.username || 'Admin'
+            });
+            if (res.success) {
+                setShowDeleteConfirm(false);
+                setSelectedBill(null);
+                setItems([]);
+                fetchBills();
+                alert('Bill deleted successfully and stock restored.');
+            } else {
+                alert('Failed to delete bill.');
+            }
+        } catch (e) {
+            console.error(e);
+            alert('Error deleting bill.');
+        }
     };
 
     const filtered = bills.filter(b =>
@@ -241,6 +272,15 @@ const AlterBill: React.FC = () => {
                                         >
                                             <Clock size={14} /> Audit Log {showAudit ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                                         </button>
+                                        
+                                        <button
+                                            onClick={() => setShowDeleteConfirm(true)}
+                                            title={canDelete ? "Delete Bill" : "You don't have permission to delete bills"}
+                                            style={{ padding: '0.5rem 1rem', borderRadius: '8px', border: '1px solid #fee2e2', background: '#fef2f2', color: '#dc2626', cursor: canDelete ? 'pointer' : 'not-allowed', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.85rem', opacity: canDelete ? 1 : 0.6 }}
+                                        >
+                                            <Trash2 size={14} /> Delete Bill
+                                        </button>
+
                                         <button
                                             onClick={handleSave}
                                             disabled={saving}
@@ -380,6 +420,54 @@ const AlterBill: React.FC = () => {
                         </>
                     )}
                 </div>
+
+                {/* Delete Confirmation Modal */}
+                <AnimatePresence>
+                    {showDeleteConfirm && (
+                        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
+                                style={{ background: '#fff', borderRadius: '16px', width: '400px', padding: '2rem', boxShadow: '0 20px 50px rgba(0,0,0,0.3)' }}>
+                                <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
+                                    <div style={{ width: '60px', height: '60px', borderRadius: '50%', background: '#fee2e2', color: '#dc2626', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1rem' }}>
+                                        <Trash2 size={30} />
+                                    </div>
+                                    <h3 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#111' }}>Delete Bill?</h3>
+                                    <p style={{ color: '#666', fontSize: '0.9rem', marginTop: '0.5rem' }}>
+                                        This action cannot be undone. Inventory stock will be restored automatically.
+                                    </p>
+                                </div>
+                                
+                                {!canDelete ? (
+                                    <div style={{ padding: '1rem', background: '#fff7ed', borderRadius: '8px', border: '1px solid #ffedd5', color: '#9a3412', fontSize: '0.85rem', textAlign: 'center' }}>
+                                        <strong>Permission Required</strong><br/>
+                                        Only administrators can delete bills. Please contact your manager.
+                                        <button onClick={() => setShowDeleteConfirm(false)} style={{ width: '100%', marginTop: '1rem', padding: '0.6rem', borderRadius: '8px', border: '1px solid #ddd', background: '#fff', cursor: 'pointer' }}>Close</button>
+                                    </div>
+                                ) : (
+                                    <>
+                                        <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.85rem', fontWeight: 600 }}>Reason for deletion:</label>
+                                        <textarea 
+                                            value={deleteReason} onChange={e => setDeleteReason(e.target.value)}
+                                            placeholder="Required..."
+                                            style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #ddd', fontSize: '0.85rem', resize: 'none', height: '80px', marginBottom: '1.5rem' }}
+                                        />
+                                        
+                                        <div style={{ display: 'flex', gap: '0.75rem' }}>
+                                            <button onClick={() => setShowDeleteConfirm(false)} style={{ flex: 1, padding: '0.75rem', borderRadius: '8px', border: '1px solid #ddd', background: '#fff', cursor: 'pointer', fontWeight: 600 }}>Cancel</button>
+                                            <button 
+                                                onClick={handleDelete}
+                                                disabled={!deleteReason.trim()}
+                                                style={{ flex: 2, padding: '0.75rem', borderRadius: '8px', border: 'none', background: '#dc2626', color: '#fff', cursor: deleteReason.trim() ? 'pointer' : 'not-allowed', fontWeight: 600, opacity: deleteReason.trim() ? 1 : 0.6 }}
+                                            >
+                                                Confirm Delete
+                                            </button>
+                                        </div>
+                                    </>
+                                )}
+                            </motion.div>
+                        </div>
+                    )}
+                </AnimatePresence>
             </div>
         </DashboardLayout>
     );

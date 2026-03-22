@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import DashboardLayout from '../../components/DashboardLayout';
 import { motion } from 'framer-motion';
 import { Calendar, Search } from 'lucide-react';
+import { useAutoRefresh } from '../../hooks/useAutoRefresh';
 
 export default function HRMAttendance() {
   const [employees, setEmployees] = useState<any[]>([]);
@@ -26,6 +27,8 @@ export default function HRMAttendance() {
   useEffect(() => {
     fetchData();
   }, [date]);
+
+  useAutoRefresh(['hrm_employees', 'hrm_attendance'], fetchData);
 
   const handleStatusChange = async (empId: number, status: string) => {
     const existing = attendance.find(a => a.employee_id === empId);

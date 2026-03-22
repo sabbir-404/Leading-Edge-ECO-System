@@ -269,13 +269,13 @@ export function registerHandlers() {
     ipcMain.handle('email-get-inbox', async (_e, userId: number) => {
         const { data, error } = await supabase.from('system_emails').select('*, sender:sender_id(full_name, email)').eq('receiver_id', userId).eq('is_deleted_by_receiver', false).order('created_at', { ascending: false });
         if (error) throw error;
-        return data || [];
+        return decryptRows(data || []);
     });
 
     ipcMain.handle('email-get-sent', async (_e, userId: number) => {
         const { data, error } = await supabase.from('system_emails').select('*, receiver:receiver_id(full_name, email)').eq('sender_id', userId).eq('is_deleted_by_sender', false).order('created_at', { ascending: false });
         if (error) throw error;
-        return data || [];
+        return decryptRows(data || []);
     });
 
     ipcMain.handle('email-send', async (_e, emailPayload) => {
@@ -308,7 +308,7 @@ export function registerHandlers() {
     ipcMain.handle('get-groups', async () => {
         const { data, error } = await supabase.from('groups').select('*, parent:groups!parent_group_id(name)').order('name');
         if (error) throw error;
-        return (data || []).map((g: any) => ({ ...g, parent_name: g.parent?.name || null }));
+        return decryptRows(data || []).map((g: any) => ({ ...g, parent_name: g.parent?.name || null }));
     });
 
     ipcMain.handle('create-group', async (_e, group) => {
@@ -334,7 +334,7 @@ export function registerHandlers() {
     ipcMain.handle('get-ledgers', async () => {
         const { data, error } = await supabase.from('ledgers').select('*, group:groups(name)').order('name');
         if (error) throw error;
-        return (data || []).map((l: any) => ({ ...l, group_name: l.group?.name || null }));
+        return decryptRows(data || []).map((l: any) => ({ ...l, group_name: l.group?.name || null }));
     });
 
     ipcMain.handle('create-ledger', async (_e, ledger) => {
@@ -356,7 +356,7 @@ export function registerHandlers() {
     ipcMain.handle('get-vouchers', async () => {
         const { data, error } = await supabase.from('vouchers').select('*, voucher_entries(ledger_id, amount, type, ledger:ledgers(name))').order('date', { ascending: false }).order('id', { ascending: false });
         if (error) throw error;
-        return (data || []).map((v: any) => ({ ...v, particulars: v.voucher_entries?.map((e: any) => e.ledger?.name).filter(Boolean).join(', ') || '' }));
+        return decryptRows(data || []).map((v: any) => ({ ...v, particulars: v.voucher_entries?.map((e: any) => e.ledger?.name).filter(Boolean).join(', ') || '' }));
     });
 
     ipcMain.handle('create-voucher', async (_e, voucher) => {
@@ -386,7 +386,7 @@ export function registerHandlers() {
     ipcMain.handle('get-units', async () => {
         const { data, error } = await supabase.from('units').select('*').order('name');
         if (error) throw error;
-        return data || [];
+        return decryptRows(data || []);
     });
 
     ipcMain.handle('create-unit', async (_e, unit) => {
@@ -406,7 +406,7 @@ export function registerHandlers() {
     ipcMain.handle('get-stock-groups', async () => {
         const { data, error } = await supabase.from('stock_groups').select('*, parent:stock_groups!parent_id(name)').order('name');
         if (error) throw error;
-        return (data || []).map((g: any) => ({ ...g, parent_name: g.parent?.name || null }));
+        return decryptRows(data || []).map((g: any) => ({ ...g, parent_name: g.parent?.name || null }));
     });
 
     ipcMain.handle('create-stock-group', async (_e, group) => {
@@ -431,7 +431,7 @@ export function registerHandlers() {
     ipcMain.handle('get-stock-items', async () => {
         const { data, error } = await supabase.from('stock_items').select('*, group:stock_groups(name), unit:units(name,symbol)').order('name');
         if (error) throw error;
-        return (data || []).map((i: any) => ({ ...i, group_name: i.group?.name || null, unit_name: i.unit?.name || null, unit_symbol: i.unit?.symbol || null }));
+        return decryptRows(data || []).map((i: any) => ({ ...i, group_name: i.group?.name || null, unit_name: i.unit?.name || null, unit_symbol: i.unit?.symbol || null }));
     });
 
     ipcMain.handle('create-stock-item', async (_e, item) => {
@@ -455,7 +455,7 @@ export function registerHandlers() {
     ipcMain.handle('get-companies', async () => {
         const { data, error } = await supabase.from('companies').select('*').order('name');
         if (error) throw error;
-        return data || [];
+        return decryptRows(data || []);
     });
 
     ipcMain.handle('create-company', async (_e, c) => {
@@ -493,7 +493,7 @@ export function registerHandlers() {
     ipcMain.handle('get-godowns', async () => {
         const { data, error } = await supabase.from('godowns').select('*').order('name');
         if (error) throw error;
-        return data || [];
+        return decryptRows(data || []);
     });
 
     ipcMain.handle('create-godown', async (_e, g) => {
@@ -530,9 +530,39 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('get-products', async () => {
-        const { data, error } = await supabase.from('products').select('*, unit:units(name,symbol), group:stock_groups(name)').order('name');
-        if (error) throw error;
-        return (data || []).map((p: any) => ({ ...p, unit_name: p.unit?.name || null, unit_symbol: p.unit?.symbol || null, group_name: p.group?.name || null }));
+        // Fetch all products in chunks if they exceed 1000 (Supabase limit)
+        let allData: any[] = [];
+        let from = 0;
+        const PAGE_SIZE = 1000;
+        let hasMore = true;
+
+        try {
+            while (hasMore) {
+                const { data, error } = await supabase
+                    .from('products')
+                    .select('*, unit:units(name,symbol), group:stock_groups(name)')
+                    .order('name')
+                    .range(from, from + PAGE_SIZE - 1);
+
+                if (error) throw error;
+                if (!data || data.length === 0) {
+                    hasMore = false;
+                } else {
+                    allData = [...allData, ...data];
+                    from += PAGE_SIZE;
+                    if (data.length < PAGE_SIZE) hasMore = false;
+                }
+            }
+            return allData.map((p: any) => ({
+                ...p,
+                unit_name: p.unit?.name || null,
+                unit_symbol: p.unit?.symbol || null,
+                group_name: p.group?.name || null
+            }));
+        } catch (error) {
+            console.error('[IPC] get-products error:', error);
+            throw error;
+        }
     });
 
     ipcMain.handle('get-product', async (_e, id: number) => {
@@ -553,11 +583,25 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('update-product', async (_e, product) => {
-        const { id, name, sku, category, purchasePrice, sellingPrice, taxRate, hsnCode, description, unit, stockGroup, imagePath, quantity, locationRow, locationRack, locationBin } = product;
+        const { id, name, sku, category, purchasePrice, sellingPrice, taxRate, hsnCode, description, unit, stockGroup, imagePath, quantity, locationRow, locationRack, locationBin, changedBy } = product;
         const { data: uRow } = await supabase.from('units').select('id').eq('name', unit).maybeSingle();
         const { data: gRow } = await supabase.from('stock_groups').select('id').eq('name', stockGroup).maybeSingle();
-        const { error } = await supabase.from('products').update({ name, sku: sku || '', category: category || '', purchase_price: purchasePrice || 0, selling_price: sellingPrice || 0, tax_rate: taxRate || 0, hsn_code: hsnCode || '', description: description || '', unit_id: uRow?.id || null, stock_group_id: gRow?.id || null, image_path: imagePath || '', quantity: quantity || 0, location_row: locationRow || null, location_rack: locationRack || null, location_bin: locationBin || null }).eq('id', id);
+        const { data: oldProd } = await supabase.from('products').select('purchase_price, selling_price').eq('id', id).maybeSingle();
+        const { error } = await supabase.from('products').update({ name, sku: sku || '', category: category || '', purchase_price: purchasePrice || 0, selling_price: sellingPrice || 0, tax_rate: taxRate || 0, hsn_code: hsnCode || '', description: description || '', unit_id: uRow?.id || null, stock_group_id: gRow?.id || null, image_path: imagePath || '', quantity: quantity || 0, location_row: locationRow || null, location_rack: locationRack || null, location_bin: locationBin || null, last_modified: new Date().toISOString() }).eq('id', id);
         if (error) throw error;
+        
+        // Log price changes if applicable
+        if (oldProd && (oldProd.purchase_price !== (purchasePrice || 0) || oldProd.selling_price !== (sellingPrice || 0))) {
+            await supabase.from('product_price_history').insert({
+                product_id: id,
+                old_purchase_price: oldProd.purchase_price,
+                new_purchase_price: purchasePrice || 0,
+                old_selling_price: oldProd.selling_price,
+                new_selling_price: sellingPrice || 0,
+                changed_by: changedBy || 'Admin'
+            });
+        }
+        
         syncProductToMySQL({ localId: id, name, sku: sku || '', category: category || '', sellingPrice: sellingPrice || 0, description: description || '', imagePath: imagePath || '', quantity: quantity || 0 });
         return { success: true };
     });
@@ -568,11 +612,27 @@ export function registerHandlers() {
         return { success: true };
     });
 
-    ipcMain.handle('search-products-detailed', async (_e, query: string) => {
-        const q = `%${query}%`;
-        const { data, error } = await supabase.from('products').select('*, unit:units(symbol), group:stock_groups(name)').or(`name.ilike.${q},sku.ilike.${q},category.ilike.${q}`).limit(20);
+    ipcMain.handle('get-product-price-history', async () => {
+        const { data, error } = await supabase.from('product_price_history').select('*, products(name, sku)').order('created_at', { ascending: false });
         if (error) throw error;
-        return (data || []).map((p: any) => ({ ...p, unit_symbol: p.unit?.symbol || null, group_name: p.group?.name || null }));
+        return data;
+    });
+
+    ipcMain.handle('search-products-detailed', async (_e, query: string) => {
+        if (!query || query.trim().length < 1) return [];
+        const q = `%${query}%`;
+        const { data, error } = await supabase
+            .from('products')
+            .select('*, unit:units(symbol), group:stock_groups(name)')
+            .or(`name.ilike.${q},sku.ilike.${q},category.ilike.${q}`)
+            .order('name') // Added consistent ordering
+            .limit(50);    // Increased limit for better selection
+        if (error) throw error;
+        return decryptRows(data || []).map((p: any) => ({
+            ...p,
+            unit_symbol: p.unit?.symbol || null,
+            group_name: p.group?.name || null
+        }));
     });
 
     // ═══ BILLING / POS ═══════════════════════════════════════════════════════════
@@ -628,6 +688,7 @@ export function registerHandlers() {
             installation_charge: installation_charge || 0,
             installation_note: installation_note || '',
             grand_total,
+            platform: 'desktop',
         };
 
         // Enqueue the bill insert — returns immediately to user
@@ -635,15 +696,17 @@ export function registerHandlers() {
             table: 'bills',
             operation: 'insert',
             data: billRow,
-            onSuccess: async (res) => {
+            onSuccess: async () => {
                 // After bill is saved, enqueue items write
                 if (items && items.length > 0) {
-                    // We need the real bill ID — re-fetch from Supabase by invoice number
+                    // Fetch the bill ID by matching the local plain-text invoice_number
                     const { data: savedBill } = await supabase
                         .from('bills').select('id').eq('invoice_number', invoiceNumber).maybeSingle();
-                    if (savedBill?.id) {
+
+                    const savedBillId = savedBill?.id;
+                    if (savedBillId) {
                         const billItems = items.map((item: any) => ({
-                            bill_id: savedBill.id,
+                            bill_id: savedBillId,
                             product_id: item.product_id,
                             product_name: item.product_name,
                             sku: item.sku || '',
@@ -669,6 +732,8 @@ export function registerHandlers() {
                                 } as any);
                             }
                         }
+                    } else {
+                        console.error('[create-bill] Failed to find saved bill ID for items mapping:', invoiceNumber);
                     }
                 }
             },
@@ -695,6 +760,8 @@ export function registerHandlers() {
         if (!bill) return null;
         const { data: items } = await supabase.from('bill_items').select('*, product:products(image_path)').eq('bill_id', billId);
         const decBill = decryptObject(bill);
+        const decItems = decryptRows(items || []);
+        
         // Decrypt nested customer fields
         const cust = bill.customer || {};
         return { 
@@ -703,8 +770,56 @@ export function registerHandlers() {
             customer_phone: decryptField(cust.phone) || null, 
             customer_email: decryptField(cust.email) || null, 
             customer_address: decryptField(cust.address) || null, 
-            items: (items || []).map((i: any) => ({ ...i, image_path: i.product?.image_path || null })) 
+            items: decItems.map((i: any) => ({ ...i, image_path: i.product?.image_path || null })) 
         };
+    });
+
+    ipcMain.handle('delete-bill', async (_e, { billId, reason, deletedBy }) => {
+        // 1. Fetch bill and items to restore stock
+        const { data: bill } = await supabase.from('bills').select('*').eq('id', billId).maybeSingle();
+        if (!bill) throw new Error('Bill not found');
+        
+        const { data: items } = await supabase.from('bill_items').select('*').eq('bill_id', billId);
+        
+        // 2. Add to audit log first
+        await supabase.from('bill_audit').insert({
+            bill_id: billId,
+            field_changed: 'DELETED',
+            old_value: bill.invoice_number,
+            new_value: reason || 'User requested deletion',
+            changed_by: deletedBy || 'Admin'
+        });
+
+        // 3. Restore stock
+        if (items && items.length > 0) {
+            for (const i of items) {
+                if (i.product_id && i.quantity) {
+                    try {
+                        await supabase.rpc('increment_product_qty', { p_id: i.product_id, qty: i.quantity });
+                    } catch (err) {
+                        console.error('Failed to restore stock for product', i.product_id, err);
+                    }
+                }
+            }
+        }
+
+        // 4. Delete items and bill
+        await supabase.from('bill_items').delete().eq('bill_id', billId);
+        const { error } = await supabase.from('bills').delete().eq('id', billId);
+        
+        if (error) throw error;
+        return { success: true };
+    });
+
+    ipcMain.handle('get-customer-bills', async (_e, customerId: number) => {
+        const { data, error } = await supabase
+            .from('bills')
+            .select('id, invoice_number, grand_total, created_at')
+            .eq('customer_id', customerId)
+            .order('created_at', { ascending: false })
+            .limit(20);
+        if (error) throw error;
+        return (data || []).map(b => decryptObject(b));
     });
 
     ipcMain.handle('update-bill', async (_e, billData: any) => {
@@ -736,7 +851,7 @@ export function registerHandlers() {
 
     ipcMain.handle('get-bill-audit', async (_e, billId: number) => {
         const { data } = await supabase.from('bill_audit').select('*').eq('bill_id', billId).order('changed_at', { ascending: false });
-        return data || [];
+        return decryptRows(data || []);
     });
 
     // ═══ PURCHASE BILLS ═══════════════════════════════════════════════════════════
@@ -744,7 +859,7 @@ export function registerHandlers() {
     ipcMain.handle('get-purchase-bills', async () => {
         const { data, error } = await supabase.from('purchase_bills').select('*, supplier:ledgers(name)').order('bill_date', { ascending: false }).order('id', { ascending: false });
         if (error) throw error;
-        return (data || []).map((b: any) => ({ ...b, supplier_name: b.supplier?.name || null }));
+        return decryptRows(data || []).map((b: any) => ({ ...b, supplier_name: b.supplier?.name || null }));
     });
 
     ipcMain.handle('create-purchase-bill', async (_e, bill) => {
@@ -844,7 +959,10 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('create-user', async (_e, user) => {
-        const { username, password, fullName, role, groupId, email, phone } = user;
+        const { username, password, fullName, role, groupId, email, phone, requestingUserRole } = user;
+        if (role === 'superadmin' && requestingUserRole !== 'superadmin') {
+            return { success: false, error: 'Only Super Admins can create other Super Admins.' };
+        }
         if (!username?.trim()) return { success: false, error: 'Username is required' };
         if (!password || password.length < 4) return { success: false, error: 'Password must be at least 4 characters' };
         if (!supabaseAdmin) return { success: false, error: 'Database Admin Key not configured in settings. Cannot create users.' };
@@ -878,9 +996,13 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('update-user', async (_e, user) => {
-        const { id, fullName, role, email, phone, isActive, password, groupId } = user;
+        const { id, fullName, role, email, phone, isActive, password, groupId, requestingUserRole } = user;
         // Coerce isActive to integer (0 or 1) for Postgres compatibility
         const isActiveValue = (isActive === undefined || isActive === null) ? 1 : (Number(isActive) ? 1 : 0);
+        
+        if (role === 'superadmin' && requestingUserRole !== 'superadmin') {
+            throw new Error('Only Super Admins can assign the Super Admin role.');
+        }
         
         if (!supabaseAdmin) throw new Error('Database Admin Key not configured in settings.');
         
@@ -1098,7 +1220,19 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('update-settings', async (_e, s) => {
-        const { error } = await supabase.from('companies').update({ name: s.name, mailing_name: s.mailingName || '', address: s.address || '', country: s.country || 'Bangladesh', state: s.state || '', phone: s.phone || '', email: s.email || '', financial_year_from: s.financialYearFrom || '', books_begin_from: s.booksBeginFrom || '', base_currency_symbol: s.currencySymbol || '৳' }).eq('id', 1);
+        const { error } = await supabase.from('companies').update({
+            name: s.name,
+            mailing_name: s.mailingName || '',
+            address: s.address || '',
+            country: s.country || 'Bangladesh',
+            state: s.state || '',
+            phone: s.phone || '',
+            email: s.email || '',
+            financial_year_from: s.financialYearFrom || '',
+            books_begin_from: s.booksBeginFrom || '',
+            base_currency_symbol: s.currencySymbol || '৳',
+            max_exchanges_per_bill: s.maxExchangesPerBill || 1
+        }).eq('id', 1);
         if (error) throw error;
         return { success: true };
     });
@@ -1177,7 +1311,7 @@ export function registerHandlers() {
     ipcMain.handle('get-notifications', async (_e, userId: number) => {
         const { data, error } = await supabase.from('notifications').select('*, sender:users!sender_id(full_name)').or(`recipient_id.eq.${userId},recipient_id.is.null`).order('created_at', { ascending: false }).limit(100);
         if (error) throw error;
-        return (data || []).map((n: any) => ({ ...n, sender_name: n.sender?.full_name || null }));
+        return decryptRows(data || []).map((n: any) => ({ ...n, sender_name: n.sender?.full_name || null }));
     });
 
     ipcMain.handle('send-notification', async (_e, notification: any) => {
@@ -1240,7 +1374,7 @@ export function registerHandlers() {
         const { data: entries } = await supabase.from('voucher_entries').select('ledger_id,amount,type');
         const em: Record<number, { dr: number; cr: number }> = {};
         for (const e of (entries || [])) { if (!em[e.ledger_id]) em[e.ledger_id] = { dr: 0, cr: 0 }; if (e.type === 'Dr') em[e.ledger_id].dr += e.amount; else em[e.ledger_id].cr += e.amount; }
-        return (data || []).map((l: any) => ({ ...l, group_name: l.group?.name, nature: l.group?.nature, total_debit: em[l.id]?.dr || 0, total_credit: em[l.id]?.cr || 0 }));
+        return decryptRows(data || []).map((l: any) => ({ ...l, group_name: l.group?.name, nature: l.group?.nature, total_debit: em[l.id]?.dr || 0, total_credit: em[l.id]?.cr || 0 }));
     });
 
     ipcMain.handle('report-profit-and-loss', async () => {
@@ -1248,7 +1382,7 @@ export function registerHandlers() {
         const { data: entries } = await supabase.from('voucher_entries').select('ledger_id,amount,type');
         const em: Record<number, { dr: number; cr: number }> = {};
         for (const e of (entries || [])) { if (!em[e.ledger_id]) em[e.ledger_id] = { dr: 0, cr: 0 }; if (e.type === 'Dr') em[e.ledger_id].dr += e.amount; else em[e.ledger_id].cr += e.amount; }
-        return (data || []).map((l: any) => ({ ...l, group_name: l.group?.name, nature: l.group?.nature, total_debit: em[l.id]?.dr || 0, total_credit: em[l.id]?.cr || 0 }));
+        return decryptRows(data || []).map((l: any) => ({ ...l, group_name: l.group?.name, nature: l.group?.nature, total_debit: em[l.id]?.dr || 0, total_credit: em[l.id]?.cr || 0 }));
     });
 
     ipcMain.handle('report-stock-summary', async () => {
@@ -1276,7 +1410,7 @@ export function registerHandlers() {
     ipcMain.handle('get-make-orders', async () => {
         const { data, error } = await supabase.from('make_orders').select('*, salesman:users(full_name)').order('created_at', { ascending: false });
         if (error) throw error;
-        return (data || []).map((o: any) => ({ ...o, salesman_name: o.salesman?.full_name || 'Unassigned' }));
+        return decryptRows(data || []).map((o: any) => ({ ...o, salesman_name: o.salesman?.full_name || 'Unassigned' }));
     });
 
     ipcMain.handle('get-salesmen', async () => {
@@ -1285,7 +1419,7 @@ export function registerHandlers() {
         if (!grp) return [];
         const { data, error } = await supabase.from('users').select('id, username, full_name, email').eq('group_id', grp.id).eq('is_active', 1);
         if (error) throw error;
-        return data || [];
+        return decryptRows(data || []);
     });
 
     ipcMain.handle('approve-make-order', async (_e, { orderId, approvedBy }) => {
@@ -1365,7 +1499,7 @@ export function registerHandlers() {
 
     ipcMain.handle('get-make-order-updates', async (_e, orderId) => {
         const { data } = await supabase.from('make_order_updates').select('*').eq('order_id', orderId).order('created_at');
-        return data || [];
+        return decryptRows(data || []);
     });
 
     ipcMain.handle('delete-make-order', async (_e, id) => {
@@ -1396,7 +1530,7 @@ export function registerHandlers() {
         let q = supabase.from('system_audit_log').select('*').order('performed_at', { ascending: false }).limit(limit || 200);
         if (module) q = q.eq('module', module);
         const { data } = await q;
-        return data || [];
+        return decryptRows(data || []);
     });
 
 
@@ -1482,7 +1616,7 @@ export function registerHandlers() {
 
     ipcMain.handle('get-shipment-history', async (_e, shipmentId: number) => {
         const { data } = await supabase.from('shipping_status_log').select('*').eq('shipment_id', shipmentId).order('created_at');
-        return data || [];
+        return decryptRows(data || []);
     });
 
     ipcMain.handle('update-shipment-status', async (_e, { shipmentId, billId, status, note, updatedBy, userRole, imagePath }: any) => {
@@ -1763,7 +1897,7 @@ export function registerHandlers() {
     ipcMain.handle('make-get-order-parts', async (_e, orderId: number) => {
         const { data } = await supabase.from('make_order_parts')
             .select('*').eq('order_id', orderId).order('sort_order').order('id');
-        return data || [];
+        return decryptRows(data || []);
     });
 
     ipcMain.handle('make-upsert-part', async (_e, part: {
@@ -1775,13 +1909,13 @@ export function registerHandlers() {
                 .update({ part_name: part.part_name, length: part.length, width: part.width, height: part.height, notes: part.notes, sort_order: part.sort_order })
                 .eq('id', part.id).select().maybeSingle();
             if (error) return { error: error.message };
-            return data;
+            return decryptObject(data);
         } else {
             const { data, error } = await supabase.from('make_order_parts')
                 .insert({ order_id: part.order_id, part_name: part.part_name, length: part.length || '', width: part.width || '', height: part.height || '', notes: part.notes || '', sort_order: part.sort_order || 0 })
                 .select().maybeSingle();
             if (error) return { error: error.message };
-            return data;
+            return decryptObject(data);
         }
     });
 
@@ -1840,7 +1974,7 @@ export function registerHandlers() {
     ipcMain.handle('make-get-alteration-log', async (_e, orderId: number) => {
         const { data } = await supabase.from('make_order_alteration_log')
             .select('*').eq('order_id', orderId).order('altered_at', { ascending: false });
-        return data || [];
+        return decryptRows(data || []);
     });
 
     // ═══ MAKE DASHBOARD STATS ════════════════════════════════════════════════
@@ -1914,7 +2048,7 @@ export function registerHandlers() {
     ipcMain.handle('hrm-get-employees', async () => {
         const { data, error } = await supabase.from('hrm_employees').select('*').order('name');
         if (error) throw error;
-        return data || [];
+        return decryptRows(data || []);
     });
 
     ipcMain.handle('hrm-upsert-employee', async (_e, emp) => {
@@ -1929,6 +2063,13 @@ export function registerHandlers() {
         }
     });
 
+
+    ipcMain.handle('get-bill-exchange-count', async (_e, billId) => {
+        const { count, error } = await supabase.from('exchange_orders').select('*', { count: 'exact', head: true }).eq('original_bill_id', billId);
+        if (error) throw error;
+        return count || 0;
+    });
+
     ipcMain.handle('hrm-delete-employee', async (_e, id) => {
         const { error } = await supabase.from('hrm_employees').delete().eq('id', id);
         if (error) throw error;
@@ -1941,7 +2082,7 @@ export function registerHandlers() {
         if (date) q = q.eq('date', date);
         const { data, error } = await q.order('date', { ascending: false });
         if (error) throw error;
-        return data || [];
+        return decryptRows(data || []);
     });
 
     ipcMain.handle('hrm-mark-attendance', async (_e, att) => {
@@ -1960,7 +2101,7 @@ export function registerHandlers() {
     ipcMain.handle('hrm-get-leaves', async () => {
         const { data, error } = await supabase.from('hrm_leaves').select('*, employee:employee_id(name)').order('created_at', { ascending: false });
         if (error) throw error;
-        return data || [];
+        return decryptRows(data || []);
     });
 
     ipcMain.handle('hrm-request-leave', async (_e, leave) => {
@@ -1982,14 +2123,14 @@ export function registerHandlers() {
         if (year) q = q.eq('year', year);
         const { data, error } = await q.order('created_at', { ascending: false });
         if (error) throw error;
-        return data || [];
+        return decryptRows(data || []);
     });
 
     // ═══ GODOWNS ════════════════════════════════════════════════════════
     ipcMain.handle('get-godowns', async () => {
         const { data, error } = await supabase.from('godowns').select('*').order('name');
         if (error) throw error;
-        return data || [];
+        return decryptRows(data || []);
     });
 
     ipcMain.handle('create-godown', async (_e, godown) => {
@@ -2036,6 +2177,9 @@ export function registerHandlers() {
     // ═══ CRM MODULE ═══════════════════════════════════════════════════════════
 
     ipcMain.handle('crm-get-customers', async () => {
+        const cached = cache.get('billing_customers');
+        if (cached) return cached;
+
         const { data, error } = await supabase.from('billing_customers').select('*').order('name');
         if (error) throw error;
         return decryptRows(data || []);
@@ -2057,7 +2201,7 @@ export function registerHandlers() {
     ipcMain.handle('crm-get-tracking-logs', async (_e, { customerId }) => {
         const { data, error } = await supabase.from('crm_tracking').select('*, user:user_id(full_name)').eq('customer_id', customerId).order('created_at', { ascending: false });
         if (error) throw error;
-        return data || [];
+        return decryptRows(data || []);
     });
 
     ipcMain.handle('crm-add-tracking-log', async (_e, log) => {
@@ -2185,11 +2329,11 @@ export function registerHandlers() {
 
         return { 
             customer: decryptObject(cust), 
-            addresses: addresses || [], 
-            payments: payments || [], 
-            bills: bills || [], 
+            addresses: decryptRows(addresses || []), 
+            payments: decryptRows(payments || []), 
+            bills: decryptRows(bills || []), 
             quotations: decryptRows(quotations || []),
-            exchanges: exchanges || []
+            exchanges: decryptRows(exchanges || [])
         };
     });
 
@@ -2284,7 +2428,7 @@ export function registerHandlers() {
             .order('feature_name');
         if (error) throw error;
         // Map approver to include the user's name
-        return (data || []).map((p: any) => ({
+        return decryptRows(data || []).map((p: any) => ({
             ...p,
             approver_user_name: p.approver ? (p.approver.full_name || p.approver.username) : null
         }));
@@ -2346,7 +2490,7 @@ export function registerHandlers() {
     ipcMain.handle('get-competitor-urls', async (_e, productId: number) => {
         const { data, error } = await supabase.from('product_competitor_urls').select('*').eq('product_id', productId).order('created_at', { ascending: false });
         if (error) throw error;
-        return data || [];
+        return decryptRows(data || []);
     });
 
     ipcMain.handle('add-competitor-url', async (_e, data) => {
@@ -2367,7 +2511,7 @@ export function registerHandlers() {
         const { data, error } = await q;
         if (error) throw error;
         // Map product name securely from joined data
-        return (data || []).map((row: any) => ({
+        return decryptRows(data || []).map((row: any) => ({
             ...row,
             product_name: row.product ? row.product.item_name : 'Unknown Product'
         }));
@@ -2435,7 +2579,7 @@ export function registerHandlers() {
     ipcMain.handle('get-payment-methods', async () => {
         const { data, error } = await supabase.from('payment_methods').select('*').order('name');
         if (error) throw error;
-        return data || [];
+        return decryptRows(data || []);
     });
 
     ipcMain.handle('create-payment-method', async (_e, method) => {

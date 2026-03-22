@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld('electron', {
     // Products
     getProducts: () => ipcRenderer.invoke('get-products'),
     getProduct: (id: number) => ipcRenderer.invoke('get-product', id),
+    getProductPriceHistory: () => ipcRenderer.invoke('get-product-price-history'),
     createProduct: (product: any) => ipcRenderer.invoke('create-product', product),
     updateProduct: (product: any) => ipcRenderer.invoke('update-product', product),
     deleteProduct: (id: number) => ipcRenderer.invoke('delete-product', id),
@@ -339,6 +340,11 @@ contextBridge.exposeInMainWorld('electron', {
         const handler = (_: any, data: any) => callback(data);
         ipcRenderer.on('write-queue-status', handler);
         return () => ipcRenderer.removeListener('write-queue-status', handler);
+    },
+    onDataUpdated: (callback: (table: string) => void) => {
+        const handler = (_: any, table: string) => callback(table);
+        ipcRenderer.on('data-updated', handler);
+        return () => ipcRenderer.removeListener('data-updated', handler);
     },
 
     // ─── AI MARKET ANALYSIS ───

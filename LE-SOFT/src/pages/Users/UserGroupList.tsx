@@ -9,7 +9,7 @@ const PERMISSION_KEYS = [
     // Masters
     'read_group', 'write_group', 'read_ledger', 'write_ledger', 'read_voucher_type', 'write_voucher_type',
     'read_currencies', 'write_currencies', 'read_stock_group', 'write_stock_group', 'read_stock_items', 'write_stock_items',
-    'read_units', 'write_units', 'read_products', 'write_products', 'read_godowns', 'write_godowns',
+    'read_units', 'write_units', 'read_products', 'write_products', 'delete_products', 'read_godowns', 'write_godowns',
     // Billing
     'read_bill', 'write_bill', 'alter_bill', 'delete_bill', 'initiate_exchange',
     // Accounts
@@ -21,7 +21,9 @@ const PERMISSION_KEYS = [
     // HRM
     'read_hrm', 'write_hrm', 'approve_leave', 'view_payroll',
     // Settings & Security
-    'manage_users', 'manage_groups', 'manage_settings'
+    'manage_users', 'manage_groups', 'manage_settings',
+    // Reports
+    'read_sales_report', 'read_inventory_report', 'read_financial_report', 'read_product_history'
 ];
 
 const UserGroupList: React.FC = () => {
@@ -39,8 +41,12 @@ const UserGroupList: React.FC = () => {
     };
     useEffect(() => { fetchGroups(); }, []);
 
+    const userRole = localStorage.getItem('user_role') || '';
+    const isSuperAdmin = userRole === 'superadmin';
+
     const filtered = groups.filter(g =>
-        g.name?.toLowerCase().includes(search.toLowerCase())
+        g.name?.toLowerCase().includes(search.toLowerCase()) &&
+        (isSuperAdmin || g.name?.toLowerCase() !== 'superadmin')
     );
 
     const handleDelete = async (id: number) => {

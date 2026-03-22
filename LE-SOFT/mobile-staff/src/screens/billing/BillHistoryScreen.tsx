@@ -3,6 +3,8 @@ import { View, Text, FlatList, TouchableOpacity, SafeAreaView, RefreshControl, S
 import { supabase } from '../../lib/supabase';
 import { Receipt, ChevronRight } from 'lucide-react-native';
 
+import { decryptField } from '../../lib/encryption';
+
 export default function BillHistoryScreen({ navigation }: any) {
   const [bills, setBills] = useState<any[]>([]);
   const [refreshing, setRefreshing] = useState(false);
@@ -13,7 +15,22 @@ export default function BillHistoryScreen({ navigation }: any) {
       .select('id, invoice_number, grand_total, created_at, billing_customers(name, phone)')
       .order('created_at', { ascending: false })
       .limit(100);
-    setBills(data || []);
+      
+    const decryptedData = (data || []).map(item => {
+      if (item.billing_customers) {
+        return {
+          ...item,
+          billing_customers: {
+            ...(item.billing_customers as any),
+            name: decryptField((item.billing_customers as any).name),
+            phone: decryptField((item.billing_customers as any).phone)
+          }
+        };
+      }
+      return item;
+    });
+
+    setBills(decryptedData);
   };
 
   useEffect(() => { fetchBills(); }, []);

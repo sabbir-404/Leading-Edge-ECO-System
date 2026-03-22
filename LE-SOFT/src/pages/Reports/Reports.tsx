@@ -1,7 +1,7 @@
 import React from 'react';
 import { useNavigate, Outlet, useLocation } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { BarChart2, TrendingUp, DollarSign, Package, BookOpen, FileText } from 'lucide-react';
+import { BarChart2, TrendingUp, DollarSign, Package, BookOpen, FileText, History } from 'lucide-react';
 import DashboardLayout from '../../components/DashboardLayout';
 import '../Accounting/Masters/Masters.css';
 
@@ -12,6 +12,7 @@ const reportCards = [
     { label: 'Stock Summary', desc: 'Product stock levels & valuation', path: '/reports/stock-summary', icon: Package, color: '#ec4899' },
     { label: 'Day Book', desc: 'All voucher entries by date', path: '/reports/day-book', icon: BookOpen, color: '#8b5cf6' },
     { label: 'Market Analysis', desc: 'AI-powered competitor price & feature comparison', path: '/reports/market-analysis', icon: TrendingUp, color: '#0ea5e9' },
+    { label: 'Product History', desc: 'Audit log of product price modifications', path: '/reports/product-history', icon: History, color: '#10b981' },
 ];
 
 const Reports: React.FC = () => {

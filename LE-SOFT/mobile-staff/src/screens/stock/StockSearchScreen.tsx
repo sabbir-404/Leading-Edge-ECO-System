@@ -9,22 +9,35 @@ export default function StockSearchScreen() {
   const [items, setItems] = useState<any[]>([]);
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     const load = async () => {
-      const { data } = await supabase.from('products').select('*').order('name');
-      setItems(data || []);
+      setLoading(true);
+      try {
+        let q = supabase.from('products').select('*').order('name').limit(50);
+        if (query.length > 0) {
+            // Using ilike to search across name, sku, or category
+            q = q.or(`name.ilike.%${query}%,sku.ilike.%${query}%,category.ilike.%${query}%`);
+        }
+        const { data } = await q;
+        setItems(data || []);
+      } catch (e) {
+        console.error(e);
+      } finally {
+        setLoading(false);
+      }
     };
-    load();
-  }, []);
+    
+    // Simple debounce
+    const timeoutId = setTimeout(() => {
+        load();
+    }, 300);
 
-  const filtered = query.length > 0
-    ? items.filter(i =>
-        i.name?.toLowerCase().includes(query.toLowerCase()) ||
-        (i.sku || '').toLowerCase().includes(query.toLowerCase()) ||
-        (i.category || '').toLowerCase().includes(query.toLowerCase())
-      )
-    : items.slice(0, 30);
+    return () => clearTimeout(timeoutId);
+  }, [query]);
+
+  const filtered = items;
 
   const stockColor = (qty: number) => {
     if (qty <= 0) return '#ef4444';
@@ -48,7 +61,10 @@ export default function StockSearchScreen() {
           <TouchableOpacity onPress={() => setQuery('')}><X color="#6b7280" size={18} /></TouchableOpacity>
         )}
       </View>
-      <Text style={s.count}>{filtered.length} item{filtered.length !== 1 ? 's' : ''}</Text>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, marginBottom: 8 }}>
+        <Text style={s.count}>{filtered.length} item{filtered.length !== 1 ? 's' : ''}</Text>
+        {loading && <Text style={[s.count, { color: '#f59e0b' }]}>Searching...</Text>}
+      </View>
       <FlatList
         data={filtered}
         keyExtractor={i => i.id.toString()}

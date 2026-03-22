@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { ClipboardList, Clock, CheckCircle, Truck, Package, BarChart2, RefreshCw } from 'lucide-react';
+import { useAutoRefresh } from '../../hooks/useAutoRefresh';
 import DashboardLayout from '../../components/DashboardLayout';
 
 const STATUSES = ['Placed', 'In Production', 'Welding', 'Painting', 'Ready for Dispatch', 'Delivered'];
@@ -40,6 +41,8 @@ const MakeDashboard: React.FC = () => {
   };
 
   useEffect(() => { fetchStats(); }, []);
+
+  useAutoRefresh(['make_orders', 'make_order_updates'], fetchStats);
 
   const chipStyle = (color: string): React.CSSProperties => ({
     display: 'inline-flex', alignItems: 'center', padding: '3px 9px',

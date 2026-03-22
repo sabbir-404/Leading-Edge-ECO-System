@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Search, Trash2, Edit2 } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { useAutoRefresh } from '../../../hooks/useAutoRefresh';
 import '../../Accounting/Masters/Masters.css';
 
 const StockItemList: React.FC = () => {
@@ -23,6 +24,8 @@ const StockItemList: React.FC = () => {
     };
 
     useEffect(() => { fetchItems(); }, []);
+
+    useAutoRefresh(['stock_items', 'stock_groups', 'units'], fetchItems);
 
     const handleDelete = async (id: number) => {
         if (!confirm('Delete this stock item?')) return;
