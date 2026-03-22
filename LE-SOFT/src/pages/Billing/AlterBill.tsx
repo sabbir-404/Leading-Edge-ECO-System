@@ -1,7 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Search, Edit3, Save, Clock, ChevronDown, ChevronUp, Minus, Plus, Trash2, Star, Package } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAutoRefresh } from '../../hooks/useAutoRefresh';
+import { getCallerContext } from '../../utils/permissions';
+
 import DashboardLayout from '../../components/DashboardLayout';
 
 // Graceful fallback if Electron main hasn't been restarted with decryption fix
@@ -47,7 +49,39 @@ const AlterBill: React.FC = () => {
     const [deleteReason, setDeleteReason] = useState('');
 
     const user = JSON.parse(localStorage.getItem('user') || '{}');
-    const canDelete = user.role === 'Superadmin' || (user.permissions && user.permissions.includes('delete_bill'));
+    const isSuperadmin = user.role === 'Superadmin';
+    const canDelete = isSuperadmin || (user.permissions && user.permissions.includes('delete_bill'));
+    const canAddItems = isSuperadmin || (user.permissions && user.permissions.includes('add_bill_items'));
+
+    // ── Product search for add-item ─────────────────────────────────────────
+    const [allProducts, setAllProducts] = useState<any[]>([]);
+    const [productsLoaded, setProductsLoaded] = useState(false);
+    const [addSearch, setAddSearch] = useState('');
+    const [showAddDropdown, setShowAddDropdown] = useState(false);
+    const [newlyAddedItems, setNewlyAddedItems] = useState<BillItem[]>([]);
+
+    // ── Payment method popup ────────────────────────────────────────────────
+    const [showPaymentPopup, setShowPaymentPopup] = useState(false);
+    const [paymentMethods, setPaymentMethods] = useState<any[]>([]);
+    const [selectedPayment, setSelectedPayment] = useState('');
+    const [paymentRef, setPaymentRef] = useState('');
+    const [pendingSave, setPendingSave] = useState(false);
+
+    const ensureProductsLoaded = useCallback(async () => {
+        if (productsLoaded) return;
+        try {
+            // @ts-ignore
+            const [pData, pmData] = await Promise.all([
+                window.electron.getProducts(),
+                // @ts-ignore
+                window.electron.getPaymentMethods?.(),
+            ]);
+            setAllProducts(pData || []);
+            setPaymentMethods(pmData || []);
+            if ((pmData || []).length > 0) setSelectedPayment(pmData[0].name);
+            setProductsLoaded(true);
+        } catch (e) { console.error(e); }
+    }, [productsLoaded]);
 
     useEffect(() => {
         fetchBills();
@@ -57,7 +91,7 @@ const AlterBill: React.FC = () => {
         setLoading(true);
         try {
             // @ts-ignore
-            const data = await window.electron.getBills();
+            const data = await window.electron.getBills(getCallerContext());
             setBills(data || []);
         } catch (e) { console.error(e); }
         setLoading(false);
@@ -112,7 +146,14 @@ const AlterBill: React.FC = () => {
 
     const handleSave = async () => {
         if (!selectedBill) return;
+        // If new items were added, show payment popup first
+        if (newlyAddedItems.length > 0 && !pendingSave) {
+            await ensureProductsLoaded();
+            setShowPaymentPopup(true);
+            return;
+        }
         setSaving(true);
+        setPendingSave(false);
         try {
             // @ts-ignore
             const result = await window.electron.updateBill({
@@ -122,9 +163,12 @@ const AlterBill: React.FC = () => {
                 discount_total: discountTotal,
                 grand_total: grandTotal,
                 changed_by: user.full_name || user.username || 'Admin',
+                ...(newlyAddedItems.length > 0 ? { added_items_payment: selectedPayment, added_items_payment_ref: paymentRef } : {}),
             });
             if (result?.success) {
                 setSaveMsg('Bill updated successfully!');
+                setNewlyAddedItems([]);
+                setPaymentRef('');
                 // Refresh audit log
                 // @ts-ignore
                 const audit = await window.electron.getBillAudit(selectedBill.id);
@@ -219,7 +263,7 @@ const AlterBill: React.FC = () => {
                                 >
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                                         <div style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: '0.85rem', color: 'var(--accent-color)' }}>{safeDecrypt(b.invoice_number)}</div>
-                                        {b.is_altered && <Star size={12} fill="#f97316" color="#f97316" />}
+                                        {!!b.is_altered && <Star size={12} fill="#f97316" color="#f97316" />}
                                     </div>
                                     <div style={{ fontSize: '0.8rem', color: 'var(--text-primary)', fontWeight: 600 }}>{safeDecrypt(b.customer_name) || 'Walk-in'}</div>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
@@ -252,7 +296,7 @@ const AlterBill: React.FC = () => {
                                             <div style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: '1.1rem', color: 'var(--accent-color)' }}>
                                                 {safeDecrypt(selectedBill.invoice_number)}
                                             </div>
-                                            {selectedBill.is_altered && (
+                                            {!!selectedBill.is_altered && (
                                                 <span style={{ padding: '0.2rem 0.5rem', background: 'rgba(249,115,22,0.1)', color: '#f97316', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 800 }}>ALTERED</span>
                                             )}
                                         </div>
@@ -399,6 +443,75 @@ const AlterBill: React.FC = () => {
                                     </table>
                                 </div>
 
+                                {/* ── Add Product Row (permission-gated) ── */}
+                                {canAddItems && (
+                                    <div style={{ borderTop: '2px dashed var(--border-color)', padding: '1rem 1.25rem', background: 'rgba(249,115,22,0.02)' }}>
+                                        <div style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--accent-color)', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>+ Add Product to Bill</div>
+                                        <div style={{ position: 'relative' }}>
+                                            <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', opacity: 0.4, pointerEvents: 'none' }} />
+                                            <input
+                                                value={addSearch}
+                                                onChange={async e => {
+                                                    setAddSearch(e.target.value);
+                                                    setShowAddDropdown(e.target.value.length > 0);
+                                                    if (!productsLoaded) await ensureProductsLoaded();
+                                                }}
+                                                onFocus={async () => { if (!productsLoaded) await ensureProductsLoaded(); }}
+                                                placeholder="Type product name or SKU..."
+                                                style={{
+                                                    width: '100%', padding: '0.6rem 0.75rem 0.6rem 2.2rem',
+                                                    borderRadius: '8px', border: '1px solid var(--border-color)',
+                                                    background: 'var(--input-bg)', fontSize: '0.88rem', boxSizing: 'border-box'
+                                                }}
+                                            />
+                                            {showAddDropdown && addSearch.trim() && (
+                                                <div style={{
+                                                    position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 500,
+                                                    background: '#fff', border: '1px solid var(--border-color)',
+                                                    borderRadius: '8px', boxShadow: '0 8px 24px rgba(0,0,0,0.15)', maxHeight: '200px', overflowY: 'auto', marginTop: '4px'
+                                                }}>
+                                                    {allProducts
+                                                        .filter(p => (p.name || '').toLowerCase().includes(addSearch.toLowerCase()) || (p.sku || '').toLowerCase().includes(addSearch.toLowerCase()))
+                                                        .slice(0, 10)
+                                                        .map(p => (
+                                                            <div
+                                                                key={p.id}
+                                                                onClick={() => {
+                                                                    const price = parseFloat(p.selling_price || p.mrp || 0);
+                                                                    const newItem: BillItem = {
+                                                                        product_id: p.id, product_name: p.name, sku: p.sku || '',
+                                                                        quantity: 1, mrp: parseFloat(p.mrp || 0), discount_pct: 0, discount_amt: 0, price,
+                                                                    };
+                                                                    setItems(prev => [...prev, newItem]);
+                                                                    setNewlyAddedItems(prev => [...prev, newItem]);
+                                                                    setAddSearch('');
+                                                                    setShowAddDropdown(false);
+                                                                }}
+                                                                style={{ padding: '0.6rem 1rem', cursor: 'pointer', borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                                                                onMouseEnter={e => (e.currentTarget.style.background = '#f8fafc')}
+                                                                onMouseLeave={e => (e.currentTarget.style.background = '#fff')}
+                                                            >
+                                                                <div>
+                                                                    <div style={{ fontWeight: 600, fontSize: '0.88rem' }}>{p.name}</div>
+                                                                    <div style={{ fontSize: '0.75rem', color: '#888' }}>SKU: {p.sku || 'N/A'}</div>
+                                                                </div>
+                                                                <div style={{ fontWeight: 700, color: 'var(--accent-color)', fontSize: '0.9rem' }}>৳{parseFloat(p.selling_price || p.mrp || 0).toLocaleString()}</div>
+                                                            </div>
+                                                        ))}
+                                                    {allProducts.filter(p => (p.name || '').toLowerCase().includes(addSearch.toLowerCase()) || (p.sku || '').toLowerCase().includes(addSearch.toLowerCase())).length === 0 && (
+                                                        <div style={{ padding: '1rem', color: '#888', textAlign: 'center', fontSize: '0.85rem' }}>No products matched</div>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                        {newlyAddedItems.length > 0 && (
+                                            <div style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: 'var(--accent-color)', fontWeight: 600 }}>
+                                                ⚡ {newlyAddedItems.length} new item{newlyAddedItems.length > 1 ? 's' : ''} added — payment method will be asked when you save.
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
                                 {/* Totals Footer */}
                                 <div style={{ padding: '1rem 1.25rem', borderTop: '2px solid var(--border-color)', background: '#f8fafc' }}>
                                     <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '2rem' }}>
@@ -420,6 +533,72 @@ const AlterBill: React.FC = () => {
                         </>
                     )}
                 </div>
+
+                {/* Payment Method Popup */}
+                <AnimatePresence>
+                    {showPaymentPopup && (
+                        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)', zIndex: 3000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
+                                style={{ background: '#fff', borderRadius: '16px', width: '460px', padding: '2rem', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+                                <h3 style={{ margin: '0 0 0.4rem', fontSize: '1.2rem', fontWeight: 700 }}>💳 Payment for Added Products</h3>
+                                <p style={{ margin: '0 0 1.5rem', fontSize: '0.85rem', color: '#666' }}>
+                                    You added <strong>{newlyAddedItems.length} new product{newlyAddedItems.length > 1 ? 's' : ''}</strong> to this bill. How were they paid?
+                                </p>
+
+                                {/* New items summary */}
+                                <div style={{ background: '#f8fafc', borderRadius: '8px', padding: '0.75rem', marginBottom: '1.25rem', border: '1px solid #e2e8f0' }}>
+                                    {newlyAddedItems.map((it, i) => (
+                                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', padding: '2px 0' }}>
+                                            <span>{it.product_name} ×{it.quantity}</span>
+                                            <span style={{ fontWeight: 600 }}>৳{(it.price * it.quantity).toLocaleString()}</span>
+                                        </div>
+                                    ))}
+                                    <div style={{ borderTop: '1px solid #e2e8f0', marginTop: '0.5rem', paddingTop: '0.5rem', display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}>
+                                        <span>Total Added</span>
+                                        <span style={{ color: 'var(--accent-color)' }}>৳{newlyAddedItems.reduce((s, i) => s + i.price * i.quantity, 0).toLocaleString()}</span>
+                                    </div>
+                                </div>
+
+                                {/* Payment method selector */}
+                                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Payment Method</label>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: '0.5rem', marginBottom: '1rem' }}>
+                                    {(paymentMethods.length > 0 ? paymentMethods : [
+                                        { id: 'Cash', name: 'Cash' }, { id: 'bKash', name: 'bKash' }, { id: 'Card', name: 'Card' }
+                                    ]).map(pm => (
+                                        <button
+                                            key={pm.id || pm.name}
+                                            onClick={() => setSelectedPayment(pm.name)}
+                                            style={{
+                                                padding: '0.6rem 0.75rem', borderRadius: '8px', border: '2px solid',
+                                                borderColor: selectedPayment === pm.name ? 'var(--accent-color)' : 'var(--border-color)',
+                                                background: selectedPayment === pm.name ? 'rgba(249,115,22,0.08)' : '#fff',
+                                                color: selectedPayment === pm.name ? 'var(--accent-color)' : '#333',
+                                                fontWeight: 600, cursor: 'pointer', fontSize: '0.85rem', transition: 'all 0.15s'
+                                            }}
+                                        >{pm.name}</button>
+                                    ))}
+                                </div>
+
+                                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Reference / Transaction ID (optional)</label>
+                                <input
+                                    value={paymentRef}
+                                    onChange={e => setPaymentRef(e.target.value)}
+                                    placeholder="e.g. bKash TrxID, cheque no..."
+                                    style={{ width: '100%', padding: '0.65rem 0.9rem', borderRadius: '8px', border: '1px solid var(--border-color)', marginBottom: '1.5rem', boxSizing: 'border-box', fontSize: '0.88rem' }}
+                                />
+
+                                <div style={{ display: 'flex', gap: '0.75rem' }}>
+                                    <button onClick={() => setShowPaymentPopup(false)} style={{ flex: 1, padding: '0.75rem', borderRadius: '8px', border: '1px solid #ddd', background: '#fff', cursor: 'pointer', fontWeight: 600 }}>Cancel</button>
+                                    <button
+                                        disabled={!selectedPayment}
+                                        onClick={() => { setShowPaymentPopup(false); setPendingSave(true); setTimeout(() => handleSave(), 50); }}
+                                        style={{ flex: 2, padding: '0.75rem', borderRadius: '8px', border: 'none', background: selectedPayment ? 'var(--accent-color)' : '#ccc', color: '#fff', fontWeight: 700, cursor: selectedPayment ? 'pointer' : 'not-allowed', fontSize: '0.9rem', transition: 'all 0.15s' }}
+                                    >Confirm & Save Bill</button>
+                                </div>
+                            </motion.div>
+                        </div>
+                    )}
+                </AnimatePresence>
 
                 {/* Delete Confirmation Modal */}
                 <AnimatePresence>

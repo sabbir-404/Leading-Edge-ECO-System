@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
 import { useTheme } from '../../lib/ThemeContext';
-import { Receipt, CreditCard, BookOpen, UserPlus, List as ListIcon } from 'lucide-react-native';
+import { Receipt, CreditCard, BookOpen, List as ListIcon } from 'lucide-react-native';
 
 export default function AccountingScreen({ navigation }: any) {
   const { theme } = useTheme();
@@ -14,13 +14,6 @@ export default function AccountingScreen({ navigation }: any) {
         { label: 'Payment Voucher', icon: <CreditCard color={theme.danger} size={24} />, screen: 'VoucherEntry', params: { type: 'Payment' }, bg: theme.dangerLight },
         { label: 'Journal Voucher', icon: <BookOpen color={theme.purple} size={24} />, screen: 'VoucherEntry', params: { type: 'Journal' }, bg: theme.purpleLight },
         { label: 'All Vouchers', icon: <ListIcon color={theme.accent} size={24} />, screen: 'VoucherList', bg: theme.accentLight },
-      ]
-    },
-    {
-      title: 'Masters',
-      items: [
-        { label: 'New Ledger', icon: <UserPlus color={theme.warning} size={24} />, screen: 'LedgerCreate', bg: theme.warningLight },
-        { label: 'Manage Ledgers', icon: <ListIcon color={theme.textMuted} size={24} />, screen: 'LedgerList', bg: theme.bgElevated },
       ]
     }
   ];

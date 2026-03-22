@@ -29,7 +29,7 @@ export default function ChatListScreen({ navigation }: any) {
             // Get all other active users
             const { data, error } = await supabase.from('users')
                 .select('*')
-                .eq('is_active', 1)
+                .eq('is_active', true)
                 .neq('id', profile.id)
                 .order('full_name');
 

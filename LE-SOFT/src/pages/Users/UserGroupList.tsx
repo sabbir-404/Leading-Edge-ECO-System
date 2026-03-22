@@ -11,11 +11,11 @@ const PERMISSION_KEYS = [
     'read_currencies', 'write_currencies', 'read_stock_group', 'write_stock_group', 'read_stock_items', 'write_stock_items',
     'read_units', 'write_units', 'read_products', 'write_products', 'delete_products', 'read_godowns', 'write_godowns',
     // Billing
-    'read_bill', 'write_bill', 'alter_bill', 'delete_bill', 'initiate_exchange',
+    'read_bill', 'write_bill', 'alter_bill', 'add_bill_items', 'see_all_bills', 'delete_bill', 'initiate_exchange',
     // Accounts
     'read_accounts', 'write_accounts',
     // CRM
-    'read_customer', 'write_customer', 'read_quotation', 'write_quotation', 'view_customer_ledger',
+    'read_customer', 'write_customer', 'delete_customer', 'read_quotation', 'write_quotation', 'see_all_customers', 'view_customer_contact', 'view_customer_financials', 'view_customer_ledger',
     // MAKE
     'read_make', 'write_make', 'alter_make',
     // HRM

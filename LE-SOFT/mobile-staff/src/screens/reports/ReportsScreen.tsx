@@ -26,14 +26,14 @@ export default function ReportsScreen() {
 
     const sum = (arr: any[]) => arr.reduce((s, b) => s + (b.grand_total || 0), 0);
 
-    const { count: lowStock } = await supabase.from('stock_items').select('id', { count: 'exact', head: true }).lte('opening_stock', 10);
-    const { count: totalProd } = await supabase.from('stock_items').select('id', { count: 'exact', head: true });
+    const { count: lowStock } = await supabase.from('products').select('id', { count: 'exact', head: true }).lte('quantity', 10);
+    const { count: totalProd } = await supabase.from('products').select('id', { count: 'exact', head: true });
 
     const { data: topItems } = await supabase.from('bill_items').select('product_name, quantity')
       .gte('created_at', monthAgo).order('quantity', { ascending: false }).limit(5);
 
     const [recentBills, recentVouchers] = await Promise.all([
-      supabase.from('bills').select('id, bill_number, grand_total, created_at').order('created_at', { ascending: false }).limit(5),
+      supabase.from('bills').select('id, invoice_number, grand_total, created_at').order('created_at', { ascending: false }).limit(5),
       supabase.from('vouchers').select('id, voucher_number, voucher_type, total_amount, date').order('created_at', { ascending: false }).limit(5),
     ]);
 
@@ -100,7 +100,7 @@ export default function ReportsScreen() {
                 {item.type === 'Sale' ? <DollarSign size={14} color="#10b981" /> : <Tag size={14} color="#8b5cf6" />}
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={s.topName}>{item.bill_number || item.voucher_number}</Text>
+                <Text style={s.topName}>{item.invoice_number || item.voucher_number}</Text>
                 <Text style={s.cardSub}>{item.type} · {new Date(item.created_at || item.date).toLocaleDateString()}</Text>
               </View>
               <Text style={[s.topQty, { color: '#fff' }]}>৳{(item.grand_total || item.total_amount || 0).toLocaleString()}</Text>

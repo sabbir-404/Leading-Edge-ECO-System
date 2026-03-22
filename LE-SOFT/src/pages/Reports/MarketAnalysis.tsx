@@ -95,6 +95,7 @@ const MarketAnalysis: React.FC = () => {
         setScanning(productId);
         showToast('AI Market Analysis started...', 'info');
         try {
+            // @ts-ignore
             const res = await window.electron.runAutoPriceScan?.(productId);
             if (res.success) {
                 showToast(`Scan complete! Analyzed ${res.count} web pages.`, 'success');

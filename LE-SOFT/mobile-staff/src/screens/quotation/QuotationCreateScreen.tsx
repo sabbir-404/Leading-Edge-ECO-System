@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Alert, ActivityIndicator } from 'react-native';
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../../lib/ThemeContext';
+import { encryptObjectForDb } from '../../lib/encryption';
 import KeyboardAwareContainer from '../../components/KeyboardAwareContainer';
 import { Save, Plus, Trash2, User, Building, MapPin, Phone, Mail } from 'lucide-react-native';
 
@@ -54,7 +55,7 @@ export default function QuotationCreateScreen({ navigation }: any) {
     if (!customerName && !companyName) return Alert.alert('Error', 'Please enter customer or company name');
     setLoading(true);
     try {
-      const { data: quote, error } = await supabase.from('quotations').insert({
+      const quotePayload = encryptObjectForDb({
         company_name: companyName,
         customer_name: customerName,
         customer_address: address,
@@ -65,18 +66,27 @@ export default function QuotationCreateScreen({ navigation }: any) {
         discount: parseFloat(discount || '0'),
         grand_total: getGrandTotal(),
         status: 'Draft'
-      }).select('id, quote_number').single();
+      });
+
+      const { data: quote, error } = await supabase.from('quotations').insert(quotePayload).select('id, quote_number').single();
 
       if (error) throw error;
 
-      await supabase.from('quotation_items').insert(items.map(it => ({
+      const itemPayload = items.map((it) => encryptObjectForDb({
         quotation_id: quote.id,
         sl_no: it.sl_no,
         specification: it.specification,
         unit: it.unit,
         quantity: it.quantity,
         rate: it.rate
-      })));
+      }));
+
+      const { error: itemsError } = await supabase.from('quotation_items').insert(itemPayload);
+
+      if (itemsError) {
+        await supabase.from('quotations').delete().eq('id', quote.id);
+        throw itemsError;
+      }
 
       Alert.alert('Success', `Quotation ${quote.quote_number} created!`);
       navigation.goBack();

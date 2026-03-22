@@ -3,10 +3,10 @@
   "version": "1.0.0",
   "main": "index.ts",
   "scripts": {
-    "start": "expo start",
+    "start": "expo start --android",
     "android": "expo run:android",
     "ios": "expo run:ios",
-    "web": "expo start --web"
+    "web": "node -e \"console.error('Web mode is disabled for this project. Use npm run android.'); process.exit(1)\""
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",
@@ -17,6 +17,7 @@
     "@react-navigation/native-stack": "^7.14.2",
     "@supabase/supabase-js": "^2.98.0",
     "@types/crypto-js": "^4.2.2",
+    "asmcrypto.js": "^2.3.2",
     "crypto-js": "^4.2.0",
     "expo": "~54.0.33",
     "expo-camera": "~17.0.10",
@@ -26,6 +27,7 @@
     "lucide-react-native": "^0.575.0",
     "nativewind": "^4.2.2",
     "react": "19.1.0",
+    "react-dom": "^19.1.0",
     "react-native": "0.81.5",
     "react-native-gesture-handler": "~2.28.0",
     "react-native-get-random-values": "~1.11.0",

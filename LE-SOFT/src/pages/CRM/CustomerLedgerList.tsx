@@ -4,7 +4,9 @@ import { Search, Eye, UserSearch } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useAutoRefresh } from '../../hooks/useAutoRefresh';
 import DashboardLayout from '../../components/DashboardLayout';
+import { getCallerContext, canViewCustomerContact, canViewCustomerFinancials } from '../../utils/permissions';
 import '../Accounting/Masters/Masters.css';
+
 
 const safeDecrypt = (val: any): string => {
     if (!val || typeof val !== 'string') return String(val || '');
@@ -36,7 +38,7 @@ const CustomerLedgerList: React.FC = () => {
         setLoading(true);
         try {
             // @ts-ignore
-            const data = await window.electron?.getCustomerLedgerList?.();
+            const data = await window.electron?.getCustomerLedgerList?.(getCallerContext());
             setCustomers(data || []);
         } catch (e) { console.error(e); }
         setLoading(false);
@@ -48,9 +50,12 @@ const CustomerLedgerList: React.FC = () => {
         navigate(`/crm/ledger/${id}`);
     };
 
+    const hasContactPerm = canViewCustomerContact();
+    const hasFinancialPerm = canViewCustomerFinancials();
+
     const filtered = customers.filter(c =>
         (c.name || '').toLowerCase().includes(search.toLowerCase()) ||
-        (c.phone || '').includes(search)
+        (hasContactPerm && (c.phone || '').includes(search))
     );
 
     return (
@@ -68,7 +73,7 @@ const CustomerLedgerList: React.FC = () => {
                             <input
                                 value={search}
                                 onChange={e => setSearch(e.target.value)}
-                                placeholder="Search by name or phone..."
+                                placeholder={hasContactPerm ? "Search by name or phone..." : "Search by name..."}
                                 style={{
                                     padding: '0.6rem 0.6rem 0.6rem 2.2rem',
                                     borderRadius: '8px',
@@ -97,10 +102,10 @@ const CustomerLedgerList: React.FC = () => {
                                 <thead style={{ background: '#f1f5f9', position: 'sticky', top: 0, zIndex: 2 }}>
                                     <tr>
                                         <th style={{ padding: '0.75rem 1rem', textAlign: 'left', fontWeight: 700 }}>Customer Name</th>
-                                        <th style={{ padding: '0.75rem 1rem', textAlign: 'left', fontWeight: 700 }}>Contact</th>
-                                        <th style={{ padding: '0.75rem 1rem', textAlign: 'left', fontWeight: 700 }}>Email</th>
-                                        <th style={{ padding: '0.75rem 1rem', textAlign: 'center', fontWeight: 700 }}>Total Bills</th>
-                                        <th style={{ padding: '0.75rem 1rem', textAlign: 'right', fontWeight: 700 }}>Current Balance</th>
+                                        {hasContactPerm && <th style={{ padding: '0.75rem 1rem', textAlign: 'left', fontWeight: 700 }}>Contact</th>}
+                                        {hasContactPerm && <th style={{ padding: '0.75rem 1rem', textAlign: 'left', fontWeight: 700 }}>Email</th>}
+                                        {hasFinancialPerm && <th style={{ padding: '0.75rem 1rem', textAlign: 'center', fontWeight: 700 }}>Total Bills</th>}
+                                        {hasFinancialPerm && <th style={{ padding: '0.75rem 1rem', textAlign: 'right', fontWeight: 700 }}>Current Balance</th>}
                                         <th style={{ padding: '0.75rem 1rem', textAlign: 'center', fontWeight: 700, width: '100px' }}>Action</th>
                                     </tr>
                                 </thead>
@@ -114,16 +119,20 @@ const CustomerLedgerList: React.FC = () => {
                                             whileHover={{ backgroundColor: '#f8fafc' }}
                                         >
                                             <td style={{ padding: '0.75rem 1rem', fontWeight: 600 }}>{safeDecrypt(customer.name)}</td>
-                                            <td style={{ padding: '0.75rem 1rem' }}>{safeDecrypt(customer.phone) || 'N/A'}</td>
-                                            <td style={{ padding: '0.75rem 1rem', color: '#666' }}>{safeDecrypt(customer.email) || 'N/A'}</td>
-                                            <td style={{ padding: '0.75rem 1rem', textAlign: 'center' }}>
-                                                <span style={{ padding: '2px 8px', background: '#e0f2fe', color: '#0369a1', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 600 }}>
-                                                    {customer.total_bills || 0}
-                                                </span>
-                                            </td>
-                                            <td style={{ padding: '0.75rem 1rem', textAlign: 'right', fontWeight: 700, fontSize: '1rem', color: (customer.balance || 0) < 0 ? '#ef4444' : 'inherit' }}>
-                                                ৳{((customer.balance || 0)).toLocaleString()}
-                                            </td>
+                                            {hasContactPerm && <td style={{ padding: '0.75rem 1rem' }}>{safeDecrypt(customer.phone) || 'N/A'}</td>}
+                                            {hasContactPerm && <td style={{ padding: '0.75rem 1rem', color: '#666' }}>{safeDecrypt(customer.email) || 'N/A'}</td>}
+                                            {hasFinancialPerm && (
+                                                <td style={{ padding: '0.75rem 1rem', textAlign: 'center' }}>
+                                                    <span style={{ padding: '2px 8px', background: '#e0f2fe', color: '#0369a1', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 600 }}>
+                                                        {customer.total_bills || 0}
+                                                    </span>
+                                                </td>
+                                            )}
+                                            {hasFinancialPerm && (
+                                                <td style={{ padding: '0.75rem 1rem', textAlign: 'right', fontWeight: 700, fontSize: '1rem', color: (customer.balance || 0) < 0 ? '#ef4444' : 'inherit' }}>
+                                                    ৳{((customer.balance || 0)).toLocaleString()}
+                                                </td>
+                                            )}
                                             <td style={{ padding: '0.75rem 1rem', textAlign: 'center' }}>
                                                 <button
                                                     onClick={e => { e.stopPropagation(); viewLedger(customer.id); }}
@@ -137,7 +146,7 @@ const CustomerLedgerList: React.FC = () => {
                                 </tbody>
                             </table>
                         </div>
-                    )}
+                    ) }
                 </div>
             </div>
         </DashboardLayout>

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, Alert, Platform, KeyboardAvoidingView, SafeAreaView, StyleSheet, Image } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
 import { useTheme } from '../lib/ThemeContext';
 import { Lock, User, Sun, Moon } from 'lucide-react-native';
@@ -24,7 +25,6 @@ export default function AuthScreen({ onAuth }: { onAuth: () => void }) {
         Alert.alert('Access Denied', 'Your account is disabled or missing.');
       } else {
         // Save user info for chat and other modules
-        const { AsyncStorage } = require('@react-native-async-storage/async-storage');
         await AsyncStorage.setItem('user_profile', JSON.stringify(userRow));
         onAuth(); 
       }

@@ -105,8 +105,9 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   // Billing / POS
   searchBillingCustomers: (query) => import_electron.ipcRenderer.invoke("search-billing-customers", query),
   createBillingCustomer: (customer) => import_electron.ipcRenderer.invoke("create-billing-customer", customer),
+  deleteBillingCustomer: (id) => import_electron.ipcRenderer.invoke("delete-billing-customer", id),
   createBill: (bill) => import_electron.ipcRenderer.invoke("create-bill", bill),
-  getBills: () => import_electron.ipcRenderer.invoke("get-bills"),
+  getBills: (opts) => import_electron.ipcRenderer.invoke("get-bills", opts),
   getBillDetails: (id) => import_electron.ipcRenderer.invoke("get-bill-details", id),
   updateBill: (bill) => import_electron.ipcRenderer.invoke("update-bill", bill),
   getBillAudit: (billId) => import_electron.ipcRenderer.invoke("get-bill-audit", billId),
@@ -265,7 +266,7 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   getQuotation: (id) => import_electron.ipcRenderer.invoke("get-quotation", id),
   deleteQuotation: (id) => import_electron.ipcRenderer.invoke("delete-quotation", id),
   // ─── CUSTOMER LEDGER & EXCHANGES ───
-  getCustomerLedgerList: () => import_electron.ipcRenderer.invoke("get-customer-ledger-list"),
+  getCustomerLedgerList: (opts) => import_electron.ipcRenderer.invoke("get-customer-ledger-list", opts),
   getCustomerLedgerDetail: (id) => import_electron.ipcRenderer.invoke("get-customer-ledger-detail", id),
   addCustomerPayment: (payment) => import_electron.ipcRenderer.invoke("add-customer-payment", payment),
   addCustomerAddress: (address) => import_electron.ipcRenderer.invoke("add-customer-address", address),

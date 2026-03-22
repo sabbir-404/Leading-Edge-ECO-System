@@ -2,8 +2,10 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, TextInput, TouchableOpacity, FlatList, Alert, ActivityIndicator, StyleSheet, Modal, ScrollView } from 'react-native';
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../../lib/ThemeContext';
+import { decryptField, decryptRows, encryptObjectForDb } from '../../lib/encryption';
+import { useResponsive } from '../../lib/responsive';
 import KeyboardAwareContainer from '../../components/KeyboardAwareContainer';
-import { Search, Plus, Minus, Trash2, Save, User, X, Scan, Camera } from 'lucide-react-native';
+import { Search, Plus, Minus, Trash2, Save, User, X, Scan } from 'lucide-react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Picker } from '@react-native-picker/picker';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -14,6 +16,7 @@ interface PaymentMethod { id: number; name: string; }
 
 export default function BillingScreen({ navigation }: any) {
   const { theme } = useTheme();
+  const ui = useResponsive();
   const insets = useSafeAreaInsets();
   const [products, setProducts] = useState<Product[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -41,16 +44,16 @@ export default function BillingScreen({ navigation }: any) {
   useEffect(() => {
     const load = async () => {
       const { data: prodData } = await supabase.from('products').select('id, name, sku, selling_price').order('name');
-      setProducts(prodData || []);
+      setProducts(decryptRows(prodData || []));
       
       const { data: pmData } = await supabase.from('payment_methods').select('id, name').eq('is_active', true);
-      setPaymentMethods(pmData || []);
+      setPaymentMethods(decryptRows(pmData || []));
       if (pmData && pmData.length > 0) setSelectedMethod(pmData[0].id);
 
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
         const { data: p } = await supabase.from('users').select('full_name').eq('auth_id', user.id).single();
-        setBilledBy(p?.full_name || 'Staff');
+        setBilledBy(decryptField(p?.full_name) || 'Staff');
       }
     };
     load();
@@ -99,14 +102,20 @@ export default function BillingScreen({ navigation }: any) {
   const updateQty = (id: number, delta: number) =>
     setCart(prev => prev.map(i => i.id === id ? { ...i, quantity: Math.max(1, i.quantity + delta) } : i));
   const removeItem = (id: number) => setCart(prev => prev.filter(i => i.id !== id));
+
+  const toMoney = (value: string) => {
+    const parsed = Number.parseFloat(value || '0');
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
   
   const getSubtotal = () => cart.reduce((s, i) => s + i.selling_price * i.quantity, 0);
   const getDiscount = () => cart.reduce((s, i) => s + i.selling_price * i.quantity * (i.discount_pct / 100), 0);
-  const getTotal = () => getSubtotal() - getDiscount() + parseFloat(installationCharge || '0');
+  const getTotal = () => getSubtotal() - getDiscount() + toMoney(installationCharge);
 
   const saveBill = async () => {
     if (cart.length === 0) return Alert.alert('Error', 'Cart is empty');
     if (!customerName.trim()) return Alert.alert('Error', 'Enter customer name');
+    if (!selectedMethod) return Alert.alert('Error', 'Select a payment method');
     setSaving(true);
     try {
       let custId: number | null = null;
@@ -115,15 +124,17 @@ export default function BillingScreen({ navigation }: any) {
         if (ex) custId = ex.id;
       }
       if (!custId) {
-        const { data: nc } = await supabase.from('billing_customers').insert({ name: customerName, phone: customerPhone || '' }).select('id').single();
+        const customerRow = encryptObjectForDb({ name: customerName, phone: customerPhone || '' });
+        const { data: nc } = await supabase.from('billing_customers').insert(customerRow).select('id').single();
         custId = nc?.id || null;
       }
       
       const subtotal = getSubtotal();
       const discountTotal = getDiscount();
       const grand = getTotal();
+      const installationChargeAmount = toMoney(installationCharge);
       
-      const { data: bill, error } = await supabase.from('bills').insert({ 
+      const billPayload = encryptObjectForDb({ 
         customer_id: custId, 
         billed_by: billedBy, 
         platform: 'mobile',
@@ -134,11 +145,14 @@ export default function BillingScreen({ navigation }: any) {
         payment_ref: paymentRef,
         shipping_address: shippingAddress,
         shipping_note: shippingNote,
-        installation_charge: parseFloat(installationCharge || '0')
-      }).select('id, invoice_number').single();
+        installation_charge: installationChargeAmount
+      });
+
+      const { data: bill, error } = await supabase.from('bills').insert(billPayload).select('id, invoice_number').single();
       
       if (error) throw error;
-      await supabase.from('bill_items').insert(cart.map(i => ({ 
+
+      const itemsPayload = cart.map(i => encryptObjectForDb({ 
         bill_id: bill.id, 
         product_id: i.id, 
         product_name: i.name, 
@@ -148,7 +162,14 @@ export default function BillingScreen({ navigation }: any) {
         discount_pct: i.discount_pct, 
         discount_amt: i.selling_price * i.quantity * (i.discount_pct / 100), 
         price: i.selling_price * i.quantity * (1 - i.discount_pct / 100) 
-      })));
+      }));
+
+      const { error: itemsError } = await supabase.from('bill_items').insert(itemsPayload);
+
+      if (itemsError) {
+        await supabase.from('bills').delete().eq('id', bill.id);
+        throw itemsError;
+      }
       
       Alert.alert('✅ Bill Saved', `Invoice: ${bill.invoice_number}\nTotal: ৳${grand.toFixed(2)}`);
       setCart([]); setCustomerName(''); setCustomerPhone(''); setPaymentRef(''); setShippingAddress(''); setShippingNote(''); setInstallationCharge('0');
@@ -156,7 +177,7 @@ export default function BillingScreen({ navigation }: any) {
     finally { setSaving(false); }
   };
 
-  const s = makeStyles(theme);
+  const s = makeStyles(theme, ui, insets);
 
   if (isScanning) {
     return (
@@ -171,7 +192,7 @@ export default function BillingScreen({ navigation }: any) {
         <View style={s.scannerOverlay}>
           <Text style={s.scannerTitle}>Scan Product Barcode</Text>
           <TouchableOpacity style={s.closeScanner} onPress={() => setIsScanning(false)}>
-            <X color="#fff" size={24} />
+            <X color="#fff" size={ui.icon(24)} />
           </TouchableOpacity>
         </View>
       </View>
@@ -189,13 +210,13 @@ export default function BillingScreen({ navigation }: any) {
       </View>
 
       <KeyboardAwareContainer>
-        <ScrollView showsVerticalScrollIndicator={false}>
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={s.scrollContent}>
 
           {/* Customer */}
           <View style={[s.section, { padding: 12, marginBottom: 12 }]}>
             <Text style={[s.sectionLabel, { marginBottom: 8 }]}>Customer Details</Text>
             <View style={[s.inputRow, { paddingVertical: 2 }]}>
-              <User color={theme.textMuted} size={16} />
+              <User color={theme.textMuted} size={ui.icon(16)} />
               <TextInput style={[s.input, { paddingVertical: 8 }]} value={customerName} onChangeText={setCustomerName}
                 placeholder="Customer Name *" placeholderTextColor={theme.textMuted} />
             </View>
@@ -210,13 +231,13 @@ export default function BillingScreen({ navigation }: any) {
             <Text style={[s.sectionLabel, { marginBottom: 8 }]}>Inventory</Text>
             <View style={s.searchRow}>
               <View style={[s.inputRow, { flex: 1 }]}>
-                <Search color={theme.textMuted} size={16} />
+                <Search color={theme.textMuted} size={ui.icon(16)} />
                 <TextInput style={s.input} value={search}
                   onChangeText={t => { setSearch(t); setShowDrop(t.length > 0); }}
                   placeholder="Items or SKU..." placeholderTextColor={theme.textMuted} />
               </View>
               <TouchableOpacity style={s.scanBtn} onPress={startScanning}>
-                <Scan color={theme.accent} size={20} />
+                <Scan color={theme.accent} size={ui.icon(20)} />
               </TouchableOpacity>
             </View>
             {showDrop && (
@@ -242,10 +263,10 @@ export default function BillingScreen({ navigation }: any) {
                     <Text style={s.cartMeta}>৳{item.selling_price} × {item.quantity}</Text>
                   </View>
                   <View style={s.qtyRow}>
-                    <TouchableOpacity onPress={() => updateQty(item.id, -1)} style={s.qBtn}><Minus color={theme.textPrimary} size={14} /></TouchableOpacity>
+                    <TouchableOpacity onPress={() => updateQty(item.id, -1)} style={s.qBtn}><Minus color={theme.textPrimary} size={ui.icon(14)} /></TouchableOpacity>
                     <Text style={s.qtyText}>{item.quantity}</Text>
-                    <TouchableOpacity onPress={() => updateQty(item.id, 1)} style={s.qBtn}><Plus color={theme.textPrimary} size={14} /></TouchableOpacity>
-                    <TouchableOpacity onPress={() => removeItem(item.id)} style={[s.qBtn, { backgroundColor: theme.dangerLight }]}><Trash2 color={theme.danger} size={14} /></TouchableOpacity>
+                    <TouchableOpacity onPress={() => updateQty(item.id, 1)} style={s.qBtn}><Plus color={theme.textPrimary} size={ui.icon(14)} /></TouchableOpacity>
+                    <TouchableOpacity onPress={() => removeItem(item.id)} style={[s.qBtn, { backgroundColor: theme.dangerLight }]}><Trash2 color={theme.danger} size={ui.icon(14)} /></TouchableOpacity>
                   </View>
                 </View>
               ))}
@@ -308,7 +329,7 @@ export default function BillingScreen({ navigation }: any) {
         <TouchableOpacity style={[s.saveBtn, { backgroundColor: theme.success }, (saving || cart.length === 0) && { opacity: 0.5 }]}
           onPress={saveBill} disabled={saving || cart.length === 0}>
           {saving ? <ActivityIndicator color="#fff" /> : (
-            <><Save color="#fff" size={17} /><Text style={s.saveBtnText}>Save Bill</Text></>
+            <><Save color="#fff" size={ui.icon(17)} /><Text style={s.saveBtnText}>Save Bill</Text></>
           )}
         </TouchableOpacity>
       </View>
@@ -316,37 +337,38 @@ export default function BillingScreen({ navigation }: any) {
   );
 }
 
-const makeStyles = (theme: any) => StyleSheet.create({
+const makeStyles = (theme: any, ui: any, insets: any) => StyleSheet.create({
   root: { flex: 1, backgroundColor: theme.bg },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, paddingTop: 20 },
-  title: { color: theme.textPrimary, fontSize: 22, fontWeight: '800' },
-  outlineBtn: { backgroundColor: theme.bgCard, borderRadius: 10, paddingVertical: 7, paddingHorizontal: 14, borderWidth: 1, borderColor: theme.border },
-  outlineBtnText: { color: theme.accent, fontWeight: '700', fontSize: 13 },
-  section: { backgroundColor: theme.bgCard, borderRadius: 16, marginHorizontal: 16, marginBottom: 16, padding: 16, borderWidth: 1, borderColor: theme.border },
-  sectionLabel: { color: theme.textSecondary, fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 },
-  fieldLabel: { color: theme.textSecondary, fontSize: 12, fontWeight: '600', marginBottom: 4 },
-  inputRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: theme.bgInput, borderRadius: 12, paddingHorizontal: 12, borderWidth: 1, borderColor: theme.border, gap: 8 },
-  input: { flex: 1, color: theme.textPrimary, paddingVertical: 12, fontSize: 15 },
-  searchRow: { flexDirection: 'row', gap: 10, alignItems: 'center' },
-  scanBtn: { backgroundColor: theme.bgElevated, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: theme.border },
-  dropdown: { backgroundColor: theme.bgCard, borderRadius: 10, marginTop: 6, borderWidth: 1, borderColor: theme.border, maxHeight: 200 },
-  dropItem: { flexDirection: 'row', justifyContent: 'space-between', padding: 14, borderBottomWidth: 1, borderBottomColor: theme.border },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: ui.contentPadding, paddingTop: ui.spacing(12), paddingBottom: ui.spacing(8) },
+  title: { color: theme.textPrimary, fontSize: ui.font(22, 18, 26), fontWeight: '800' },
+  outlineBtn: { backgroundColor: theme.bgCard, borderRadius: ui.radius(10), paddingVertical: ui.spacing(7), paddingHorizontal: ui.spacing(14), borderWidth: 1, borderColor: theme.border },
+  outlineBtnText: { color: theme.accent, fontWeight: '700', fontSize: ui.font(13) },
+  scrollContent: { paddingBottom: ui.sectionGap },
+  section: { backgroundColor: theme.bgCard, borderRadius: ui.radius(16), marginHorizontal: ui.contentPadding, marginBottom: ui.sectionGap, padding: ui.cardPadding, borderWidth: 1, borderColor: theme.border },
+  sectionLabel: { color: theme.textSecondary, fontSize: ui.font(11), fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1, marginBottom: ui.spacing(12) },
+  fieldLabel: { color: theme.textSecondary, fontSize: ui.font(12), fontWeight: '600', marginBottom: ui.spacing(4) },
+  inputRow: { flexDirection: 'row', alignItems: 'center', minHeight: ui.controlHeight, backgroundColor: theme.bgInput, borderRadius: ui.radius(12), paddingHorizontal: ui.spacing(12), borderWidth: 1, borderColor: theme.border, gap: ui.spacing(8) },
+  input: { flex: 1, color: theme.textPrimary, paddingVertical: ui.spacing(12), fontSize: ui.font(15) },
+  searchRow: { flexDirection: 'row', gap: ui.spacing(10), alignItems: 'center' },
+  scanBtn: { backgroundColor: theme.bgElevated, borderRadius: ui.radius(12), minWidth: ui.touchMin, minHeight: ui.touchMin, alignItems: 'center', justifyContent: 'center', padding: ui.spacing(10), borderWidth: 1, borderColor: theme.border },
+  dropdown: { backgroundColor: theme.bgCard, borderRadius: ui.radius(10), marginTop: ui.spacing(6), borderWidth: 1, borderColor: theme.border, maxHeight: ui.scale(220) },
+  dropItem: { flexDirection: 'row', justifyContent: 'space-between', padding: ui.spacing(14), borderBottomWidth: 1, borderBottomColor: theme.border },
   dropName: { color: theme.textPrimary, fontWeight: '500', flex: 1 },
   dropPrice: { fontWeight: '700' },
-  cartItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: theme.border },
-  cartName: { color: theme.textPrimary, fontWeight: '600', fontSize: 15 },
-  cartMeta: { color: theme.textMuted, fontSize: 13, marginTop: 2 },
-  qtyRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  qBtn: { backgroundColor: theme.bgElevated, borderRadius: 8, padding: 8 },
-  qtyText: { color: theme.textPrimary, fontWeight: '700', minWidth: 24, textAlign: 'center', fontSize: 16 },
-  pickerContainer: { backgroundColor: theme.bgInput, borderRadius: 12, borderWidth: 1, borderColor: theme.border, overflow: 'hidden' },
-  footer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 20, backgroundColor: theme.bgCard, borderTopWidth: 1, borderTopColor: theme.border, paddingBottom: 30 },
-  totalLabel: { color: theme.textMuted, fontSize: 13 },
-  totalValue: { fontSize: 24, fontWeight: '900' },
-  saveBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 14, paddingVertical: 14, paddingHorizontal: 24 },
-  saveBtnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
+  cartItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: ui.compactRowPadding, borderBottomWidth: 1, borderBottomColor: theme.border },
+  cartName: { color: theme.textPrimary, fontWeight: '600', fontSize: ui.font(15) },
+  cartMeta: { color: theme.textMuted, fontSize: ui.font(13), marginTop: ui.spacing(1) },
+  qtyRow: { flexDirection: 'row', alignItems: 'center', gap: ui.compactRowGap },
+  qBtn: { backgroundColor: theme.bgElevated, borderRadius: ui.radius(8), minWidth: ui.touchMin, minHeight: ui.touchMin, alignItems: 'center', justifyContent: 'center', padding: ui.compactDetailPadding },
+  qtyText: { color: theme.textPrimary, fontWeight: '700', minWidth: ui.scale(24), textAlign: 'center', fontSize: ui.font(16) },
+  pickerContainer: { backgroundColor: theme.bgInput, borderRadius: ui.radius(12), borderWidth: 1, borderColor: theme.border, overflow: 'hidden' },
+  footer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: ui.contentPadding, paddingTop: ui.spacing(14), backgroundColor: theme.bgCard, borderTopWidth: 1, borderTopColor: theme.border, paddingBottom: (insets.bottom > 0 ? insets.bottom : ui.spacing(10)) + ui.spacing(8) },
+  totalLabel: { color: theme.textMuted, fontSize: ui.font(13) },
+  totalValue: { fontSize: ui.font(24, 20, 30), fontWeight: '900' },
+  saveBtn: { flexDirection: 'row', alignItems: 'center', gap: ui.spacing(8), borderRadius: ui.radius(14), paddingVertical: ui.spacing(14), paddingHorizontal: ui.spacing(24) },
+  saveBtnText: { color: '#fff', fontWeight: '700', fontSize: ui.font(16) },
   scannerRoot: { flex: 1, backgroundColor: '#000' },
-  scannerOverlay: { position: 'absolute', top: 0, left: 0, right: 0, paddingTop: 60, paddingHorizontal: 20, alignItems: 'center' },
-  scannerTitle: { color: '#fff', fontSize: 18, fontWeight: '700', textShadowColor: 'rgba(0,0,0,0.7)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 4 },
-  closeScanner: { position: 'absolute', top: 55, right: 20, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 20, padding: 8 },
+  scannerOverlay: { position: 'absolute', top: 0, left: 0, right: 0, paddingTop: ui.spacing(60), paddingHorizontal: ui.spacing(20), alignItems: 'center' },
+  scannerTitle: { color: '#fff', fontSize: ui.font(18), fontWeight: '700', textShadowColor: 'rgba(0,0,0,0.7)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 4 },
+  closeScanner: { position: 'absolute', top: ui.spacing(55), right: ui.spacing(20), backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: ui.radius(20), padding: ui.spacing(8) },
 });

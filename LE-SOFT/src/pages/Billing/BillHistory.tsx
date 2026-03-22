@@ -3,7 +3,9 @@ import { Search, Printer, Eye, Calendar, X, Star, Filter, ChevronDown, ChevronUp
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAutoRefresh } from '../../hooks/useAutoRefresh';
 import DashboardLayout from '../../components/DashboardLayout';
+import { getCallerContext, canSeeAllBills } from '../../utils/permissions';
 import '../Accounting/Masters/Masters.css';
+
 
 interface Bill {
     id: number;
@@ -70,11 +72,12 @@ const BillHistory: React.FC = () => {
         setLoading(true);
         try {
             // @ts-ignore
-            const data = await window.electron.getBills();
+            const data = await window.electron.getBills(getCallerContext());
             setBills(data || []);
         } catch (e) { console.error(e); }
         setLoading(false);
     };
+
 
     useAutoRefresh(['bills', 'bill_items', 'billing_customers'], fetchBills);
 
@@ -200,14 +203,16 @@ const BillHistory: React.FC = () => {
                                     <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
                                         style={{ padding: '0.45rem 0.65rem', borderRadius: '6px', border: '1px solid var(--border-color)', fontSize: '0.85rem', background: '#fff' }} />
                                 </div>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-                                    <label style={{ fontSize: '0.75rem', fontWeight: 600, opacity: 0.7 }}>Billed By</label>
-                                    <select value={filterBilledBy} onChange={e => setFilterBilledBy(e.target.value)}
-                                        style={{ padding: '0.45rem 0.65rem', borderRadius: '6px', border: '1px solid var(--border-color)', fontSize: '0.85rem', background: '#fff', minWidth: '140px' }}>
-                                        <option value="">All Staff</option>
-                                        {billedByOptions.map(b => <option key={b} value={b}>{b}</option>)}
-                                    </select>
-                                </div>
+                                {canSeeAllBills() && (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                                        <label style={{ fontSize: '0.75rem', fontWeight: 600, opacity: 0.7 }}>Billed By</label>
+                                        <select value={filterBilledBy} onChange={e => setFilterBilledBy(e.target.value)}
+                                            style={{ padding: '0.45rem 0.65rem', borderRadius: '6px', border: '1px solid var(--border-color)', fontSize: '0.85rem', background: '#fff', minWidth: '140px' }}>
+                                            <option value="">All Staff</option>
+                                            {billedByOptions.map(b => <option key={b} value={b}>{b}</option>)}
+                                        </select>
+                                    </div>
+                                )}
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '1rem' }}>
                                     <input type="checkbox" id="alteredOnly" checked={filterAlteredOnly} onChange={e => setFilterAlteredOnly(e.target.checked)}
                                         style={{ width: '16px', height: '16px', cursor: 'pointer' }} />
@@ -267,7 +272,7 @@ const BillHistory: React.FC = () => {
                                                     <span style={{ fontFamily: 'monospace', fontWeight: 600, color: 'var(--accent-color)', fontSize: '0.82rem' }}>
                                                         {safeDecrypt(bill.invoice_number)}
                                                     </span>
-                                                    {bill.is_altered && <Star size={12} fill="#f97316" color="#f97316" />}
+                                                    {!!bill.is_altered && <Star size={12} fill="#f97316" color="#f97316" />}
                                                 </div>
                                             </td>
                                             <td style={{ padding: '0.7rem 1rem' }}>
@@ -322,7 +327,7 @@ const BillHistory: React.FC = () => {
                                             <span style={{ fontFamily: 'monospace', color: 'var(--accent-color)', fontWeight: 600, fontSize: '1rem' }}>
                                                 {safeDecrypt(selectedBill.invoice_number)}
                                             </span>
-                                            {selectedBill.is_altered && (
+                                            {!!selectedBill.is_altered && (
                                                 <span style={{ padding: '0.2rem 0.5rem', background: 'rgba(249,115,22,0.1)', color: '#f97316', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px' }}>
                                                     <Star size={12} fill="#f97316" /> ALTERED
                                                 </span>

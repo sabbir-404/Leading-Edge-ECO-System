@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, TextInput, TouchableOpacity, FlatList, Alert, Modal, StyleSheet, SafeAreaView } from 'react-native';
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../../lib/ThemeContext';
+import { decryptRows, encryptObjectForDb } from '../../lib/encryption';
 import KeyboardAwareContainer from '../../components/KeyboardAwareContainer';
 import { Plus, X } from 'lucide-react-native';
 
@@ -21,7 +22,7 @@ export default function LeavesScreen() {
     if (emp) {
       setEmployeeId(emp.id);
       const { data } = await supabase.from('hrm_leaves').select('*').eq('employee_id', emp.id).order('created_at', { ascending: false });
-      setLeaves(data || []);
+      setLeaves(decryptRows(data || []));
     }
   };
 
@@ -31,7 +32,8 @@ export default function LeavesScreen() {
   const handleSubmit = async () => {
     if (!form.from_date || !form.to_date) return Alert.alert('Error', 'Enter both dates');
     if (!employeeId) return Alert.alert('Error', 'Employee profile not found.');
-    const { error } = await supabase.from('hrm_leaves').insert({ ...form, employee_id: employeeId, status: 'Pending' });
+    const payload = encryptObjectForDb({ ...form, employee_id: employeeId, status: 'Pending' });
+    const { error } = await supabase.from('hrm_leaves').insert(payload);
     if (error) return Alert.alert('Error', error.message);
     setShowModal(false);
     setForm({ leave_type: 'Casual', from_date: '', to_date: '', reason: '' });

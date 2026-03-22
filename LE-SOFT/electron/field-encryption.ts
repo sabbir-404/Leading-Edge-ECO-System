@@ -132,7 +132,13 @@ const SKIP_KEYS = new Set([
     'phone',
     'email',
     'product_name',
-    'customer_name'
+    'customer_name',
+    'platform',
+    'status',
+    'type',
+    'device_type',
+    'employee_code',
+    'crm_state'
 ]);
 
 // ── Bulk object encrypt / decrypt ──────────────────────────────────────────────

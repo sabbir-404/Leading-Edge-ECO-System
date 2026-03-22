@@ -30,6 +30,8 @@ const PERMISSION_GROUPS = [
             { key: 'read_bill', label: 'Read Bills' },
             { key: 'write_bill', label: 'Create Bills' },
             { key: 'alter_bill', label: 'Alter/Edit Bills' },
+            { key: 'add_bill_items', label: 'Add Products to Existing Bills' },
+            { key: 'see_all_bills', label: 'View all users\' bills (not just own)' },
             { key: 'delete_bill', label: 'Delete Bills' },
             { key: 'initiate_exchange', label: 'Initiate Exchanges' }
         ]
@@ -48,8 +50,12 @@ const PERMISSION_GROUPS = [
         perms: [
             { key: 'read_customer', label: 'Read Customers' },
             { key: 'write_customer', label: 'Write Customers' },
+            { key: 'delete_customer', label: 'Delete Customers' },
             { key: 'read_quotation', label: 'Read Quotations' },
             { key: 'write_quotation', label: 'Create Quotations' },
+            { key: 'see_all_customers', label: 'View all customers (not just own)' },
+            { key: 'view_customer_contact', label: 'View customer phone & email' },
+            { key: 'view_customer_financials', label: 'View customer balances & payment history' },
             { key: 'view_customer_ledger', label: 'View Customer Ledgers & Balances' }
         ]
     },

@@ -16,6 +16,7 @@ interface ExchangeOrder {
     total_new_value: number;
     difference_amount: number;
     created_at: string;
+    original_invoice_number?: string; // Linked invoice number
 }
 
 const ExchangeOrders: React.FC = () => {
@@ -28,8 +29,6 @@ const ExchangeOrders: React.FC = () => {
         fetchOrders();
     }, []);
 
-    useAutoRefresh(['exchange_orders'], fetchOrders);
-
     const fetchOrders = async () => {
         setLoading(true);
         try {
@@ -39,6 +38,8 @@ const ExchangeOrders: React.FC = () => {
         } catch (e) { console.error(e); }
         setLoading(false);
     };
+
+    useAutoRefresh(['exchange_orders'], fetchOrders);
 
     const viewExchange = (id: number) => {
         // Here you would navigate to detail or open a modal (Not fully detailed here for brevity)
@@ -101,6 +102,7 @@ const ExchangeOrders: React.FC = () => {
                                     <tr>
                                         <th style={{ padding: '0.75rem 1rem', textAlign: 'left', fontWeight: 700 }}>Date</th>
                                         <th style={{ padding: '0.75rem 1rem', textAlign: 'left', fontWeight: 700 }}>Exchange No.</th>
+                                        <th style={{ padding: '0.75rem 1rem', textAlign: 'left', fontWeight: 700 }}>Linked Bill</th>
                                         <th style={{ padding: '0.75rem 1rem', textAlign: 'left', fontWeight: 700 }}>Customer Name</th>
                                         <th style={{ padding: '0.75rem 1rem', textAlign: 'right', fontWeight: 700 }}>Return Val</th>
                                         <th style={{ padding: '0.75rem 1rem', textAlign: 'right', fontWeight: 700 }}>New Val</th>
@@ -113,6 +115,11 @@ const ExchangeOrders: React.FC = () => {
                                         <tr key={order.id} style={{ borderBottom: '1px solid #f0f0f0', background: idx % 2 === 0 ? '#fafbfc' : '#fff' }}>
                                             <td style={{ padding: '0.75rem 1rem', color: '#666' }}>{new Date(order.created_at).toLocaleDateString()}</td>
                                             <td style={{ padding: '0.75rem 1rem', fontWeight: 600, color: 'var(--accent-color)' }}>{order.exchange_number}</td>
+                                            <td style={{ padding: '0.75rem 1rem' }}>
+                                                {order.original_invoice_number 
+                                                    ? <span style={{ fontFamily: 'monospace', fontSize: '0.82rem', background: 'rgba(99,102,241,0.08)', color: 'var(--accent-color)', padding: '2px 6px', borderRadius: '4px', fontWeight: 600 }}>{order.original_invoice_number}</span>
+                                                    : <span style={{ color: '#aaa', fontSize: '0.8rem' }}>—</span>}
+                                            </td>
                                             <td style={{ padding: '0.75rem 1rem' }}>
                                                 <div style={{ fontWeight: 600 }}>{order.customer_name}</div>
                                                 <div style={{ fontSize: '0.8rem', color: '#888' }}>{order.customer_phone}</div>

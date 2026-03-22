@@ -1,12 +1,12 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, FlatList, RefreshControl, Image, TextInput, Animated, Keyboard, Dimensions } from 'react-native';
+import React, { useEffect, useState, useCallback } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, FlatList, RefreshControl, TextInput, Keyboard } from 'react-native';
 import { supabase } from '../lib/supabase';
 import { useTheme } from '../lib/ThemeContext';
+import { decryptObject } from '../lib/encryption';
+import { useResponsive } from '../lib/responsive';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { User, Search, Package, X, LogOut, Activity, ShoppingBag, Menu, AlertTriangle, Users } from 'lucide-react-native';
 import { useDebounce } from 'use-debounce';
-
-const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 interface Stats {
   todaySales: number; totalBills: number;
@@ -14,6 +14,7 @@ interface Stats {
 
 export default function DashboardScreen({ navigation }: any) {
   const { theme } = useTheme();
+  const ui = useResponsive();
   const [user, setUser] = useState<any>(null);
   const [stats, setStats] = useState<Stats>({ todaySales: 0, totalBills: 0 });
   const [refreshing, setRefreshing] = useState(false);
@@ -28,17 +29,16 @@ export default function DashboardScreen({ navigation }: any) {
   const [totalCustomers, setTotalCustomers] = useState(0);
   const [lowStockCount, setLowStockCount] = useState(0);
 
-  // Animation
-  const searchAnim = useRef(new Animated.Value(0)).current;
-
   const fetchData = async () => {
     const { data: { user: authUser } } = await supabase.auth.getUser();
     if (!authUser) return;
     const { data: profile } = await supabase.from('users').select('*').eq('auth_id', authUser.id).single();
-    setUser(profile);
+    const parsedProfile = decryptObject(profile || {});
+    setUser(parsedProfile);
+    const role = String(parsedProfile?.role || '').toLowerCase();
     
     // Only load global sales if Admin or Owner (to protect sensitive financial data)
-    if (profile?.role === 'ADMIN' || profile?.role === 'OWNER') {
+    if (role === 'admin' || role === 'owner') {
       const today = new Date().toISOString().split('T')[0];
       const { data: bills } = await supabase.from('bills').select('grand_total').gte('created_at', today);
       const todaySales = (bills || []).reduce((s: number, b: any) => s + (b.grand_total || 0), 0);
@@ -79,14 +79,12 @@ export default function DashboardScreen({ navigation }: any) {
 
   const handleSearchFocus = () => {
     setIsSearching(true);
-    Animated.timing(searchAnim, { toValue: 1, duration: 300, useNativeDriver: true }).start();
   };
 
   const handleSearchBlur = () => {
     if (searchQuery.length === 0) {
       Keyboard.dismiss();
       setIsSearching(false);
-      Animated.timing(searchAnim, { toValue: 0, duration: 300, useNativeDriver: true }).start();
     }
   };
   
@@ -94,72 +92,49 @@ export default function DashboardScreen({ navigation }: any) {
     setSearchQuery('');
     Keyboard.dismiss();
     setIsSearching(false);
-    Animated.timing(searchAnim, { toValue: 0, duration: 300, useNativeDriver: true }).start();
   };
 
-  const s = makeStyles(theme);
+  const s = makeStyles(theme, ui);
 
-  const headerTranslateY = searchAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, -200], // Push header up out of view
-  });
-
-  const searchTranslateY = searchAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, -165], // Hover to top
-  });
-  
-  const backdropOpacity = searchAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, 1],
-  });
-
-  const isAdmin = user?.role === 'ADMIN' || user?.role === 'OWNER';
+  const isAdmin = ['admin', 'owner'].includes(String(user?.role || '').toLowerCase());
 
   return (
     <SafeAreaView style={s.root} edges={['top', 'left', 'right']}>
-      <Animated.View style={[s.searchBackdrop, { opacity: backdropOpacity }]} pointerEvents={isSearching ? 'auto' : 'none'} />
-
-      <Animated.View style={{ flex: 1, transform: [{ translateY: headerTranslateY }] }}>
-        
-        {/* Top Header */}
-        <View style={s.topProfileArea}>
-          <TouchableOpacity onPress={() => navigation.openDrawer()} style={s.menuBtn}>
-            <Menu color={theme.textPrimary} size={28} />
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => navigation.navigate('SettingsTab')} style={s.profileBtn}>
-            <View style={[s.avatar, { backgroundColor: theme.accent + '22' }]}>
-              <User color={theme.accent} size={22} />
-            </View>
-            <View>
-              <Text style={s.greeting}>Good day,</Text>
-              <Text style={s.name}>{user?.full_name || 'Loading...'}</Text>
-            </View>
-          </TouchableOpacity>
-          <View style={{ flex: 1 }} />
-          <TouchableOpacity onPress={() => supabase.auth.signOut()} style={s.logoutBtn}>
-            <LogOut color={theme.danger} size={18} />
-          </TouchableOpacity>
-        </View>
-
-        {/* Admin Secret Dashboard Summary */}
-        {isAdmin && (
-          <View style={s.heroBox}>
-            <Text style={s.heroLabel}>Today's Total Bills</Text>
-            <Text style={s.heroAmount}>৳{stats.todaySales.toLocaleString()}</Text>
-            <View style={s.heroSub}>
-              <ShoppingBag color={theme.accent} size={14} />
-              <Text style={s.heroSubText}>{stats.totalBills} Bills generated today</Text>
-            </View>
+      {/* Top Header */}
+      <View style={s.topProfileArea}>
+        <TouchableOpacity onPress={() => navigation.openDrawer()} style={s.menuBtn}>
+          <Menu color={theme.textPrimary} size={ui.icon(26)} />
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => navigation.navigate('SettingsTab')} style={s.profileBtn}>
+          <View style={[s.avatar, { backgroundColor: theme.accent + '22' }]}>
+            <User color={theme.accent} size={ui.icon(20)} />
           </View>
-        )}
+          <View>
+            <Text style={s.greeting}>Good day,</Text>
+            <Text style={s.name}>{user?.full_name || 'Loading...'}</Text>
+          </View>
+        </TouchableOpacity>
+        <View style={{ flex: 1 }} />
+        <TouchableOpacity onPress={() => supabase.auth.signOut()} style={s.logoutBtn}>
+          <LogOut color={theme.danger} size={ui.icon(18)} />
+        </TouchableOpacity>
+      </View>
 
-      </Animated.View>
+      {/* Admin Summary */}
+      {isAdmin && !isSearching && (
+        <View style={s.heroBox}>
+          <Text style={s.heroLabel}>Today's Total Bills</Text>
+          <Text style={s.heroAmount}>৳{stats.todaySales.toLocaleString()}</Text>
+          <View style={s.heroSub}>
+            <ShoppingBag color={theme.accent} size={ui.icon(14)} />
+            <Text style={s.heroSubText}>{stats.totalBills} Bills generated today</Text>
+          </View>
+        </View>
+      )}
 
-      {/* Animated Search Bar Container */}
-      <Animated.View style={[s.searchContainerWrapper, { transform: [{ translateY: searchTranslateY }] }]}>
+      <View style={s.searchContainerWrapper}>
         <View style={s.searchBar}>
-          <Search color={isSearching ? theme.accent : theme.textMuted} size={20} />
+          <Search color={isSearching ? theme.accent : theme.textMuted} size={ui.icon(19)} />
           <TextInput
             style={s.searchInput}
             placeholder="Search stock, names, SKUs..."
@@ -171,14 +146,14 @@ export default function DashboardScreen({ navigation }: any) {
           />
           {isSearching && (
             <TouchableOpacity onPress={closeSearch} style={s.clearBtn}>
-              <X color={theme.textMuted} size={18} />
+              <X color={theme.textMuted} size={ui.icon(17)} />
             </TouchableOpacity>
           )}
         </View>
-      </Animated.View>
+      </View>
 
       {/* Content Below Search */}
-      <View style={{ flex: 1, marginTop: isSearching ? -200 + 70 : 10 }}>
+      <View style={{ flex: 1, marginTop: 10 }}>
         {isSearching ? (
           <FlatList
             keyboardShouldPersistTaps="handled"
@@ -188,7 +163,7 @@ export default function DashboardScreen({ navigation }: any) {
             renderItem={({ item }) => (
               <TouchableOpacity style={s.resultCard} onPress={() => { closeSearch(); }}>
                 <View style={[s.iconBox, { backgroundColor: theme.bgElevated }]}>
-                  <Package color={theme.accent} size={20} />
+                  <Package color={theme.accent} size={ui.icon(19)} />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={s.rName}>{item.name}</Text>
@@ -232,7 +207,7 @@ export default function DashboardScreen({ navigation }: any) {
 
                 {isAdmin && (
                   <View style={[s.placeholderCard, { marginTop: 16 }]}>
-                    <Activity color={theme.textMuted} size={32} />
+                    <Activity color={theme.textMuted} size={ui.icon(30)} />
                     <Text style={s.placeText}>More advanced admin charts can go here later.</Text>
                   </View>
                 )}
@@ -246,44 +221,43 @@ export default function DashboardScreen({ navigation }: any) {
   );
 }
 
-const makeStyles = (theme: any) => StyleSheet.create({
+const makeStyles = (theme: any, ui: any) => StyleSheet.create({
   root: { flex: 1, backgroundColor: theme.bg },
-  searchBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: theme.bg, zIndex: 10 },
-  topProfileArea: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingTop: 10, paddingBottom: 20 },
-  menuBtn: { marginRight: 16, padding: 4 },
-  profileBtn: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  avatar: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
-  greeting: { color: theme.textMuted, fontSize: 13 },
-  name: { color: theme.textPrimary, fontSize: 18, fontWeight: '800' },
-  logoutBtn: { padding: 8, backgroundColor: theme.bgCard, borderRadius: 12, borderWidth: 1, borderColor: theme.border },
+  topProfileArea: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: ui.spacing(20), paddingTop: ui.spacing(10), paddingBottom: ui.spacing(12) },
+  menuBtn: { marginRight: ui.spacing(16), padding: ui.spacing(4) },
+  profileBtn: { flexDirection: 'row', alignItems: 'center', gap: ui.spacing(12), flexShrink: 1 },
+  avatar: { width: ui.scale(44), height: ui.scale(44), borderRadius: ui.radius(22), alignItems: 'center', justifyContent: 'center' },
+  greeting: { color: theme.textMuted, fontSize: ui.font(13) },
+  name: { color: theme.textPrimary, fontSize: ui.font(22, 16, 24), fontWeight: '800' },
+  logoutBtn: { padding: ui.spacing(8), backgroundColor: theme.bgCard, borderRadius: ui.radius(12), borderWidth: 1, borderColor: theme.border },
   
-  heroBox: { backgroundColor: theme.bgCard, marginHorizontal: 20, borderRadius: 24, padding: 24, borderWidth: 1, borderColor: theme.border, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 10, shadowOffset: { width: 0, height: 4 } },
-  heroLabel: { color: theme.textMuted, fontSize: 14, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 },
-  heroAmount: { color: theme.textPrimary, fontSize: 42, fontWeight: '900', letterSpacing: -1 },
-  heroSub: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 12, backgroundColor: theme.bg, paddingHorizontal: 10, paddingVertical: 6, alignSelf: 'flex-start', borderRadius: 8 },
-  heroSubText: { color: theme.textSecondary, fontSize: 13, fontWeight: '500' },
+  heroBox: { backgroundColor: theme.bgCard, marginHorizontal: ui.spacing(20), borderRadius: ui.radius(24), padding: ui.spacing(22), borderWidth: 1, borderColor: theme.border, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 10, shadowOffset: { width: 0, height: 4 } },
+  heroLabel: { color: theme.textMuted, fontSize: ui.font(13), fontWeight: '600', textTransform: 'uppercase', letterSpacing: 1, marginBottom: ui.spacing(8) },
+  heroAmount: { color: theme.textPrimary, fontSize: ui.font(36, 28, 44), fontWeight: '900', letterSpacing: -1 },
+  heroSub: { flexDirection: 'row', alignItems: 'center', gap: ui.spacing(6), marginTop: ui.spacing(12), backgroundColor: theme.bg, paddingHorizontal: ui.spacing(10), paddingVertical: ui.spacing(6), alignSelf: 'flex-start', borderRadius: ui.radius(8) },
+  heroSubText: { color: theme.textSecondary, fontSize: ui.font(12), fontWeight: '500' },
   
-  searchContainerWrapper: { paddingHorizontal: 20, zIndex: 20, marginTop: 20 },
-  searchBar: { flexDirection: 'row', alignItems: 'center', backgroundColor: theme.bgInput, borderRadius: 16, paddingHorizontal: 16, height: 56, borderWidth: 1, borderColor: theme.border, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 8, shadowOffset: { width: 0, height: 2 } },
-  searchInput: { flex: 1, color: theme.textPrimary, fontSize: 16, marginLeft: 12, height: '100%' },
-  clearBtn: { padding: 6 },
+  searchContainerWrapper: { paddingHorizontal: ui.spacing(20), zIndex: 5, marginTop: ui.spacing(12) },
+  searchBar: { flexDirection: 'row', alignItems: 'center', backgroundColor: theme.bgInput, borderRadius: ui.radius(16), paddingHorizontal: ui.spacing(16), height: ui.scale(56), borderWidth: 1, borderColor: theme.border, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 8, shadowOffset: { width: 0, height: 2 } },
+  searchInput: { flex: 1, color: theme.textPrimary, fontSize: ui.font(16), marginLeft: ui.spacing(12), height: '100%' },
+  clearBtn: { padding: ui.spacing(6) },
   
-  listContent: { paddingHorizontal: 20, paddingTop: 20, paddingBottom: 100 },
-  resultCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: theme.bgCard, borderRadius: 16, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: theme.border },
-  iconBox: { width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginRight: 14 },
-  rName: { color: theme.textPrimary, fontSize: 16, fontWeight: '700' },
-  rMeta: { color: theme.textMuted, fontSize: 13, marginTop: 2 },
-  rVal: { fontSize: 16, fontWeight: '800' },
-  empty: { alignItems: 'center', marginTop: 40 },
+  listContent: { paddingHorizontal: ui.spacing(20), paddingTop: ui.spacing(18), paddingBottom: ui.spacing(110) },
+  resultCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: theme.bgCard, borderRadius: ui.radius(16), padding: ui.spacing(14), marginBottom: ui.spacing(10), borderWidth: 1, borderColor: theme.border },
+  iconBox: { width: ui.scale(44), height: ui.scale(44), borderRadius: ui.radius(12), alignItems: 'center', justifyContent: 'center', marginRight: ui.spacing(14) },
+  rName: { color: theme.textPrimary, fontSize: ui.font(16), fontWeight: '700' },
+  rMeta: { color: theme.textMuted, fontSize: ui.font(12), marginTop: ui.spacing(2) },
+  rVal: { fontSize: ui.font(15), fontWeight: '800' },
+  empty: { alignItems: 'center', marginTop: ui.spacing(40) },
 
-  dashScroll: { paddingHorizontal: 20, paddingBottom: 100 },
-  sectionTitle: { color: theme.textPrimary, fontSize: 18, fontWeight: '800', marginTop: 10, marginBottom: 16 },
-  placeholderCard: { backgroundColor: theme.bgCard, borderRadius: 20, padding: 30, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: theme.border, borderStyle: 'dashed' },
-  placeText: { color: theme.textMuted, fontSize: 14, fontWeight: '500', marginTop: 10 },
+  dashScroll: { paddingHorizontal: ui.spacing(20), paddingBottom: ui.spacing(110) },
+  sectionTitle: { color: theme.textPrimary, fontSize: ui.font(18), fontWeight: '800', marginTop: ui.spacing(10), marginBottom: ui.spacing(16) },
+  placeholderCard: { backgroundColor: theme.bgCard, borderRadius: ui.radius(20), padding: ui.spacing(30), alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: theme.border, borderStyle: 'dashed' },
+  placeText: { color: theme.textMuted, fontSize: ui.font(14), fontWeight: '500', marginTop: ui.spacing(10), textAlign: 'center' },
 
-  gridRow: { flexDirection: 'row', gap: 12 },
-  gridTile: { flex: 1, backgroundColor: theme.bgCard, borderRadius: 20, padding: 20, borderWidth: 1, borderColor: theme.border },
-  tileIcon: { width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
-  tileTitle: { color: theme.textMuted, fontSize: 14, fontWeight: '600', marginBottom: 6 },
-  tileValue: { color: theme.textPrimary, fontSize: 26, fontWeight: '800' },
+  gridRow: { flexDirection: ui.isCompact ? 'column' : 'row', gap: ui.spacing(12) },
+  gridTile: { flex: 1, backgroundColor: theme.bgCard, borderRadius: ui.radius(20), padding: ui.spacing(20), borderWidth: 1, borderColor: theme.border },
+  tileIcon: { width: ui.scale(44), height: ui.scale(44), borderRadius: ui.radius(12), alignItems: 'center', justifyContent: 'center', marginBottom: ui.spacing(16) },
+  tileTitle: { color: theme.textMuted, fontSize: ui.font(14), fontWeight: '600', marginBottom: ui.spacing(6) },
+  tileValue: { color: theme.textPrimary, fontSize: ui.font(30, 24, 34), fontWeight: '800' },
 });

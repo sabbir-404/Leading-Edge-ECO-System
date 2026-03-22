@@ -2,15 +2,19 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, TextInput, TouchableOpacity, Alert, StyleSheet, Modal, ScrollView, ActivityIndicator } from 'react-native';
 import { supabase } from '../lib/supabase';
 import { useTheme } from '../lib/ThemeContext';
+import { useResponsive } from '../lib/responsive';
+import { decryptObject, encryptObjectForDb } from '../lib/encryption';
 import KeyboardAwareContainer from '../components/KeyboardAwareContainer';
 import { User, Lock, Eye, EyeOff, Info, LogOut, Sun, Moon, Database, Settings as SettingsIcon, RefreshCw, Barcode, Download, ChevronRight } from 'lucide-react-native';
 import * as Updates from 'expo-updates';
 import Constants from 'expo-constants';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 type SettingsTab = 'profile' | 'system' | 'database' | 'about';
 
 export default function SettingsScreen() {
   const { theme, isDark, toggleTheme } = useTheme();
+  const ui = useResponsive();
   const [activeTab, setActiveTab] = useState<SettingsTab>('profile');
   
   const [profile, setProfile] = useState<any>(null);
@@ -32,7 +36,9 @@ export default function SettingsScreen() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
       const { data } = await supabase.from('users').select('*').eq('auth_id', user.id).single();
-      setProfile(data); setDisplayName(data?.full_name || '');
+      const parsed = decryptObject(data || {});
+      setProfile(parsed);
+      setDisplayName(parsed?.full_name || '');
       checkDb();
     };
     load();
@@ -80,7 +86,8 @@ export default function SettingsScreen() {
   const saveName = async () => {
     if (!displayName.trim()) return Alert.alert('Error', 'Name cannot be empty.');
     setSaving(true);
-    const { error } = await supabase.from('users').update({ full_name: displayName }).eq('id', profile.id);
+    const payload = encryptObjectForDb({ full_name: displayName.trim() });
+    const { error } = await supabase.from('users').update(payload).eq('id', profile.id);
     setSaving(false);
     if (error) Alert.alert('Error', error.message); else Alert.alert('✅ Saved', 'Display name updated.');
   };
@@ -99,20 +106,20 @@ export default function SettingsScreen() {
     { text: 'Logout', style: 'destructive', onPress: () => supabase.auth.signOut() },
   ]);
 
-  const s = makeStyles(theme);
+  const s = makeStyles(theme, ui);
 
   return (
-    <View style={s.root}>
+    <SafeAreaView style={s.root} edges={['top', 'left', 'right']}>
       <View style={s.header}><Text style={s.title}>Settings</Text></View>
 
       {/* Tabs */}
       <View style={s.tabStrip}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.tabScroll}>
           {[
-            { id: 'profile', label: 'Profile', icon: <User size={18} color={activeTab === 'profile' ? '#fff' : theme.textSecondary} /> },
-            { id: 'system', label: 'System', icon: <SettingsIcon size={18} color={activeTab === 'system' ? '#fff' : theme.textSecondary} /> },
-            { id: 'database', label: 'Database', icon: <Database size={18} color={activeTab === 'database' ? '#fff' : theme.textSecondary} /> },
-            { id: 'about', label: 'About', icon: <Info size={18} color={activeTab === 'about' ? '#fff' : theme.textSecondary} /> },
+            { id: 'profile', label: 'Profile', icon: <User size={ui.icon(18)} color={activeTab === 'profile' ? '#fff' : theme.textSecondary} /> },
+            { id: 'system', label: 'System', icon: <SettingsIcon size={ui.icon(18)} color={activeTab === 'system' ? '#fff' : theme.textSecondary} /> },
+            { id: 'database', label: 'Database', icon: <Database size={ui.icon(18)} color={activeTab === 'database' ? '#fff' : theme.textSecondary} /> },
+            { id: 'about', label: 'About', icon: <Info size={ui.icon(18)} color={activeTab === 'about' ? '#fff' : theme.textSecondary} /> },
           ].map(tab => (
             <TouchableOpacity
               key={tab.id}
@@ -143,7 +150,7 @@ export default function SettingsScreen() {
               )}
 
               <View style={s.section}>
-                <View style={s.sectionHead}><User color={theme.accent} size={18} /><Text style={s.sectionTitle}>Display Name</Text></View>
+                <View style={s.sectionHead}><User color={theme.accent} size={ui.icon(18)} /><Text style={s.sectionTitle}>Display Name</Text></View>
                 <TextInput style={s.input} value={displayName} onChangeText={setDisplayName}
                   placeholder="Your name..." placeholderTextColor={theme.textMuted} />
                 <TouchableOpacity style={[s.btn, { backgroundColor: theme.accent }]} onPress={saveName} disabled={saving}>
@@ -152,12 +159,12 @@ export default function SettingsScreen() {
               </View>
 
               <View style={s.section}>
-                <View style={s.sectionHead}><Lock color={theme.purple} size={18} /><Text style={s.sectionTitle}>Change Password</Text></View>
+                <View style={s.sectionHead}><Lock color={theme.purple} size={ui.icon(18)} /><Text style={s.sectionTitle}>Change Password</Text></View>
                 <View style={s.passRow}>
                   <TextInput style={[s.input, { flex: 1 }]} value={newPass} onChangeText={setNewPass}
                     placeholder="New password" placeholderTextColor={theme.textMuted} secureTextEntry={!showNew} />
                   <TouchableOpacity style={s.eyeBtn} onPress={() => setShowNew(!showNew)}>
-                    {showNew ? <EyeOff color={theme.textMuted} size={18} /> : <Eye color={theme.textMuted} size={18} />}
+                    {showNew ? <EyeOff color={theme.textMuted} size={ui.icon(18)} /> : <Eye color={theme.textMuted} size={ui.icon(18)} />}
                   </TouchableOpacity>
                 </View>
                 <TextInput style={[s.input, { marginTop: 10 }]} value={confirmPass} onChangeText={setConfirmPass}
@@ -173,7 +180,7 @@ export default function SettingsScreen() {
             <View>
               {/* Appearance */}
               <View style={s.section}>
-                <View style={s.sectionHead}><Sun color={theme.warning} size={18} /><Text style={s.sectionTitle}>Appearance</Text></View>
+                <View style={s.sectionHead}><Sun color={theme.warning} size={ui.icon(18)} /><Text style={s.sectionTitle}>Appearance</Text></View>
                 <TouchableOpacity style={s.row} onPress={toggleTheme}>
                   <View>
                     <Text style={s.rowTitle}>{isDark ? 'Dark Mode' : 'Light Mode'}</Text>
@@ -187,7 +194,7 @@ export default function SettingsScreen() {
 
               {/* Barcode settings simplified for mobile */}
               <View style={s.section}>
-                <View style={s.sectionHead}><Barcode color={theme.accent} size={18} /><Text style={s.sectionTitle}>Scanning</Text></View>
+                <View style={s.sectionHead}><Barcode color={theme.accent} size={ui.icon(18)} /><Text style={s.sectionTitle}>Scanning</Text></View>
                 <View style={s.row}>
                   <View style={{ flex: 1 }}>
                     <Text style={s.rowTitle}>Auto-Focus</Text>
@@ -202,7 +209,7 @@ export default function SettingsScreen() {
           {activeTab === 'database' && (
             <View>
               <View style={s.section}>
-                <View style={s.sectionHead}><Database color={theme.success} size={18} /><Text style={s.sectionTitle}>Supabase Connection</Text></View>
+                <View style={s.sectionHead}><Database color={theme.success} size={ui.icon(18)} /><Text style={s.sectionTitle}>Supabase Connection</Text></View>
                 <View style={s.row}>
                   <View style={{ flex: 1 }}>
                     <Text style={s.rowTitle}>Health Check</Text>
@@ -211,13 +218,13 @@ export default function SettingsScreen() {
                     </Text>
                   </View>
                   <TouchableOpacity onPress={checkDb} style={s.refreshBtn}>
-                    <RefreshCw size={16} color={theme.accent} />
+                    <RefreshCw size={ui.icon(16)} color={theme.accent} />
                   </TouchableOpacity>
                 </View>
               </View>
 
               <View style={s.section}>
-                <View style={s.sectionHead}><LogOut color={theme.danger} size={18} /><Text style={s.sectionTitle}>Session</Text></View>
+                <View style={s.sectionHead}><LogOut color={theme.danger} size={ui.icon(18)} /><Text style={s.sectionTitle}>Session</Text></View>
                 <TouchableOpacity style={[s.btn, { backgroundColor: theme.dangerLight, borderColor: theme.danger + '44', borderWidth: 1 }]} onPress={logout}>
                   <Text style={[s.btnText, { color: theme.danger }]}>Logout Session</Text>
                 </TouchableOpacity>
@@ -228,7 +235,7 @@ export default function SettingsScreen() {
           {activeTab === 'about' && (
             <View>
               <View style={s.section}>
-                <View style={s.sectionHead}><Info color={theme.accent} size={18} /><Text style={s.sectionTitle}>Software Info</Text></View>
+                <View style={s.sectionHead}><Info color={theme.accent} size={ui.icon(18)} /><Text style={s.sectionTitle}>Software Info</Text></View>
                 {[
                   ['Application', 'LE-SOFT Staff'],
                   ['Version', Constants.expoConfig?.version || '1.2.5'],
@@ -243,7 +250,7 @@ export default function SettingsScreen() {
               </View>
 
               <View style={s.section}>
-                <View style={s.sectionHead}><Download color={theme.purple} size={18} /><Text style={s.sectionTitle}>Updates</Text></View>
+                <View style={s.sectionHead}><Download color={theme.purple} size={ui.icon(18)} /><Text style={s.sectionTitle}>Updates</Text></View>
                 <View style={s.row}>
                   <View style={{ flex: 1 }}>
                     <Text style={s.rowTitle}>Check for Updates</Text>
@@ -254,60 +261,60 @@ export default function SettingsScreen() {
                     disabled={checkingUpdate}
                     style={[s.refreshBtn, { backgroundColor: theme.bgElevated }]}
                   >
-                    {checkingUpdate ? <ActivityIndicator size="small" color={theme.accent} /> : <RefreshCw size={16} color={theme.accent} />}
+                    {checkingUpdate ? <ActivityIndicator size="small" color={theme.accent} /> : <RefreshCw size={ui.icon(16)} color={theme.accent} />}
                   </TouchableOpacity>
                 </View>
               </View>
             </View>
           )}
-          <View style={{ height: 40 }} />
+          <View style={{ height: ui.spacing(40) }} />
         </ScrollView>
       </KeyboardAwareContainer>
-    </View>
+    </SafeAreaView>
   );
 }
 
-const makeStyles = (t: any) => StyleSheet.create({
+const makeStyles = (t: any, ui: any) => StyleSheet.create({
   root: { flex: 1, backgroundColor: t.bg },
-  header: { padding: 16, paddingTop: 20 },
-  title: { color: t.textPrimary, fontSize: 24, fontWeight: '900' },
+  header: { paddingHorizontal: ui.contentPadding, paddingTop: ui.spacing(10), paddingBottom: ui.spacing(8) },
+  title: { color: t.textPrimary, fontSize: ui.font(24, 20, 30), fontWeight: '900' },
   
-  tabStrip: { paddingHorizontal: 16, marginBottom: 8 },
-  tabScroll: { gap: 8 },
-  tab: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: t.bgElevated, paddingVertical: 8, paddingHorizontal: 16, borderRadius: 10, borderWidth: 1, borderColor: t.border },
+  tabStrip: { paddingHorizontal: ui.contentPadding, marginBottom: ui.spacing(8) },
+  tabScroll: { gap: ui.spacing(8) },
+  tab: { flexDirection: 'row', alignItems: 'center', gap: ui.spacing(6), backgroundColor: t.bgElevated, paddingVertical: ui.spacing(8), paddingHorizontal: ui.spacing(16), borderRadius: ui.radius(10), borderWidth: 1, borderColor: t.border },
   tabActive: { backgroundColor: t.accent, borderColor: t.accent },
-  tabText: { color: t.textSecondary, fontWeight: '700', fontSize: 13 },
+  tabText: { color: t.textSecondary, fontWeight: '700', fontSize: ui.font(13) },
   tabTextActive: { color: '#fff' },
 
   content: { flex: 1 },
-  profileHeader: { flexDirection: 'row', alignItems: 'center', gap: 16, padding: 20 },
-  avatar: { width: 60, height: 60, borderRadius: 30, alignItems: 'center', justifyContent: 'center' },
-  avatarText: { color: '#fff', fontSize: 24, fontWeight: '900' },
-  profileName: { color: t.textPrimary, fontSize: 18, fontWeight: '800' },
-  profileRole: { fontSize: 12, fontWeight: '700', letterSpacing: 1.2, marginTop: 4 },
+  profileHeader: { flexDirection: 'row', alignItems: 'center', gap: ui.spacing(16), paddingHorizontal: ui.contentPadding, paddingVertical: ui.spacing(18) },
+  avatar: { width: ui.scale(60), height: ui.scale(60), borderRadius: ui.radius(30), alignItems: 'center', justifyContent: 'center' },
+  avatarText: { color: '#fff', fontSize: ui.font(24, 20, 30), fontWeight: '900' },
+  profileName: { color: t.textPrimary, fontSize: ui.font(18), fontWeight: '800' },
+  profileRole: { fontSize: ui.font(12), fontWeight: '700', letterSpacing: 1.2, marginTop: ui.spacing(4) },
 
-  section: { backgroundColor: t.bgCard, borderRadius: 20, marginHorizontal: 16, marginBottom: 16, padding: 18, borderWidth: 1, borderColor: t.border },
-  sectionHead: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 16 },
-  sectionTitle: { color: t.textPrimary, fontSize: 16, fontWeight: '800' },
+  section: { backgroundColor: t.bgCard, borderRadius: ui.radius(20), marginHorizontal: ui.contentPadding, marginBottom: ui.sectionGap, padding: ui.cardPadding, borderWidth: 1, borderColor: t.border },
+  sectionHead: { flexDirection: 'row', alignItems: 'center', gap: ui.spacing(10), marginBottom: ui.spacing(16) },
+  sectionTitle: { color: t.textPrimary, fontSize: ui.font(16), fontWeight: '800' },
   
-  input: { backgroundColor: t.bgInput, borderRadius: 14, padding: 14, color: t.textPrimary, borderWidth: 1, borderColor: t.border, fontSize: 16 },
-  passRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  eyeBtn: { backgroundColor: t.bgInput, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: t.border },
+  input: { minHeight: ui.controlHeight, backgroundColor: t.bgInput, borderRadius: ui.radius(14), paddingHorizontal: ui.spacing(14), paddingVertical: ui.spacing(12), color: t.textPrimary, borderWidth: 1, borderColor: t.border, fontSize: ui.font(16) },
+  passRow: { flexDirection: 'row', alignItems: 'center', gap: ui.spacing(8) },
+  eyeBtn: { backgroundColor: t.bgInput, borderRadius: ui.radius(14), minWidth: ui.touchMin, minHeight: ui.controlHeight, padding: ui.spacing(12), alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: t.border },
   
-  btn: { borderRadius: 16, paddingVertical: 14, alignItems: 'center', marginTop: 12 },
-  btnText: { color: '#fff', fontWeight: '800', fontSize: 16 },
+  btn: { borderRadius: ui.radius(16), paddingVertical: ui.spacing(14), alignItems: 'center', marginTop: ui.spacing(12) },
+  btnText: { color: '#fff', fontWeight: '800', fontSize: ui.font(16) },
 
-  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4 },
-  rowTitle: { color: t.textPrimary, fontSize: 15, fontWeight: '700' },
-  rowSub: { color: t.textSecondary, fontSize: 12, marginTop: 2 },
+  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: ui.spacing(4) },
+  rowTitle: { color: t.textPrimary, fontSize: ui.font(15), fontWeight: '700' },
+  rowSub: { color: t.textSecondary, fontSize: ui.font(12), marginTop: ui.spacing(2) },
   
-  toggle: { width: 48, height: 26, borderRadius: 13, padding: 2, justifyContent: 'center' },
-  toggleDot: { width: 22, height: 22, borderRadius: 11, backgroundColor: '#fff' },
+  toggle: { width: ui.scale(48), height: ui.scale(26), borderRadius: ui.radius(13), padding: ui.spacing(2), justifyContent: 'center' },
+  toggleDot: { width: ui.scale(22), height: ui.scale(22), borderRadius: ui.radius(11), backgroundColor: '#fff' },
   toggleDotOn: { alignSelf: 'flex-end' },
 
-  refreshBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: t.bgElevated, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: t.border },
+  refreshBtn: { width: ui.touchMin, height: ui.touchMin, borderRadius: ui.radius(20), backgroundColor: t.bgElevated, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: t.border },
 
-  infoRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: t.border },
-  infoKey: { color: t.textSecondary, fontSize: 14 },
-  infoVal: { color: t.textPrimary, fontWeight: '700', fontSize: 14 },
+  infoRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: ui.spacing(12), borderBottomWidth: 1, borderBottomColor: t.border },
+  infoKey: { color: t.textSecondary, fontSize: ui.font(14) },
+  infoVal: { color: t.textPrimary, fontWeight: '700', fontSize: ui.font(14) },
 });

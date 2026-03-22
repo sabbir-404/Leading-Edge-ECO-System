@@ -105,7 +105,7 @@ export default function ChatRoomScreen({ route, navigation }: any) {
                     <Text style={[s.msgText, isMine ? s.myText : s.theirText]}>
                         {decryptedContent}
                     </Text>
-                    <Text style={s.time}>
+                    <Text style={[s.time, isMine ? s.myTime : s.theirTime]}>
                         {new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </Text>
                 </View>
@@ -231,7 +231,9 @@ const makeStyles = (theme: any) => StyleSheet.create({
     msgText: { fontSize: 15, lineHeight: 20 },
     myText: { color: '#fff' },
     theirText: { color: theme.textPrimary },
-    time: { fontSize: 9, marginTop: 4, alignSelf: 'flex-end', opacity: 0.6, color: 'inherit' },
+    time: { fontSize: 9, marginTop: 4, alignSelf: 'flex-end', opacity: 0.6 },
+    myTime: { color: '#ffffff' },
+    theirTime: { color: theme.textSecondary },
     inputContainer: { 
         flexDirection: 'row', 
         alignItems: 'center', 

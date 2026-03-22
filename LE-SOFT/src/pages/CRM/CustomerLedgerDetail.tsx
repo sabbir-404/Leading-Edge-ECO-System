@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
-import { ArrowLeftRight, FileCheck, Phone, Mail, Plus, MapPin, CreditCard, FileText } from 'lucide-react';
+import { useNavigate, useParams } from 'react-router-dom';
+import { ArrowLeftRight, FileCheck, Phone, Mail, Plus, MapPin, CreditCard, FileText, Trash2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAutoRefresh } from '../../hooks/useAutoRefresh';
 import DashboardLayout from '../../components/DashboardLayout';
@@ -17,6 +17,7 @@ interface LedgerData {
 
 const CustomerLedgerDetail: React.FC = () => {
     const { id } = useParams();
+    const navigate = useNavigate();
     const [data, setData] = useState<LedgerData | null>(null);
     const [loading, setLoading] = useState(true);
     const [activeTab, setActiveTab] = useState('bills');
@@ -46,6 +47,25 @@ const CustomerLedgerDetail: React.FC = () => {
     useAutoRefresh(['bills', 'customer_payments', 'exchange_orders', 'quotations'], () => {
         if (id) fetchDetail();
     });
+
+    const user = JSON.parse(localStorage.getItem('user') || '{}');
+    const canDelete = user.role?.toLowerCase() === 'superadmin' || 
+                      (user.permissions && user.permissions.includes('delete_customer'));
+
+    const handleDeleteCustomer = async () => {
+        if (!confirm('Are you absolutely sure you want to delete this customer? All their associated data (payments, addresses) will be deleted, and their bills will be converted to walk-in status. This action cannot be undone.')) return;
+        
+        try {
+            setLoading(true);
+            // @ts-ignore
+            await window.electron.deleteBillingCustomer(parseInt(id!));
+            navigate('/crm/ledger');
+        } catch (e: any) {
+            console.error(e);
+            alert(`Failed to delete customer: ${e.message}`);
+            setLoading(false);
+        }
+    };
 
     const handleSavePayment = async () => {
         if (!paymentAmount || Number(paymentAmount) <= 0) return alert('Enter a valid amount');
@@ -99,11 +119,21 @@ const CustomerLedgerDetail: React.FC = () => {
                             {data.customer.email && <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}><Mail size={14} /> {data.customer.email}</span>}
                         </div>
                     </div>
-                    <div style={{ textAlign: 'right', padding: '1rem', background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
-                        <div style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: 600, textTransform: 'uppercase' }}>Current Balance</div>
-                        <div style={{ fontSize: '1.5rem', fontWeight: 800, color: balance > 0 ? '#ef4444' : '#10b981' }}>
-                            {balance > 0 ? 'Due ' : 'Cr '} ৳{Math.abs(balance).toLocaleString()}
+                    <div style={{ textAlign: 'right', padding: '1rem', background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.5rem' }}>
+                        <div>
+                            <div style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: 600, textTransform: 'uppercase' }}>Current Balance</div>
+                            <div style={{ fontSize: '1.5rem', fontWeight: 800, color: balance > 0 ? '#ef4444' : '#10b981' }}>
+                                {balance > 0 ? 'Due ' : 'Cr '} ৳{Math.abs(balance).toLocaleString()}
+                            </div>
                         </div>
+                        {canDelete && (
+                            <button 
+                                onClick={handleDeleteCustomer}
+                                style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', background: 'rgba(239,68,68,0.1)', color: '#ef4444', border: 'none', borderRadius: '6px', padding: '0.4rem 0.8rem', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600, marginTop: '0.2rem' }}
+                            >
+                                <Trash2 size={14} /> Delete Customer
+                            </button>
+                        )}
                     </div>
                 </div>
 

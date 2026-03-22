@@ -9,8 +9,6 @@ import {
   LogOut,
   Menu,
   X,
-  Minus,
-  Square,
   ChevronRight,
   ChevronDown,
   Users,
@@ -123,11 +121,15 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
     return () => clearInterval(interval);
   }, [userId]);
 
-  // Auto-expand submenu based on current route
+  // Auto-expand submenu based on current route (including sub-item paths)
   useEffect(() => {
     navItems.forEach(item => {
-      if (item.subItems && location.pathname.startsWith(item.path)) {
-        setExpandedMenus(prev => prev.includes(item.label) ? prev : [...prev, item.label]);
+      if (item.subItems) {
+        const isParentMatch = location.pathname.startsWith(item.path);
+        const isSubMatch = item.subItems.some((sub: any) => location.pathname === sub.path || location.pathname.startsWith(sub.path + '/'));
+        if (isParentMatch || isSubMatch) {
+          setExpandedMenus(prev => prev.includes(item.label) ? prev : [...prev, item.label]);
+        }
       }
     });
   }, [location.pathname]);
@@ -316,8 +318,9 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
 
         <nav className="sidebar-nav">
           {navItems.map((item, index) => {
-            const isActive = location.pathname === item.path || 
-              (item.subItems && location.pathname.startsWith(item.path));
+            const isActive = item.subItems 
+              ? (location.pathname.startsWith(item.path) || item.subItems.some((sub: any) => location.pathname === sub.path || location.pathname.startsWith(sub.path + '/')))
+              : location.pathname === item.path;
             const isExpanded = expandedMenus.includes(item.label);
             
             return (

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, Alert, ActivityIndicator, FlatList, Modal } from 'react-native';
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../../lib/ThemeContext';
+import { decryptRows, encryptObjectForDb } from '../../lib/encryption';
 import { Calendar, Tag, Plus, Trash2, Check, Search, X } from 'lucide-react-native';
 import KeyboardAwareContainer from '../../components/KeyboardAwareContainer';
 
@@ -33,7 +34,7 @@ export default function VoucherEntryScreen({ route, navigation }: any) {
   useEffect(() => {
     const fetchLedgers = async () => {
       const { data } = await supabase.from('ledgers').select('id, name').order('name');
-      setLedgers(data || []);
+      setLedgers(decryptRows(data || []));
     };
     fetchLedgers();
   }, []);
@@ -74,14 +75,16 @@ export default function VoucherEntryScreen({ route, navigation }: any) {
     try {
       const vNum = `${voucherType[0]}${Date.now().toString().slice(-6)}`;
       
-      const { data: v, error: vErr } = await supabase.from('vouchers').insert({
+      const voucherPayload = encryptObjectForDb({
         voucher_type: voucherType,
         voucher_number: vNum,
         date,
         narration,
         total_amount: entries.filter(e => e.type === 'Dr').reduce((s, e) => s + parseFloat(e.amount), 0),
         company_id: 1
-      }).select().single();
+      });
+
+      const { data: v, error: vErr } = await supabase.from('vouchers').insert(voucherPayload).select().single();
 
       if (vErr) throw vErr;
 

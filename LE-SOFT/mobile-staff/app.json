@@ -3,6 +3,10 @@
     "name": "mobile-staff",
     "slug": "mobile-staff",
     "version": "1.0.0",
+    "platforms": [
+      "android",
+      "ios"
+    ],
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -32,9 +36,6 @@
         "android.permission.RECORD_AUDIO"
       ],
       "predictiveBackGestureEnabled": false
-    },
-    "web": {
-      "favicon": "./assets/favicon.png"
     },
     "plugins": [
       "expo-camera",

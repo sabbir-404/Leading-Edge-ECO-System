@@ -23,6 +23,7 @@
     "@google/genai": "^1.45.0",
     "@supabase/supabase-js": "^2.97.0",
     "@types/bcrypt": "^6.0.0",
+    "asmcrypto.js": "^2.3.2",
     "bcrypt": "^6.0.0",
     "cheerio": "^1.2.0",
     "clsx": "^2.1.1",

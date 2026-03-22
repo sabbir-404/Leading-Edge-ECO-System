@@ -39,6 +39,12 @@ export default function StockSearchScreen() {
 
   const filtered = items;
 
+  const getStockQty = (item: any) => {
+    if (typeof item?.quantity === 'number') return item.quantity;
+    if (typeof item?.opening_stock === 'number') return item.opening_stock;
+    return 0;
+  };
+
   const stockColor = (qty: number) => {
     if (qty <= 0) return '#ef4444';
     if (qty <= 10) return '#f59e0b';
@@ -78,8 +84,8 @@ export default function StockSearchScreen() {
               <Text style={s.sku}>SKU: {item.sku || 'N/A'}{item.category ? ` · ${item.category}` : ''}</Text>
             </View>
             <View style={{ alignItems: 'flex-end' }}>
-              <Text style={[s.qty, { color: stockColor(item.opening_stock || 0) }]}>
-                {item.opening_stock || 0}
+              <Text style={[s.qty, { color: stockColor(getStockQty(item)) }]}>
+                {getStockQty(item)}
               </Text>
               <Text style={s.qtyLabel}>in stock</Text>
             </View>
@@ -100,7 +106,7 @@ export default function StockSearchScreen() {
                 ['SKU', selected?.sku || 'N/A'],
                 ['Category', selected?.category || 'N/A'],
                 ['Unit', selected?.unit || 'N/A'],
-                ['Opening Stock', selected?.opening_stock ?? 0],
+                ['Current Stock', selected ? getStockQty(selected) : 0],
                 ['Selling Price', selected?.selling_price ? `৳${selected.selling_price}` : 'N/A'],
                 ['Purchase Price', selected?.purchase_price ? `৳${selected.purchase_price}` : 'N/A'],
               ].map(([k, v]) => (
