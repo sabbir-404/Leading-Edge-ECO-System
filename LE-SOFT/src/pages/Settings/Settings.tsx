@@ -300,6 +300,62 @@ const Settings: React.FC = () => {
                 <AnimatePresence mode="wait">
                     <motion.div key={activeTab} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}>
 
+                        {/* ── POLICY TAB ───────────────────────────────────────── */}
+                        {activeTab === 'policy' && (() => {
+                            const [maxAdj, setMaxAdj] = React.useState(0);
+                            const [policySaving, setPolicySaving] = React.useState(false);
+                            React.useEffect(() => {
+                                window.electron.getPolicy?.().then((p: any) => setMaxAdj(p?.maxPriceAdjustment ?? 0)).catch(() => {});
+                            }, []);
+                            return (
+                                <div style={card}>
+                                    <div style={cardHeader}>
+                                        <div style={iconBox('#8b5cf6', 'rgba(139,92,246,0.12)')}><Lock size={20} /></div>
+                                        <div>
+                                            <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>Billing Policy</h2>
+                                            <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-secondary)' }}>Rules applied during billing for all staff</p>
+                                        </div>
+                                    </div>
+
+                                    <div style={{ display: 'grid', gap: '1.5rem' }}>
+                                        {/* Max Price Adjustment */}
+                                        <div>
+                                            <span style={label}>Maximum Price Adjustment (৳)</span>
+                                            <p style={{ margin: '0 0 0.6rem', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                                                The maximum amount (positive or negative) a staff member with <strong>adjust_bill_price</strong> permission can apply per bill.
+                                                Set to 0 to disallow adjustments entirely.
+                                            </p>
+                                            <input
+                                                type="number"
+                                                min={0}
+                                                style={{ ...input, maxWidth: '220px' }}
+                                                value={maxAdj}
+                                                onChange={e => setMaxAdj(parseFloat(e.target.value) || 0)}
+                                            />
+                                        </div>
+
+                                        <div>
+                                            <button
+                                                style={btn('#8b5cf6')}
+                                                disabled={policySaving}
+                                                onClick={async () => {
+                                                    setPolicySaving(true);
+                                                    try {
+                                                        const res = await window.electron.savePolicy?.({ maxPriceAdjustment: maxAdj });
+                                                        if (res?.success) showToast('Policy saved!', 'success');
+                                                        else showToast('Failed to save policy', 'error');
+                                                    } catch { showToast('Failed to save policy', 'error'); }
+                                                    setPolicySaving(false);
+                                                }}
+                                            >
+                                                <Save size={16} /> {policySaving ? 'Saving…' : 'Save Policy'}
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })()}
+
                         {/* ── PAYMENT METHODS TAB ─────────────────────────────── */}
                         {activeTab === 'payment_methods' && (
                             <>

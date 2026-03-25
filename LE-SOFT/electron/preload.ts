@@ -366,6 +366,10 @@ contextBridge.exposeInMainWorld('electron', {
     deletePaymentMethod: (id: number) => ipcRenderer.invoke('delete-payment-method', id),
     verifyBillPayment: (data: any) => ipcRenderer.invoke('verify-bill-payment', data),
 
+    // ─── POLICY ───
+    getPolicy: () => ipcRenderer.invoke('get-policy'),
+    savePolicy: (policy: any) => ipcRenderer.invoke('save-policy', policy),
+
     // ─── WINDOW CONTROLS ───
     setTheme: (theme: string) => ipcRenderer.invoke('set-theme', theme),
 });

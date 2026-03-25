@@ -1,0 +1,18 @@
+# Keep upload small for EAS cloud builds
+node_modules
+.expo
+dist
+
+# Local Android build artifacts
+android/.gradle
+android/build
+android/app/build
+android/app/.cxx
+
+# Local tooling
+.idea
+.vscode
+
+# Temp artifacts
+*.log
+*.tmp

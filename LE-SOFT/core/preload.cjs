@@ -312,6 +312,9 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   updatePaymentMethod: (method) => import_electron.ipcRenderer.invoke("update-payment-method", method),
   deletePaymentMethod: (id) => import_electron.ipcRenderer.invoke("delete-payment-method", id),
   verifyBillPayment: (data) => import_electron.ipcRenderer.invoke("verify-bill-payment", data),
+  // ─── POLICY ───
+  getPolicy: () => import_electron.ipcRenderer.invoke("get-policy"),
+  savePolicy: (policy) => import_electron.ipcRenderer.invoke("save-policy", policy),
   // ─── WINDOW CONTROLS ───
   setTheme: (theme) => import_electron.ipcRenderer.invoke("set-theme", theme)
 });

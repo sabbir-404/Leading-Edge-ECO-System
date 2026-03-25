@@ -14,7 +14,7 @@ import supabase, { supabaseAdmin } from './supabase';
 import mysql from 'mysql2/promise';
 import * as licenseManager from './license-manager';
 import { getConnectedDevices, setBackupNode, DEVICE_ID } from './device-monitor';
-import { encryptObject, decryptRows, decryptObject, decryptField } from './field-encryption';
+import { encryptObject, encryptField, decryptRows, decryptObject, decryptField } from './field-encryption';
 import { enqueue, getQueueStats } from './write-queue';
 import * as cache from './cache-manager';
 import { saveSession, loadSession, clearSession } from './session-vault';
@@ -660,25 +660,27 @@ export function registerHandlers() {
                 .maybeSingle();
 
             if (existing) {
-                // Update info and return existing record
+                // Update info and return existing record (address is PII — encrypt it)
                 const updates = {
                     name: name || existing.name,
                     email: email || existing.email,
-                    address: address || existing.address,
+                    address: address ? encryptField(address) : existing.address,
                 };
                 await supabase.from('billing_customers').update(updates).eq('id', existing.id);
                 const updated = { ...existing, ...updates };
                 cache.updateOne('billing_customers', (r: any) => r.id === existing.id, updates);
-                return updated;
+                return { ...updated, address: address || decryptField(existing.address) };
             }
         }
 
         // New customer — do a real synchronous insert to get the actual ID back
+        // name/phone/email stay plaintext (SKIP_KEYS) so they remain searchable.
+        // address is PII — encrypt it to match mobile app behaviour.
         const payload = {
             name: name || 'Walk-in',
             phone: phone || null,
             email: email || null,
-            address: address || null,
+            address: address ? encryptField(address) : null,
         };
         const { data: inserted, error } = await supabase
             .from('billing_customers')
@@ -689,20 +691,22 @@ export function registerHandlers() {
         if (error || !inserted) {
             console.error('[create-billing-customer] Insert error:', error);
             // Fall back — return a minimal object so billing continues
-            return { ...payload, id: null };
+            return { ...payload, id: null, address: address || null };
         }
 
+        // Return with plaintext address so the UI doesn't show ciphertext
+        const insertedWithPlain = { ...inserted, address: address || null };
         // Update cache
-        cache.addOne('billing_customers', inserted);
+        cache.addOne('billing_customers', insertedWithPlain);
         // Broadcast so ledger list refreshes
         const { BrowserWindow } = require('electron');
         BrowserWindow.getAllWindows().forEach((win: any) => win.webContents.send('data-updated', 'billing_customers'));
-        return inserted;
+        return insertedWithPlain;
     });
 
 
     ipcMain.handle('create-bill', async (_e, billData) => {
-        const { customer_id, billed_by, items, subtotal, discount_total, installation_charge, installation_note, grand_total } = billData;
+        const { customer_id, billed_by, items, subtotal, discount_total, installation_charge, installation_note, grand_total, price_adjustment } = billData;
         const now = new Date();
         const dateStr = now.getFullYear().toString() +
             String(now.getMonth() + 1).padStart(2, '0') +
@@ -719,6 +723,7 @@ export function registerHandlers() {
             billed_by: billed_by || 'Admin',
             subtotal,
             discount_total,
+            price_adjustment: price_adjustment || 0,
             installation_charge: installation_charge || 0,
             installation_note: installation_note || '',
             grand_total,
@@ -770,6 +775,12 @@ export function registerHandlers() {
                         console.error('[create-bill] Failed to find saved bill ID for items mapping:', invoiceNumber);
                     }
                 }
+                // Broadcast so BillHistory and CustomerLedger auto-refresh
+                try {
+                    BrowserWindow.getAllWindows().forEach(win => {
+                        if (!win.isDestroyed()) win.webContents.send('data-updated', 'bills');
+                    });
+                } catch { }
             },
         });
 
@@ -935,6 +946,205 @@ export function registerHandlers() {
     ipcMain.handle('get-bill-audit', async (_e, billId: number) => {
         const { data } = await supabase.from('bill_audit').select('*').eq('bill_id', billId).order('changed_at', { ascending: false });
         return decryptRows(data || []);
+    });
+
+    // ═══ CUSTOMER LEDGER ══════════════════════════════════════════════════════════
+
+    ipcMain.handle('get-customer-ledger-list', async (_e, _opts?: any) => {
+        // Fetch all billing_customers with aggregated bill count and total billed amount
+        const { data: customers, error } = await supabase
+            .from('billing_customers')
+            .select('id, name, phone, email')
+            .order('name');
+        if (error) throw error;
+
+        // For each customer, get bill totals (in parallel batches)
+        const { data: billSums } = await supabase
+            .from('bills')
+            .select('customer_id, grand_total');
+
+        const { data: paymentSums } = await supabase
+            .from('customer_payments')
+            .select('customer_id, amount, payment_type');
+
+        const result = (customers || []).map((c: any) => {
+            const cBills = (billSums || []).filter((b: any) => b.customer_id === c.id);
+            const totalBilled = cBills.reduce((s: number, b: any) => s + (b.grand_total || 0), 0);
+            const cPayments = (paymentSums || []).filter((p: any) => p.customer_id === c.id);
+            const totalPaid = cPayments.filter((p: any) => p.payment_type === 'CREDIT').reduce((s: number, p: any) => s + (p.amount || 0), 0);
+            return {
+                id: c.id,
+                name: decryptField(c.name) || c.name,
+                phone: decryptField(c.phone) || c.phone,
+                email: decryptField(c.email) || c.email,
+                total_bills: cBills.length,
+                balance: totalBilled - totalPaid,
+            };
+        });
+
+        return result;
+    });
+
+    ipcMain.handle('get-customer-ledger-detail', async (_e, customerId: number) => {
+        const [custRes, billsRes, paymentsRes, addressesRes, exchangesRes, quotationsRes] = await Promise.all([
+            supabase.from('billing_customers').select('*').eq('id', customerId).maybeSingle(),
+            supabase.from('bills').select('id, invoice_number, grand_total, created_at, billed_by').eq('customer_id', customerId).order('created_at', { ascending: false }),
+            supabase.from('customer_payments').select('*').eq('customer_id', customerId).order('created_at', { ascending: false }),
+            supabase.from('customer_addresses').select('*').eq('customer_id', customerId).order('created_at', { ascending: false }),
+            supabase.from('exchange_orders').select('*').eq('customer_id', customerId).order('created_at', { ascending: false }),
+            supabase.from('quotations').select('id, quotation_number, grand_total, created_at').eq('customer_id', customerId).order('created_at', { ascending: false }).limit(20),
+        ]);
+
+        if (!custRes.data) return null;
+        const cust = custRes.data;
+
+        return {
+            customer: {
+                ...cust,
+                name: decryptField(cust.name) || cust.name,
+                phone: decryptField(cust.phone) || cust.phone,
+                email: decryptField(cust.email) || cust.email,
+                address: decryptField(cust.address) || cust.address,
+            },
+            bills: (billsRes.data || []).map((b: any) => decryptObject(b)),
+            payments: (paymentsRes.data || []).map((p: any) => decryptObject(p)),
+            addresses: (addressesRes.data || []).map((a: any) => decryptObject(a)),
+            exchanges: (exchangesRes.data || []).map((e: any) => decryptObject(e)),
+            quotations: (quotationsRes.data || []).map((q: any) => decryptObject(q)),
+        };
+    });
+
+    ipcMain.handle('add-customer-payment', async (_e, payment: any) => {
+        const { customer_id, amount, payment_type, payment_method, note, recorded_by } = payment;
+        if (!customer_id || !amount) throw new Error('customer_id and amount are required');
+        const { data, error } = await supabase.from('customer_payments').insert({
+            customer_id,
+            amount: Number(amount),
+            payment_type: payment_type || 'CREDIT',
+            payment_method: payment_method || 'CASH',
+            note: note || null,
+            recorded_by: recorded_by || 'Admin',
+        }).select('id').single();
+        if (error) throw error;
+        try {
+            BrowserWindow.getAllWindows().forEach(win => {
+                if (!win.isDestroyed()) win.webContents.send('data-updated', 'customer_payments');
+            });
+        } catch { }
+        return { success: true, id: data.id };
+    });
+
+    ipcMain.handle('add-customer-address', async (_e, addr: any) => {
+        const { customer_id, label, address } = addr;
+        if (!customer_id || !address) throw new Error('customer_id and address are required');
+        const { data, error } = await supabase.from('customer_addresses').insert({
+            customer_id,
+            label: label || 'Address',
+            address: encryptField(address),
+        }).select('id').single();
+        if (error) throw error;
+        return { success: true, id: data.id };
+    });
+
+    ipcMain.handle('delete-billing-customer', async (_e, customerId: number) => {
+        // Nullify customer_id on bills (convert to walk-in) before deleting customer
+        await supabase.from('bills').update({ customer_id: null }).eq('customer_id', customerId);
+        // Delete cascades handle customer_payments, customer_addresses automatically (ON DELETE CASCADE)
+        const { error } = await supabase.from('billing_customers').delete().eq('id', customerId);
+        if (error) throw error;
+        try {
+            BrowserWindow.getAllWindows().forEach(win => {
+                if (!win.isDestroyed()) win.webContents.send('data-updated', 'billing_customers');
+            });
+        } catch { }
+        return { success: true };
+    });
+
+    // ═══ EXCHANGE ORDERS ══════════════════════════════════════════════════════════
+
+    ipcMain.handle('create-exchange-order', async (_e, exchange: any) => {
+        const { customer_id, original_bill_id, returned_items, new_items } = exchange;
+
+        const totalReturnValue = (returned_items || []).reduce((s: number, i: any) => s + (Number(i.amount) || 0), 0);
+        const totalNewValue = (new_items || []).reduce((s: number, i: any) => s + (Number(i.amount) || 0), 0);
+        const differenceAmount = totalNewValue - totalReturnValue;
+
+        const { data: order, error } = await supabase.from('exchange_orders').insert({
+            exchange_number: '', // Trigger generates this automatically
+            customer_id: customer_id || null,
+            original_bill_id: original_bill_id || null,
+            total_return_value: totalReturnValue,
+            total_new_value: totalNewValue,
+            difference_amount: differenceAmount,
+            status: 'completed',
+        }).select('id, exchange_number').single();
+        if (error) throw error;
+
+        const allItems = [
+            ...(returned_items || []).map((i: any) => ({ ...i, exchange_id: order.id, item_type: 'RETURNED' })),
+            ...(new_items || []).map((i: any) => ({ ...i, exchange_id: order.id, item_type: 'NEW' })),
+        ];
+        if (allItems.length > 0) {
+            await supabase.from('exchange_items').insert(allItems.map((i: any) => ({
+                exchange_id: i.exchange_id,
+                item_type: i.item_type,
+                product_id: i.product_id || null,
+                product_name: i.product_name || '',
+                sku: i.sku || '',
+                quantity: i.quantity || 1,
+                rate: i.rate || 0,
+                amount: i.amount || 0,
+            })));
+
+            // Restore stock for returned items, decrement for new items
+            for (const item of (returned_items || [])) {
+                if (item.product_id && item.quantity) {
+                    try { await supabase.rpc('increment_product_qty', { p_id: item.product_id, qty: item.quantity }); } catch { }
+                }
+            }
+            for (const item of (new_items || [])) {
+                if (item.product_id && item.quantity) {
+                    try { await supabase.rpc('decrement_product_qty', { p_id: item.product_id, qty: item.quantity }); } catch { }
+                }
+            }
+        }
+
+        try {
+            BrowserWindow.getAllWindows().forEach(win => {
+                if (!win.isDestroyed()) win.webContents.send('data-updated', 'exchange_orders');
+            });
+        } catch { }
+        return { success: true, id: order.id, exchange_number: order.exchange_number, difference_amount: differenceAmount };
+    });
+
+    ipcMain.handle('get-exchange-orders', async () => {
+        const { data, error } = await supabase
+            .from('exchange_orders')
+            .select('*, customer:billing_customers(name, phone)')
+            .order('created_at', { ascending: false });
+        if (error) throw error;
+        return (data || []).map((ex: any) => ({
+            ...decryptObject(ex),
+            customer_name: ex.customer?.name ? decryptField(ex.customer.name) : null,
+            customer_phone: ex.customer?.phone ? decryptField(ex.customer.phone) : null,
+        }));
+    });
+
+    ipcMain.handle('get-exchange-details', async (_e, id: number) => {
+        const { data: order, error } = await supabase
+            .from('exchange_orders')
+            .select('*, customer:billing_customers(name, phone)')
+            .eq('id', id)
+            .maybeSingle();
+        if (error) throw error;
+        if (!order) return null;
+
+        const { data: items } = await supabase.from('exchange_items').select('*').eq('exchange_id', id);
+        return {
+            ...decryptObject(order),
+            customer_name: order.customer?.name ? decryptField(order.customer.name) : null,
+            items: decryptRows(items || []),
+        };
     });
 
     // ═══ PURCHASE BILLS ═══════════════════════════════════════════════════════════
@@ -1316,6 +1526,20 @@ export function registerHandlers() {
             base_currency_symbol: s.currencySymbol || '৳',
             max_exchanges_per_bill: s.maxExchangesPerBill || 1
         }).eq('id', 1);
+        if (error) throw error;
+        return { success: true };
+    });
+
+    // ═══ POLICY ════════════════════════════════════════════════════════════════
+    ipcMain.handle('get-policy', async () => {
+        const { data } = await supabase.from('companies').select('max_price_adjustment').eq('id', 1).maybeSingle();
+        return { maxPriceAdjustment: Number(data?.max_price_adjustment ?? 0) };
+    });
+
+    ipcMain.handle('save-policy', async (_e, policy: { maxPriceAdjustment: number }) => {
+        const { error } = await supabase.from('companies')
+            .update({ max_price_adjustment: Number(policy.maxPriceAdjustment ?? 0) })
+            .eq('id', 1);
         if (error) throw error;
         return { success: true };
     });
@@ -2390,23 +2614,21 @@ export function registerHandlers() {
     ipcMain.handle('get-customer-ledger-list', async (_e, opts?: { callerUsername?: string; isSuperadmin?: boolean; canSeeAllCustomers?: boolean }) => {
         const isAdmin = opts?.isSuperadmin === true;
         const seeAll  = isAdmin || opts?.canSeeAllCustomers === true;
-        const caller  = opts?.callerUsername || '';
+        const caller  = (opts?.callerUsername || '').trim();
 
-        if (seeAll) {
-            // Full list — use cache when available
+        console.log('[customer-ledger-list] opts:', { isAdmin, seeAll, caller });
+
+        // ── Full access path (superadmin / see_all_customers) ───────────────
+        if (seeAll || !caller) {
             const cached = cache.get('billing_customers');
             const rows = cached || [];
             if (rows.length > 0) return decryptRows(rows);
-
             const { data: customers, error } = await supabase.from('billing_customers').select('*').order('name');
             if (error) throw error;
             return decryptRows(customers || []);
         }
 
-        // Scoped: return only customers whose bills were created by this user
-        // We join via bills to find customer_ids for this user's bills
-        if (!caller) return [];
-
+        // ── Scoped path: find customer_ids through this user's bills ────────
         const { data: bills } = await supabase
             .from('bills')
             .select('customer_id')
@@ -2414,7 +2636,16 @@ export function registerHandlers() {
             .not('customer_id', 'is', null);
 
         const custIds = [...new Set((bills || []).map((b: any) => b.customer_id).filter(Boolean))];
-        if (custIds.length === 0) return [];
+        console.log('[customer-ledger-list] bills found for caller:', (bills || []).length, 'custIds:', custIds.length);
+
+        // If no bills found for this user, fall back to returning ALL customers
+        // (covers: new user, billed_by mismatch, first-time setup)
+        if (custIds.length === 0) {
+            console.log('[customer-ledger-list] No bills matched, falling back to full list');
+            const { data: allCustomers, error } = await supabase.from('billing_customers').select('*').order('name');
+            if (error) throw error;
+            return decryptRows(allCustomers || []);
+        }
 
         const { data: customers, error } = await supabase
             .from('billing_customers')
@@ -2424,6 +2655,7 @@ export function registerHandlers() {
         if (error) throw error;
         return decryptRows(customers || []);
     });
+
 
 
     ipcMain.handle('delete-billing-customer', async (_e, id: number) => {

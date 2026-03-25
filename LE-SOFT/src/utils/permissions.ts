@@ -19,7 +19,9 @@ const getUser = (): Record<string, any> => {
 /** True if logged-in user is superadmin (bypasses all checks). */
 export const isSuperadmin = (): boolean => {
     const u = getUser();
-    return u.role === 'Superadmin' || u.role === 'superadmin';
+    const roleFromUser = (u.role || '').toLowerCase();
+    const roleFromStorage = (localStorage.getItem('user_role') || '').toLowerCase();
+    return roleFromUser === 'superadmin' || roleFromStorage === 'superadmin';
 };
 
 /** True if logged-in user has an explicit permission key. Superadmin always returns true. */
@@ -43,6 +45,10 @@ export const canDeleteBill = (): boolean => hasPerm('delete_bill');
 
 /** Superadmin or has 'add_bill_items'. */
 export const canAddBillItems = (): boolean => hasPerm('add_bill_items');
+
+/** Superadmin or has 'adjust_bill_price' — can apply a price adjustment to a bill. */
+export const canAdjustBillPrice = (): boolean => hasPerm('adjust_bill_price');
+
 
 // ── Customer Data shortcuts ───────────────────────────────────────────────────
 
@@ -76,12 +82,20 @@ export interface CallerContext {
 export const getCallerContext = (): CallerContext => {
     const u = getUser();
     const sa = isSuperadmin();
+    // Use `user_name` (set by Billing.tsx via localStorage.getItem('user_name'))
+    // Fall back to full_name or username for compatibility
+    const callerUsername =
+        localStorage.getItem('user_name') ||
+        u.full_name ||
+        u.username ||
+        '';
+    const perms: Record<string, any> = typeof u.permissions === 'object' ? u.permissions : {};
     return {
-        callerUsername: u.full_name || u.username || '',
+        callerUsername,
         isSuperadmin: sa,
-        canSeeAllBills: sa || !!( typeof u.permissions === 'object' && u.permissions?.see_all_bills ),
-        canSeeAllCustomers: sa || !!( typeof u.permissions === 'object' && u.permissions?.see_all_customers ),
-        canViewCustomerContact: sa || !!( typeof u.permissions === 'object' && u.permissions?.view_customer_contact ),
-        canViewCustomerFinancials: sa || !!( typeof u.permissions === 'object' && u.permissions?.view_customer_financials ),
+        canSeeAllBills: sa || !!perms.see_all_bills,
+        canSeeAllCustomers: sa || !!perms.see_all_customers,
+        canViewCustomerContact: sa || !!perms.view_customer_contact,
+        canViewCustomerFinancials: sa || !!perms.view_customer_financials,
     };
 };

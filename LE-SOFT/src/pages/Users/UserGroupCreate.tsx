@@ -31,7 +31,8 @@ const PERMISSION_GROUPS = [
             { key: 'write_bill', label: 'Create Bills' },
             { key: 'alter_bill', label: 'Alter/Edit Bills' },
             { key: 'add_bill_items', label: 'Add Products to Existing Bills' },
-            { key: 'see_all_bills', label: 'View all users\' bills (not just own)' },
+            { key: 'see_all_bills', label: "View all users' bills (not just own)" },
+            { key: 'adjust_bill_price', label: 'Apply price adjustment on a bill' },
             { key: 'delete_bill', label: 'Delete Bills' },
             { key: 'initiate_exchange', label: 'Initiate Exchanges' }
         ]

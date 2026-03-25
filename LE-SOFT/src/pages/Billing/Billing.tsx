@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
     Search, Printer, Trash2, Plus, Minus, ScanBarcode, Save, UserSearch,
-    Truck, Tag, ChevronDown, ChevronUp, Package, Receipt, Wrench
+    Truck, Tag, ChevronDown, ChevronUp, Package, Receipt, Wrench, Sliders
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import DashboardLayout from '../../components/DashboardLayout';
+import { canAdjustBillPrice } from '../../utils/permissions';
 
 interface Product {
     id: number;
@@ -100,6 +101,10 @@ const Billing: React.FC = () => {
     const [saving, setSaving] = useState(false);
     const [searching, setSearching] = useState(false);
     const [detailedResults, setDetailedResults] = useState<Product[]>([]);
+    const [priceAdjustment, setPriceAdjustment] = useState(0);
+    const [maxAdj, setMaxAdj] = useState(0);
+    const [globalDiscountPct, setGlobalDiscountPct] = useState<number | ''>('');
+    const canAdjust = canAdjustBillPrice();
 
     // Shipping
     const [shippingEnabled, setShippingEnabled] = useState(false);
@@ -122,10 +127,16 @@ const Billing: React.FC = () => {
     useEffect(() => {
         const load = async () => {
             try {
-                // @ts-ignore
-                const [prods, methods] = await Promise.all([window.electron.getProducts(), window.electron.getPaymentMethods()]);
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const el = window.electron as any;
+                const [prods, methods, policy] = await Promise.all([
+                    el.getProducts(),
+                    el.getPaymentMethods(),
+                    el.getPolicy?.() || { maxPriceAdjustment: 0 }
+                ]);
                 setProducts(prods || []);
                 setPaymentMethods(methods || []);
+                setMaxAdj(Number(policy?.maxPriceAdjustment ?? 0));
                 const cash = (methods || []).find((m: any) => m.provider === 'Cash');
                 if (cash) setSelectedPaymentMethod(cash.id);
             } catch (e) { console.error(e); }
@@ -247,7 +258,21 @@ const Billing: React.FC = () => {
     const subtotal = cart.reduce((s, i) => s + i.mrp * i.quantity, 0);
     const discountTotal = cart.reduce((s, i) => s + Math.max(0, i.discount_amt), 0);
     const itemsTotal = subtotal - discountTotal;
-    const grandTotal = itemsTotal + installationCharge + (shippingEnabled ? shippingCharge : 0);
+    // Clamp adjustment to ±maxAdj
+    const adjClamped = maxAdj > 0 ? Math.max(-maxAdj, Math.min(maxAdj, priceAdjustment)) : 0;
+    const grandTotal = itemsTotal + installationCharge + (shippingEnabled ? shippingCharge : 0) + adjClamped;
+
+    /** Calculated discount % across all items (for display only) */
+    const calcGlobalDiscPct = subtotal > 0 ? +((discountTotal / subtotal) * 100).toFixed(2) : 0;
+
+    /** Apply a uniform discount % to all items */
+    const applyGlobalDiscount = (pct: number) => {
+        const p = Math.min(100, Math.max(0, pct));
+        setCart(prev => prev.map(item => {
+            const disc_amt = item.mrp * item.quantity * (p / 100);
+            return { ...item, discount_pct: p, discount_amt: disc_amt, price: item.mrp * item.quantity - disc_amt };
+        }));
+    };
 
     // ── Save Bill ─────────────────────────────────────────────────────────────
     const handleSaveBill = async () => {
@@ -263,6 +288,7 @@ const Billing: React.FC = () => {
             const result = await window.electron.createBill({
                 customer_id: custId, billed_by: billedBy, items: cart,
                 subtotal, discount_total: discountTotal,
+                price_adjustment: canAdjust ? adjClamped : 0,
                 installation_charge: installationCharge, installation_note: installationNote,
                 grand_total: grandTotal, payment_method_id: selectedPaymentMethod, payment_ref: paymentRef,
             });
@@ -289,6 +315,7 @@ const Billing: React.FC = () => {
         setInvoiceNumber(`${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}-XXXX-XXX`);
         setInstallationCharge(0); setInstallationNote(''); setPaymentRef('');
         setShippingEnabled(false); setShipTo({ name: '', address: '', phone: '' }); setShippingCharge(0);
+        setPriceAdjustment(0); setGlobalDiscountPct('');
     };
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -647,19 +674,39 @@ const Billing: React.FC = () => {
                                 <span style={{ fontWeight: 600 }}>৳{subtotal.toLocaleString()}</span>
                             </div>
 
-                            {discountTotal > 0 && (
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', color: '#16a34a' }}>
-                                    <span style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
-                                        <Tag size={11} /> Total Discount
-                                        <span style={{ fontSize: '0.72rem', fontWeight: 600, background: '#dcfce7', color: '#15803d', borderRadius: '4px', padding: '1px 5px', marginLeft: '3px' }}>
-                                            {subtotal > 0 ? ((discountTotal / subtotal) * 100).toFixed(1) : '0'}%
-                                        </span>
-                                    </span>
-                                    <span style={{ fontWeight: 700 }}>-৳{discountTotal.toLocaleString(undefined, { minimumFractionDigits: 0 })}</span>
+                            {/* Editable Total Discount */}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#16a34a' }}>
+                                <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                    <Tag size={11} />
+                                    <span>Total Discount</span>
+                                </span>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                    <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                                        <input
+                                            type="number"
+                                            min={0} max={100}
+                                            placeholder={String(calcGlobalDiscPct)}
+                                            value={globalDiscountPct}
+                                            title="Set a global discount % to distribute evenly to all products"
+                                            onChange={e => {
+                                                const v = e.target.value === '' ? '' : parseFloat(e.target.value);
+                                                setGlobalDiscountPct(v);
+                                                if (typeof v === 'number' && !isNaN(v)) applyGlobalDiscount(v);
+                                            }}
+                                            onBlur={() => { if (globalDiscountPct === '') setGlobalDiscountPct(''); }}
+                                            style={{
+                                                width: '52px', textAlign: 'center', border: '1px solid #86efac',
+                                                borderRadius: '5px', padding: '2px 16px 2px 4px',
+                                                fontSize: '0.78rem', background: '#f0fdf4', color: '#15803d', fontWeight: 700
+                                            }}
+                                        />
+                                        <span style={{ position: 'absolute', right: '4px', fontSize: '0.7rem', color: '#15803d', fontWeight: 700 }}>%</span>
+                                    </div>
+                                    {discountTotal > 0 && (
+                                        <span style={{ fontWeight: 700 }}>-৳{discountTotal.toLocaleString(undefined, { minimumFractionDigits: 0 })}</span>
+                                    )}
                                 </div>
-                            )}
-
-
+                            </div>
 
                             {installationCharge > 0 && (
                                 <div style={{ display: 'flex', justifyContent: 'space-between', color: '#7c3aed' }}>
@@ -672,6 +719,32 @@ const Billing: React.FC = () => {
                                 <div style={{ display: 'flex', justifyContent: 'space-between', color: '#4f46e5' }}>
                                     <span>🚚 Shipping</span>
                                     <span style={{ fontWeight: 600 }}>+৳{shippingCharge.toLocaleString()}</span>
+                                </div>
+                            )}
+
+                            {/* Price Adjustment — only shown when permitted and policy allows */}
+                            {canAdjust && maxAdj > 0 && (
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: adjClamped < 0 ? '#dc2626' : '#2563eb' }}>
+                                    <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                        <Sliders size={11} />
+                                        <span>Price Adjust</span>
+                                        <span style={{ fontSize: '0.68rem', color: 'var(--text-secondary)' }}>(±৳{maxAdj})</span>
+                                    </span>
+                                    <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                                        <span style={{ position: 'absolute', left: '5px', fontSize: '0.76rem', fontWeight: 700 }}>৳</span>
+                                        <input
+                                            type="number"
+                                            value={priceAdjustment}
+                                            onChange={e => setPriceAdjustment(parseFloat(e.target.value) || 0)}
+                                            style={{
+                                                width: '80px', textAlign: 'right', paddingLeft: '16px', paddingRight: '5px',
+                                                border: `1px solid ${adjClamped < 0 ? '#fca5a5' : adjClamped > 0 ? '#93c5fd' : 'var(--border-color)'}`,
+                                                borderRadius: '5px', fontSize: '0.82rem', fontWeight: 700,
+                                                background: adjClamped < 0 ? '#fef2f2' : adjClamped > 0 ? '#eff6ff' : 'var(--card-bg)',
+                                                color: adjClamped < 0 ? '#dc2626' : '#2563eb',
+                                            }}
+                                        />
+                                    </div>
                                 </div>
                             )}
 
@@ -688,6 +761,7 @@ const Billing: React.FC = () => {
                             </div>
                         </div>
                     </div>
+
 
                     {/* ── Action buttons ── */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>

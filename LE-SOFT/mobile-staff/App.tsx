@@ -5,7 +5,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { View, ActivityIndicator, TouchableOpacity, Text, Image } from 'react-native';
-import { Home, CreditCard, Users, Truck, Briefcase, Settings as SettingsIcon, Receipt, MessageSquare, Package, User as UserIcon, FileText } from 'lucide-react-native';
+import { Home, CreditCard, Users, Truck, Briefcase, Settings as SettingsIcon, Receipt, MessageSquare, Package, User as UserIcon, FileText, History, ShieldCheck } from 'lucide-react-native';
 import { ThemeProvider, useTheme } from './src/lib/ThemeContext';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
@@ -22,6 +22,7 @@ import SettingsScreen from './src/screens/SettingsScreen';
 // Billing
 import BillingScreen from './src/screens/billing/BillingScreen';
 import BillHistoryScreen from './src/screens/billing/BillHistoryScreen';
+import AlterBillScreen from './src/screens/billing/AlterBillScreen';
 
 // HRM
 import HRMScreen from './src/screens/hrm/HRMScreen';
@@ -124,6 +125,20 @@ function CustomDrawerContent(props: any) {
       
       <DrawerItem label="Dashboard" icon={({ color, size }) => <Home color={color} size={size} />} onPress={() => props.navigation.navigate('MainTabs', { screen: 'HomeTab' })} inactiveTintColor={theme.textPrimary} labelStyle={{ fontWeight: '700', fontSize: ui.font(15), marginLeft: -10 }} />
       <DrawerItem label="Billing" icon={({ color, size }) => <CreditCard color={color} size={size} />} onPress={() => props.navigation.navigate('MainTabs', { screen: 'BillingTab' })} inactiveTintColor={theme.textPrimary} labelStyle={{ fontWeight: '700', fontSize: ui.font(15), marginLeft: -10 }} />
+      <DrawerItem
+        label="Bill History"
+        icon={({ color, size }) => <History color={color} size={size} />}
+        onPress={() => props.navigation.navigate('MainTabs', { screen: 'BillingTab', params: { screen: 'BillHistory' } })}
+        inactiveTintColor={theme.textSecondary}
+        labelStyle={{ fontWeight: '600', fontSize: ui.font(13), marginLeft: 2 }}
+      />
+      <DrawerItem
+        label="Alter & Audit"
+        icon={({ color, size }) => <ShieldCheck color={color} size={size} />}
+        onPress={() => props.navigation.navigate('MainTabs', { screen: 'BillingTab', params: { screen: 'AlterBill' } })}
+        inactiveTintColor={theme.textSecondary}
+        labelStyle={{ fontWeight: '600', fontSize: ui.font(13), marginLeft: 2 }}
+      />
       <DrawerItem label="HRM" icon={({ color, size }) => <Users color={color} size={size} />} onPress={() => props.navigation.navigate('MainTabs', { screen: 'HRMTab' })} inactiveTintColor={theme.textPrimary} labelStyle={{ fontWeight: '700', fontSize: ui.font(15), marginLeft: -10 }} />
       <DrawerItem label="Production" icon={({ color, size }) => <Briefcase color={color} size={size} />} onPress={() => props.navigation.navigate('MainTabs', { screen: 'MakeTab' })} inactiveTintColor={theme.textPrimary} labelStyle={{ fontWeight: '700', fontSize: ui.font(15), marginLeft: -10 }} />
       <DrawerItem label="Shipping" icon={({ color, size }) => <Truck color={color} size={size} />} onPress={() => props.navigation.navigate('MainTabs', { screen: 'ShippingTab' })} inactiveTintColor={theme.textPrimary} labelStyle={{ fontWeight: '700', fontSize: ui.font(15), marginLeft: -10 }} />
@@ -146,42 +161,58 @@ function MainTabNavigator() {
   const { theme } = useTheme();
   const ui = useResponsive();
   const insets = useSafeAreaInsets();
-  const tabBaseHeight = ui.isCompact ? ui.scale(58) : ui.scale(64);
-  const tabLabelSize = ui.isCompact ? ui.font(10) : ui.font(11);
+  const tabBaseHeight = ui.isCompact ? ui.scale(60) : ui.scale(66);
+  const tabLabelSize = ui.isCompact ? ui.font(9, 9, 10) : ui.font(11);
+  const tabLineHeight = ui.isCompact ? ui.font(11, 10, 12) : ui.font(13);
   return (
     <Tab.Navigator
       screenOptions={{
         headerShown: false,
         tabBarHideOnKeyboard: true,
+        tabBarLabelPosition: 'below-icon',
+        tabBarAllowFontScaling: false,
         tabBarStyle: { 
           backgroundColor: theme.tabBar, 
           borderTopColor: theme.tabBarBorder, 
           borderTopWidth: 1, 
           paddingBottom: insets.bottom > 0 ? insets.bottom : ui.spacing(6), 
-          paddingTop: ui.spacing(4),
+          paddingTop: ui.spacing(3),
           height: insets.bottom > 0 ? tabBaseHeight + insets.bottom : tabBaseHeight
         },
-        tabBarLabelStyle: { fontSize: tabLabelSize, fontWeight: '600', marginBottom: ui.spacing(2) },
-        tabBarIconStyle: { marginTop: ui.spacing(2) },
-        tabBarItemStyle: { paddingHorizontal: ui.spacing(2), minHeight: ui.touchMin },
+        tabBarLabelStyle: {
+          fontSize: tabLabelSize,
+          lineHeight: tabLineHeight,
+          fontWeight: '600',
+          marginBottom: ui.spacing(1),
+          textAlign: 'center',
+          includeFontPadding: false,
+        },
+        tabBarIconStyle: { marginTop: ui.spacing(1) },
+        tabBarItemStyle: {
+          flex: 1,
+          minWidth: 0,
+          paddingHorizontal: 0,
+          minHeight: ui.controlHeight,
+          justifyContent: 'center',
+        },
         tabBarActiveTintColor: theme.accent,
         tabBarInactiveTintColor: theme.textMuted,
       }}
     >
-      <Tab.Screen name="HomeTab" component={DashboardScreen} options={{ title: 'Home', tabBarIcon: ({ color, size }) => <Home color={color} size={size} /> }} />
+      <Tab.Screen name="HomeTab" component={DashboardScreen} options={{ title: 'Home', tabBarLabel: 'Home', tabBarIcon: ({ color, size }) => <Home color={color} size={size} /> }} />
       <Tab.Screen name="BillingTab" component={BillingStackNav} options={{ title: 'Bill', tabBarIcon: ({ color, size }) => <CreditCard color={color} size={size} /> }} />
-      <Tab.Screen name="HRMTab" component={HRMStackNav} options={{ title: 'HRM', tabBarIcon: ({ color, size }) => <Users color={color} size={size} /> }} />
-      <Tab.Screen name="MakeTab" component={MakeStackNav} options={{ title: 'MAKE', tabBarIcon: ({ color, size }) => <Briefcase color={color} size={size} /> }} />
+      <Tab.Screen name="HRMTab" component={HRMStackNav} options={{ title: 'HR', tabBarLabel: 'HR', tabBarIcon: ({ color, size }) => <Users color={color} size={size} /> }} />
+      <Tab.Screen name="MakeTab" component={MakeStackNav} options={{ title: 'Make', tabBarLabel: 'Make', tabBarIcon: ({ color, size }) => <Briefcase color={color} size={size} /> }} />
       
       {/* Hidden tabs so bottom bar is persistent across all nested app routes */}
-      <Tab.Screen name="ShippingTab" component={ShippingStackNav} options={{ tabBarButton: () => null, title: 'Shipping' }} />
-      <Tab.Screen name="SettingsTab" component={SettingsStackNav} options={{ tabBarButton: () => null, title: 'Settings' }} />
-      <Tab.Screen name="AccountingTab" component={AccountingStackNav} options={{ tabBarButton: () => null, title: 'Accounting' }} />
-      <Tab.Screen name="CRMTab" component={CRMStackNav} options={{ tabBarButton: () => null, title: 'CRM Directory' }} />
-      <Tab.Screen name="QuotationsTab" component={QuotationStackNav} options={{ tabBarButton: () => null, title: 'Quotations' }} />
-      <Tab.Screen name="StockTab" component={StockSearchScreen} options={{ tabBarButton: () => null, title: 'Stock' }} />
-      <Tab.Screen name="ChatTab" component={ChatStackNav} options={{ tabBarButton: () => null, title: 'Chat' }} />
-      <Tab.Screen name="UsersTab" component={UsersScreen} options={{ tabBarButton: () => null, title: 'Users' }} />
+      <Tab.Screen name="ShippingTab" component={ShippingStackNav} options={{ tabBarButton: () => null, tabBarItemStyle: { display: 'none' }, title: 'Shipping' }} />
+      <Tab.Screen name="SettingsTab" component={SettingsStackNav} options={{ tabBarButton: () => null, tabBarItemStyle: { display: 'none' }, title: 'Settings' }} />
+      <Tab.Screen name="AccountingTab" component={AccountingStackNav} options={{ tabBarButton: () => null, tabBarItemStyle: { display: 'none' }, title: 'Accounting' }} />
+      <Tab.Screen name="CRMTab" component={CRMStackNav} options={{ tabBarButton: () => null, tabBarItemStyle: { display: 'none' }, title: 'CRM Directory' }} />
+      <Tab.Screen name="QuotationsTab" component={QuotationStackNav} options={{ tabBarButton: () => null, tabBarItemStyle: { display: 'none' }, title: 'Quotations' }} />
+      <Tab.Screen name="StockTab" component={StockSearchScreen} options={{ tabBarButton: () => null, tabBarItemStyle: { display: 'none' }, title: 'Stock' }} />
+      <Tab.Screen name="ChatTab" component={ChatStackNav} options={{ tabBarButton: () => null, tabBarItemStyle: { display: 'none' }, title: 'Chat' }} />
+      <Tab.Screen name="UsersTab" component={UsersScreen} options={{ tabBarButton: () => null, tabBarItemStyle: { display: 'none' }, title: 'Users' }} />
     </Tab.Navigator>
   );
 }
@@ -192,6 +223,7 @@ function BillingStackNav() {
     <BillingStack.Navigator screenOptions={{ animation: 'fade', headerStyle: { backgroundColor: theme.bg }, headerTintColor: theme.textPrimary, headerTitleStyle: { fontWeight: '800' } }}>
       <BillingStack.Screen name="BillingMain" component={BillingScreen} options={{ headerShown: false }} />
       <BillingStack.Screen name="BillHistory" component={BillHistoryScreen} options={{ title: 'Bill History' }} />
+      <BillingStack.Screen name="AlterBill" component={AlterBillScreen} options={{ title: 'Alter & Audit' }} />
     </BillingStack.Navigator>
   );
 }
