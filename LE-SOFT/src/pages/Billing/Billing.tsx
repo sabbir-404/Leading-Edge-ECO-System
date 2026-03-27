@@ -292,36 +292,19 @@ const Billing: React.FC = () => {
                 price_adjustment: canAdjust ? adjClamped : 0,
                 installation_charge: installationCharge, installation_note: installationNote,
                 grand_total: grandTotal, payment_method_id: selectedPaymentMethod, payment_ref: paymentRef,
+                shipping: (shippingEnabled && shipTo.name && shipTo.address) ? {
+                    ship_to_name: shipTo.name,
+                    ship_to_address: shipTo.address,
+                    ship_to_phone: shipTo.phone,
+                    ship_from_name: shipFrom.name,
+                    ship_from_address: shipFrom.address,
+                    shipping_charge: shippingCharge,
+                    user_role: localStorage.getItem('user_role') || 'cashier'
+                } : undefined
             });
             if (result.success) {
                 setInvoiceNumber(result.invoice_number);
                 setBillSaved(true);
-                // BUG-03 fix: create-bill is async/queued so it doesn't return an id immediately.
-                // We resolve the real bill id after a short wait by looking up the invoice number.
-                if (shippingEnabled && shipTo.name && shipTo.address) {
-                    const resolveAndSaveShipping = async () => {
-                        for (let attempt = 0; attempt < 10; attempt++) {
-                            await new Promise(r => setTimeout(r, 600));
-                            try {
-                                // @ts-ignore
-                                const bills = await window.electron.getBills();
-                                const saved = (bills || []).find((b: any) => b.invoice_number === result.invoice_number);
-                                if (saved?.id) {
-                                    // @ts-ignore
-                                    await window.electron.addBillShipping({
-                                        bill_id: saved.id, ship_to_name: shipTo.name, ship_to_address: shipTo.address,
-                                        ship_to_phone: shipTo.phone, ship_from_name: shipFrom.name,
-                                        ship_from_address: shipFrom.address, shipping_charge: shippingCharge,
-                                        updated_by: billedBy, user_role: localStorage.getItem('user_role') || 'cashier',
-                                    });
-                                    return;
-                                }
-                            } catch { /* retry */ }
-                        }
-                        console.warn('[Billing] Could not find saved bill ID to link shipping info.');
-                    };
-                    resolveAndSaveShipping();
-                }
                 alert(`Bill saved! Invoice: ${result.invoice_number}`);
             }
         } catch (e) { console.error(e); alert('Failed to save bill.'); }

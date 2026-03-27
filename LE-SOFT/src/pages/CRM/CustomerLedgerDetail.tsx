@@ -49,8 +49,9 @@ const CustomerLedgerDetail: React.FC = () => {
     });
 
     const user = JSON.parse(localStorage.getItem('user') || '{}');
-    const canDelete = user.role?.toLowerCase() === 'superadmin' || 
-                      (user.permissions && user.permissions.includes('delete_customer'));
+    // BUG-11 follow-up: permissions is now an object {key: true}, not a string array
+    const canDelete = (user.role || '').toLowerCase() === 'superadmin' || 
+                      !!(user.permissions?.['delete_customer']);
 
     const handleDeleteCustomer = async () => {
         if (!confirm('Are you absolutely sure you want to delete this customer? All their associated data (payments, addresses) will be deleted, and their bills will be converted to walk-in status. This action cannot be undone.')) return;

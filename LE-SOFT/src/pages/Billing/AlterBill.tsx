@@ -49,9 +49,10 @@ const AlterBill: React.FC = () => {
     const [deleteReason, setDeleteReason] = useState('');
 
     const user = JSON.parse(localStorage.getItem('user') || '{}');
-    const isSuperadmin = user.role === 'Superadmin';
-    const canDelete = isSuperadmin || (user.permissions && user.permissions.includes('delete_bill'));
-    const canAddItems = isSuperadmin || (user.permissions && user.permissions.includes('add_bill_items'));
+    const isSuperadmin = (user.role || '').toLowerCase() === 'superadmin';
+    // BUG-11 follow-up: permissions is now an object {key: true}, not a string array
+    const canDelete = isSuperadmin || !!(user.permissions?.['delete_bill']);
+    const canAddItems = isSuperadmin || !!(user.permissions?.['add_bill_items']);
 
     // ── Product search for add-item ─────────────────────────────────────────
     const [allProducts, setAllProducts] = useState<any[]>([]);

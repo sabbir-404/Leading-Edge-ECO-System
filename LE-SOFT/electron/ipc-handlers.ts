@@ -708,7 +708,7 @@ export function registerHandlers() {
 
 
     ipcMain.handle('create-bill', async (_e, billData) => {
-        const { customer_id, billed_by, items, subtotal, discount_total, installation_charge, installation_note, grand_total, price_adjustment } = billData;
+        const { customer_id, billed_by, items, shipping, subtotal, discount_total, installation_charge, installation_note, grand_total, price_adjustment } = billData;
         const now = new Date();
         const dateStr = now.getFullYear().toString() +
             String(now.getMonth() + 1).padStart(2, '0') +
@@ -775,6 +775,62 @@ export function registerHandlers() {
                         }
                     } else {
                         console.error('[create-bill] Failed to find saved bill ID for items mapping:', invoiceNumber);
+                    }
+                }
+                
+                // If shipping info was passed along
+                if (shipping && shipping.ship_to_name && shipping.ship_to_address) {
+                    const { data: b } = await supabase.from('bills').select('id').eq('invoice_number', invoiceNumber).maybeSingle();
+                    const bId = b?.id;
+                    if (bId) {
+                        // Create the shipping payload matching exactly the DB schema
+                        const shippingPayload = {
+                            bill_id: bId, 
+                            ship_to_name: shipping.ship_to_name, 
+                            ship_to_address: shipping.ship_to_address, 
+                            ship_to_phone: shipping.ship_to_phone || '', 
+                            ship_from_name: shipping.ship_from_name || '', 
+                            ship_from_address: shipping.ship_from_address || '', 
+                            shipping_charge: shipping.shipping_charge || 0, 
+                            updated_by: billed_by, 
+                            status: 'pending_payment'
+                        };
+                        
+                        enqueue({
+                            table: 'bill_shipping',
+                            operation: 'insert',
+                            data: shippingPayload,
+                            onSuccess: async () => {
+                                // After successful replication of shipping record, we can add the initial status log.
+                                // It requires the shipment_id, which we now fetch directly.
+                                try {
+                                    const { data: sh } = await supabase.from('bill_shipping').select('id').eq('bill_id', bId).maybeSingle();
+                                    if (sh?.id) {
+                                        enqueue({
+                                            table: 'shipping_status_log',
+                                            operation: 'insert',
+                                            data: {
+                                                shipment_id: sh.id, 
+                                                bill_id: bId, 
+                                                status: 'pending_payment', 
+                                                note: 'Shipping order created', 
+                                                updated_by: billed_by, 
+                                                updated_by_role: shipping.user_role || 'cashier' 
+                                            }
+                                        });
+                                    }
+                                } catch (e) {
+                                    console.error('[create-bill shipping log] Failed:', e);
+                                }
+                                
+                                // Broadcast update so Shipping Dashboard sees the new record
+                                try {
+                                    BrowserWindow.getAllWindows().forEach(win => {
+                                        if (!win.isDestroyed()) win.webContents.send('data-updated', 'bill_shipping');
+                                    });
+                                } catch { }
+                            }
+                        });
                     }
                 }
                 // Broadcast so BillHistory and CustomerLedger auto-refresh
@@ -1904,11 +1960,58 @@ export function registerHandlers() {
     // ═══ SHIPPING ═════════════════════════════════════════════════════════
 
     ipcMain.handle('add-bill-shipping', async (_e, data: any) => {
-        const { data: sh, error } = await supabase.from('bill_shipping').upsert({ bill_id: data.bill_id, ship_to_name: data.ship_to_name, ship_to_address: data.ship_to_address, ship_to_phone: data.ship_to_phone || '', ship_from_name: data.ship_from_name || '', ship_from_address: data.ship_from_address || '', shipping_charge: data.shipping_charge || 0, updated_by: data.updated_by, status: 'pending_payment' }, { onConflict: 'bill_id' }).select('id').single();
-        if (error) throw error;
-        await supabase.from('shipping_status_log').insert({ shipment_id: sh.id, bill_id: data.bill_id, status: 'pending_payment', note: 'Shipping order created', updated_by: data.updated_by, updated_by_role: data.user_role || 'cashier' });
-        await writeAuditLog({ module: 'Shipping', action: 'SHIPPING_CREATED', entity_type: 'bill', entity_id: data.bill_id, description: `Shipping added. Destination: ${data.ship_to_address}`, new_value: data, performed_by: data.updated_by });
-        return { success: true, id: sh.id };
+        // Since create-bill uses the write-queue, the bill_id might not exist yet if we query Supabase immediately.
+        // We queue this shipping record to insert roughly after the bill is written.
+        enqueue({
+            table: 'bill_shipping',
+            operation: 'custom_insert_shipping', // Use custom queue op or a wrapper
+            data: data,
+            onSuccess: async () => {
+                try {
+                    // Try to resolve the actual Supabase bill_id using the deterministic invoice_number
+                    const { data: b } = await supabase.from('bills').select('id').eq('invoice_number', data.invoice_number).maybeSingle();
+                    const realBillId = b?.id || data.bill_id;
+
+                    const { data: sh, error } = await supabase.from('bill_shipping').upsert({ 
+                        bill_id: realBillId, 
+                        ship_to_name: data.ship_to_name, 
+                        ship_to_address: data.ship_to_address, 
+                        ship_to_phone: data.ship_to_phone || '', 
+                        ship_from_name: data.ship_from_name || '', 
+                        ship_from_address: data.ship_from_address || '', 
+                        shipping_charge: data.shipping_charge || 0, 
+                        updated_by: data.updated_by, 
+                        status: 'pending_payment' 
+                    }, { onConflict: 'bill_id' }).select('id').single();
+                    
+                    if (error) throw error;
+                    
+                    await supabase.from('shipping_status_log').insert({ 
+                        shipment_id: sh.id, 
+                        bill_id: realBillId, 
+                        status: 'pending_payment', 
+                        note: 'Shipping order created', 
+                        updated_by: data.updated_by, 
+                        updated_by_role: data.user_role || 'cashier' 
+                    });
+                    
+                    await writeAuditLog({ 
+                        module: 'Shipping', 
+                        action: 'SHIPPING_CREATED', 
+                        entity_type: 'bill', 
+                        entity_id: realBillId, 
+                        description: `Shipping added. Destination: ${data.ship_to_address}`, 
+                        new_value: data, 
+                        performed_by: data.updated_by 
+                    });
+                } catch (e) {
+                    console.error('[add-bill-shipping] Background write failed:', e);
+                }
+            }
+        });
+
+        // Return immediate success to unblock the UI since it's queued
+        return { success: true, queued: true };
     });
 
     ipcMain.handle('get-bill-shipping', async (_e, billId: number) => {
