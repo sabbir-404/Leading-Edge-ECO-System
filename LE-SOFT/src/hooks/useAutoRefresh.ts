@@ -19,8 +19,11 @@ export function useAutoRefresh(tables: string[], onRefresh: () => void) {
         const electron = (window as any).electron;
         if (!electron || !electron.onDataUpdated) return;
 
+        // Capture current tables in a ref so the closure always reads the latest value
+        const tablesRef = { current: tables };
+
         const unsubscribe = electron.onDataUpdated((table: string) => {
-            if (tables.includes(table) || tables.includes('*')) {
+            if (tablesRef.current.includes(table) || tablesRef.current.includes('*')) {
                 // Silently fire the refresh payload in the background
                 refreshRef.current();
             }

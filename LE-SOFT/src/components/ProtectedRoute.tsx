@@ -19,6 +19,18 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children, allowedRoles,
     return <Navigate to="/" replace />;
   }
 
+  // BUG-12: Also check user_id — if role exists but id is missing it's a stale/incomplete session
+  const userId = localStorage.getItem('user_id');
+  if (!userId) {
+    // Clean stale keys and redirect to login
+    localStorage.removeItem('user_role');
+    localStorage.removeItem('user_name');
+    localStorage.removeItem('user_permissions');
+    localStorage.removeItem('user');
+    localStorage.removeItem('license_warning');
+    return <Navigate to="/" replace />;
+  }
+
   if (allowedRoles && !allowedRoles.includes(userRole)) {
     return <AccessDenied />;
   }

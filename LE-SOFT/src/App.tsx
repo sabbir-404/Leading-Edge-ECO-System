@@ -169,14 +169,15 @@ function App() {
 
   const isAuthPage = location.pathname === '/' || location.pathname === '/login' || location.pathname === '/setup';
 
-  // Auto-logout on idle
+  // Auto-logout on idle — clears ALL session keys to prevent stale state (BUG-02 fix)
   const handleAutoLogout = () => {
     localStorage.removeItem('user_role');
     localStorage.removeItem('user_permissions');
     localStorage.removeItem('user_name');
     localStorage.removeItem('user_id');
+    localStorage.removeItem('user');
     localStorage.removeItem('license_warning');
-    navigate('/login');
+    navigate('/');
   };
 
   const { showWarning, countdown, stayLoggedIn } = useIdleLogout(handleAutoLogout, !isAuthPage);

@@ -26,7 +26,9 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
   useEffect(() => {
     const existingToken = localStorage.getItem('supabase_admin_key');
     const existingLicense = localStorage.getItem('app_license_key');
-    if (!existingToken || !existingLicense) {
+    // BUG-19: Only redirect to /setup if setup keys are completely absent.
+    // Users with stale/expired keys see a login error, not an unexpected redirect.
+    if (!existingToken && !existingLicense) {
         navigate('/setup');
     }
   }, [navigate]);
@@ -43,7 +45,13 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
       if (result?.success && result.user) {
         localStorage.setItem('user', JSON.stringify(result.user));
         localStorage.setItem('user_role', result.user.role);
-        localStorage.setItem('user_permissions', typeof result.user.permissions === 'string' ? result.user.permissions : JSON.stringify(result.user.permissions || {}));
+        // BUG-10 fix: always serialize permissions as a proper JSON string.
+        // The backend now returns an object, but guard against legacy string responses.
+        const permsRaw = result.user.permissions;
+        const permsStr = (typeof permsRaw === 'object' && permsRaw !== null)
+            ? JSON.stringify(permsRaw)
+            : (typeof permsRaw === 'string' ? permsRaw : '{}');
+        localStorage.setItem('user_permissions', permsStr);
         localStorage.setItem('user_name', result.user.full_name || result.user.username);
         localStorage.setItem('user_id', String(result.user.id));
         if (result.licenseWarning) {

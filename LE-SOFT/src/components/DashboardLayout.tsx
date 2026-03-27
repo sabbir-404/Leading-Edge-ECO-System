@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -134,14 +134,17 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
     });
   }, [location.pathname]);
 
-  const handleLogout = () => {
+  const handleLogout = useCallback(() => {
     localStorage.removeItem('user_role');
     localStorage.removeItem('user_name');
     localStorage.removeItem('user_id');
+    localStorage.removeItem('user_permissions');
+    localStorage.removeItem('user');
+    localStorage.removeItem('license_warning');
     navigate('/');
-  };
+  }, [navigate]);
 
-  const navItems = [
+  const navItems = useMemo(() => [
     { icon: <LayoutDashboard size={20} />, label: 'Overview', path: '/dashboard' },
     ...(hasPermission('read_bill') || hasPermission('write_bill') || hasPermission('alter_bill') ? [{ 
       icon: <ShoppingCart size={20} />, 
@@ -224,7 +227,8 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
       ]
     }] : []),
     ...(hasPermission('manage_settings') ? [{ icon: <Settings size={20} />, label: 'Settings', path: '/settings' }] : []),
-  ];
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], [userRole, JSON.stringify(userPermissions)]);
 
   const handleNavClick = (item: any) => {
     if (item.subItems) {
@@ -243,23 +247,60 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
   // Profile modal save handlers
   const [profileForm, setProfileForm] = useState({ name: userName, currentPassword: '', newPassword: '', confirmPassword: '' });
 
-  const handleSaveName = () => {
-    localStorage.setItem('user_name', profileForm.name);
-    alert('Name updated successfully!');
-    setShowProfileModal(false);
-    window.location.reload();
+  const handleSaveName = async () => {
+    const newName = profileForm.name.trim();
+    if (!newName) return alert('Name cannot be empty.');
+    try {
+      // Persist name to database via IPC
+      // @ts-ignore
+      await window.electron.updateUser({ id: userId, fullName: newName, requestingUserRole: userRole });
+      localStorage.setItem('user_name', newName);
+      // Update the stored user JSON too
+      try {
+        const stored = JSON.parse(localStorage.getItem('user') || '{}');
+        localStorage.setItem('user', JSON.stringify({ ...stored, full_name: newName }));
+      } catch { /* ignore */ }
+      alert('Name updated successfully!');
+      setShowProfileModal(false);
+    } catch (e) {
+      alert('Failed to update name. Please try again.');
+    }
   };
 
-  const handleSavePassword = () => {
+  const handleSavePassword = async () => {
     if (profileForm.newPassword !== profileForm.confirmPassword) {
       return alert('New passwords do not match.');
     }
     if (profileForm.newPassword.length < 4) {
       return alert('Password must be at least 4 characters.');
     }
-    alert('Password updated successfully!');
-    setShowProfileModal(false);
-    setProfileForm(prev => ({ ...prev, currentPassword: '', newPassword: '', confirmPassword: '' }));
+    try {
+      // @ts-ignore
+      const result = await window.electron.changePassword({
+        id: userId,
+        currentPassword: profileForm.currentPassword,
+        newPassword: profileForm.newPassword,
+      });
+      if (result?.success) {
+        alert('Password updated successfully!');
+        setShowProfileModal(false);
+        setProfileForm(prev => ({ ...prev, currentPassword: '', newPassword: '', confirmPassword: '' }));
+      } else {
+        alert(result?.error || 'Failed to update password.');
+      }
+    } catch (e) {
+      alert('Failed to update password. Please try again.');
+    }
+  };
+
+  const handlePickProfilePicture = async () => {
+    try {
+      // @ts-ignore
+      const filePath = await window.electron.pickImage();
+      if (filePath) {
+        alert('Profile picture feature coming soon. Image selected: ' + filePath);
+      }
+    } catch { /* ignore */ }
   };
 
   const formatTime = (date: Date) => {
@@ -644,11 +685,13 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
                     border: '3px solid var(--border-color)', position: 'relative'
                   }}>
                     {userName.charAt(0)}
-                    <div style={{
-                      position: 'absolute', bottom: 0, right: 0, width: '30px', height: '30px',
-                      borderRadius: '50%', background: '#fff', border: '2px solid var(--border-color)',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer'
-                    }}>
+                    <div
+                      onClick={handlePickProfilePicture}
+                      style={{
+                        position: 'absolute', bottom: 0, right: 0, width: '30px', height: '30px',
+                        borderRadius: '50%', background: '#fff', border: '2px solid var(--border-color)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer'
+                      }}>
                       <Camera size={14} color="var(--accent-color)" />
                     </div>
                   </div>
@@ -656,7 +699,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
                     Click the camera icon to upload a new profile picture.<br />
                     <em>Supported formats: JPG, PNG (max 2MB)</em>
                   </p>
-                  <button style={{ padding: '0.7rem 1.5rem', background: 'var(--accent-color)', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: 'pointer' }}>
+                  <button onClick={handlePickProfilePicture} style={{ padding: '0.7rem 1.5rem', background: 'var(--accent-color)', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: 'pointer' }}>
                     Upload Picture
                   </button>
                 </div>

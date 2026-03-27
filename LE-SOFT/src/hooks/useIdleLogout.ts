@@ -24,6 +24,8 @@ export function useIdleLogout(onLogout: () => void, isActive = true): IdleLogout
 
     const idleTimer   = useRef<ReturnType<typeof setTimeout> | null>(null);
     const countTimer  = useRef<ReturnType<typeof setInterval> | null>(null);
+    // Keep a mutable ref so resetIdle never captures stale showWarning state
+    const showWarningRef = useRef(false);
 
     const getSettings = () => {
         const enabled = localStorage.getItem('auto_logout_enabled') !== 'false'; // default: on
@@ -40,6 +42,7 @@ export function useIdleLogout(onLogout: () => void, isActive = true): IdleLogout
 
     const startCountdown = useCallback(() => {
         setShowWarning(true);
+        showWarningRef.current = true;
         setCountdown(WARN_SECONDS);
 
         let secs = WARN_SECONDS;
@@ -49,6 +52,7 @@ export function useIdleLogout(onLogout: () => void, isActive = true): IdleLogout
             if (secs <= 0) {
                 clearTimers();
                 setShowWarning(false);
+                showWarningRef.current = false;
                 onLogout();
             }
         }, 1000);
@@ -58,18 +62,19 @@ export function useIdleLogout(onLogout: () => void, isActive = true): IdleLogout
         const { enabled, idleMs } = getSettings();
         if (!enabled || !isActive) return;
 
-        // If warning was showing and user moved — dismiss it
-        if (showWarning) {
+        // Use ref so we never capture stale showWarning from closure
+        if (showWarningRef.current) {
             clearTimers();
             setShowWarning(false);
+            showWarningRef.current = false;
             setCountdown(WARN_SECONDS);
         }
 
         clearTimers();
         idleTimer.current = setTimeout(startCountdown, idleMs);
-    }, [clearTimers, isActive, showWarning, startCountdown]);
+    }, [clearTimers, isActive, startCountdown]);
 
-    // Reset on any user activity
+    // Reset on any user activity — depend on resetIdle so listener stays current
     useEffect(() => {
         if (!isActive) return;
 
@@ -83,12 +88,12 @@ export function useIdleLogout(onLogout: () => void, isActive = true): IdleLogout
             events.forEach(e => window.removeEventListener(e, resetIdle));
             clearTimers();
         };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isActive]);
+    }, [isActive, resetIdle, clearTimers]);
 
     const stayLoggedIn = useCallback(() => {
         clearTimers();
         setShowWarning(false);
+        showWarningRef.current = false;
         setCountdown(WARN_SECONDS);
         resetIdle();
     }, [clearTimers, resetIdle]);

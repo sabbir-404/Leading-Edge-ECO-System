@@ -363,7 +363,7 @@ export function registerHandlers() {
         const { voucherType, voucherDate, narration, rows } = voucher;
         const { data: maxRow } = await supabase.from('vouchers').select('voucher_number').eq('voucher_type', voucherType).order('id', { ascending: false }).limit(1).maybeSingle();
         const voucherNumber = String((parseInt(maxRow?.voucher_number || '0') || 0) + 1);
-        const totalAmount = rows.reduce((s: number, r: any) => s + Math.max(Number(r.debit) || 0, Number(r.credit) || 0), 0) / 2;
+        const totalAmount = rows.reduce((s: number, r: any) => s + (Number(r.debit) || 0), 0);
         const { data: vData, error: vErr } = await supabase.from('vouchers').insert({ voucher_type: voucherType, voucher_number: voucherNumber, date: voucherDate, narration, total_amount: totalAmount, company_id: 1 }).select('id').single();
         if (vErr) throw vErr;
         for (const row of rows) {
@@ -553,12 +553,14 @@ export function registerHandlers() {
                     if (data.length < PAGE_SIZE) hasMore = false;
                 }
             }
-            return allData.map((p: any) => ({
+            // BUG-20 fix: Decrypt rows consistently with search-products-detailed
+            const mapped = allData.map((p: any) => ({
                 ...p,
                 unit_name: p.unit?.name || null,
                 unit_symbol: p.unit?.symbol || null,
                 group_name: p.group?.name || null
             }));
+            return decryptRows(mapped);
         } catch (error) {
             console.error('[IPC] get-products error:', error);
             throw error;
@@ -897,7 +899,8 @@ export function registerHandlers() {
             }
         }
         
-        // Update bill (Encrypted & marked as altered)
+        // BUG-09: Do NOT encrypt update payload — original create-bill stores bills plaintext.
+        // Encrypting here would store ciphertext in columns that are read back as plain numbers.
         const updates = { 
             subtotal, 
             discount_total, 
@@ -906,13 +909,12 @@ export function registerHandlers() {
             grand_total,
             is_altered: true 
         };
-        const encUpdates = encryptObject(updates);
-        await supabase.from('bills').update(encUpdates).eq('id', bill_id);
+        await supabase.from('bills').update(updates).eq('id', bill_id);
         
-        // Replace items (Encrypted)
+        // Replace items — also stored plaintext like original create-bill inserts
         await supabase.from('bill_items').delete().eq('bill_id', bill_id);
         if (items && items.length) {
-            const newItems = items.map((i: any) => encryptObject({ 
+            const newItems = items.map((i: any) => ({ 
                 bill_id, product_id: i.product_id, product_name: i.product_name, 
                 sku: i.sku || '', quantity: i.quantity, mrp: i.mrp, 
                 discount_pct: i.discount_pct || 0, discount_amt: i.discount_amt || 0, price: i.price 
@@ -951,21 +953,26 @@ export function registerHandlers() {
     // ═══ CUSTOMER LEDGER ══════════════════════════════════════════════════════════
 
     ipcMain.handle('get-customer-ledger-list', async (_e, _opts?: any) => {
-        // Fetch all billing_customers with aggregated bill count and total billed amount
+        // BUG-13 fix: Fetch totals per-customer instead of loading ALL bills and payments into memory.
         const { data: customers, error } = await supabase
             .from('billing_customers')
             .select('id, name, phone, email')
-            .order('name');
+            .order('name')
+            .limit(500); // Reasonable page size prevents OOM on large datasets
         if (error) throw error;
 
-        // For each customer, get bill totals (in parallel batches)
+        const customerIds = (customers || []).map((c: any) => c.id);
+
+        // Fetch only relevant bills and payments for these customers
         const { data: billSums } = await supabase
             .from('bills')
-            .select('customer_id, grand_total');
+            .select('customer_id, grand_total')
+            .in('customer_id', customerIds.length ? customerIds : [-1]);
 
         const { data: paymentSums } = await supabase
             .from('customer_payments')
-            .select('customer_id, amount, payment_type');
+            .select('customer_id, amount, payment_type')
+            .in('customer_id', customerIds.length ? customerIds : [-1]);
 
         const result = (customers || []).map((c: any) => {
             const cBills = (billSums || []).filter((b: any) => b.customer_id === c.id);
@@ -1384,7 +1391,9 @@ export function registerHandlers() {
             await supabase.from('users').update({ is_online: true, device_type: 'PC' }).eq('id', row.id);
 
             const { password_hash: _omit, user_groups, ...safeUser } = row;
-            safeUser.permissions = user_groups?.permissions || '{}';
+            // BUG-11: Fall back to empty object (not string '{}') so JSON.stringify in Login.tsx
+            // produces valid permissions JSON and doesn't double-encode the value.
+            safeUser.permissions = user_groups?.permissions ?? {};
 
             resetLoginAttempts(username);
             await saveSession(row);

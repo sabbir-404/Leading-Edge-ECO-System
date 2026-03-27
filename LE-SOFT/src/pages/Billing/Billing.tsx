@@ -99,6 +99,7 @@ const Billing: React.FC = () => {
     const billedBy = localStorage.getItem('user_name') || 'Admin';
     const [editingPriceId, setEditingPriceId] = useState<number | null>(null);
     const [saving, setSaving] = useState(false);
+    const [billSaved, setBillSaved] = useState(false); // tracks if the current bill is already saved
     const [searching, setSearching] = useState(false);
     const [detailedResults, setDetailedResults] = useState<Product[]>([]);
     const [priceAdjustment, setPriceAdjustment] = useState(0);
@@ -294,14 +295,32 @@ const Billing: React.FC = () => {
             });
             if (result.success) {
                 setInvoiceNumber(result.invoice_number);
+                setBillSaved(true);
+                // BUG-03 fix: create-bill is async/queued so it doesn't return an id immediately.
+                // We resolve the real bill id after a short wait by looking up the invoice number.
                 if (shippingEnabled && shipTo.name && shipTo.address) {
-                    // @ts-ignore
-                    await window.electron.addBillShipping({
-                        bill_id: result.id, ship_to_name: shipTo.name, ship_to_address: shipTo.address,
-                        ship_to_phone: shipTo.phone, ship_from_name: shipFrom.name,
-                        ship_from_address: shipFrom.address, shipping_charge: shippingCharge,
-                        updated_by: billedBy, user_role: localStorage.getItem('user_role') || 'cashier',
-                    });
+                    const resolveAndSaveShipping = async () => {
+                        for (let attempt = 0; attempt < 10; attempt++) {
+                            await new Promise(r => setTimeout(r, 600));
+                            try {
+                                // @ts-ignore
+                                const bills = await window.electron.getBills();
+                                const saved = (bills || []).find((b: any) => b.invoice_number === result.invoice_number);
+                                if (saved?.id) {
+                                    // @ts-ignore
+                                    await window.electron.addBillShipping({
+                                        bill_id: saved.id, ship_to_name: shipTo.name, ship_to_address: shipTo.address,
+                                        ship_to_phone: shipTo.phone, ship_from_name: shipFrom.name,
+                                        ship_from_address: shipFrom.address, shipping_charge: shippingCharge,
+                                        updated_by: billedBy, user_role: localStorage.getItem('user_role') || 'cashier',
+                                    });
+                                    return;
+                                }
+                            } catch { /* retry */ }
+                        }
+                        console.warn('[Billing] Could not find saved bill ID to link shipping info.');
+                    };
+                    resolveAndSaveShipping();
                 }
                 alert(`Bill saved! Invoice: ${result.invoice_number}`);
             }
@@ -311,6 +330,7 @@ const Billing: React.FC = () => {
 
     const handleNewBill = () => {
         setCart([]); setCustomer({ name: '', phone: '', email: '', address: '' }); setSavedCustomerId(null);
+        setBillSaved(false);
         const now = new Date();
         setInvoiceNumber(`${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}-XXXX-XXX`);
         setInstallationCharge(0); setInstallationNote(''); setPaymentRef('');
@@ -770,8 +790,9 @@ const Billing: React.FC = () => {
                             <Save size={17} /> {saving ? 'Saving...' : 'Save Bill'}
                         </button>
                         <div style={{ display: 'flex', gap: '0.5rem' }}>
-                            <button onClick={() => window.print()} disabled={cart.length === 0}
-                                style={{ flex: 1, padding: '0.65rem', background: 'var(--accent-color)', color: 'white', border: 'none', borderRadius: '10px', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem', opacity: cart.length === 0 ? 0.5 : 1, fontSize: '0.85rem' }}>
+                        <button onClick={() => window.print()} disabled={!billSaved || cart.length === 0}
+                                style={{ flex: 1, padding: '0.65rem', background: 'var(--accent-color)', color: 'white', border: 'none', borderRadius: '10px', fontWeight: 600, cursor: (!billSaved || cart.length === 0) ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem', opacity: (!billSaved || cart.length === 0) ? 0.5 : 1, fontSize: '0.85rem' }}
+                                title={!billSaved ? 'Save the bill first before printing' : ''}>
                                 <Printer size={15} /> Print
                             </button>
                             <button onClick={handleNewBill}

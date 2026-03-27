@@ -6,9 +6,11 @@ interface Props {
     show: boolean;
     countdown: number;
     onStay: () => void;
+    /** Must match WARN_SECONDS in useIdleLogout so the ring animation is correct. */
+    warnSeconds?: number;
 }
 
-const IdleWarningModal: React.FC<Props> = ({ show, countdown, onStay }) => {
+const IdleWarningModal: React.FC<Props> = ({ show, countdown, onStay, warnSeconds = 15 }) => {
     const minutes = parseInt(localStorage.getItem('auto_logout_minutes') || '15', 10);
 
     return (
@@ -70,7 +72,7 @@ const IdleWarningModal: React.FC<Props> = ({ show, countdown, onStay }) => {
                                     stroke="var(--accent-color)"
                                     strokeWidth="3"
                                     strokeDasharray={`${2 * Math.PI * 36}`}
-                                    strokeDashoffset={`${2 * Math.PI * 36 * (1 - countdown / 15)}`}
+                                    strokeDashoffset={`${2 * Math.PI * 36 * (1 - countdown / warnSeconds)}`}
                                     style={{ transition: 'stroke-dashoffset 0.9s linear' }}
                                 />
                             </svg>
