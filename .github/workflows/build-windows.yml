@@ -1,14 +1,14 @@
-name: Build & Publish macOS
+name: Build & Publish Windows
 
 on:
   push:
     branches:
-      - main-mac
+      - main-windows
   workflow_dispatch:
 
 jobs:
-  build-mac:
-    runs-on: macos-latest
+  build-windows:
+    runs-on: windows-latest
 
     defaults:
       run:
@@ -27,17 +27,19 @@ jobs:
 
       - name: Install Dependencies
         run: npm install
+        env:
+          npm_config_arch: x64
 
-      - name: Build & Publish macOS Release
-        run: npm run dist:mac:publish
+      - name: Build & Publish Windows Release
+        run: npm run dist:publish
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
 
-      - name: Upload macOS Artifacts
+      - name: Upload Installer Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: LESOFT-macOS
+          name: LESOFT-Windows-Installer
           path: |
-            LE-SOFT/release/*.dmg
-            LE-SOFT/release/*.zip
-            LE-SOFT/release/latest-mac.yml
+            LE-SOFT/release/*.exe
+            LE-SOFT/release/*.exe.blockmap
+            LE-SOFT/release/latest.yml
