@@ -21,16 +21,27 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          # Node 22 is required by @electron/rebuild@4 and modern supabase packages
+          node-version: 22
           cache: 'npm'
           cache-dependency-path: LE-SOFT/package-lock.json
 
       - name: Install Dependencies
-        run: npm install
+        # --ignore-scripts skips the postinstall electron-rebuild.
+        # electron-builder install-app-deps (run below) handles native modules correctly.
+        run: npm install --ignore-scripts
         env:
           npm_config_arch: x64
 
+      - name: Install Native Modules for Electron
+        # Rebuilds better-sqlite3 for the correct Electron ABI + win32-x64
+        run: npx electron-builder install-app-deps
+
       - name: Build & Publish Windows Release
+        # electron-builder --win -p always:
+        #   - Builds the NSIS installer (.exe)
+        #   - Uploads .exe, .exe.blockmap, and latest.yml to GitHub Release
+        #   - latest.yml is what electron-updater reads on Windows end-user machines
         run: npm run dist:publish
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}

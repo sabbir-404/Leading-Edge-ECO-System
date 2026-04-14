@@ -21,14 +21,26 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          # Node 22 is required by @electron/rebuild@4 and modern supabase packages
+          node-version: 22
           cache: 'npm'
           cache-dependency-path: LE-SOFT/package-lock.json
 
       - name: Install Dependencies
-        run: npm install
+        # --ignore-scripts skips the postinstall electron-rebuild.
+        # electron-builder install-app-deps (run below) handles native modules correctly.
+        run: npm install --ignore-scripts
+
+      - name: Install Native Modules for Electron
+        # This is the electron-builder recommended way to rebuild natives for the
+        # correct Electron ABI, arch, and platform.
+        run: npx electron-builder install-app-deps
 
       - name: Build & Publish macOS Release
+        # electron-builder --mac -p always:
+        #   - Builds .dmg and .zip
+        #   - Uploads both + latest-mac.yml to a GitHub Release
+        #   - latest-mac.yml is what electron-updater reads on end-user macs
         run: npm run dist:mac:publish
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
