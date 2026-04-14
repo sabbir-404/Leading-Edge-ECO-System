@@ -1,6 +1,7 @@
-import { app, BrowserWindow, Menu, dialog } from 'electron';
+import { app, BrowserWindow, Menu, dialog, ipcMain } from 'electron';
 import fs from 'fs';
 import path from 'path';
+import { autoUpdater } from 'electron-updater';
 import { initDB } from './database';
 import { initOfflineDB } from './offline-db';
 import { registerDevice, startHeartbeat } from './device-monitor';
@@ -8,6 +9,53 @@ import { registerHandlers } from './ipc-handlers';
 import { initEncryptionKey, clearEncryptionKey } from './field-encryption';
 import { startQueue, flush as flushQueue } from './write-queue';
 import { clearAll as clearCache } from './cache-manager';
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Auto-Updater
+//  Checks GitHub Releases for latest.yml (Windows) / latest-mac.yml (macOS)
+//  Only runs in production (app.isPackaged). Push status to renderer via IPC.
+// ─────────────────────────────────────────────────────────────────────────────
+function setupAutoUpdater() {
+    if (!app.isPackaged) return; // skip in dev mode
+
+    // Silence console noise — log to app.log instead
+    autoUpdater.logger = null;
+    autoUpdater.autoDownload = false;       // Let the user decide to download
+    autoUpdater.autoInstallOnAppQuit = true; // Install silently on next quit
+
+    const broadcast = (data: object) => {
+        BrowserWindow.getAllWindows().forEach(win => {
+            if (!win.isDestroyed()) win.webContents.send('update-status', data);
+        });
+    };
+
+    autoUpdater.on('checking-for-update',  () => broadcast({ status: 'checking' }));
+    autoUpdater.on('update-not-available', () => broadcast({ status: 'up-to-date' }));
+    autoUpdater.on('update-available',  info => broadcast({ status: 'available', info }));
+    autoUpdater.on('error', err => {
+        console.error('[Updater] Error:', err.message);
+        broadcast({ status: 'error', message: err.message });
+    });
+    autoUpdater.on('download-progress', prog => broadcast({ status: 'downloading', progress: prog }));
+    autoUpdater.on('update-downloaded',  info => broadcast({ status: 'ready', info }));
+
+    // IPC: renderer calls these
+    ipcMain.handle('check-for-update', async () => {
+        try { await autoUpdater.checkForUpdates(); return { success: true }; }
+        catch (e: any) { return { success: false, error: e.message }; }
+    });
+    ipcMain.handle('download-update', async () => {
+        try { await autoUpdater.downloadUpdate(); return { success: true }; }
+        catch (e: any) { return { success: false, error: e.message }; }
+    });
+    ipcMain.handle('install-update', () => {
+        autoUpdater.quitAndInstall(false, true); // isSilent=false, isForceRunAfter=true
+    });
+    ipcMain.handle('get-app-version', () => app.getVersion());
+
+    // Check for updates 5 s after launch (give the main window time to load)
+    setTimeout(() => autoUpdater.checkForUpdates().catch(() => {}), 5000);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Window creation
@@ -196,6 +244,7 @@ app.whenReady().then(() => {
             registerDevice();
             startHeartbeat(60_000);
             registerHandlers();
+            setupAutoUpdater(); // ← wire up electron-updater
             log('Background services registered');
         } catch (e: any) {
             log(`Service start error: ${e.message}`);

@@ -1,0 +1,45 @@
+name: Build & Publish Windows
+
+on:
+  push:
+    branches:
+      - main-windows
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm install
+        env:
+          # Force x64 architecture for native module prebuilds on Windows
+          npm_config_arch: x64
+
+      - name: Build & Publish Windows Release
+        # electron-builder --win -p always:
+        #   - Builds the NSIS installer (.exe)
+        #   - Uploads .exe, .exe.blockmap, and latest.yml to a GitHub Release
+        #   - latest.yml is what electron-updater reads on the end-user's machine
+        run: npm run dist:publish
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+
+      - name: Upload Installer as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LESOFT-Windows-Installer
+          path: |
+            release/*.exe
+            release/*.exe.blockmap
+            release/latest.yml

@@ -3157,5 +3157,40 @@ export function registerHandlers() {
         }
     });
 
+    // ═══ LICENSE KEY GENERATOR (Superadmin only) ══════════════════════════════
+    // Ports the same crypto algorithm as tools/generate-license.cjs.
+    // GENERATION_SECRET lives HERE only — never sent to the renderer.
+    ipcMain.handle('generate-license-key', async (_e, { machineId, requestedBy }: { machineId: string; requestedBy: string }) => {
+        // Security gate: only superadmin role may generate keys
+        if (!requestedBy || requestedBy !== 'superadmin') {
+            return { success: false, error: 'Unauthorized: superadmin access required' };
+        }
+        if (!machineId || typeof machineId !== 'string' || !machineId.trim().startsWith('LE-')) {
+            return { success: false, error: 'Invalid Machine ID — must start with "LE-"' };
+        }
+
+        const GENERATION_SECRET = 'LE-SOFT-MASTER-KEY-2026-Pr0duct10n-S3cret!@#';
+        const VERIFICATION_SALT = 'LE-SOFT-2026-VERIFY-SALT-xK9mQ2';
+        const id = machineId.trim();
+
+        const prefix = crypto
+            .createHmac('sha256', VERIFICATION_SALT)
+            .update(id)
+            .digest('hex')
+            .substring(0, 8)
+            .toUpperCase();
+
+        const body = crypto
+            .createHmac('sha256', GENERATION_SECRET)
+            .update(id)
+            .digest('hex')
+            .substring(0, 24)
+            .toUpperCase();
+
+        const formatted = (prefix + body).match(/.{1,4}/g)!.join('-');
+        return { success: true, key: formatted };
+    });
+
 } // end registerHandlers
+
 

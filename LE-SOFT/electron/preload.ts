@@ -370,6 +370,9 @@ contextBridge.exposeInMainWorld('electron', {
     getPolicy: () => ipcRenderer.invoke('get-policy'),
     savePolicy: (policy: any) => ipcRenderer.invoke('save-policy', policy),
 
+    // ─── LICENSE GENERATOR (Superadmin only) ───
+    generateLicenseKey: (data: { machineId: string; requestedBy: string }) => ipcRenderer.invoke('generate-license-key', data),
+
     // ─── WINDOW CONTROLS ───
     setTheme: (theme: string) => ipcRenderer.invoke('set-theme', theme),
 });

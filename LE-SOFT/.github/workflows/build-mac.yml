@@ -1,13 +1,13 @@
-name: Build macOS Version
+name: Build & Publish macOS
 
 on:
   push:
     branches:
-      - main
+      - main-mac
   workflow_dispatch:
 
 jobs:
-  build:
+  build-mac:
     runs-on: macos-latest
 
     steps:
@@ -23,8 +23,12 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
-      - name: Build Application
-        run: npm run dist:mac
+      - name: Build & Publish macOS Release
+        # electron-builder --mac -p always:
+        #   - Builds the .dmg and .zip
+        #   - Uploads them plus latest-mac.yml to a GitHub Release
+        #   - latest-mac.yml is what electron-updater reads on macOS end-user machines
+        run: npm run dist:mac:publish
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
 
@@ -35,3 +39,4 @@ jobs:
           path: |
             release/*.dmg
             release/*.zip
+            release/latest-mac.yml

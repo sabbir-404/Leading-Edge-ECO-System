@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import {
     Save, Download, RefreshCw, CheckCircle, AlertTriangle, User, Lock,
     Eye, EyeOff, DollarSign, Barcode, Printer, Database, Settings as SettingsIcon,
-    Server, Sun, Moon, AtSign, Info, Clock
+    Server, Sun, Moon, AtSign, Info, Clock, Key, Copy, CheckCheck
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTheme } from '../../context/ThemeContext';
@@ -11,15 +11,16 @@ import DashboardLayout from '../../components/DashboardLayout';
 import { useToast } from '../../context/ToastContext';
 import '../Accounting/Masters/Masters.css';
 
-type SettingsTab = 'profile' | 'system_hardware' | 'payment_methods' | 'database_api' | 'policy' | 'about';
+type SettingsTab = 'profile' | 'system_hardware' | 'payment_methods' | 'database_api' | 'policy' | 'about' | 'license_generator';
 
 const TAB_LIST: { id: SettingsTab; label: string; icon: React.ReactNode; adminOnly?: boolean }[] = [
-    { id: 'profile',          label: 'Profile',             icon: <User size={18} />       },
-    { id: 'system_hardware',  label: 'System & Hardware',    icon: <SettingsIcon size={18} />},
-    { id: 'policy',           label: 'Policy',              icon: <Lock size={18} />, adminOnly: true },
-    { id: 'payment_methods',  label: 'Payment Methods',      icon: <DollarSign size={18} />, adminOnly: true },
-    { id: 'database_api',     label: 'Database & API',      icon: <Database size={18} />   },
-    { id: 'about',            label: 'About',               icon: <Info size={18} />       },
+    { id: 'profile',            label: 'Profile',             icon: <User size={18} />       },
+    { id: 'system_hardware',    label: 'System & Hardware',    icon: <SettingsIcon size={18} />},
+    { id: 'policy',             label: 'Policy',              icon: <Lock size={18} />, adminOnly: true },
+    { id: 'payment_methods',    label: 'Payment Methods',      icon: <DollarSign size={18} />, adminOnly: true },
+    { id: 'database_api',       label: 'Database & API',      icon: <Database size={18} />   },
+    { id: 'license_generator',  label: 'License Generator',   icon: <Key size={18} />, adminOnly: true },
+    { id: 'about',              label: 'About',               icon: <Info size={18} />       },
 ];
 
 const Settings: React.FC = () => {
@@ -67,6 +68,13 @@ const Settings: React.FC = () => {
     const [licenseKeyReveal, setLicenseKeyReveal] = useState(localStorage.getItem('app_license_key') || 'Not Activated');
     const [licenseClickCount, setLicenseClickCount] = useState(0);
     const [showFullLicense, setShowFullLicense] = useState(false);
+
+    // ── License Generator (Superadmin) ───────────────────────────────────────
+    const [genMachineId, setGenMachineId] = useState('');
+    const [genResult, setGenResult] = useState('');
+    const [genError, setGenError] = useState('');
+    const [genLoading, setGenLoading] = useState(false);
+    const [genCopied, setGenCopied] = useState(false);
 
     useEffect(() => {
         if (licenseClickCount === 0) return;
@@ -680,6 +688,98 @@ const Settings: React.FC = () => {
                                             </p>
                                         </div>
                                     </div>
+                                </div>
+                            </>
+                        )}
+
+                        {/* ── LICENSE GENERATOR TAB ──────────────────────────────── */}
+                        {activeTab === 'license_generator' && (
+                            <>
+                                <div style={card}>
+                                    <div style={cardHeader}>
+                                        <div style={iconBox('#f43f5e', 'rgba(244,63,94,0.12)')}><Key size={20} /></div>
+                                        <div>
+                                            <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>License Key Generator</h2>
+                                            <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-secondary)' }}>Superadmin only — generate a machine-locked license key for a customer</p>
+                                        </div>
+                                    </div>
+
+                                    {/* Info box */}
+                                    <div style={{ padding: '0.85rem 1rem', borderRadius: '10px', background: 'rgba(244,63,94,0.06)', border: '1px solid rgba(244,63,94,0.2)', marginBottom: '1.5rem', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                                        <strong style={{ color: '#f43f5e' }}>🔐 How it works:</strong><br />
+                                        The customer opens LE SOFT on their machine. The License Gate screen shows their <strong>Machine ID</strong>.
+                                        They send you that ID, you paste it here, and generate a key that works <em>only on that machine</em>.
+                                    </div>
+
+                                    <span style={label}>Customer Machine ID</span>
+                                    <p style={{ margin: '0 0 0.75rem', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                                        Must start with <code style={{ fontFamily: 'monospace', background: 'var(--input-bg)', padding: '1px 5px', borderRadius: '4px' }}>LE-</code> (e.g. <code style={{ fontFamily: 'monospace', background: 'var(--input-bg)', padding: '1px 5px', borderRadius: '4px' }}>LE-A1B2-C3D4-E5F6</code>)
+                                    </p>
+                                    <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.5rem' }}>
+                                        <input
+                                            id="gen-machine-id"
+                                            style={{ ...input, fontFamily: 'monospace', letterSpacing: '0.05em' }}
+                                            placeholder="LE-A1B2-C3D4-E5F6"
+                                            value={genMachineId}
+                                            onChange={e => { setGenMachineId(e.target.value); setGenResult(''); setGenError(''); }}
+                                            onKeyDown={e => { if (e.key === 'Enter') document.getElementById('gen-btn')?.click(); }}
+                                        />
+                                        <button
+                                            id="gen-btn"
+                                            disabled={genLoading || !genMachineId.trim()}
+                                            onClick={async () => {
+                                                setGenLoading(true); setGenResult(''); setGenError('');
+                                                try {
+                                                    const role = localStorage.getItem('user_role') || '';
+                                                    const res = await (window.electron as any).generateLicenseKey?.({ machineId: genMachineId.trim(), requestedBy: role });
+                                                    if (res?.success) setGenResult(res.key);
+                                                    else setGenError(res?.error || 'Generation failed');
+                                                } catch (e: any) { setGenError(e.message || 'Unknown error'); }
+                                                setGenLoading(false);
+                                            }}
+                                            style={{ ...btn('#f43f5e'), whiteSpace: 'nowrap', opacity: genLoading || !genMachineId.trim() ? 0.6 : 1 }}
+                                        >
+                                            <Key size={15} /> {genLoading ? 'Generating…' : 'Generate Key'}
+                                        </button>
+                                    </div>
+
+                                    {genError && (
+                                        <div style={{ padding: '0.85rem 1rem', borderRadius: '10px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: '#ef4444', fontSize: '0.88rem', fontWeight: 600, marginBottom: '1rem' }}>
+                                            ⚠ {genError}
+                                        </div>
+                                    )}
+
+                                    {genResult && (
+                                        <div style={{ padding: '1.25rem', borderRadius: '12px', background: 'rgba(16,185,129,0.08)', border: '2px solid rgba(16,185,129,0.3)' }}>
+                                            <p style={{ margin: '0 0 0.5rem', fontSize: '0.78rem', fontWeight: 700, color: '#10b981', textTransform: 'uppercase', letterSpacing: '0.06em' }}>✓ License Key Generated</p>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                                <code style={{
+                                                    flex: 1, fontFamily: 'monospace', fontSize: '1.05rem', fontWeight: 700,
+                                                    letterSpacing: '0.08em', color: 'var(--text-primary)',
+                                                    padding: '0.75rem 1rem', borderRadius: '8px',
+                                                    background: 'var(--input-bg)', border: '1px solid var(--border-color)',
+                                                    wordBreak: 'break-all', userSelect: 'all'
+                                                }}>
+                                                    {genResult}
+                                                </code>
+                                                <button
+                                                    onClick={() => {
+                                                        navigator.clipboard.writeText(genResult).then(() => {
+                                                            setGenCopied(true);
+                                                            setTimeout(() => setGenCopied(false), 2500);
+                                                        });
+                                                    }}
+                                                    style={{ padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: genCopied ? 'rgba(16,185,129,0.1)' : 'var(--input-bg)', color: genCopied ? '#10b981' : 'var(--text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', transition: 'all 0.2s', flexShrink: 0 }}
+                                                    title="Copy to clipboard"
+                                                >
+                                                    {genCopied ? <CheckCheck size={18} /> : <Copy size={18} />}
+                                                </button>
+                                            </div>
+                                            <p style={{ margin: '0.75rem 0 0', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                                                Send this key to the customer. It will <strong>only work</strong> on the machine with Machine ID <code style={{ fontFamily: 'monospace' }}>{genMachineId}</code>.
+                                            </p>
+                                        </div>
+                                    )}
                                 </div>
                             </>
                         )}
