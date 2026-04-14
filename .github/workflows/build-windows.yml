@@ -44,7 +44,7 @@ jobs:
         #   - latest.yml is what electron-updater reads on Windows end-user machines
         run: npm run dist:publish
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload Installer Artifact
         uses: actions/upload-artifact@v4

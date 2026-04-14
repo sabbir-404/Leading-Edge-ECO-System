@@ -43,7 +43,7 @@ jobs:
         #   - latest-mac.yml is what electron-updater reads on end-user macs
         run: npm run dist:mac:publish
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload macOS Artifacts
         uses: actions/upload-artifact@v4
