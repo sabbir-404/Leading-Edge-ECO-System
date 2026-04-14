@@ -21,7 +21,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { app } from 'electron';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 
 const ALG        = 'aes-256-gcm';
 const ITER       = 200_000;

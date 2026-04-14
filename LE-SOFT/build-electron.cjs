@@ -13,7 +13,7 @@ try {
     console.log('⚙️ Bundling Electron code with esbuild...');
 
     // Build Main
-    execSync('npx esbuild electron/main.ts --bundle --platform=node --target=node18 --external:electron --external:sqlite3 --external:mysql2 --external:bcrypt --external:electron-updater --outfile=core/main.cjs', { stdio: 'inherit' });
+    execSync('npx esbuild electron/main.ts --bundle --platform=node --target=node18 --external:electron --external:better-sqlite3 --external:mysql2 --external:bcryptjs --external:electron-updater --outfile=core/main.cjs', { stdio: 'inherit' });
 
     // Build Preload
     execSync('npx esbuild electron/preload.ts --bundle --platform=node --target=node18 --external:electron --outfile=core/preload.cjs', { stdio: 'inherit' });

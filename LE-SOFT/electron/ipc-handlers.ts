@@ -9,7 +9,7 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import crypto from 'crypto';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import supabase, { supabaseAdmin } from './supabase';
 import mysql from 'mysql2/promise';
 import * as licenseManager from './license-manager';

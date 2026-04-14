@@ -25,6 +25,14 @@ function createWindow() {
 
     log('Creating window...');
 
+    // Resolve app icon cross-platform:
+    //  - In packaged builds the icon is bundled alongside the binary
+    //  - In dev mode we resolve relative to the project root via __dirname
+    const isMac = process.platform === 'darwin';
+    const iconFile = isMac
+        ? path.join(__dirname, '../Logo/icon.icns')
+        : path.join(path.dirname(path.dirname(__dirname)), 'icon.ico');
+
     const win = new BrowserWindow({
         width: 1280,
         height: 800,
@@ -36,16 +44,21 @@ function createWindow() {
             allowRunningInsecureContent: false,
             preload: path.join(__dirname, 'preload.cjs'),
         },
-        icon: 'D:\\Code\\Leading Edge\\icon.ico',
+        icon: iconFile,
         backgroundColor: '#f5f6fa',
         show: false,
         frame: true,
-        titleBarStyle: 'hidden',
-        titleBarOverlay: {
-            color: '#c0c0c0', 
-            symbolColor: '#111111',
-            height: 64
-        },
+        // titleBarStyle and overlay are platform-specific:
+        //   Windows: 'hidden' + titleBarOverlay gives a custom-coloured caption bar
+        //   macOS:   'hiddenInset' keeps native traffic-light buttons in the correct position
+        titleBarStyle: isMac ? 'hiddenInset' : 'hidden',
+        ...(isMac ? {} : {
+            titleBarOverlay: {
+                color: '#c0c0c0',
+                symbolColor: '#111111',
+                height: 64
+            }
+        }),
     });
 
     // Block DevTools in production
@@ -125,7 +138,7 @@ function createWindow() {
             title: 'Confirm Exit',
             message: 'Are you sure you want to close LESOFT?',
             detail: 'Any unsaved changes may be lost.',
-            icon: 'D:\\Code\\Leading Edge\\icon.ico',
+            // No hard-coded icon path — dialog inherits the app icon automatically
             noLink: true,
         });
         if (choice === 0) {

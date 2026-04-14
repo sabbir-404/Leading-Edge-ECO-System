@@ -1,0 +1,23 @@
+# Enforce consistent LF line endings for all text files across platforms.
+# This prevents Windows contributors from re-introducing CRLF into source files.
+* text=auto eol=lf
+
+# Windows-specific scripts (batch files) must keep CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary files — no line-ending conversion
+*.ico binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.svg binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+*.db binary
+*.sqlite binary
+*.node binary

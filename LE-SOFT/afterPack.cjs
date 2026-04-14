@@ -8,5 +8,5 @@ exports.default = async function (context) {
 
     // Note: electron-builder extraResources handles most of the copying,
     // but we can add specific logic here if needed for binary pathing.
-    console.log('  • afterPack: Ensuring SQLite native modules are correctly placed');
+    console.log('  • afterPack: Ensuring better-sqlite3 native modules are correctly placed');
 };
