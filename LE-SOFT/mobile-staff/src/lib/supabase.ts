@@ -1,16 +1,41 @@
 import { createClient } from '@supabase/supabase-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import Constants from 'expo-constants';
 import 'react-native-url-polyfill/auto';
 
-// From your LE-SOFT config
-const supabaseUrl = 'https://ildkkgjrolcjijwfokek.supabase.co';
-const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlsZGtrZ2pyb2xjamlqd2Zva2VrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE5MzMzMjQsImV4cCI6MjA4NzUwOTMyNH0.Bn6c-87BOumPXyH5F469P04fQSMnI9SjNDZAwgGyTsM';
+/**
+ * Supabase client initialization.
+ * 
+ * Environment variables MUST be set in app.json > extra or environment:
+ *   SUPABASE_URL: Your Supabase project URL (e.g., https://xxxxx.supabase.co)
+ *   SUPABASE_ANON_KEY: Public anonymous key from Supabase dashboard
+ * 
+ * SECURITY: The anon key is intentionally public and restricted by RLS.
+ * Never store service role keys in client apps.
+ */
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-    auth: {
-        storage: AsyncStorage,
-        autoRefreshToken: true,
-        persistSession: true,
-        detectSessionInUrl: false,
-    },
-});
+const config = Constants.expoConfig?.extra as Record<string, string> | undefined;
+
+const supabaseUrl = config?.SUPABASE_URL || process.env.SUPABASE_URL;
+const supabaseAnonKey = config?.SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+
+if (!supabaseUrl || !supabaseAnonKey) {
+    console.error(
+        '❌ Supabase configuration missing.\n' +
+        'Set SUPABASE_URL and SUPABASE_ANON_KEY in app.json > extra\n' +
+        'or in environment variables.'
+    );
+}
+
+export const supabase = createClient(
+    supabaseUrl || 'https://placeholder.supabase.co',
+    supabaseAnonKey || 'placeholder-key',
+    {
+        auth: {
+            storage: AsyncStorage,
+            autoRefreshToken: true,
+            persistSession: true,
+            detectSessionInUrl: false,
+        },
+    }
+);

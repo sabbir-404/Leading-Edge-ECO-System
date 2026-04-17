@@ -20,20 +20,29 @@ export default function ChatRoomScreen({ route, navigation }: any) {
 
     useEffect(() => {
         setupChat();
-        
-        // Subscribe to new messages
+    }, [receiver.id]);
+
+    useEffect(() => {
+        if (!currentUser?.id) return;
+
         const channel = supabase
-            .channel(`internal_messages:${receiver.id}`)
-            .on('postgres_changes', 
+            .channel(`internal_messages:${currentUser.id}:${receiver.id}`)
+            .on(
+                'postgres_changes',
                 { event: 'INSERT', schema: 'public', table: 'internal_messages' },
                 (payload) => {
-                    const msg = payload.new;
-                    // Only add if it belongs to this conversation
-                    if ((msg.sender_id === currentUser?.id && msg.receiver_id === receiver.id) ||
-                        (msg.sender_id === receiver.id && msg.receiver_id === currentUser?.id)) {
-                        setMessages(current => [...current, msg]);
-                        setTimeout(() => flatListRef.current?.scrollToEnd(), 100);
-                    }
+                    const msg: any = payload.new;
+                    const belongsToConversation =
+                        (msg.sender_id === currentUser.id && msg.receiver_id === receiver.id) ||
+                        (msg.sender_id === receiver.id && msg.receiver_id === currentUser.id);
+
+                    if (!belongsToConversation) return;
+
+                    setMessages((current) => {
+                        if (current.some((m) => m.id === msg.id)) return current;
+                        return [...current, msg];
+                    });
+                    setTimeout(() => flatListRef.current?.scrollToEnd(), 100);
                 }
             )
             .subscribe();
@@ -41,7 +50,7 @@ export default function ChatRoomScreen({ route, navigation }: any) {
         return () => {
             supabase.removeChannel(channel);
         };
-    }, [currentUser, receiver.id]);
+    }, [currentUser?.id, receiver.id]);
 
     const setupChat = async () => {
         try {

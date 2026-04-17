@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, TextInput, TouchableOpacity, Alert, StyleSheet, Modal, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, Alert, StyleSheet, Modal, ScrollView, ActivityIndicator, Platform } from 'react-native';
 import { supabase } from '../lib/supabase';
 import { useTheme } from '../lib/ThemeContext';
 import { useResponsive } from '../lib/responsive';
@@ -239,7 +239,7 @@ export default function SettingsScreen() {
                 {[
                   ['Application', 'LE-SOFT Staff'],
                   ['Version', Constants.expoConfig?.version || '1.2.5'],
-                  ['Platform', 'Android'],
+                  ['Platform', Platform.OS === 'ios' ? 'iOS' : 'Android'],
                   ['Developer', 'Leading Edge'],
                 ].map(([k, v]) => (
                   <View key={k} style={s.infoRow}>

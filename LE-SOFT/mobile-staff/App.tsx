@@ -301,7 +301,7 @@ export default function App() {
 }
 
 function AppInner({ session, loading }: { session: any; loading: boolean }) {
-  const { theme, isDark } = useTheme();
+  const { theme, isDark, themeLoading } = useTheme();
   const [dbUser, setDbUser] = React.useState<any>(null);
   const ui = useResponsive();
 
@@ -312,7 +312,8 @@ function AppInner({ session, loading }: { session: any; loading: boolean }) {
     }
   }, [session]);
 
-  if (loading) {
+  // Wait for both session auth and theme hydration before rendering
+  if (loading || themeLoading) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: theme.bg }}>
         <ActivityIndicator size="large" color={theme.accent} />

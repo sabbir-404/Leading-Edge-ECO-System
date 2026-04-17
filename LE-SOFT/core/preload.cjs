@@ -315,6 +315,8 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   // ─── POLICY ───
   getPolicy: () => import_electron.ipcRenderer.invoke("get-policy"),
   savePolicy: (policy) => import_electron.ipcRenderer.invoke("save-policy", policy),
+  // ─── LICENSE GENERATOR (Superadmin only) ───
+  generateLicenseKey: (data) => import_electron.ipcRenderer.invoke("generate-license-key", data),
   // ─── WINDOW CONTROLS ───
   setTheme: (theme) => import_electron.ipcRenderer.invoke("set-theme", theme)
 });
