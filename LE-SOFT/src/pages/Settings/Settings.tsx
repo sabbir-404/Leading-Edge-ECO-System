@@ -139,7 +139,10 @@ const Settings: React.FC = () => {
             }
         }).catch(() => {});
         const cleanup = window.electron.onUpdateStatus?.((data: any) => {
-            if (data.status === 'available') { setUpdateStatus('available'); setUpdateInfo(data.info); }
+            if (data.status === 'available') { 
+                setUpdateStatus('available'); 
+                setUpdateInfo({ ...(data.info || {}), isManual: !!data.isManual }); 
+            }
             else if (data.status === 'up-to-date') setUpdateStatus('up-to-date');
             else if (data.status === 'downloading') { setUpdateStatus('downloading'); setDownloadProgress(data.progress?.percent || 0); }
             else if (data.status === 'ready') setUpdateStatus('ready');
@@ -885,6 +888,11 @@ const Settings: React.FC = () => {
                                         {updateStatus === 'ready' && 'Update downloaded — ready to install!'}
                                         {updateStatus === 'error' && 'Update check failed. Try again later.'}
                                     </p>
+                                    {updateStatus === 'available' && updateInfo?.isManual && (
+                                        <p style={{ margin: '0 0 1rem', fontSize: '0.82rem', color: '#dc2626', fontWeight: 600, background: '#fef2f2', padding: '0.75rem', borderRadius: '8px', border: '1px solid #fca5a5' }}>
+                                            {updateInfo.releaseNotes || 'Automatic installation is unavailable on this system. Please download the latest version manually.'}
+                                        </p>
+                                    )}
                                     {updateStatus === 'downloading' && (
                                         <div style={{ width: '100%', height: '6px', borderRadius: '3px', background: 'var(--border-color)', marginBottom: '1rem', overflow: 'hidden' }}>
                                             <div style={{ width: `${downloadProgress}%`, height: '100%', borderRadius: '3px', background: 'var(--accent-color)', transition: 'width 0.3s ease' }} />
@@ -897,8 +905,14 @@ const Settings: React.FC = () => {
                                                 <RefreshCw size={16} /> Check for Updates
                                             </button>
                                         )}
-                                        {updateStatus === 'available' && (
-                                            <button onClick={async () => { setUpdateStatus('downloading'); await window.electron.downloadUpdate?.(); }} style={btn('var(--accent-color)')}>
+                                        {updateStatus === 'available' && updateInfo?.isManual && (
+                                            <a href="https://github.com/sabbir-404/Leading-Edge-ECO-System/releases/latest" target="_blank" rel="noreferrer"
+                                                style={{ padding: '0.6rem 1.2rem', borderRadius: '8px', border: 'none', background: 'var(--accent-color)', color: 'white', cursor: 'pointer', fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: '0.4rem', textDecoration: 'none' }}>
+                                                <Download size={15} /> Download From Website
+                                            </a>
+                                        )}
+                                        {updateStatus === 'available' && !updateInfo?.isManual && (
+                                            <button onClick={async () => { setUpdateStatus('downloading'); await window.electron.downloadUpdate?.(); }} style={{ padding: '0.6rem 1.2rem', borderRadius: '8px', border: 'none', background: 'var(--accent-color)', color: 'white', cursor: 'pointer', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                                                 <Download size={15} /> Download Update
                                             </button>
                                         )}
