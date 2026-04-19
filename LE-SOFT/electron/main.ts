@@ -39,22 +39,71 @@ function setupAutoUpdater() {
     autoUpdater.on('download-progress', prog => broadcast({ status: 'downloading', progress: prog }));
     autoUpdater.on('update-downloaded',  info => broadcast({ status: 'ready', info }));
 
+    // Helper: fallback update check for unsigned macOS builds
+    const performManualMacCheck = async () => {
+        try {
+            const response = await fetch('https://api.github.com/repos/sabbir-404/Leading-Edge-ECO-System/releases/latest');
+            if (!response.ok) return;
+            const data = await response.json();
+            if (data && data.tag_name) {
+                const current = app.getVersion().replace('v', '').split('.').map(Number);
+                const latest = data.tag_name.replace('v', '').split('.').map(Number);
+                
+                let isNewer = false;
+                for (let i = 0; i < 3; i++) {
+                    if ((latest[i] || 0) > (current[i] || 0)) { isNewer = true; break; }
+                    if ((latest[i] || 0) < (current[i] || 0)) { break; }
+                }
+
+                if (isNewer) {
+                    broadcast({ 
+                        status: 'available', 
+                        isManual: true,
+                        info: { 
+                            version: data.tag_name, 
+                            releaseNotes: 'Automatic installation is unavailable because this Mac build is unsigned. Please download the latest version from the releases page manually.' 
+                        } 
+                    });
+                } else {
+                    broadcast({ status: 'up-to-date' });
+                }
+            }
+        } catch (err) { console.error('Manual fallback fetch failed', err); }
+    };
+
     // IPC: renderer calls these
     ipcMain.handle('check-for-update', async () => {
-        try { await autoUpdater.checkForUpdates(); return { success: true }; }
-        catch (e: any) { return { success: false, error: e.message }; }
+        try { 
+            await autoUpdater.checkForUpdates(); 
+            return { success: true }; 
+        } catch (e: any) { 
+            if (process.platform === 'darwin') {
+                await performManualMacCheck();
+                return { success: true };
+            }
+            return { success: false, error: e.message }; 
+        }
     });
+
     ipcMain.handle('download-update', async () => {
         try { await autoUpdater.downloadUpdate(); return { success: true }; }
         catch (e: any) { return { success: false, error: e.message }; }
     });
+    
     ipcMain.handle('install-update', () => {
         autoUpdater.quitAndInstall(false, true); // isSilent=false, isForceRunAfter=true
     });
+    
     ipcMain.handle('get-app-version', () => app.getVersion());
 
-    // Check for updates 5 s after launch (give the main window time to load)
-    setTimeout(() => autoUpdater.checkForUpdates().catch(() => {}), 5000);
+    // Check for updates 5 s after launch
+    setTimeout(() => {
+        autoUpdater.checkForUpdates().catch((e: any) => {
+            if (process.platform === 'darwin') {
+                performManualMacCheck();
+            }
+        });
+    }, 5000);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

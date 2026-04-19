@@ -34,7 +34,8 @@ const PERMISSION_GROUPS = [
             { key: 'see_all_bills', label: "View all users' bills (not just own)" },
             { key: 'adjust_bill_price', label: 'Apply price adjustment on a bill' },
             { key: 'delete_bill', label: 'Delete Bills' },
-            { key: 'initiate_exchange', label: 'Initiate Exchanges' }
+            { key: 'initiate_exchange', label: 'Initiate Exchanges' },
+            { key: 'approve_bill', label: 'Approve Pending Bills' }
         ]
     },
     {
@@ -85,6 +86,8 @@ const PERMISSION_GROUPS = [
         perms: [
             { key: 'manage_users', label: 'Manage User Accounts' },
             { key: 'manage_groups', label: 'Manage Permission Groups' },
+            { key: 'manage_sessions', label: 'View Active Sessions' },
+            { key: 'manage_permissions', label: 'Manage Permission Levels' },
             { key: 'manage_settings', label: 'Manage Application Settings' }
         ]
     },
@@ -96,6 +99,13 @@ const PERMISSION_GROUPS = [
             { key: 'read_inventory_report', label: 'Read Inventory Reports' },
             { key: 'read_financial_report', label: 'Read Financial Reports' },
             { key: 'read_product_history', label: 'Read Product History' }
+        ]
+    },
+    {
+        category: 'Website & E-Commerce',
+        desc: 'Website Content and Orders',
+        perms: [
+            { key: 'manage_website', label: 'Manage Website & Content' }
         ]
     }
 ];

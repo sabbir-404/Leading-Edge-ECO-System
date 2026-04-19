@@ -154,7 +154,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
         ...(hasPermission('write_bill') ? [{ icon: <FileText size={18} />, label: 'New Bill', path: '/billing' }] : []),
         ...(hasPermission('read_bill') ? [{ icon: <History size={18} />, label: 'Bill History', path: '/billing/history' }] : []),
         ...(hasPermission('alter_bill') ? [{ icon: <Edit size={18} />, label: 'Alter Bill', path: '/billing/alter' }] : []),
-        ...(userRole === 'admin' || userRole === 'superadmin' ? [{ icon: <ClipboardCheck size={18} />, label: 'Pending Approvals', path: '/billing/pending-approvals' }] : []),
+        ...(hasPermission('approve_bill') ? [{ icon: <ClipboardCheck size={18} />, label: 'Pending Approvals', path: '/billing/pending-approvals' }] : []),
         ...(hasPermission('read_quotation') || hasPermission('write_quotation') ? [{ icon: <FileText size={18} />, label: 'Quotations', path: '/quotations' }] : []),
         ...(hasPermission('view_customer_ledger') ? [{ icon: <FileText size={18} />, label: 'Customer Ledger', path: '/crm/ledger' }] : []),
         ...(hasPermission('initiate_exchange') ? [{ icon: <ArrowLeftRight size={18} />, label: 'Exchanges', path: '/crm/exchanges' }] : []),
@@ -173,9 +173,9 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
       path: '/users',
       subItems: [
         ...(hasPermission('manage_users') ? [{ icon: <User size={18} />, label: 'User List', path: '/users' }] : []),
-        ...(userRole === 'admin' || userRole === 'superadmin' ? [{ icon: <ShieldAlert size={18} />, label: 'Active Sessions', path: '/users/active' }] : []),
+        ...(hasPermission('manage_sessions') ? [{ icon: <ShieldAlert size={18} />, label: 'Active Sessions', path: '/users/active' }] : []),
         ...(hasPermission('manage_groups') ? [{ icon: <Lock size={18} />, label: 'User Groups', path: '/users/groups' }] : []),
-        ...(userRole === 'admin' || userRole === 'superadmin' ? [{ icon: <Shield size={18} />, label: 'Permission Levels', path: '/users/permissions' }] : []),
+        ...(hasPermission('manage_permissions') ? [{ icon: <Shield size={18} />, label: 'Permission Levels', path: '/users/permissions' }] : []),
       ]
     }] : []),
     ...(hasPermission('read_hrm') || hasPermission('write_hrm') ? [{ 
@@ -210,7 +210,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
       label: 'Shipping',
       path: '/shipping',
     },
-    ...(userRole === 'admin' || userRole === 'superadmin' ? [{ 
+    ...(hasPermission('manage_website') ? [{ 
       icon: <Globe size={20} />, 
       label: 'Website', 
       path: '/website',

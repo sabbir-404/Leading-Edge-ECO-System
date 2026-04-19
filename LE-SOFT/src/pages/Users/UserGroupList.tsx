@@ -11,7 +11,7 @@ const PERMISSION_KEYS = [
     'read_currencies', 'write_currencies', 'read_stock_group', 'write_stock_group', 'read_stock_items', 'write_stock_items',
     'read_units', 'write_units', 'read_products', 'write_products', 'delete_products', 'read_godowns', 'write_godowns',
     // Billing
-    'read_bill', 'write_bill', 'alter_bill', 'add_bill_items', 'see_all_bills', 'adjust_bill_price', 'delete_bill', 'initiate_exchange',
+    'read_bill', 'write_bill', 'alter_bill', 'add_bill_items', 'see_all_bills', 'adjust_bill_price', 'delete_bill', 'initiate_exchange', 'approve_bill',
     // Accounts
     'read_accounts', 'write_accounts',
     // CRM
@@ -21,9 +21,11 @@ const PERMISSION_KEYS = [
     // HRM
     'read_hrm', 'write_hrm', 'approve_leave', 'view_payroll',
     // Settings & Security
-    'manage_users', 'manage_groups', 'manage_settings',
+    'manage_users', 'manage_groups', 'manage_sessions', 'manage_permissions', 'manage_settings',
     // Reports
-    'read_sales_report', 'read_inventory_report', 'read_financial_report', 'read_product_history'
+    'read_sales_report', 'read_inventory_report', 'read_financial_report', 'read_product_history',
+    // Website
+    'manage_website'
 ];
 
 const UserGroupList: React.FC = () => {

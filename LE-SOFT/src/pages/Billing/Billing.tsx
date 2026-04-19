@@ -23,7 +23,7 @@ interface CartItem {
     sku: string;
     quantity: number;
     mrp: number;           // unit price
-    discount_pct: number;
+    discount_pct: number | string;
     discount_amt: number;  // total discount for row
     price: number;         // line total after discount
     image_path?: string;
@@ -102,20 +102,20 @@ const Billing: React.FC = () => {
     const [billSaved, setBillSaved] = useState(false); // tracks if the current bill is already saved
     const [searching, setSearching] = useState(false);
     const [detailedResults, setDetailedResults] = useState<Product[]>([]);
-    const [priceAdjustment, setPriceAdjustment] = useState(0);
+    const [priceAdjustment, setPriceAdjustment] = useState<number | string>(0);
     const [maxAdj, setMaxAdj] = useState(0);
-    const [globalDiscountPct, setGlobalDiscountPct] = useState<number | ''>('');
+    const [globalDiscountPct, setGlobalDiscountPct] = useState<number | string>('');
     const canAdjust = canAdjustBillPrice();
 
     // Shipping
     const [shippingEnabled, setShippingEnabled] = useState(false);
     const [shipTo, setShipTo] = useState({ name: '', address: '', phone: '' });
     const [shipFrom, setShipFrom] = useState({ name: 'Leading Edge', address: 'Dhaka, Bangladesh' });
-    const [shippingCharge, setShippingCharge] = useState(0);
+    const [shippingCharge, setShippingCharge] = useState<number | string>(0);
     const [showShipping, setShowShipping] = useState(false);
 
     // Extras
-    const [installationCharge, setInstallationCharge] = useState(0);
+    const [installationCharge, setInstallationCharge] = useState<number | string>(0);
     const [installationNote, setInstallationNote] = useState('');
     const [showExtras, setShowExtras] = useState(false);
 
@@ -222,23 +222,24 @@ const Billing: React.FC = () => {
     // Changing quantity → recalc based on existing %
     // Changing discount_pct → recalc discounted price
     // Changing discounted_price (final price) → back-calc % (price can only go DOWN, not above MRP×qty)
-    const updateCartItem = (productId: number, field: 'quantity' | 'discount_pct' | 'discounted_price', rawValue: number) => {
+    const updateCartItem = (productId: number, field: 'quantity' | 'discount_pct' | 'discounted_price', rawValue: number | string) => {
         setCart(prev => prev.map(item => {
             if (item.product_id !== productId) return item;
             let { quantity, mrp, discount_pct, discount_amt, price } = item;
+            const currentDiscPctNum = Number(discount_pct) || 0;
 
             if (field === 'quantity') {
-                quantity = Math.max(1, rawValue);
-                discount_amt = mrp * quantity * (discount_pct / 100);
+                quantity = Math.max(1, Number(rawValue) || 1);
+                discount_amt = mrp * quantity * (currentDiscPctNum / 100);
                 price = mrp * quantity - discount_amt;
             } else if (field === 'discount_pct') {
-                discount_pct = Math.min(100, Math.max(0, rawValue));
-                discount_amt = mrp * quantity * (discount_pct / 100);
+                discount_pct = rawValue as any;
+                const parsed = Number(rawValue) || 0;
+                discount_amt = mrp * quantity * (Math.min(100, Math.max(0, parsed)) / 100);
                 price = mrp * quantity - discount_amt;
             } else if (field === 'discounted_price') {
-                // Clamp: cannot exceed MRP × qty (no price increase allowed)
                 const maxPrice = mrp * quantity;
-                const lineTotal = Math.min(maxPrice, Math.max(0, rawValue));
+                const lineTotal = Math.min(maxPrice, Math.max(0, Number(rawValue) || 0));
                 price = lineTotal;
                 discount_amt = maxPrice - lineTotal;
                 const totalMrp = mrp * quantity;
@@ -259,9 +260,12 @@ const Billing: React.FC = () => {
     const subtotal = cart.reduce((s, i) => s + i.mrp * i.quantity, 0);
     const discountTotal = cart.reduce((s, i) => s + Math.max(0, i.discount_amt), 0);
     const itemsTotal = subtotal - discountTotal;
+    const pAdjNum = Number(priceAdjustment) || 0;
+    const shipNum = Number(shippingCharge) || 0;
+    const instNum = Number(installationCharge) || 0;
     // Clamp adjustment to ±maxAdj
-    const adjClamped = maxAdj > 0 ? Math.max(-maxAdj, Math.min(maxAdj, priceAdjustment)) : 0;
-    const grandTotal = itemsTotal + installationCharge + (shippingEnabled ? shippingCharge : 0) + adjClamped;
+    const adjClamped = maxAdj > 0 ? Math.max(-maxAdj, Math.min(maxAdj, pAdjNum)) : 0;
+    const grandTotal = itemsTotal + instNum + (shippingEnabled ? shipNum : 0) + adjClamped;
 
     /** Calculated discount % across all items (for display only) */
     const calcGlobalDiscPct = subtotal > 0 ? +((discountTotal / subtotal) * 100).toFixed(2) : 0;
@@ -298,7 +302,7 @@ const Billing: React.FC = () => {
                     ship_to_phone: shipTo.phone,
                     ship_from_name: shipFrom.name,
                     ship_from_address: shipFrom.address,
-                    shipping_charge: shippingCharge,
+                    shipping_charge: shipNum,
                     user_role: localStorage.getItem('user_role') || 'cashier'
                 } : undefined
             });
@@ -521,7 +525,7 @@ const Billing: React.FC = () => {
                                                         <input type="number"
                                                             value={item.discount_pct === 0 ? '' : item.discount_pct}
                                                             placeholder="0"
-                                                            onChange={e => updateCartItem(item.product_id, 'discount_pct', parseFloat(e.target.value) || 0)}
+                                                            onChange={e => updateCartItem(item.product_id, 'discount_pct', e.target.value)}
                                                             style={{ width: '58px', textAlign: 'center', border: `1px solid ${item.discount_pct > 0 ? '#f97316' : 'var(--border-color)'}`, borderRadius: '6px', padding: '3px 18px 3px 5px', fontSize: '0.82rem', background: item.discount_pct > 0 ? '#fff7ed' : 'var(--card-bg)', color: item.discount_pct > 0 ? '#c2410c' : 'inherit', fontWeight: item.discount_pct > 0 ? 700 : 400 }}
                                                             min={0} max={100} />
                                                         <span style={{ position: 'absolute', right: '5px', fontSize: '0.72rem', color: '#c2410c', fontWeight: 700 }}>%</span>
@@ -595,7 +599,7 @@ const Billing: React.FC = () => {
                                                 <input style={inp} value={shipFrom.address} onChange={e => setShipFrom(p => ({ ...p, address: e.target.value }))} placeholder="Sender address" />
                                                 <div>
                                                     <label style={lbl}>Shipping Charge (৳)</label>
-                                                    <input type="number" style={{ ...inp, fontWeight: 700 }} placeholder="0" min={0} value={shippingCharge || ''} onChange={e => setShippingCharge(parseFloat(e.target.value) || 0)} />
+                                                    <input type="number" style={{ ...inp, fontWeight: 700 }} placeholder="0" min={0} value={shippingCharge === 0 ? '' : shippingCharge} onChange={e => setShippingCharge(e.target.value)} />
                                                 </div>
                                             </div>
                                         </div>
@@ -624,7 +628,7 @@ const Billing: React.FC = () => {
                                         </div>
                                         <div style={{ width: '160px' }}>
                                             <label style={lbl}>Charge (৳)</label>
-                                            <input type="number" style={{ ...inp, fontWeight: 700 }} placeholder="0" min={0} value={installationCharge || ''} onChange={e => setInstallationCharge(parseFloat(e.target.value) || 0)} />
+                                            <input type="number" style={{ ...inp, fontWeight: 700 }} placeholder="0" min={0} value={installationCharge === 0 ? '' : installationCharge} onChange={e => setInstallationCharge(e.target.value)} />
                                         </div>
                                     </div>
                                 </motion.div>
@@ -692,9 +696,10 @@ const Billing: React.FC = () => {
                                             value={globalDiscountPct}
                                             title="Set a global discount % to distribute evenly to all products"
                                             onChange={e => {
-                                                const v = e.target.value === '' ? '' : parseFloat(e.target.value);
+                                                const v = e.target.value;
                                                 setGlobalDiscountPct(v);
-                                                if (typeof v === 'number' && !isNaN(v)) applyGlobalDiscount(v);
+                                                const num = Number(v);
+                                                if (!isNaN(num)) applyGlobalDiscount(num);
                                             }}
                                             onBlur={() => { if (globalDiscountPct === '') setGlobalDiscountPct(''); }}
                                             style={{
@@ -738,7 +743,7 @@ const Billing: React.FC = () => {
                                         <input
                                             type="number"
                                             value={priceAdjustment}
-                                            onChange={e => setPriceAdjustment(parseFloat(e.target.value) || 0)}
+                                            onChange={e => setPriceAdjustment(e.target.value)}
                                             style={{
                                                 width: '80px', textAlign: 'right', paddingLeft: '16px', paddingRight: '5px',
                                                 border: `1px solid ${adjClamped < 0 ? '#fca5a5' : adjClamped > 0 ? '#93c5fd' : 'var(--border-color)'}`,

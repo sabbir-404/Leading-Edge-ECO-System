@@ -1352,7 +1352,7 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('update-user', async (_e, user) => {
-        const { id, fullName, role, email, phone, isActive, password, groupId, requestingUserRole } = user;
+        const { id, username, fullName, role, email, phone, isActive, password, groupId, requestingUserRole } = user;
         // Coerce isActive to integer (0 or 1) for Postgres compatibility
         const isActiveValue = (isActive === undefined || isActive === null) ? 1 : (Number(isActive) ? 1 : 0);
         
@@ -1370,20 +1370,38 @@ export function registerHandlers() {
             is_active: isActiveValue
         };
 
+        if (username) {
+            updatePayload.username = username;
+        }
+
         if (groupId) {
             updatePayload.group_id = parseInt(groupId);
         }
 
+        // Fetch auth_id to update auth password and/or user_metadata if needed
+        const { data: row } = await supabaseAdmin.from('users').select('auth_id').eq('id', id).single();
+
+        try {
+            if (row?.auth_id) {
+                const authUpdates: any = {};
+                if (password && password.trim() !== '') {
+                    authUpdates.password = password;
+                }
+                if (username || fullName || role) {
+                    authUpdates.user_metadata = { 
+                        ...(username ? { username } : {}), 
+                        ...(fullName ? { full_name: fullName } : {}), 
+                        ...(role ? { role } : {}) 
+                    };
+                }
+                if (Object.keys(authUpdates).length > 0) {
+                    await supabaseAdmin.auth.admin.updateUserById(row.auth_id, authUpdates);
+                }
+            }
+        } catch(e) { console.error("Could not update auth user", e); }
+
         if (password && password.trim() !== '') {
             updatePayload.password_hash = await bcrypt.hash(password, BCRYPT_ROUNDS);
-            
-            // Also attempt to update the auth password if auth_id exists
-            try {
-                const { data: row } = await supabaseAdmin.from('users').select('auth_id').eq('id', id).single();
-                if (row?.auth_id) {
-                    await supabaseAdmin.auth.admin.updateUserById(row.auth_id, { password });
-                }
-            } catch(e) { console.error("Could not update auth password", e); }
         }
 
         const { error } = await supabaseAdmin.from('users').update(updatePayload).eq('id', id);
