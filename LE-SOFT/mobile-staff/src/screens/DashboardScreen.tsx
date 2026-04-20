@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase';
 import { useTheme } from '../lib/ThemeContext';
 import { decryptObject } from '../lib/encryption';
 import { useResponsive } from '../lib/responsive';
+import { buildIlikeOr } from '../lib/queryUtils';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { User, Search, Package, X, LogOut, ShoppingBag, Menu, AlertTriangle, Users, CalendarDays, Truck, ReceiptText, TrendingUp } from 'lucide-react-native';
 import { useDebounce } from 'use-debounce';
@@ -62,7 +63,15 @@ export default function DashboardScreen({ navigation }: any) {
   const [totalCustomers, setTotalCustomers] = useState(0);
   const [lowStockCount, setLowStockCount] = useState(0);
 
-  const today = useMemo(() => new Date(), []);
+  const [today, setToday] = useState(() => new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setToday(new Date());
+    }, 60 * 1000);
+
+    return () => clearInterval(timer);
+  }, []);
 
   const holidayMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -150,10 +159,19 @@ export default function DashboardScreen({ navigation }: any) {
         return;
       }
       setSearchingDB(true);
+      
+      // Use safe query builder instead of string interpolation
+      const filter = buildIlikeOr(debouncedQuery, ['name', 'sku']);
+      if (!filter) {
+        setSearchResults([]);
+        setSearchingDB(false);
+        return;
+      }
+
       const { data } = await supabase
         .from('products')
         .select('*')
-        .or(`name.ilike.%${debouncedQuery}%,sku.ilike.%${debouncedQuery}%`)
+        .or(filter)
         .limit(20);
       setSearchResults(data || []);
       setSearchingDB(false);
@@ -371,26 +389,26 @@ export default function DashboardScreen({ navigation }: any) {
 
 const makeStyles = (theme: any, ui: any) => StyleSheet.create({
   root: { flex: 1, backgroundColor: theme.bg },
-  topProfileArea: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: ui.spacing(20), paddingTop: ui.spacing(10), paddingBottom: ui.spacing(12) },
-  menuBtn: { marginRight: ui.spacing(16), padding: ui.spacing(4) },
-  profileBtn: { flexDirection: 'row', alignItems: 'center', gap: ui.spacing(12), flexShrink: 1 },
-  avatar: { width: ui.scale(44), height: ui.scale(44), borderRadius: ui.radius(22), alignItems: 'center', justifyContent: 'center' },
-  greeting: { color: theme.textMuted, fontSize: ui.font(13) },
-  name: { color: theme.textPrimary, fontSize: ui.font(22, 16, 24), fontWeight: '800' },
-  logoutBtn: { padding: ui.spacing(8), backgroundColor: theme.bgCard, borderRadius: ui.radius(12), borderWidth: 1, borderColor: theme.border },
+  topProfileArea: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: ui.spacing(20), paddingTop: ui.spacing(12), paddingBottom: ui.spacing(16), gap: ui.spacing(12) },
+  menuBtn: { minWidth: ui.touchMin, minHeight: ui.touchMin, marginRight: ui.spacing(8), padding: ui.spacing(8), borderRadius: ui.radius(12), justifyContent: 'center', alignItems: 'center', backgroundColor: theme.bgCard, borderWidth: 1, borderColor: theme.border },
+  profileBtn: { flexDirection: 'row', alignItems: 'center', gap: ui.spacing(14), flexShrink: 1, paddingVertical: ui.spacing(8), paddingHorizontal: ui.spacing(12), borderRadius: ui.radius(14), backgroundColor: theme.bgCard, borderWidth: 1, borderColor: theme.border },
+  avatar: { width: ui.scale(48), height: ui.scale(48), borderRadius: ui.radius(24), alignItems: 'center', justifyContent: 'center' },
+  greeting: { color: theme.textMuted, fontSize: ui.font(12), fontWeight: '600' },
+  name: { color: theme.textPrimary, fontSize: ui.font(18, 16, 20), fontWeight: '900', marginTop: ui.spacing(2) },
+  logoutBtn: { minWidth: ui.touchMin, minHeight: ui.touchMin, padding: ui.spacing(10), backgroundColor: theme.bgCard, borderRadius: ui.radius(12), borderWidth: 1, borderColor: theme.danger + '44', justifyContent: 'center', alignItems: 'center', marginLeft: 'auto' },
 
-  searchContainerWrapper: { paddingHorizontal: ui.spacing(20), zIndex: 5, marginTop: ui.spacing(4) },
-  searchBar: { flexDirection: 'row', alignItems: 'center', backgroundColor: theme.bgInput, borderRadius: ui.radius(16), paddingHorizontal: ui.spacing(16), height: ui.scale(56), borderWidth: 1, borderColor: theme.border },
-  searchInput: { flex: 1, color: theme.textPrimary, fontSize: ui.font(16), marginLeft: ui.spacing(12), height: '100%' },
-  clearBtn: { padding: ui.spacing(6) },
+  searchContainerWrapper: { paddingHorizontal: ui.spacing(20), zIndex: 5, marginBottom: ui.spacing(8) },
+  searchBar: { flexDirection: 'row', alignItems: 'center', backgroundColor: theme.bgInput, borderRadius: ui.radius(18), paddingHorizontal: ui.spacing(18), height: ui.scale(60), borderWidth: 1.5, borderColor: theme.border, gap: ui.spacing(12), shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 8, shadowOffset: { width: 0, height: 2 } },
+  searchInput: { flex: 1, color: theme.textPrimary, fontSize: ui.font(16), height: '100%', fontWeight: '500' },
+  clearBtn: { minWidth: ui.touchMin, minHeight: ui.touchMin, padding: ui.spacing(8), justifyContent: 'center', alignItems: 'center' },
 
-  listContent: { paddingHorizontal: ui.spacing(20), paddingTop: ui.spacing(18), paddingBottom: ui.spacing(110) },
-  resultCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: theme.bgCard, borderRadius: ui.radius(16), padding: ui.spacing(14), marginBottom: ui.spacing(10), borderWidth: 1, borderColor: theme.border },
-  iconBox: { width: ui.scale(44), height: ui.scale(44), borderRadius: ui.radius(12), alignItems: 'center', justifyContent: 'center', marginRight: ui.spacing(14) },
+  listContent: { paddingHorizontal: ui.spacing(20), paddingTop: ui.spacing(20), paddingBottom: ui.spacing(120) },
+  resultCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: theme.bgCard, borderRadius: ui.radius(18), padding: ui.spacing(16), marginBottom: ui.spacing(12), borderWidth: 1, borderColor: theme.border, gap: ui.spacing(14) },
+  iconBox: { width: ui.scale(50), height: ui.scale(50), borderRadius: ui.radius(14), alignItems: 'center', justifyContent: 'center' },
   rName: { color: theme.textPrimary, fontSize: ui.font(16), fontWeight: '700' },
-  rMeta: { color: theme.textMuted, fontSize: ui.font(12), marginTop: ui.spacing(2) },
+  rMeta: { color: theme.textMuted, fontSize: ui.font(13), marginTop: ui.spacing(4) },
   rVal: { fontSize: ui.font(15), fontWeight: '800' },
-  empty: { alignItems: 'center', marginTop: ui.spacing(40) },
+  empty: { alignItems: 'center', marginTop: ui.spacing(60) },
 
   dashScroll: { paddingHorizontal: ui.spacing(20), paddingBottom: ui.spacing(110) },
 

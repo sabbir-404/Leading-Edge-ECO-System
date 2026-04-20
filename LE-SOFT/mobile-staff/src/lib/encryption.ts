@@ -2,9 +2,26 @@ import CryptoJS from 'crypto-js';
 import Constants from 'expo-constants';
 import { AES_GCM } from 'asmcrypto.js/dist_es8/aes/gcm.js';
 
+/**
+ * SECURITY NOTES:
+ * - Client-side encryption should only be used for non-critical fields.
+ * - Sensitive data like passwords, API keys, auth tokens MUST NOT be encrypted on the client.
+ * - Consider migrating sensitive fields to server-side encryption with edge functions.
+ * - Encryption keys should be environment-specific and rotated periodically.
+ * - Never hardcode encryption keys or use defaults in production.
+ */
+
 const SALT_PHRASE = 'lesoft-e2e-salt-v1';
-const FALLBACK_KEY_BASE = 'default-lesoft-key';
-const LEGACY_ANON_BASE = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlsZGtrZ2pyb2xjamlqd2Zva2VrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE5MzMzMjQsImV4cCI6MjA4NzUwOTMyNH0.Bn6c-87BOumPXyH5F469P04fQSMnI9SjNDZAwgGyTsM';
+
+const config = Constants.expoConfig?.extra as Record<string, string> | undefined;
+const ENCRYPTION_KEY_BASE = config?.ENCRYPTION_KEY_BASE;
+
+if (!ENCRYPTION_KEY_BASE && typeof __DEV__ !== 'undefined' && __DEV__) {
+    console.warn(
+        '⚠️  ENCRYPTION_KEY_BASE not set in app.json > extra.\n' +
+        'Using in-memory derivation only; decryption will fail on app restart.'
+    );
+}
 
 const NON_ENCRYPTED_KEY_PATTERNS = [
     /^id$/i,
@@ -45,10 +62,8 @@ const LOOKUP_KEYS = new Set([
 function getKeyBaseCandidates() {
     const extra = Constants.expoConfig?.extra as Record<string, any> | undefined;
     const candidates = [
-        extra?.supabaseServiceRoleKey,
-        extra?.encryptionKeyBase,
-        FALLBACK_KEY_BASE,
-        LEGACY_ANON_BASE,
+        extra?.ENCRYPTION_KEY_BASE,
+        extra?.encryptionKeyBase, // Legacy fallback
     ];
     return candidates
         .filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
@@ -61,7 +76,13 @@ function deriveKey(base: string) {
 }
 
 const KEY_CANDIDATES = getKeyBaseCandidates().map(deriveKey);
-const PRIMARY_KEY = KEY_CANDIDATES[0] || deriveKey(FALLBACK_KEY_BASE);
+if (KEY_CANDIDATES.length === 0 && typeof __DEV__ !== 'undefined' && !__DEV__) {
+    console.error(
+        '❌ ENCRYPTION_KEY_BASE not configured in app.json > extra.\n' +
+        'Encrypted fields cannot be decrypted in production.'
+    );
+}
+const PRIMARY_KEY = KEY_CANDIDATES[0] || deriveKey('fallback-dev-key-do-not-use-in-prod');
 
 function wordArrayToUint8Array(wordArray: CryptoJS.lib.WordArray): Uint8Array {
     const { words, sigBytes } = wordArray;

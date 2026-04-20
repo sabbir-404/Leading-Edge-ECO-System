@@ -6,22 +6,26 @@ interface ThemeContextType {
   theme: Theme;
   isDark: boolean;
   toggleTheme: () => void;
+  themeLoading: boolean;
 }
 
 const ThemeContext = createContext<ThemeContextType>({
   theme: lightTheme,
   isDark: false,
   toggleTheme: () => {},
+  themeLoading: true,
 });
 
 const THEME_KEY = 'lesoft_theme';
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [isDark, setIsDark] = useState(false); // light default
+  const [themeLoading, setThemeLoading] = useState(true); // Track hydration
 
   useEffect(() => {
     AsyncStorage.getItem(THEME_KEY).then(val => {
       if (val === 'dark') setIsDark(true);
+      setThemeLoading(false); // Mark theme as hydrated
     });
   }, []);
 
@@ -36,7 +40,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const theme = isDark ? darkTheme : lightTheme;
 
   return (
-    <ThemeContext.Provider value={{ theme, isDark, toggleTheme }}>
+    <ThemeContext.Provider value={{ theme, isDark, toggleTheme, themeLoading }}>
       {children}
     </ThemeContext.Provider>
   );

@@ -102,10 +102,18 @@ const PERMISSION_GROUPS = [
         ]
     },
     {
-        category: 'Website & E-Commerce',
-        desc: 'Website Content and Orders',
+        category: 'Communications',
+        desc: 'Internal Email and Messaging',
         perms: [
-            { key: 'manage_website', label: 'Manage Website & Content' }
+            { key: 'read_email', label: 'Access Internal Emails' },
+            { key: 'write_email', label: 'Send Internal Emails' }
+        ]
+    },
+    {
+        category: 'Logistics',
+        desc: 'Shipping and Delivery Management',
+        perms: [
+            { key: 'manage_shipping', label: 'Manage Shipping & Deliveries' }
         ]
     }
 ];

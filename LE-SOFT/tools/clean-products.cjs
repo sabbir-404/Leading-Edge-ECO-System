@@ -2,10 +2,7 @@
 /**
  * clean-products.cjs
  * Deletes all rows from the products table (and related data) in your Supabase database.
- * Run with: node tools/clean-products.cjs
- *
- * This script reads your Supabase config from electron/supabase.ts local override
- * or prompts you to enter the URL + key directly.
+ * Run: cd LE-SOFT && node tools/clean-products.cjs
  */
 
 const { createClient } = require('@supabase/supabase-js');
@@ -25,15 +22,17 @@ if (fs.existsSync(localConfigPath)) {
     console.log('✅ Loaded Supabase config from supabase.local.json');
 }
 
-// ── Tables to clean (order matters — dependents first) ────────────────────────
-// These are all tables that reference products by product_id or similar FK
+// ── Tables to clean in FK-safe order (dependents first, products last) ────────
+// Use { table, idColumn } — idColumn is used for the delete filter.
+// UUID columns: use 'id' and filter with not('id', 'is', null)
+// Integer columns: same approach
 const TABLES_TO_CLEAN = [
-    'product_price_history',    // price history rows
-    'bill_items',               // bill line items referencing products
-    'stock_movements',          // stock movement logs
-    'competitor_urls',          // AI market analysis URLs
-    'market_analysis_history',  // AI analysis history
-    'products',                 // ← main products table, cleaned last
+    { table: 'product_price_history',   idCol: 'id' },
+    { table: 'exchange_items',          idCol: 'id' },  // ← FK: exchange_items.product_id → products.id
+    { table: 'bill_items',              idCol: 'id' },
+    { table: 'market_analysis_history', idCol: 'id' },
+    { table: 'website_products',        idCol: 'id', optional: true },
+    { table: 'products',                idCol: 'id' },  // ← main table, cleared last
 ];
 
 async function run() {
@@ -45,13 +44,13 @@ async function run() {
         rl.close();
     }
 
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const supabase = createClient(supabaseUrl.trim(), supabaseKey.trim());
 
     console.log('\n⚠️  WARNING: This will delete ALL rows from the following tables:');
-    TABLES_TO_CLEAN.forEach(t => console.log(`   - ${t}`));
+    TABLES_TO_CLEAN.forEach(t => console.log(`   - ${t.table}${t.optional ? ' (optional)' : ''}`));
     console.log('\nThis cannot be undone!\n');
 
-    // Simple 5-second countdown
+    // 5-second countdown
     for (let i = 5; i > 0; i--) {
         process.stdout.write(`\rStarting in ${i}s... (Ctrl+C to abort) `);
         await new Promise(r => setTimeout(r, 1000));
@@ -59,12 +58,20 @@ async function run() {
     console.log('\n');
 
     let allOk = true;
-    for (const table of TABLES_TO_CLEAN) {
+    for (const { table, idCol, optional } of TABLES_TO_CLEAN) {
         process.stdout.write(`Cleaning ${table}... `);
-        const { error, count } = await supabase.from(table).delete().neq('id', 0);
+        const { error } = await supabase
+            .from(table)
+            .delete()
+            .not(idCol, 'is', null);   // works for both UUID and integer PKs
+
         if (error) {
-            // Some tables may not exist yet — that's fine
-            if (error.code === '42P01' || error.message?.includes('does not exist')) {
+            const notFound = error.code === '42P01'
+                || error.message?.includes('does not exist')
+                || error.message?.includes('schema cache');
+            if (notFound && optional) {
+                console.log(`⚠️  Table not found, skipping (optional).`);
+            } else if (notFound) {
                 console.log(`⚠️  Table not found, skipping.`);
             } else {
                 console.log(`❌ Error: ${error.message}`);
@@ -75,11 +82,11 @@ async function run() {
         }
     }
 
-    if (allOk) {
-        console.log('\n✅ Product database cleaned successfully!');
-    } else {
-        console.log('\n⚠️  Some tables had errors. Check output above.');
-    }
+    console.log(allOk
+        ? '\n✅ Product database cleaned successfully!'
+        : '\n⚠️  Some tables had errors. Check output above.'
+    );
+    process.exit(allOk ? 0 : 1);
 }
 
-run().catch(console.error);
+run().catch(err => { console.error('\n❌ Fatal:', err.message); process.exit(1); });
