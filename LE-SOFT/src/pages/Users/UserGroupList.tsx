@@ -25,7 +25,9 @@ const PERMISSION_KEYS = [
     // Reports
     'read_sales_report', 'read_inventory_report', 'read_financial_report', 'read_product_history',
     // Website
-    'manage_website'
+    'manage_website',
+    // Communications & Logistics
+    'read_email', 'write_email', 'manage_shipping'
 ];
 
 const UserGroupList: React.FC = () => {

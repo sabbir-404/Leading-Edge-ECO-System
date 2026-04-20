@@ -4,7 +4,7 @@ import path from 'path';
 import { autoUpdater } from 'electron-updater';
 import { initDB } from './database';
 import { initOfflineDB } from './offline-db';
-import { registerDevice, startHeartbeat } from './device-monitor';
+import { registerDevice, startHeartbeat, startBroadcastListener } from './device-monitor';
 import { registerHandlers } from './ipc-handlers';
 import { initEncryptionKey, clearEncryptionKey } from './field-encryption';
 import { startQueue, flush as flushQueue } from './write-queue';
@@ -292,6 +292,7 @@ app.whenReady().then(() => {
             startQueue();
             registerDevice();
             startHeartbeat(60_000);
+            startBroadcastListener();
             registerHandlers();
             setupAutoUpdater(); // ← wire up electron-updater
             log('Background services registered');

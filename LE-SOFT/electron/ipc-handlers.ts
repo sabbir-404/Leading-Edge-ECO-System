@@ -1595,6 +1595,29 @@ export function registerHandlers() {
         return data || {};
     });
 
+    ipcMain.handle('get-device-sessions', async (_e, callerContext) => {
+        if (!callerContext?.isSuperadmin) return { success: false, error: 'Unauthorized' };
+        if (!supabaseAdmin) return { success: false, error: 'Database Admin Key not configured in settings.' };
+        const { data, error } = await supabaseAdmin.from('device_sessions').select('*').order('last_seen', { ascending: false });
+        if (error) return { success: false, error: error.message };
+        return { success: true, data };
+    });
+
+    ipcMain.handle('force-update-all', async (_e, callerContext) => {
+        if (!callerContext?.isSuperadmin) return { success: false, error: 'Unauthorized' };
+        if (!supabaseAdmin) return { success: false, error: 'Database Admin Key not configured in settings.' };
+        
+        // Broadcast force-update signal via supabaseAdmin
+        const channel = supabaseAdmin.channel('system_broadcasts');
+        await channel.send({
+            type: 'broadcast',
+            event: 'force-update',
+            payload: { timestamp: Date.now() }
+        });
+        supabaseAdmin.removeChannel(channel);
+        return { success: true };
+    });
+
     ipcMain.handle('update-settings', async (_e, s) => {
         const { error } = await supabase.from('companies').update({
             name: s.name,

@@ -96,3 +96,25 @@ export function startHeartbeat(intervalMs = 60_000): NodeJS.Timeout {
             .eq('device_id', DEVICE_ID);
     }, intervalMs);
 }
+
+// ─── Listen for Global System Broadcasts ─────────────────────────────────────
+export function startBroadcastListener(): void {
+    supabase.channel('system_broadcasts')
+        .on('broadcast', { event: 'force-update' }, () => {
+            console.log('[DEVICE] Received Global Force Update Signal');
+            try {
+                const autoUpdater = require('electron-updater').autoUpdater;
+                autoUpdater.checkForUpdates();
+                // We don't downloadUpdate() immediately because Mac unsigned logic 
+                // requires the renderer to manually process the info.
+                // autoUpdater's update-available event will automatically notify the UI.
+            } catch (e) {
+                console.warn('[DEVICE] autoUpdater trigger failed', e);
+            }
+        })
+        .subscribe((status) => {
+            if (status === 'SUBSCRIBED') {
+                console.log('[DEVICE] Listening to global system broadcasts');
+            }
+        });
+}

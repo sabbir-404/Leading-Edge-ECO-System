@@ -11,10 +11,11 @@ import DashboardLayout from '../../components/DashboardLayout';
 import { useToast } from '../../context/ToastContext';
 import '../Accounting/Masters/Masters.css';
 
-type SettingsTab = 'profile' | 'system_hardware' | 'payment_methods' | 'database_api' | 'policy' | 'about' | 'license_generator';
+type SettingsTab = 'profile' | 'system_hardware' | 'payment_methods' | 'database_api' | 'policy' | 'about' | 'license_generator' | 'versions';
 
 const TAB_LIST: { id: SettingsTab; label: string; icon: React.ReactNode; adminOnly?: boolean }[] = [
     { id: 'profile',            label: 'Profile',             icon: <User size={18} />       },
+    { id: 'versions',           label: 'App Versions & Devices', icon: <MonitorPlay size={18} />, adminOnly: true },
     { id: 'system_hardware',    label: 'System & Hardware',    icon: <SettingsIcon size={18} />},
     { id: 'policy',             label: 'Policy',              icon: <Lock size={18} />, adminOnly: true },
     { id: 'payment_methods',    label: 'Payment Methods',      icon: <DollarSign size={18} />, adminOnly: true },
@@ -108,6 +109,37 @@ const Settings: React.FC = () => {
     const [unlockError, setUnlockError] = useState('');
     const [adminKeyMsg, setAdminKeyMsg] = useState('');
 
+    // ── Device Versions (Superadmin) ──────────────────────────────────────────
+    const [deviceSessions, setDeviceSessions] = useState<any[]>([]);
+    const [loadingDevices, setLoadingDevices] = useState(false);
+
+    const fetchDeviceSessions = async () => {
+        setLoadingDevices(true);
+        try {
+            const res = await window.electron.getDeviceSessions?.({ 
+                isSuperadmin: localStorage.getItem('user_role') === 'superadmin' 
+            });
+            if (res?.success) setDeviceSessions(res.data);
+        } catch (e) {
+            console.error(e);
+            showToast('Failed to load device sessions', 'error');
+        }
+        setLoadingDevices(false);
+    };
+
+    const handleForceUpdateAll = async () => {
+        if (!confirm('Are you sure you want to force all active users to restart and update the software? This can cause immediate downtime.')) return;
+        try {
+            const res = await window.electron.forceUpdateAll?.({ 
+                isSuperadmin: localStorage.getItem('user_role') === 'superadmin' 
+            });
+            if (res?.success) showToast('Force update broadcast sent successfully!', 'success');
+            else showToast(res?.error || 'Failed to send broadcast', 'error');
+        } catch (e: any) {
+            showToast(e.message || 'Error occurred', 'error');
+        }
+    };
+
     // ── Payment Methods ───────────────────────────────────────────────────────
     const [paymentMethods, setPaymentMethods] = useState<any[]>([]);
     const [loadingMethods, setLoadingMethods] = useState(false);
@@ -126,6 +158,8 @@ const Settings: React.FC = () => {
     useEffect(() => {
         if (activeTab === 'payment_methods') {
             fetchPaymentMethods();
+        } else if (activeTab === 'versions') {
+            fetchDeviceSessions();
         }
     }, [activeTab]);
 
@@ -312,6 +346,83 @@ const Settings: React.FC = () => {
                     <motion.div key={activeTab} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}>
 
 
+
+
+                        {/* ── VERSIONS TAB ─────────────────────────────── */}
+                        {activeTab === 'versions' && (
+                            <>
+                                <div style={card}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                            <div style={iconBox('#10b981', 'rgba(16,185,129,0.15)')}>
+                                                <MonitorPlay size={20} />
+                                            </div>
+                                            <div>
+                                                <h3 style={{ margin: 0, fontSize: '1.1rem', color: 'var(--text-primary)' }}>App Versions & Devices</h3>
+                                                <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>View exact software versions and force cluster updates.</p>
+                                            </div>
+                                        </div>
+                                        <button onClick={handleForceUpdateAll} style={btn('#ef4444')}>
+                                            <Download size={18} /> Force Update All Users
+                                        </button>
+                                    </div>
+
+                                    {loadingDevices ? (
+                                        <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>Loading devices...</div>
+                                    ) : (
+                                        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                                            <thead>
+                                                <tr style={{ background: 'var(--bg-color)' }}>
+                                                    <th style={{ padding: '0.8rem', borderBottom: '1px solid var(--border-color)', fontWeight: 600, fontSize: '0.85rem' }}>User</th>
+                                                    <th style={{ padding: '0.8rem', borderBottom: '1px solid var(--border-color)', fontWeight: 600, fontSize: '0.85rem' }}>Machine ID / Component</th>
+                                                    <th style={{ padding: '0.8rem', borderBottom: '1px solid var(--border-color)', fontWeight: 600, fontSize: '0.85rem' }}>Platform</th>
+                                                    <th style={{ padding: '0.8rem', borderBottom: '1px solid var(--border-color)', fontWeight: 600, fontSize: '0.85rem' }}>App Version</th>
+                                                    <th style={{ padding: '0.8rem', borderBottom: '1px solid var(--border-color)', fontWeight: 600, fontSize: '0.85rem' }}>Status</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {deviceSessions.map((dev: any) => {
+                                                    const isOnline = (new Date().getTime() - new Date(dev.last_seen || 0).getTime()) < 300000; // 5 mins
+                                                    return (
+                                                        <tr key={dev.id} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                                                            <td style={{ padding: '0.8rem', fontSize: '0.9rem', color: 'var(--text-primary)' }}>
+                                                                <strong>{dev.username || 'System Device'}</strong>
+                                                            </td>
+                                                            <td style={{ padding: '0.8rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                                                <div style={{ fontWeight: 600 }}>{dev.device_name}</div>
+                                                                <div style={{ fontSize: '0.75rem', opacity: 0.7 }}>{dev.device_id.substring(0,16)}...</div>
+                                                            </td>
+                                                            <td style={{ padding: '0.8rem', fontSize: '0.9rem', color: 'var(--text-primary)', textTransform: 'capitalize' }}>{dev.platform}</td>
+                                                            <td style={{ padding: '0.8rem', fontSize: '0.9rem' }}>
+                                                                <span style={{ background: 'rgba(59,130,246,0.1)', color: '#3b82f6', padding: '2px 8px', borderRadius: '12px', fontWeight: 600 }}>
+                                                                    v{dev.app_version}
+                                                                </span>
+                                                            </td>
+                                                            <td style={{ padding: '0.8rem' }}>
+                                                                {isOnline ? (
+                                                                    <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#10b981', fontSize: '0.85rem', fontWeight: 600 }}>
+                                                                        <span style={{ width: '8px', height: '8px', background: '#10b981', borderRadius: '50%' }}></span> Online
+                                                                    </span>
+                                                                ) : (
+                                                                    <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--text-secondary)', fontSize: '0.85rem', fontWeight: 600 }}>
+                                                                        <span style={{ width: '8px', height: '8px', background: 'var(--text-secondary)', borderRadius: '50%' }}></span> Offline
+                                                                    </span>
+                                                                )}
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })}
+                                                {deviceSessions.length === 0 && (
+                                                    <tr>
+                                                        <td colSpan={5} style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--text-secondary)' }}>No device sessions found.</td>
+                                                    </tr>
+                                                )}
+                                            </tbody>
+                                        </table>
+                                    )}
+                                </div>
+                            </>
+                        )}
 
 
                         {/* ── PAYMENT METHODS TAB ─────────────────────────────── */}

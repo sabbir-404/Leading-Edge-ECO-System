@@ -200,16 +200,16 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
         { icon: <Clock size={18} />, label: 'Track Orders', path: '/make/track' },
       ]
     }] : []),
-    {
+    ...(hasPermission('read_email') || hasPermission('write_email') ? [{
       icon: <Mail size={20} />,
       label: 'Email',
       path: '/email',
-    },
-    {
+    }] : []),
+    ...(hasPermission('manage_shipping') ? [{
       icon: <Truck size={20} />,
       label: 'Shipping',
       path: '/shipping',
-    },
+    }] : []),
     ...(hasPermission('manage_website') ? [{ 
       icon: <Globe size={20} />, 
       label: 'Website', 
