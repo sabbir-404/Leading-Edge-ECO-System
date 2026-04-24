@@ -1618,6 +1618,44 @@ export function registerHandlers() {
         return { success: true };
     });
 
+    ipcMain.handle('clear-database', async (_e, { section, password, username }) => {
+        if (!supabaseAdmin) return { success: false, error: 'Database Admin Key not configured in settings.' };
+        
+        // 1. Verify Password via Supabase Auth
+        const emailToUse = username.includes('@') ? username : `${username}@lesoft.local`;
+        const { error: authError } = await supabaseAdmin.auth.signInWithPassword({
+            email: emailToUse,
+            password: password
+        });
+        if (authError) return { success: false, error: 'Invalid password. Action denied.' };
+
+        // 2. Verify Superadmin Role
+        const { data: userData } = await supabaseAdmin.from('users').select('role').eq('username', username).single();
+        if (userData?.role !== 'superadmin') {
+            return { success: false, error: 'Unauthorized: Only superadmin can perform this action.' };
+        }
+
+        try {
+            if (section === 'products') {
+                await supabaseAdmin.from('products').delete().neq('id', 0);
+            } else if (section === 'billing') {
+                await supabaseAdmin.from('shipping_status_log').delete().neq('id', 0);
+                await supabaseAdmin.from('bill_shipping').delete().neq('id', 0);
+                await supabaseAdmin.from('bill_audit').delete().neq('id', 0);
+                await supabaseAdmin.from('bill_items').delete().neq('id', 0);
+                await supabaseAdmin.from('bills').delete().neq('id', 0);
+            } else if (section === 'customer') {
+                await supabaseAdmin.from('bills').update({ customer_id: null }).neq('id', 0);
+                await supabaseAdmin.from('billing_customers').delete().neq('id', 0);
+            } else {
+                return { success: false, error: 'Unknown database section' };
+            }
+            return { success: true };
+        } catch (e: any) {
+            return { success: false, error: e.message };
+        }
+    });
+
     ipcMain.handle('update-settings', async (_e, s) => {
         const { error } = await supabase.from('companies').update({
             name: s.name,
