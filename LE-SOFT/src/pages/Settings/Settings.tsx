@@ -140,6 +140,41 @@ const Settings: React.FC = () => {
         }
     };
 
+    // ── Clear Database (Superadmin) ───────────────────────────────────────────
+    const handleClearDatabase = async (section: string) => {
+        if (localStorage.getItem('user_role') !== 'superadmin') {
+            showToast('Only superadmin can perform this action', 'error');
+            return;
+        }
+
+        const pwd = prompt(`Enter Superadmin password to clear the ${section} database:`);
+        if (!pwd) return;
+
+        const confirmText = prompt(`Type "CLEAR ${section.toUpperCase()}" to confirm this highly destructive action:`);
+        if (confirmText !== `CLEAR ${section.toUpperCase()}`) {
+            showToast('Confirmation failed. Database was NOT cleared.', 'warning');
+            return;
+        }
+
+        setLoadingDevices(true); // Re-use a loading state
+        try {
+            const userObj = JSON.parse(localStorage.getItem('user') || '{}');
+            const res = await window.electron.clearDatabase?.({ 
+                section,
+                password: pwd,
+                username: userObj.username || localStorage.getItem('user_name') 
+            });
+            if (res?.success) {
+                showToast(`Successfully cleared ${section} database!`, 'success');
+            } else {
+                showToast(res?.error || 'Failed to clear database', 'error');
+            }
+        } catch (e: any) {
+            showToast(e.message || 'Error occurred', 'error');
+        }
+        setLoadingDevices(false);
+    };
+
     // ── Payment Methods ───────────────────────────────────────────────────────
     const [paymentMethods, setPaymentMethods] = useState<any[]>([]);
     const [loadingMethods, setLoadingMethods] = useState(false);
@@ -768,6 +803,30 @@ const Settings: React.FC = () => {
                                         </motion.div>
                                     )}
                                 </div>
+
+                                {/* Superadmin Only: Database Cleanup */}
+                                {localStorage.getItem('user_role') === 'superadmin' && (
+                                    <div style={card}>
+                                        <div style={cardHeader}>
+                                            <div style={iconBox('#ef4444', 'rgba(239,68,68,0.12)')}><AlertTriangle size={20} /></div>
+                                            <div>
+                                                <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700, color: '#ef4444' }}>Danger Zone: Clear Database</h2>
+                                                <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-secondary)' }}>Irreversibly delete records from the cloud. Requires superadmin password.</p>
+                                            </div>
+                                        </div>
+                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
+                                            <button onClick={() => handleClearDatabase('products')} style={{ padding: '0.75rem', borderRadius: '8px', border: '1px solid #ef4444', background: 'rgba(239,68,68,0.05)', color: '#ef4444', fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}>
+                                                Clear Product Database
+                                            </button>
+                                            <button onClick={() => handleClearDatabase('billing')} style={{ padding: '0.75rem', borderRadius: '8px', border: '1px solid #ef4444', background: 'rgba(239,68,68,0.05)', color: '#ef4444', fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}>
+                                                Clear Billing Database
+                                            </button>
+                                            <button onClick={() => handleClearDatabase('customer')} style={{ padding: '0.75rem', borderRadius: '8px', border: '1px solid #ef4444', background: 'rgba(239,68,68,0.05)', color: '#ef4444', fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}>
+                                                Clear Customer Database
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
 
                                 {/* AI Integration Section - MOVED TO DATABASE & API */}
                                 <div style={card}>
