@@ -113,6 +113,13 @@ const Settings: React.FC = () => {
     const [deviceSessions, setDeviceSessions] = useState<any[]>([]);
     const [loadingDevices, setLoadingDevices] = useState(false);
 
+    // ── Clear DB Modal (Superadmin) ───────────────────────────────────────────
+    const [clearDbModal, setClearDbModal] = useState<{ section: string } | null>(null);
+    const [clearDbPassword, setClearDbPassword] = useState('');
+    const [clearDbConfirmText, setClearDbConfirmText] = useState('');
+    const [clearDbLoading, setClearDbLoading] = useState(false);
+    const [clearDbError, setClearDbError] = useState('');
+
     const fetchDeviceSessions = async () => {
         setLoadingDevices(true);
         try {
@@ -141,38 +148,50 @@ const Settings: React.FC = () => {
     };
 
     // ── Clear Database (Superadmin) ───────────────────────────────────────────
-    const handleClearDatabase = async (section: string) => {
+    const openClearDbModal = (section: string) => {
         if (localStorage.getItem('user_role') !== 'superadmin') {
             showToast('Only superadmin can perform this action', 'error');
             return;
         }
+        setClearDbPassword('');
+        setClearDbConfirmText('');
+        setClearDbError('');
+        setClearDbModal({ section });
+    };
 
-        const pwd = prompt(`Enter Superadmin password to clear the ${section} database:`);
-        if (!pwd) return;
+    const handleClearDatabaseConfirm = async () => {
+        if (!clearDbModal) return;
+        const { section } = clearDbModal;
+        const expected = `CLEAR ${section.toUpperCase()}`;
 
-        const confirmText = prompt(`Type "CLEAR ${section.toUpperCase()}" to confirm this highly destructive action:`);
-        if (confirmText !== `CLEAR ${section.toUpperCase()}`) {
-            showToast('Confirmation failed. Database was NOT cleared.', 'warning');
+        if (clearDbConfirmText.trim() !== expected) {
+            setClearDbError(`You must type "${expected}" exactly to confirm.`);
+            return;
+        }
+        if (!clearDbPassword.trim()) {
+            setClearDbError('Password is required.');
             return;
         }
 
-        setLoadingDevices(true); // Re-use a loading state
+        setClearDbLoading(true);
+        setClearDbError('');
         try {
             const userObj = JSON.parse(localStorage.getItem('user') || '{}');
-            const res = await window.electron.clearDatabase?.({ 
+            const res = await window.electron.clearDatabase?.({
                 section,
-                password: pwd,
-                username: userObj.username || localStorage.getItem('user_name') 
+                password: clearDbPassword,
+                username: userObj.username || userObj.email || localStorage.getItem('user_name'),
             });
             if (res?.success) {
                 showToast(`Successfully cleared ${section} database!`, 'success');
+                setClearDbModal(null);
             } else {
-                showToast(res?.error || 'Failed to clear database', 'error');
+                setClearDbError(res?.error || 'Failed to clear database. Check your password.');
             }
         } catch (e: any) {
-            showToast(e.message || 'Error occurred', 'error');
+            setClearDbError(e.message || 'Unexpected error occurred.');
         }
-        setLoadingDevices(false);
+        setClearDbLoading(false);
     };
 
     // ── Payment Methods ───────────────────────────────────────────────────────
@@ -354,6 +373,7 @@ const Settings: React.FC = () => {
     });
 
     return (
+        <>
         <DashboardLayout title="Settings">
             <div style={{ maxWidth: '900px', margin: '0 auto' }}>
 
@@ -815,14 +835,14 @@ const Settings: React.FC = () => {
                                             </div>
                                         </div>
                                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
-                                            <button onClick={() => handleClearDatabase('products')} style={{ padding: '0.75rem', borderRadius: '8px', border: '1px solid #ef4444', background: 'rgba(239,68,68,0.05)', color: '#ef4444', fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}>
-                                                Clear Product Database
+                                            <button onClick={() => openClearDbModal('products')} style={{ padding: '0.75rem', borderRadius: '8px', border: '1px solid #ef4444', background: 'rgba(239,68,68,0.05)', color: '#ef4444', fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}>
+                                                🗑️ Clear Product Database
                                             </button>
-                                            <button onClick={() => handleClearDatabase('billing')} style={{ padding: '0.75rem', borderRadius: '8px', border: '1px solid #ef4444', background: 'rgba(239,68,68,0.05)', color: '#ef4444', fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}>
-                                                Clear Billing Database
+                                            <button onClick={() => openClearDbModal('billing')} style={{ padding: '0.75rem', borderRadius: '8px', border: '1px solid #ef4444', background: 'rgba(239,68,68,0.05)', color: '#ef4444', fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}>
+                                                🗑️ Clear Billing Database
                                             </button>
-                                            <button onClick={() => handleClearDatabase('customer')} style={{ padding: '0.75rem', borderRadius: '8px', border: '1px solid #ef4444', background: 'rgba(239,68,68,0.05)', color: '#ef4444', fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}>
-                                                Clear Customer Database
+                                            <button onClick={() => openClearDbModal('customer')} style={{ padding: '0.75rem', borderRadius: '8px', border: '1px solid #ef4444', background: 'rgba(239,68,68,0.05)', color: '#ef4444', fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}>
+                                                🗑️ Clear Customer Database
                                             </button>
                                         </div>
                                     </div>
@@ -1129,6 +1149,45 @@ const Settings: React.FC = () => {
                 </div>
             )}
         </DashboardLayout>
+
+        {clearDbModal && (
+            <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(4px)' }}>
+                <motion.div
+                    initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    style={{ background: 'var(--card-bg)', borderRadius: '16px', padding: '2rem', width: '100%', maxWidth: '460px', margin: '1rem', border: '1px solid var(--border-color)', boxShadow: '0 25px 60px rgba(0,0,0,0.5)' }}
+                >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' }}>
+                        <div style={{ width: '42px', height: '42px', borderRadius: '10px', background: 'rgba(239,68,68,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                            <AlertTriangle size={20} color="#ef4444" />
+                        </div>
+                        <div>
+                            <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700, color: '#ef4444' }}>Confirm Database Clear</h3>
+                            <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-secondary)' }}>This action is permanent and cannot be undone.</p>
+                        </div>
+                    </div>
+                    <p style={{ margin: '0 0 0.4rem', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>Step 1 — Enter your superadmin password</p>
+                    <input type="password" placeholder="Your login password" value={clearDbPassword} onChange={e => setClearDbPassword(e.target.value)} style={{ ...input, marginBottom: '1.25rem' }} autoFocus />
+                    <p style={{ margin: '0 0 0.4rem', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                        Step 2 — Type{' '}<code style={{ background: 'rgba(239,68,68,0.1)', color: '#ef4444', padding: '1px 6px', borderRadius: '4px', fontWeight: 700 }}>CLEAR {clearDbModal.section.toUpperCase()}</code>{' '}to confirm
+                    </p>
+                    <input type="text" placeholder={`CLEAR ${clearDbModal.section.toUpperCase()}`} value={clearDbConfirmText} onChange={e => setClearDbConfirmText(e.target.value)} style={{ ...input, marginBottom: '1rem', fontFamily: 'monospace', letterSpacing: '0.05em' }} />
+                    {clearDbError && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#ef4444', fontSize: '0.85rem', marginBottom: '1rem', padding: '0.65rem', borderRadius: '8px', background: 'rgba(239,68,68,0.08)' }}>
+                            <AlertTriangle size={14} /> {clearDbError}
+                        </div>
+                    )}
+                    <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+                        <button onClick={() => setClearDbModal(null)} disabled={clearDbLoading} style={{ padding: '0.7rem 1.25rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer', fontWeight: 600 }}>Cancel</button>
+                        <button onClick={handleClearDatabaseConfirm} disabled={clearDbLoading} style={{ padding: '0.7rem 1.5rem', borderRadius: '8px', border: 'none', background: clearDbLoading ? '#94a3b8' : '#ef4444', color: '#fff', cursor: clearDbLoading ? 'not-allowed' : 'pointer', fontWeight: 700 }}>
+                            {clearDbLoading ? 'Clearing...' : '⚠️ Yes, Clear Database'}
+                        </button>
+                    </div>
+                </motion.div>
+            </div>
+        )}
+        </>
     );
 };
 

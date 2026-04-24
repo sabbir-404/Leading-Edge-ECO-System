@@ -146,6 +146,9 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   getDeviceId: () => import_electron.ipcRenderer.invoke("get-device-id"),
   activateLicense: (key) => import_electron.ipcRenderer.invoke("activate-license", key),
   getSupabaseConfig: () => import_electron.ipcRenderer.invoke("get-supabase-config"),
+  getDeviceSessions: (opts) => import_electron.ipcRenderer.invoke("get-device-sessions", opts),
+  forceUpdateAll: (opts) => import_electron.ipcRenderer.invoke("force-update-all", opts),
+  clearDatabase: (opts) => import_electron.ipcRenderer.invoke("clear-database", opts),
   // Internal Chat
   getChatMessages: (params) => import_electron.ipcRenderer.invoke("get-chat-messages", params),
   sendChatMessage: (msg) => import_electron.ipcRenderer.invoke("send-chat-message", msg),
