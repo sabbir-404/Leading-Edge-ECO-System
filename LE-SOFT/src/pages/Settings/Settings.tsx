@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import {
     Save, Download, RefreshCw, CheckCircle, AlertTriangle, User, Lock,
     Eye, EyeOff, DollarSign, Barcode, Printer, Database, Settings as SettingsIcon,
-    Server, Sun, Moon, AtSign, Info, Clock, Key, Copy, CheckCheck
+    Server, Sun, Moon, AtSign, Info, Clock, Key, Copy, CheckCheck, MonitorPlay
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTheme } from '../../context/ThemeContext';
