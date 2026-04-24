@@ -15,7 +15,7 @@ import { encryptObject, encryptRowsAsync } from './field-encryption';
 import { enqueueOfflineWrite, removePendingWrite, getPendingWrites, incrementRetryCount } from './offline-db';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
-export type QueueOperation = 'insert' | 'update' | 'upsert' | 'delete';
+export type QueueOperation = 'insert' | 'update' | 'upsert' | 'delete' | 'custom';
 
 export interface QueueEntry {
     id: string;
