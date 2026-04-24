@@ -2043,7 +2043,7 @@ export function registerHandlers() {
         // We queue this shipping record to insert roughly after the bill is written.
         enqueue({
             table: 'bill_shipping',
-            operation: 'custom_insert_shipping', // Use custom queue op or a wrapper
+            operation: 'custom', // Use custom queue op or a wrapper
             data: data,
             onSuccess: async () => {
                 try {

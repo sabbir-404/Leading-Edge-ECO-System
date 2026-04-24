@@ -203,7 +203,7 @@ const Billing: React.FC = () => {
         setCart(prev => {
             const ex = prev.find(i => i.product_id === product.id);
             if (ex) return prev.map(i => i.product_id === product.id
-                ? { ...i, quantity: i.quantity + 1, price: (i.quantity + 1) * i.mrp * (1 - i.discount_pct / 100) }
+                ? { ...i, quantity: i.quantity + 1, price: (i.quantity + 1) * i.mrp * (1 - Number(i.discount_pct) / 100) }
                 : i
             );
             return [...prev, {
@@ -526,7 +526,7 @@ const Billing: React.FC = () => {
                                                             value={item.discount_pct === 0 ? '' : item.discount_pct}
                                                             placeholder="0"
                                                             onChange={e => updateCartItem(item.product_id, 'discount_pct', e.target.value)}
-                                                            style={{ width: '58px', textAlign: 'center', border: `1px solid ${item.discount_pct > 0 ? '#f97316' : 'var(--border-color)'}`, borderRadius: '6px', padding: '3px 18px 3px 5px', fontSize: '0.82rem', background: item.discount_pct > 0 ? '#fff7ed' : 'var(--card-bg)', color: item.discount_pct > 0 ? '#c2410c' : 'inherit', fontWeight: item.discount_pct > 0 ? 700 : 400 }}
+                                                            style={{ width: '58px', textAlign: 'center', border: `1px solid ${Number(item.discount_pct) > 0 ? '#f97316' : 'var(--border-color)'}`, borderRadius: '6px', padding: '3px 18px 3px 5px', fontSize: '0.82rem', background: Number(item.discount_pct) > 0 ? '#fff7ed' : 'var(--card-bg)', color: Number(item.discount_pct) > 0 ? '#c2410c' : 'inherit', fontWeight: Number(item.discount_pct) > 0 ? 700 : 400 }}
                                                             min={0} max={100} />
                                                         <span style={{ position: 'absolute', right: '5px', fontSize: '0.72rem', color: '#c2410c', fontWeight: 700 }}>%</span>
                                                     </div>
@@ -577,7 +577,7 @@ const Billing: React.FC = () => {
                                 style={{ width: '15px', height: '15px', accentColor: 'var(--accent-color)' }} />
                             <Truck size={15} color={shippingEnabled ? 'var(--accent-color)' : 'var(--text-secondary)'} />
                             <span style={{ fontWeight: 700, fontSize: '0.85rem', color: shippingEnabled ? 'var(--accent-color)' : 'var(--text-secondary)', flex: 1 }}>Ship this order</span>
-                            {shippingEnabled && shippingCharge > 0 && <span style={{ fontSize: '0.8rem', color: '#6366f1', fontWeight: 700 }}>+৳{shippingCharge}</span>}
+                            {shippingEnabled && Number(shippingCharge) > 0 && <span style={{ fontSize: '0.8rem', color: '#6366f1', fontWeight: 700 }}>+৳{shippingCharge}</span>}
                             {showShipping ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                         </button>
                         <AnimatePresence>
@@ -615,7 +615,7 @@ const Billing: React.FC = () => {
                             style={{ width: '100%', padding: '0.65rem 1rem', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                             <Wrench size={15} color="var(--text-secondary)" />
                             <span style={{ fontWeight: 700, fontSize: '0.85rem', color: 'var(--text-secondary)', flex: 1 }}>Installation / Service Note</span>
-                            {installationCharge > 0 && <span style={{ fontSize: '0.8rem', color: '#8b5cf6', fontWeight: 700 }}>+৳{installationCharge}</span>}
+                            {Number(installationCharge) > 0 && <span style={{ fontSize: '0.8rem', color: '#8b5cf6', fontWeight: 700 }}>+৳{installationCharge}</span>}
                             {showExtras ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                         </button>
                         <AnimatePresence>
@@ -716,14 +716,14 @@ const Billing: React.FC = () => {
                                 </div>
                             </div>
 
-                            {installationCharge > 0 && (
+                            {Number(installationCharge) > 0 && (
                                 <div style={{ display: 'flex', justifyContent: 'space-between', color: '#7c3aed' }}>
                                     <span>🔧 Installation</span>
                                     <span style={{ fontWeight: 600 }}>+৳{installationCharge.toLocaleString()}</span>
                                 </div>
                             )}
 
-                            {shippingEnabled && shippingCharge > 0 && (
+                            {shippingEnabled && Number(shippingCharge) > 0 && (
                                 <div style={{ display: 'flex', justifyContent: 'space-between', color: '#4f46e5' }}>
                                     <span>🚚 Shipping</span>
                                     <span style={{ fontWeight: 600 }}>+৳{shippingCharge.toLocaleString()}</span>
