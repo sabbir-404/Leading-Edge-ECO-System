@@ -22,20 +22,42 @@ import { saveSession, loadSession, clearSession } from './session-vault';
 const BCRYPT_ROUNDS = 12;
 
 // ── Super Admin seeder ───────────────────────────────────────────────────────
+/**
+ * generateFirstTimePassword()
+ *
+ * Creates a cryptographically random 16-character password for the superadmin
+ * account on first-time system setup.
+ *
+ * Character set excludes visually ambiguous characters (0, O, I, l, 1)
+ * so the password can be read and typed accurately from a dialog or log file.
+ *
+ * SECURITY: This password is NEVER stored in plaintext anywhere in the code.
+ * It is shown once in a dialog, logged to app.log, then discarded from memory.
+ * The only thing stored in the DB is the bcrypt hash.
+ */
+function generateFirstTimePassword(): string {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%';
+    const bytes = crypto.randomBytes(16);
+    return Array.from(bytes as Uint8Array)
+        .map((b: number) => chars[b % chars.length])
+        .join('');
+}
+
 async function checkAndSeedSuperAdmin() {
     if (!supabaseAdmin) return;
     try {
-        // Ensure Super Admin group exists
-        // Note: group name is kept as plain text in DB for lookup purposes (it's a structural key)
+        // ── Step 1: Ensure the Super Admin permission group exists ───────────────
+        // The group name is stored as plaintext (structural lookup key — not sensitive).
         let { data: grp } = await supabase.from('user_groups').select('id').eq('name', 'Super Admin').maybeSingle();
         let groupId: number;
         if (!grp) {
+            // All permissions granted to Super Admin
             const allPerms = {
                 can_create_user: true, can_delete_user: true, can_edit_user: true, can_edit_groups: true,
                 can_create_bill: true, can_alter_bill: true, can_delete_bill: true,
                 can_create_order: true, can_alter_order: true, can_view_payroll: true, can_approve_leave: true,
             };
-            // Encrypt group row (name stays plain — used as lookup key)
+            // Encrypt the description field before writing; name stays plain for lookups
             const groupRow = encryptObject(
                 { description: 'Full administrative access to all features. Super Admin only.' }
             );
@@ -47,44 +69,112 @@ async function checkAndSeedSuperAdmin() {
             groupId = grp.id;
         }
 
-        const DEFAULT_PASSWORD = '123456';
-        const DEFAULT_HASH = await bcrypt.hash(DEFAULT_PASSWORD, BCRYPT_ROUNDS);
+        // ── Step 2: Check if the superadmin user already exists ──────────────────
+        // username 'sabbirsuperadmin' is the fixed structural identifier for this account.
+        const { data: existing } = await supabase
+            .from('users').select('id,password_hash').eq('username', 'sabbirsuperadmin').maybeSingle();
 
-        // Check if the superadmin user exists (username is structural — kept plain)
-        const { data: existing } = await supabase.from('users').select('id,password_hash').eq('username', 'sabbirsuperadmin').maybeSingle();
         if (!existing) {
+            // ── FIRST LAUNCH: Create the superadmin account with a random password ──
+            // We generate a random strong password — never hardcoded in source.
+            // The password is shown once in a native dialog and written to app.log.
+            const generatedPassword = generateFirstTimePassword();
+            const generatedHash = await bcrypt.hash(generatedPassword, BCRYPT_ROUNDS);
+
+            // Write the generated password to app.log for the admin's reference
+            const logPath = path.join(app.getPath('userData'), 'app.log');
+            fs.appendFileSync(logPath, `[${new Date().toISOString()}] [SEED] FIRST LAUNCH — Super Admin generated password: ${generatedPassword}\n`);
+            fs.appendFileSync(logPath, `[${new Date().toISOString()}] [SEED] Please change this password immediately after first login.\n`);
+
             const email = 'sabbirsuperadmin@lesoft.local';
             const { data: authUser, error: authErr } = await supabaseAdmin.auth.admin.createUser({
                 email,
-                password: DEFAULT_PASSWORD,
+                password: generatedPassword,       // Supabase Auth uses this for the Auth session
                 email_confirm: true,
                 user_metadata: { username: 'sabbirsuperadmin', full_name: 'Super Admin', role: 'superadmin' }
             });
+
             if (!authErr && authUser?.user) {
-                // Encrypt all profile fields before writing to Supabase
+                // Encrypt all personal profile fields before writing to Supabase
                 const encryptedProfile = encryptObject({
                     full_name: 'Super Administrator',
                     email: email,
                     phone: '',
                 });
                 await supabase.from('users').update({
-                    role: 'superadmin',       // role: not encrypted (structural)
+                    role: 'superadmin',                // Structural field — not encrypted
                     group_id: groupId,
-                    password_hash: DEFAULT_HASH,  // already hashed
+                    password_hash: generatedHash,      // bcrypt hash — stored as-is (already hashed)
                     is_active: true,
                     ...encryptedProfile,
                 }).eq('auth_id', authUser.user.id);
-                console.log('[SEED] Super Admin account created with encrypted profile + password hash.');
+
+                console.log('[SEED] Super Admin account created with random password and encrypted profile.');
+
+                // Show the generated password in a one-time Electron dialog.
+                // This is the ONLY time the plaintext password will ever be visible.
+                // After the admin logs in and changes the password, this is irrelevant.
+                const allWindows = BrowserWindow.getAllWindows();
+                const targetWindow = allWindows.length > 0 ? allWindows[0] : undefined;
+                dialog.showMessageBoxSync(targetWindow || {} as any, {
+                    type: 'info',
+                    title: '🔐 LE-SOFT — First Launch Setup',
+                    message: 'Super Admin Account Created',
+                    detail: [
+                        'A secure random password has been generated for your superadmin account.',
+                        '',
+                        `Username: sabbirsuperadmin`,
+                        `Password: ${generatedPassword}`,
+                        '',
+                        '⚠️  This password is shown ONCE. Please write it down and change it immediately after logging in.',
+                        '',
+                        'The password has also been saved to: userData/app.log'
+                    ].join('\n'),
+                    buttons: ['I have saved my password — Continue'],
+                    defaultId: 0,
+                    noLink: true,
+                });
             }
+
         } else if (!existing.password_hash || !existing.password_hash.startsWith('$2')) {
-            // Fix existing superadmin account that's missing/broken the bcrypt hash
+            // ── REPAIR: Existing account has a missing or broken bcrypt hash ────────
+            // This can happen if the account was created before password hashing was
+            // implemented, or if the DB was corrupted. Generate a new random password.
+            const repairedPassword = generateFirstTimePassword();
+            const repairedHash = await bcrypt.hash(repairedPassword, BCRYPT_ROUNDS);
+
+            const logPath = path.join(app.getPath('userData'), 'app.log');
+            fs.appendFileSync(logPath, `[${new Date().toISOString()}] [SEED] Password hash repaired. New password: ${repairedPassword}\n`);
+
             await supabase.from('users').update({
-                password_hash: DEFAULT_HASH,
+                password_hash: repairedHash,
                 group_id: groupId,
                 role: 'superadmin',
             }).eq('id', existing.id);
-            console.log('[SEED] Super Admin password hash patched.');
+            // Note: this only repairs the bcrypt hash in the users table.
+            // The Supabase Auth password is a separate record — if needed,
+            // use the superadmin panel → Settings to reset it via supabaseAdmin.auth.admin.updateUserById()
+
+            console.log('[SEED] Super Admin password hash repaired with a new random password. Check app.log.');
+
+            dialog.showMessageBoxSync({} as any, {
+                type: 'warning',
+                title: '⚠️  LE-SOFT — Account Repair',
+                message: 'Super Admin Password Reset',
+                detail: [
+                    'Your superadmin account had a missing or invalid password hash.',
+                    'A new random password has been generated.',
+                    '',
+                    `New Password: ${repairedPassword}`,
+                    '',
+                    'Please log in with this password and change it immediately.',
+                    'The password has also been saved to: userData/app.log'
+                ].join('\n'),
+                buttons: ['OK'],
+                noLink: true,
+            });
         }
+        // If existing.password_hash starts with '$2', the account is healthy — skip entirely.
     } catch (e: any) {
         console.warn('[SEED] Super Admin seeder skipped:', e.message);
     }
