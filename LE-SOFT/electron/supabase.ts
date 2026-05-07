@@ -3,7 +3,11 @@ import { app } from 'electron';
 import path from 'path';
 import fs from 'fs';
 
-// ─── Config loading ──────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Config path — stored in the OS user-data directory (never in Git)
+// macOS:   ~/Library/Application Support/le-soft/supabase-config.json
+// Windows: %APPDATA%\le-soft\supabase-config.json
+// ─────────────────────────────────────────────────────────────────────────────
 const CONFIG_PATH = path.join(app.getPath('userData'), 'supabase-config.json');
 
 interface SupabaseConfig {
@@ -12,10 +16,12 @@ interface SupabaseConfig {
     serviceRoleKey?: string;
 }
 
-// Built-in defaults (your project credentials)
-const DEFAULTS: SupabaseConfig = {
-    url: 'https://ildkkgjrolcjijwfokek.supabase.co',
-    anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlsZGtrZ2pyb2xjamlqd2Zva2VrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE5MzMzMjQsImV4cCI6MjA4NzUwOTMyNH0.Bn6c-87BOumPXyH5F469P04fQSMnI9SjNDZAwgGyTsM',
+// SECURITY: No credentials are hardcoded here.
+// All keys must come from the on-disk config file written during first-time setup.
+// If the config file is absent, the app redirects to /setup via hasSupabaseConfig().
+const EMPTY_DEFAULTS: SupabaseConfig = {
+    url: '',
+    anonKey: '',
     serviceRoleKey: ''
 };
 
@@ -23,25 +29,48 @@ function loadConfig(): SupabaseConfig {
     try {
         if (fs.existsSync(CONFIG_PATH)) {
             const raw = fs.readFileSync(CONFIG_PATH, 'utf-8');
-            return { ...DEFAULTS, ...JSON.parse(raw) };
+            const parsed = JSON.parse(raw);
+            // Merge with empty defaults — partial configs are handled gracefully
+            return { ...EMPTY_DEFAULTS, ...parsed };
         }
     } catch (e) {
-        console.warn('[SUPABASE] Could not load config file, using defaults:', e);
+        console.warn('[SUPABASE] Could not load config file:', e);
     }
-    return DEFAULTS;
+    // No config found — caller should redirect to /setup
+    return EMPTY_DEFAULTS;
 }
 
-export function saveSupabaseConfig(config: SupabaseConfig): void {
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), 'utf-8');
+/**
+ * Returns true if a valid Supabase config exists on disk.
+ * Used by main.ts to decide whether to show the Setup screen on first launch.
+ */
+export function hasSupabaseConfig(): boolean {
+    try {
+        if (!fs.existsSync(CONFIG_PATH)) return false;
+        const cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+        return !!(cfg.url && cfg.anonKey);
+    } catch {
+        return false;
+    }
+}
+
+export function saveSupabaseConfig(config: Partial<SupabaseConfig>): void {
+    // Merge with any existing config so partial saves don't wipe other keys
+    const existing = loadConfig();
+    const merged = { ...existing, ...config };
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2), 'utf-8');
     console.log('[SUPABASE] Config saved to', CONFIG_PATH);
 }
 
-// ─── Client singleton ────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Client singletons — created once at module load time
+// ─────────────────────────────────────────────────────────────────────────────
 const config = loadConfig();
 
-export const supabase: SupabaseClient = createClient(config.url, config.anonKey, {
+// Standard client — uses anon key, subject to Supabase RLS policies
+export const supabase: SupabaseClient = createClient(config.url || 'https://placeholder.supabase.co', config.anonKey || 'placeholder', {
     auth: {
-        persistSession: false,           // Electron handles its own sessions
+        persistSession: false,    // Electron manages sessions via session-vault.ts
         autoRefreshToken: true,
     },
     global: {
@@ -51,6 +80,10 @@ export const supabase: SupabaseClient = createClient(config.url, config.anonKey,
     },
 });
 
+// Admin client — uses service role key, bypasses RLS completely.
+// Only available after the superadmin has entered the service key in Settings.
+// All destructive / privileged operations (clear-database, get-device-sessions, etc.)
+// use this client, never the standard anon client.
 export const supabaseAdmin = config.serviceRoleKey ? createClient(config.url, config.serviceRoleKey, {
     auth: {
         autoRefreshToken: false,
@@ -58,6 +91,10 @@ export const supabaseAdmin = config.serviceRoleKey ? createClient(config.url, co
     }
 }) : null;
 
-console.log('[SUPABASE] Client initialized →', config.url);
+if (config.url && config.anonKey) {
+    console.log('[SUPABASE] Client initialized →', config.url);
+} else {
+    console.warn('[SUPABASE] No config found — app will redirect to /setup on first launch.');
+}
 
 export default supabase;

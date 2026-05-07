@@ -7,6 +7,8 @@ import './Login.css';
 
 const SetupScreen: React.FC = () => {
     const navigate = useNavigate();
+    const [supabaseUrl, setSupabaseUrl] = useState('');
+    const [anonKey, setAnonKey] = useState('');
     const [serviceKey, setServiceKey] = useState('');
     const [licenseKey, setLicenseKey] = useState('');
     
@@ -34,11 +36,15 @@ const SetupScreen: React.FC = () => {
         setValidating(true);
 
         try {
-            // 1. Save Supabase Service Key securely
+            // 1. Save all Supabase credentials to disk (userData path — never in Git)
             // @ts-ignore
-            const dbRes = await window.electron.saveSupabaseConfig({ serviceRoleKey: serviceKey.trim() });
+            const dbRes = await window.electron.saveSupabaseConfig({
+                url: supabaseUrl.trim(),
+                anonKey: anonKey.trim(),
+                serviceRoleKey: serviceKey.trim()
+            });
             if (!dbRes?.success) {
-                throw new Error('Failed to save Database Admin Key');
+                throw new Error('Failed to save Database configuration');
             }
 
             // 2. We could optionally validate the license here via an IPC call to Supabase.
@@ -103,12 +109,40 @@ const SetupScreen: React.FC = () => {
 
                 <form onSubmit={handleSetup} className="login-form">
                     <div className="input-group">
-                        <label>Service Key</label>
+                        <label>Supabase Project URL</label>
+                        <div className="input-field">
+                            <Database size={18} />
+                            <input 
+                                type="text" 
+                                placeholder="https://xxxxxxxx.supabase.co" 
+                                value={supabaseUrl}
+                                onChange={(e) => setSupabaseUrl(e.target.value)}
+                                required
+                            />
+                        </div>
+                    </div>
+
+                    <div className="input-group">
+                        <label>Anon / Public Key</label>
+                        <div className="input-field">
+                            <Key size={18} />
+                            <input 
+                                type="password" 
+                                placeholder="Anon Key (eyJh...)" 
+                                value={anonKey}
+                                onChange={(e) => setAnonKey(e.target.value)}
+                                required
+                            />
+                        </div>
+                    </div>
+
+                    <div className="input-group">
+                        <label>Service Role Key</label>
                         <div className="input-field">
                             <Database size={18} />
                             <input 
                                 type="password" 
-                                placeholder="Service Key" 
+                                placeholder="Service Role Key (eyJh...)" 
                                 value={serviceKey}
                                 onChange={(e) => setServiceKey(e.target.value)}
                                 required

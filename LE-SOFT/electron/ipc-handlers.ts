@@ -1708,18 +1708,20 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('save-supabase-config', async (_e, newConfig) => {
+        // newConfig can be a partial object: { url?, anonKey?, serviceRoleKey? }
+        // We merge it with whatever is already on disk so partial saves are safe.
         try {
             const currentConfigPath = path.join(app.getPath('userData'), 'supabase-config.json');
-            let configToSave = {
-                url: 'https://ildkkgjrolcjijwfokek.supabase.co',
-                anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlsZGtrZ2pyb2xjamlqd2Zva2VrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE5MzMzMjQsImV4cCI6MjA4NzUwOTMyNH0.Bn6c-87BOumPXyH5F469P04fQSMnI9SjNDZAwgGyTsM',
-                serviceRoleKey: newConfig.serviceRoleKey || ''
-            };
+            let existing: Record<string, string> = {};
             if (fs.existsSync(currentConfigPath)) {
-                const existing = JSON.parse(fs.readFileSync(currentConfigPath, 'utf8'));
-                configToSave = { ...existing, ...configToSave };
+                existing = JSON.parse(fs.readFileSync(currentConfigPath, 'utf8'));
             }
-            fs.writeFileSync(currentConfigPath, JSON.stringify(configToSave, null, 2), 'utf8');
+            // Merge: new values overwrite existing, but empty/undefined values are ignored
+            const merged: Record<string, string> = { ...existing };
+            if (newConfig.url)            merged.url            = newConfig.url;
+            if (newConfig.anonKey)        merged.anonKey        = newConfig.anonKey;
+            if (newConfig.serviceRoleKey) merged.serviceRoleKey = newConfig.serviceRoleKey;
+            fs.writeFileSync(currentConfigPath, JSON.stringify(merged, null, 2), 'utf8');
             return { success: true };
         } catch (e: any) {
             return { success: false, error: e.message };
