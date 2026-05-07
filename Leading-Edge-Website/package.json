@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "express-rate-limit": "^8.2.1",
+    "express-rate-limit": "^8.5.1",
     "framer-motion": "^11.0.0",
     "helmet": "^8.1.0",
     "lucide-react": "^0.344.0",
