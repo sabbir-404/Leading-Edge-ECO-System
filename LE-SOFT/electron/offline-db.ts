@@ -89,7 +89,14 @@ export async function clearTableCache(): Promise<void> {
 export interface SyncOperation {
     id: string;
     table: string;
-    operation: 'insert' | 'update' | 'upsert' | 'delete';
+    /**
+     * 'insert' | 'update' | 'upsert' | 'delete' — standard Supabase operations.
+     * 'custom' — used for operations that rely on the caller's onSuccess callback
+     *            (e.g., bill_shipping inserts that need the parent bill_id resolved first).
+     *            Custom ops are still persisted to SQLite for offline durability,
+     *            but processEntry() has no SQL for them — the callback handles the write.
+     */
+    operation: 'insert' | 'update' | 'upsert' | 'delete' | 'custom';
     payload: any;
     created_at?: number;
     retry_count?: number;
