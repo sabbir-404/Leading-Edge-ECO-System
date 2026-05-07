@@ -1619,9 +1619,15 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('clear-database', async (_e, { section, password, username }) => {
+        // Guard: all three fields must be provided to avoid crashes
+        if (!section || !password || !username) {
+            return { success: false, error: 'Missing required fields: section, password, or username.' };
+        }
         if (!supabaseAdmin) return { success: false, error: 'Database Admin Key not configured in settings.' };
         
-        // 1. Verify Password via Supabase Auth
+        // Step 1: Verify the caller's password against Supabase Auth.
+        // Construct the email: if username already has '@', use as-is;
+        // otherwise append the internal domain suffix.
         const emailToUse = username.includes('@') ? username : `${username}@lesoft.local`;
         const { error: authError } = await supabaseAdmin.auth.signInWithPassword({
             email: emailToUse,

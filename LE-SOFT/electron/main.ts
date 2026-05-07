@@ -316,9 +316,16 @@ app.on('before-quit', async (event) => {
     event.preventDefault();
 
     console.log('[App] Shutting down — flushing write queue...');
-    await flushQueue();
+    try {
+        // Wait for all pending Supabase writes to drain (max 15s timeout).
+        // If flush() throws for any reason, we still proceed with exit
+        // rather than hanging the app permanently.
+        await flushQueue();
+    } catch (e: any) {
+        console.error('[App] Flush failed on quit:', e.message);
+    }
 
-    // Clear sensitive data from memory
+    // Clear sensitive data from memory before exit
     clearCache();
     clearEncryptionKey();
 

@@ -1,12 +1,25 @@
 /**
- * write-queue.ts
- * Universal async write queue for ALL Supabase data-entry operations.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * write-queue.ts — Universal Asynchronous Write Buffer for LE-SOFT
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- * Every write (insert/update/delete) to Supabase goes through this queue.
- * Writes are processed asynchronously in the background every 300ms.
- * The caller gets an immediate success response.
+ * WHY THIS EXISTS:
+ *   All Supabase writes pass through this queue instead of hitting the DB
+ *   directly. This gives us:
+ *   1. OFFLINE RESILIENCE — writes survive network drops (persisted to SQLite)
+ *   2. NON-BLOCKING UI   — IPC handlers return immediately; DB write is async
+ *   3. RETRY LOGIC       — exponential backoff up to 4 retries before failing
+ *   4. BATCH THROUGHPUT  — 10 concurrent writes per 300ms drain cycle
  *
- * On app close (before-quit signal), call flush() to wait for queue drain.
+ * DATA FLOW:
+ *   ipc-handlers → enqueue() → [memory queue + SQLite sync_queue]
+ *                 → drain() every 300ms
+ *                 → processEntry() → Supabase
+ *                 → onSuccess() → renderer refresh signal
+ *
+ * SHUTDOWN:
+ *   main.ts calls flush() in 'before-quit'. Drains all writes within 15s
+ *   before calling app.exit(0). Unsent writes stay in SQLite for next launch.
  */
 
 import { BrowserWindow } from 'electron';
