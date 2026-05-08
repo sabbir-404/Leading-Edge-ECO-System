@@ -18,6 +18,7 @@ import { encryptObject, encryptField, decryptRows, decryptObject, decryptField }
 import { enqueue, getQueueStats } from './write-queue';
 import * as cache from './cache-manager';
 import { saveSession, loadSession, clearSession } from './session-vault';
+import { autoUpdater } from 'electron-updater';
 
 const BCRYPT_ROUNDS = 12;
 
@@ -2358,10 +2359,9 @@ export function registerHandlers() {
     ipcMain.handle('restart-app', () => { app.relaunch(); app.exit(); });
 
     // Auto-update wiring (electron-updater optional)
-    let autoUpdater: any = null;
     try {
-        autoUpdater = require('electron-updater').autoUpdater;
-        autoUpdater.autoDownload = false; autoUpdater.autoInstallOnAppQuit = true;
+        autoUpdater.autoDownload = false; 
+        autoUpdater.autoInstallOnAppQuit = true;
         const broadcast = (payload: any) => BrowserWindow.getAllWindows().forEach(w => w.webContents.send('update-status', payload));
         autoUpdater.on('update-available', (info: any) => broadcast({ status: 'available', info }));
         autoUpdater.on('update-not-available', () => broadcast({ status: 'up-to-date' }));
