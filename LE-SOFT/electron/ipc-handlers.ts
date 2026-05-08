@@ -1465,8 +1465,8 @@ export function registerHandlers() {
             updatePayload.username = username;
         }
 
-        if (groupId) {
-            updatePayload.group_id = parseInt(groupId);
+        if (groupId !== undefined) {
+            updatePayload.group_id = groupId ? parseInt(groupId) : null;
         }
 
         // Fetch auth_id to update auth password and/or user_metadata if needed
@@ -1848,14 +1848,14 @@ export function registerHandlers() {
 
     ipcMain.handle('create-user-group', async (_e, group) => {
         if (!supabaseAdmin) throw new Error('Database Admin Key not configured in settings.');
-        const { data, error } = await supabaseAdmin.from('user_groups').insert({ name: group.name, description: group.description || '', permissions: JSON.stringify(group.permissions || {}) }).select('id').single();
+        const { data, error } = await supabaseAdmin.from('user_groups').insert({ name: group.name, description: group.description || '', permissions: group.permissions || {} }).select('id').single();
         if (error) throw error;
         return { success: true, id: data.id };
     });
 
     ipcMain.handle('update-user-group', async (_e, group) => {
         if (!supabaseAdmin) throw new Error('Database Admin Key not configured in settings.');
-        const { error } = await supabaseAdmin.from('user_groups').update({ name: group.name, description: group.description || '', permissions: JSON.stringify(group.permissions || {}) }).eq('id', group.id);
+        const { error } = await supabaseAdmin.from('user_groups').update({ name: group.name, description: group.description || '', permissions: group.permissions || {} }).eq('id', group.id);
         if (error) throw error;
         return { success: true };
     });

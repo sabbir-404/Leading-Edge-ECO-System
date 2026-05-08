@@ -62,8 +62,8 @@ const UserGroupList: React.FC = () => {
 
     const startEdit = (group: any) => {
         setEditingId(group.id);
-        try { setEditPerms(JSON.parse(group.permissions || '{}')); }
-        catch { setEditPerms({}); }
+        const p = group.permissions;
+        setEditPerms(typeof p === 'object' && p !== null ? p : (typeof p === 'string' ? JSON.parse(p || '{}') : {}));
     };
 
     const saveEdit = async (group: any) => {
@@ -106,7 +106,9 @@ const UserGroupList: React.FC = () => {
                         <tbody>
                             {filtered.map((group, i) => {
                                 let perms: any = {};
-                                try { perms = JSON.parse(group.permissions || '{}'); } catch {}
+                                const pRaw = group.permissions;
+                                if (typeof pRaw === 'object' && pRaw !== null) perms = pRaw;
+                                else if (typeof pRaw === 'string') { try { perms = JSON.parse(pRaw || '{}'); } catch {} }
                                 const isEditing = editingId === group.id;
 
                                 return (
