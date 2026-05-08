@@ -120,9 +120,10 @@ export default function QuotationCreate() {
     try {
       // @ts-ignore
       const result = await window.electron.pickImage() as any;
-      if (result?.path) {
-        updateItem(id, 'imagePath', result.path);
-        updateItem(id, 'imagePreview', result.dataUrl || result.path);
+      const path = typeof result === 'string' ? result : result?.path;
+      if (path) {
+        updateItem(id, 'imagePath', path);
+        updateItem(id, 'imagePreview', typeof result === 'object' && result?.dataUrl ? result.dataUrl : path);
       }
     } catch { }
   };

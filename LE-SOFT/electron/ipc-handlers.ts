@@ -1906,7 +1906,24 @@ export function registerHandlers() {
     ipcMain.handle('pick-image', async () => {
         const result = await dialog.showOpenDialog({ properties: ['openFile'], filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'] }] });
         if (result.canceled || result.filePaths.length === 0) return null;
-        return result.filePaths[0];
+        
+        const filePath = result.filePaths[0];
+        try {
+            const buffer = fs.readFileSync(filePath);
+            const blob = new Blob([buffer]);
+            const formData = new FormData();
+            formData.append('secret_key', 'LE_SOFT_SECURE_UPLOAD_KEY_2026');
+            formData.append('image', blob, path.basename(filePath));
+            
+            const response = await fetch('https://leadingedge.com.bd/api/upload_image.php', { method: 'POST', body: formData });
+            const data = await response.json();
+            if (data.success) return data.url;
+            console.error("Hostinger upload error:", data.error);
+            return filePath; // Fallback to local path if upload fails
+        } catch (e) {
+            console.error("Upload failed", e);
+            return filePath;
+        }
     });
 
     ipcMain.handle('pick-chat-file', async () => {
@@ -2197,11 +2214,17 @@ export function registerHandlers() {
 
     ipcMain.handle('upload-packaging-image', async (_e, { shipmentId, billId, imageBase64, updatedBy, userRole }: any) => {
         try {
-            const imgDir = path.join(app.getPath('userData'), 'packaging_images');
-            if (!fs.existsSync(imgDir)) fs.mkdirSync(imgDir, { recursive: true });
-            const filename = `ship_${shipmentId}_${Date.now()}.jpg`;
-            const imgPath = path.join(imgDir, filename);
-            fs.writeFileSync(imgPath, Buffer.from(imageBase64.replace(/^data:image\/\w+;base64,/, ''), 'base64'));
+            const buffer = Buffer.from(imageBase64.replace(/^data:image\/\w+;base64,/, ''), 'base64');
+            const blob = new Blob([buffer]);
+            const formData = new FormData();
+            formData.append('secret_key', 'LE_SOFT_SECURE_UPLOAD_KEY_2026');
+            formData.append('image', blob, `ship_${shipmentId}_${Date.now()}.jpg`);
+            
+            const response = await fetch('https://leadingedge.com.bd/api/upload_image.php', { method: 'POST', body: formData });
+            const data = await response.json();
+            
+            if (!data.success) throw new Error(data.error || 'Failed to upload image to Hostinger');
+            const imgPath = data.url;
             await supabase.from('bill_shipping').update({ packaging_image_path: imgPath, updated_by: updatedBy, status: 'ready_to_ship', updated_at: new Date().toISOString() }).eq('id', shipmentId);
             await supabase.from('shipping_status_log').insert({ shipment_id: shipmentId, bill_id: billId, status: 'ready_to_ship', note: 'Packaging photo uploaded, ready to ship', image_path: imgPath, updated_by: updatedBy, updated_by_role: userRole });
             await writeAuditLog({ module: 'Shipping', action: 'PACKAGING_IMAGE_UPLOADED', entity_type: 'shipment', entity_id: shipmentId, description: `Photo uploaded by ${updatedBy}`, performed_by: updatedBy });
