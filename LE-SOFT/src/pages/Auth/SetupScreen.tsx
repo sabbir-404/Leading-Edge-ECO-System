@@ -131,19 +131,7 @@ const SetupScreen: React.FC = () => {
                         </div>
                     </div>
 
-                    <div className="input-group">
-                        <label>License Key</label>
-                        <div className="input-field">
-                            <Key size={18} />
-                            <input 
-                                type="text" 
-                                placeholder="XXXXX-XXXXX-XXXXX-XXXXX" 
-                                value={licenseKey}
-                                onChange={(e) => setLicenseKey(e.target.value)}
-                                required
-                            />
-                        </div>
-                    </div>
+
 
                     {deviceId && (
                         <div style={{ marginTop: '1rem', padding: '0.75rem', background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '8px', fontSize: '0.85rem', textAlign: 'center' }}>

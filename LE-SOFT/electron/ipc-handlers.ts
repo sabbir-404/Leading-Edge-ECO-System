@@ -2139,52 +2139,11 @@ export function registerHandlers() {
     ipcMain.handle('add-bill-shipping', async (_e, data: any) => {
         // Since create-bill uses the write-queue, the bill_id might not exist yet if we query Supabase immediately.
         // We queue this shipping record to insert roughly after the bill is written.
+        // Handled entirely by processEntry() in write-queue.ts to survive app restarts.
         enqueue({
             table: 'bill_shipping',
-            operation: 'custom', // Use custom queue op or a wrapper
-            data: data,
-            onSuccess: async () => {
-                try {
-                    // Try to resolve the actual Supabase bill_id using the deterministic invoice_number
-                    const { data: b } = await supabase.from('bills').select('id').eq('invoice_number', data.invoice_number).maybeSingle();
-                    const realBillId = b?.id || data.bill_id;
-
-                    const { data: sh, error } = await supabase.from('bill_shipping').upsert({ 
-                        bill_id: realBillId, 
-                        ship_to_name: data.ship_to_name, 
-                        ship_to_address: data.ship_to_address, 
-                        ship_to_phone: data.ship_to_phone || '', 
-                        ship_from_name: data.ship_from_name || '', 
-                        ship_from_address: data.ship_from_address || '', 
-                        shipping_charge: data.shipping_charge || 0, 
-                        updated_by: data.updated_by, 
-                        status: 'pending_payment' 
-                    }, { onConflict: 'bill_id' }).select('id').single();
-                    
-                    if (error) throw error;
-                    
-                    await supabase.from('shipping_status_log').insert({ 
-                        shipment_id: sh.id, 
-                        bill_id: realBillId, 
-                        status: 'pending_payment', 
-                        note: 'Shipping order created', 
-                        updated_by: data.updated_by, 
-                        updated_by_role: data.user_role || 'cashier' 
-                    });
-                    
-                    await writeAuditLog({ 
-                        module: 'Shipping', 
-                        action: 'SHIPPING_CREATED', 
-                        entity_type: 'bill', 
-                        entity_id: realBillId, 
-                        description: `Shipping added. Destination: ${data.ship_to_address}`, 
-                        new_value: data, 
-                        performed_by: data.updated_by 
-                    });
-                } catch (e) {
-                    console.error('[add-bill-shipping] Background write failed:', e);
-                }
-            }
+            operation: 'custom',
+            data: data
         });
 
         // Return immediate success to unblock the UI since it's queued

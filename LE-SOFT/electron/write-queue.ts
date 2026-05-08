@@ -124,6 +124,49 @@ async function processEntry(entry: QueueEntry): Promise<void> {
             for (const f of filter) q = q.eq(f.column, f.value);
             const res = await q;
             error = res.error;
+        } else if (operation === 'custom' && table === 'bill_shipping') {
+            const d = data as Record<string, any>;
+            // Handle bill_shipping custom operation here so it survives app restarts
+            // Since create-bill uses the write-queue, the bill_id might not exist yet
+            // when we queued this. We resolve it now using the deterministic invoice_number.
+            const { data: b } = await supabase.from('bills').select('id').eq('invoice_number', d.invoice_number).maybeSingle();
+            const realBillId = b?.id || d.bill_id;
+
+            const { data: sh, error: shErr } = await supabase.from('bill_shipping').upsert({ 
+                bill_id: realBillId, 
+                ship_to_name: d.ship_to_name, 
+                ship_to_address: d.ship_to_address, 
+                ship_to_phone: d.ship_to_phone || '', 
+                ship_from_name: d.ship_from_name || '', 
+                ship_from_address: d.ship_from_address || '', 
+                shipping_charge: d.shipping_charge || 0, 
+                updated_by: d.updated_by, 
+                status: 'pending_payment' 
+            }, { onConflict: 'bill_id' }).select('id').single();
+            
+            error = shErr;
+
+            if (!error && sh) {
+                await supabase.from('shipping_status_log').insert({ 
+                    shipment_id: sh.id, 
+                    bill_id: realBillId, 
+                    status: 'pending_payment', 
+                    note: 'Shipping order created', 
+                    updated_by: d.updated_by, 
+                    updated_by_role: d.user_role || 'cashier' 
+                });
+                
+                // Write audit log (same as writeAuditLog in ipc-handlers)
+                await supabase.from('system_audit_log').insert({
+                    module: 'Shipping',
+                    action: 'SHIPPING_CREATED',
+                    entity_type: 'bill',
+                    entity_id: String(realBillId),
+                    description: `Shipping added. Destination: ${d.ship_to_address}`,
+                    new_value: JSON.stringify(d),
+                    performed_by: d.updated_by
+                });
+            }
         }
 
         if (error) throw new Error(error.message);
