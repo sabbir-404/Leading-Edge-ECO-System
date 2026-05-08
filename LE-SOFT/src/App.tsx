@@ -171,12 +171,23 @@ function App() {
 
   // Auto-logout on idle — clears ALL session keys to prevent stale state (BUG-02 fix)
   const handleAutoLogout = () => {
-    localStorage.removeItem('user_role');
-    localStorage.removeItem('user_permissions');
-    localStorage.removeItem('user_name');
-    localStorage.removeItem('user_id');
-    localStorage.removeItem('user');
-    localStorage.removeItem('license_warning');
+    const keepKeys = ['app_license_key', 'supabase_admin_key', 'barcode_sticker_size', 'barcode_printer', 'auto_logout_enabled', 'auto_logout_minutes', 'theme'];
+    const keysToKeep = keepKeys.reduce((acc, key) => {
+      const val = localStorage.getItem(key);
+      if (val !== null) acc[key] = val;
+      return acc;
+    }, {} as Record<string, string>);
+
+    localStorage.clear();
+    sessionStorage.clear();
+
+    Object.entries(keysToKeep).forEach(([k, v]) => localStorage.setItem(k, v));
+    
+    // Also notify main process if needed
+    if ((window as any).electron?.clearSession) {
+      (window as any).electron.clearSession();
+    }
+    
     navigate('/');
   };
 
@@ -234,7 +245,7 @@ function App() {
         <IdleWarningModal show={showWarning} countdown={countdown} onStay={stayLoggedIn} />
         
         {/* Render the unified loading screen over the protected routes until the offline cache is fully warmed up */}
-        {location.pathname !== '/' && location.pathname !== '/login' && location.pathname !== '/setup' && !isAppReady && (
+        {!isAuthPage && !isAppReady && (
             <AppLoadingScreen onReady={() => setIsAppReady(true)} />
         )}
 

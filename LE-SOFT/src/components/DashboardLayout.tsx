@@ -135,12 +135,23 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
   }, [location.pathname]);
 
   const handleLogout = useCallback(() => {
-    localStorage.removeItem('user_role');
-    localStorage.removeItem('user_name');
-    localStorage.removeItem('user_id');
-    localStorage.removeItem('user_permissions');
-    localStorage.removeItem('user');
-    localStorage.removeItem('license_warning');
+    const keepKeys = ['app_license_key', 'supabase_admin_key', 'barcode_sticker_size', 'barcode_printer', 'auto_logout_enabled', 'auto_logout_minutes', 'theme'];
+    const keysToKeep = keepKeys.reduce((acc, key) => {
+      const val = localStorage.getItem(key);
+      if (val !== null) acc[key] = val;
+      return acc;
+    }, {} as Record<string, string>);
+
+    localStorage.clear();
+    sessionStorage.clear();
+
+    Object.entries(keysToKeep).forEach(([k, v]) => localStorage.setItem(k, v));
+    
+    // Also notify main process if needed
+    if ((window as any).electron?.clearSession) {
+      (window as any).electron.clearSession();
+    }
+    
     navigate('/');
   }, [navigate]);
 

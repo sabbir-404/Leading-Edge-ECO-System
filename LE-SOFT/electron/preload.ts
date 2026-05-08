@@ -56,6 +56,7 @@ contextBridge.exposeInMainWorld('electron', {
     updateUser: (user: any) => ipcRenderer.invoke('update-user', user),
     deleteUser: (id: number) => ipcRenderer.invoke('delete-user', id),
     authenticateUser: (creds: any) => ipcRenderer.invoke('authenticate-user', creds),
+    clearSession: () => ipcRenderer.invoke('clear-session'),
     getActiveSessions: () => ipcRenderer.invoke('get-active-sessions'),
     kickUserSession: (userId: number) => ipcRenderer.invoke('kick-user-session', userId),
     verifyAdminPassword: (data: any) => ipcRenderer.invoke('verify-admin-password', data),

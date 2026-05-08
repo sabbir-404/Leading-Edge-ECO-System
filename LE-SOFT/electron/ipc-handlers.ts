@@ -1641,6 +1641,16 @@ export function registerHandlers() {
         return { success: false, error: 'Invalid username or password.' };
     });
 
+    ipcMain.handle('clear-session', async () => {
+        try {
+            await supabase.auth.signOut();
+            clearSession();
+            return { success: true };
+        } catch (e) {
+            return { success: false, error: String(e) };
+        }
+    });
+
     // ═══ ACTIVE SESSION KICKING ═══════════════════════════════════════════════
     ipcMain.handle('get-active-sessions', async () => {
         const { data, error } = await supabase.from('users').select('*').eq('is_online', true);
