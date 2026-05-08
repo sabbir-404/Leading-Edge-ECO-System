@@ -7,8 +7,6 @@ import './Login.css';
 
 const SetupScreen: React.FC = () => {
     const navigate = useNavigate();
-    const [supabaseUrl, setSupabaseUrl] = useState('');
-    const [anonKey, setAnonKey] = useState('');
     const [serviceKey, setServiceKey] = useState('');
     const [licenseKey, setLicenseKey] = useState('');
     
@@ -36,26 +34,24 @@ const SetupScreen: React.FC = () => {
         setValidating(true);
 
         try {
-            // 1. Save all Supabase credentials to disk (userData path — never in Git)
-            // @ts-ignore
-            const dbRes = await window.electron.saveSupabaseConfig({
-                url: supabaseUrl.trim(),
-                anonKey: anonKey.trim(),
-                serviceRoleKey: serviceKey.trim()
-            });
-            if (!dbRes?.success) {
-                throw new Error('Failed to save Database configuration');
-            }
-
-            // 2. We could optionally validate the license here via an IPC call to Supabase.
-            // But since the config is just saved, we assume it's stored and verify it later,
-            // or we could enforce a license check. 
-            // For now, let's just save it.
+            // Step 1: Activate license — this also auto-decrypts the embedded
+            // Supabase URL and anon key from the encrypted blobs in the app binary.
+            // The user never needs to enter the project URL or anon key manually.
             // @ts-ignore
             const licRes = await window.electron.activateLicense(licenseKey.trim());
-            
             if (!licRes?.success) {
-                throw new Error(licRes?.error || 'Invalid License Key or Database connection failed');
+                throw new Error(licRes?.error || 'Invalid License Key or activation failed');
+            }
+
+            // Step 2: If service key provided, save it separately
+            if (serviceKey.trim()) {
+                // @ts-ignore
+                const dbRes = await window.electron.saveSupabaseConfig({
+                    serviceRoleKey: serviceKey.trim()
+                });
+                if (!dbRes?.success) {
+                    throw new Error('Failed to save Service Role Key');
+                }
             }
 
             // Success
@@ -109,35 +105,21 @@ const SetupScreen: React.FC = () => {
 
                 <form onSubmit={handleSetup} className="login-form">
                     <div className="input-group">
-                        <label>Supabase Project URL</label>
-                        <div className="input-field">
-                            <Database size={18} />
-                            <input 
-                                type="text" 
-                                placeholder="https://xxxxxxxx.supabase.co" 
-                                value={supabaseUrl}
-                                onChange={(e) => setSupabaseUrl(e.target.value)}
-                                required
-                            />
-                        </div>
-                    </div>
-
-                    <div className="input-group">
-                        <label>Anon / Public Key</label>
+                        <label>License Key</label>
                         <div className="input-field">
                             <Key size={18} />
                             <input 
-                                type="password" 
-                                placeholder="Anon Key (eyJh...)" 
-                                value={anonKey}
-                                onChange={(e) => setAnonKey(e.target.value)}
+                                type="text" 
+                                placeholder="XXXXX-XXXXX-XXXXX-XXXXX" 
+                                value={licenseKey}
+                                onChange={(e) => setLicenseKey(e.target.value)}
                                 required
                             />
                         </div>
                     </div>
 
                     <div className="input-group">
-                        <label>Service Role Key</label>
+                        <label>Service Role Key <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>(optional — required for admin features)</span></label>
                         <div className="input-field">
                             <Database size={18} />
                             <input 
@@ -145,7 +127,6 @@ const SetupScreen: React.FC = () => {
                                 placeholder="Service Role Key (eyJh...)" 
                                 value={serviceKey}
                                 onChange={(e) => setServiceKey(e.target.value)}
-                                required
                             />
                         </div>
                     </div>

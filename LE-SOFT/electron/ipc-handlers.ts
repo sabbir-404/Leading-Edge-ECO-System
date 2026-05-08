@@ -10,7 +10,7 @@ import fs from 'fs';
 import os from 'os';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
-import supabase, { supabaseAdmin } from './supabase';
+import supabase, { supabaseAdmin, decryptEmbeddedCredentials } from './supabase';
 import mysql from 'mysql2/promise';
 import * as licenseManager from './license-manager';
 import { getConnectedDevices, setBackupNode, DEVICE_ID } from './device-monitor';
@@ -2244,9 +2244,24 @@ export function registerHandlers() {
     ipcMain.handle('get-machine-id', async () => licenseManager.getMachineId());
     ipcMain.handle('check-license', async () => licenseManager.isLicensed());
     ipcMain.handle('activate-license', async (_e, key: string) => {
-        if (!key || typeof key !== 'string' || key.trim().length < 10) return { success: false, error: 'Invalid license key format' };
-        return licenseManager.saveLicense(key.trim());
+        if (!key || typeof key !== 'string' || key.trim().length < 10)
+            return { success: false, error: 'Invalid license key format' };
+
+        // Step 1: Validate the license key against this machine's hardware ID
+        const result = licenseManager.saveLicense(key.trim());
+        if (!result.success) return result;
+
+        // Step 2: On successful activation, auto-decrypt the embedded Supabase
+        // credentials (URL + anon key) using the master secret.
+        // The user never needs to manually enter the project URL or anon key.
+        const credResult = decryptEmbeddedCredentials();
+        if (!credResult) {
+            console.warn('[LICENSE] License activated but credential decryption failed. User may need to enter credentials manually.');
+        }
+
+        return { success: true, credentialsDecrypted: credResult };
     });
+
 
     // ═══ DB MONITORING ════════════════════════════════════════════════════
 

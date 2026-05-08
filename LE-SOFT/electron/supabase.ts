@@ -2,6 +2,9 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { app } from 'electron';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
+import { ENCRYPTED_URL, ENCRYPTED_ANON_KEY } from './credentials';
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Config path — stored in the OS user-data directory (never in Git)
@@ -61,6 +64,75 @@ export function saveSupabaseConfig(config: Partial<SupabaseConfig>): void {
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2), 'utf-8');
     console.log('[SUPABASE] Config saved to', CONFIG_PATH);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Credential decryption — unlocked by the license key at setup time
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Must match tools/encrypt-credentials.cjs constants exactly
+const GENERATION_SECRET = 'LE-SOFT-MASTER-KEY-2026-Pr0duct10n-S3cret!@#';
+const CREDENTIAL_SALT   = 'LE-SOFT-CREDENTIAL-ENCRYPT-SALT-v1-2026';
+
+/**
+ * Derives the AES-256 decryption key using PBKDF2.
+ * Same derivation as the encryption tool — produces an identical key.
+ */
+function deriveCredentialKey(): Buffer {
+    return crypto.pbkdf2Sync(
+        GENERATION_SECRET,
+        CREDENTIAL_SALT,
+        100_000,   // iterations — must match encrypt-credentials.cjs
+        32,        // 32 bytes = 256-bit key
+        'sha512'
+    );
+}
+
+/**
+ * Decrypts a single AES-256-GCM encrypted blob.
+ * Format: base64( IV[12] + AuthTag[16] + Ciphertext )
+ */
+function decryptBlob(encryptedBase64: string, key: Buffer): string {
+    const buf        = Buffer.from(encryptedBase64, 'base64');
+    const iv         = buf.subarray(0, 12);
+    const tag        = buf.subarray(12, 28);
+    const ciphertext = buf.subarray(28);
+    const decipher   = crypto.createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAuthTag(tag);
+    return decipher.update(ciphertext).toString('utf8') + decipher.final('utf8');
+}
+
+/**
+ * Decrypts the embedded Supabase URL and anon key from credentials.ts and
+ * saves them to the userData config file.
+ *
+ * Called from the activate-license IPC handler after license validation passes.
+ * This means the user NEVER has to manually type the project URL or anon key —
+ * a valid license key is sufficient to unlock the database connection.
+ *
+ * @returns true if decryption succeeded and config was saved, false on error
+ */
+export function decryptEmbeddedCredentials(): boolean {
+    try {
+        const key     = deriveCredentialKey();
+        const url     = decryptBlob(ENCRYPTED_URL, key);
+        const anonKey = decryptBlob(ENCRYPTED_ANON_KEY, key);
+
+        // Sanity check: decrypted values must look like real credentials
+        if (!url.startsWith('https://') || !anonKey.startsWith('eyJ')) {
+            console.error('[CREDENTIALS] Decryption produced invalid output. Blob may be corrupted or GENERATION_SECRET has changed.');
+            return false;
+        }
+
+        // Save to userData config — this is what supabase.ts reads on next launch
+        saveSupabaseConfig({ url, anonKey });
+        console.log('[CREDENTIALS] Supabase credentials auto-configured from embedded encrypted store.');
+        return true;
+    } catch (e: any) {
+        console.error('[CREDENTIALS] Failed to decrypt embedded credentials:', e.message);
+        return false;
+    }
+}
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Client singletons — created once at module load time
