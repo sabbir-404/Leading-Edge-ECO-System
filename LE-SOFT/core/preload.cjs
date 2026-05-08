@@ -49,6 +49,7 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   updateUser: (user) => import_electron.ipcRenderer.invoke("update-user", user),
   deleteUser: (id) => import_electron.ipcRenderer.invoke("delete-user", id),
   authenticateUser: (creds) => import_electron.ipcRenderer.invoke("authenticate-user", creds),
+  clearSession: () => import_electron.ipcRenderer.invoke("clear-session"),
   getActiveSessions: () => import_electron.ipcRenderer.invoke("get-active-sessions"),
   kickUserSession: (userId) => import_electron.ipcRenderer.invoke("kick-user-session", userId),
   verifyAdminPassword: (data) => import_electron.ipcRenderer.invoke("verify-admin-password", data),

@@ -17,6 +17,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { useAutoRefresh } from '../../hooks/useAutoRefresh';
 import DashboardLayout from '../../components/DashboardLayout';
+import { resolveImageSrc } from '../../utils/imageSrc';
 import './Dashboard.css';
 
 const Dashboard: React.FC = () => {
@@ -312,11 +313,18 @@ const Dashboard: React.FC = () => {
                                     ) : (
                                         <table>
                                             <thead><tr>
-                                                <th>SKU</th><th>Product Name</th><th style={{ textAlign: 'right' }}>Stock</th><th style={{ textAlign: 'right' }}>Price</th>
+                                                <th>Image</th><th>SKU</th><th>Product Name</th><th style={{ textAlign: 'right' }}>Stock</th><th style={{ textAlign: 'right' }}>Price</th>
                                             </tr></thead>
                                             <tbody>
                                                 {searchResults.map((p: any) => (
                                                     <tr key={p.id} onClick={() => setSelectedProduct(p)}>
+                                                        <td>
+                                                            {p.image_path ? (
+                                                                <img src={resolveImageSrc(p.image_path)} alt="" style={{ width: '30px', height: '30px', borderRadius: '6px', objectFit: 'cover', border: '1px solid var(--border-color)' }} onError={(e: any) => { e.target.style.display = 'none'; }} />
+                                                            ) : (
+                                                                <div style={{ width: '30px', height: '30px', borderRadius: '6px', background: 'var(--hover-bg)', color: 'var(--text-secondary)', fontSize: '0.6rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>IMG</div>
+                                                            )}
+                                                        </td>
                                                         <td style={{ fontFamily: 'monospace' }}>{p.sku}</td>
                                                         <td style={{ fontWeight: 500 }}>{p.name}</td>
                                                         <td style={{ textAlign: 'right' }}>{p.quantity} {p.unit_symbol}</td>
@@ -543,7 +551,11 @@ const Dashboard: React.FC = () => {
                         >
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.25rem' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                                    <div style={{ background: 'rgba(34, 197, 94, 0.1)', color: '#22c55e', padding: '10px', borderRadius: '10px' }}><Package size={22} /></div>
+                                    {selectedProduct.image_path ? (
+                                        <img src={resolveImageSrc(selectedProduct.image_path)} alt="" style={{ width: '52px', height: '52px', borderRadius: '12px', objectFit: 'cover', border: '1px solid var(--border-color)' }} onError={(e: any) => { e.target.style.display = 'none'; }} />
+                                    ) : (
+                                        <div style={{ background: 'rgba(34, 197, 94, 0.1)', color: '#22c55e', padding: '10px', borderRadius: '10px' }}><Package size={22} /></div>
+                                    )}
                                     <div>
                                         <h2 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 700 }}>{selectedProduct.name}</h2>
                                         <span style={{ fontFamily: 'monospace', opacity: 0.5, fontSize: '0.8rem' }}>SKU: {selectedProduct.sku}</span>

@@ -257,6 +257,16 @@ app.whenReady().then(() => {
 
     log('App starting...');
     
+    // Register IPC handlers early to ensure renderer calls before background init succeed
+    // This avoids a race where the renderer invokes `ipcRenderer.invoke(...)` before handlers
+    // are registered, causing "No handler registered" errors in the renderer.
+    try {
+        registerHandlers();
+        log('IPC handlers registered');
+    } catch (err: any) {
+        log(`Failed to register IPC handlers early: ${err.message}`);
+    }
+
     // 1. Open main window immediately so the app is visibly running
     createWindow();
     log('Window created call done');
@@ -293,7 +303,7 @@ app.whenReady().then(() => {
             registerDevice();
             startHeartbeat(60_000);
             startBroadcastListener();
-            registerHandlers();
+            // registerHandlers() has already been called earlier to avoid IPC race.
             setupAutoUpdater(); // ← wire up electron-updater
             log('Background services registered');
         } catch (e: any) {

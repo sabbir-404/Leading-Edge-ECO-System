@@ -10,6 +10,7 @@ import fs from 'fs';
 import os from 'os';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
+import sharp from 'sharp';
 import supabase, { supabaseAdmin, decryptEmbeddedCredentials } from './supabase';
 import mysql from 'mysql2/promise';
 import * as licenseManager from './license-manager';
@@ -21,6 +22,52 @@ import { saveSession, loadSession, clearSession } from './session-vault';
 import { autoUpdater } from 'electron-updater';
 
 const BCRYPT_ROUNDS = 12;
+const HOSTINGER_UPLOAD_URL = 'https://leadingedge.com.bd/api/upload_image.php';
+const HOSTINGER_UPLOAD_SECRET = 'LE_SOFT_SECURE_UPLOAD_KEY_2026';
+const MAX_IMAGE_UPLOAD_BYTES = 500 * 1024;
+
+async function optimizeImageBuffer(buffer: Buffer): Promise<Buffer> {
+    const metadata = await sharp(buffer, { failOnError: false }).metadata();
+    const sourceWidth = metadata.width || 1600;
+
+    const attempts = [
+        { width: Math.min(sourceWidth, 1600), quality: 82 },
+        { width: Math.min(sourceWidth, 1280), quality: 74 },
+        { width: Math.min(sourceWidth, 1024), quality: 66 },
+        { width: Math.min(sourceWidth, 800), quality: 58 },
+        { width: Math.min(sourceWidth, 640), quality: 48 },
+        { width: Math.min(sourceWidth, 480), quality: 38 },
+        { width: Math.min(sourceWidth, 360), quality: 30 },
+    ];
+
+    let optimized = buffer;
+    for (const attempt of attempts) {
+        optimized = await sharp(buffer, { failOnError: false })
+            .rotate()
+            .resize({ width: attempt.width, withoutEnlargement: true })
+            .webp({ quality: attempt.quality, effort: 6 })
+            .toBuffer();
+        if (optimized.length <= MAX_IMAGE_UPLOAD_BYTES) break;
+    }
+
+    return optimized;
+}
+
+async function uploadOptimizedImage(buffer: Buffer, filenamePrefix: string): Promise<string> {
+    const optimized = await optimizeImageBuffer(buffer);
+    const formData = new FormData();
+    formData.append('secret_key', HOSTINGER_UPLOAD_SECRET);
+    formData.append('image', new Blob([optimized], { type: 'image/webp' }), `${filenamePrefix}_${Date.now()}.webp`);
+
+    const response = await fetch(HOSTINGER_UPLOAD_URL, { method: 'POST', body: formData });
+    const data = await response.json();
+
+    if (!data.success || !data.url) {
+        throw new Error(data.error || 'Failed to upload image to Hostinger');
+    }
+
+    return data.url;
+}
 
 // ── Super Admin seeder ───────────────────────────────────────────────────────
 /**
@@ -249,6 +296,20 @@ async function writeAuditLog(params: { module: string; action: string; entity_ty
 
 // ─────────────────────────────────────────────────────────────────────────────
 export function registerHandlers() {
+    // Make handler registration idempotent: ensure calling registerHandlers()
+    // multiple times doesn't attempt to register the same channel twice.
+    // We wrap ipcMain.handle with a small shim that removes any existing
+    // handler for the channel before registering the new one.
+    try {
+        const _origHandle = (ipcMain as any).handle.bind(ipcMain);
+        (ipcMain as any).handle = (channel: string, listener: any) => {
+            try { ipcMain.removeHandler(channel); } catch (e) { /* ignore */ }
+            return _origHandle(channel, listener);
+        };
+    } catch (e) {
+        // If we can't patch, fall back to normal behavior — registration
+        // may throw if called twice, which will be handled by caller.
+    }
 
     // ═══ DATABASE HEALTH ═════════════════════════════════════════════════════
     ipcMain.handle('ping-supabase', async () => {
@@ -1909,20 +1970,10 @@ export function registerHandlers() {
         
         const filePath = result.filePaths[0];
         try {
-            const buffer = fs.readFileSync(filePath);
-            const blob = new Blob([buffer]);
-            const formData = new FormData();
-            formData.append('secret_key', 'LE_SOFT_SECURE_UPLOAD_KEY_2026');
-            formData.append('image', blob, path.basename(filePath));
-            
-            const response = await fetch('https://leadingedge.com.bd/api/upload_image.php', { method: 'POST', body: formData });
-            const data = await response.json();
-            if (data.success) return data.url;
-            console.error("Hostinger upload error:", data.error);
-            return filePath; // Fallback to local path if upload fails
+            return await uploadOptimizedImage(fs.readFileSync(filePath), path.basename(filePath, path.extname(filePath)) || 'product');
         } catch (e) {
-            console.error("Upload failed", e);
-            return filePath;
+            console.error('[IPC] Product image upload failed:', e);
+            return null;
         }
     });
 
@@ -2215,16 +2266,7 @@ export function registerHandlers() {
     ipcMain.handle('upload-packaging-image', async (_e, { shipmentId, billId, imageBase64, updatedBy, userRole }: any) => {
         try {
             const buffer = Buffer.from(imageBase64.replace(/^data:image\/\w+;base64,/, ''), 'base64');
-            const blob = new Blob([buffer]);
-            const formData = new FormData();
-            formData.append('secret_key', 'LE_SOFT_SECURE_UPLOAD_KEY_2026');
-            formData.append('image', blob, `ship_${shipmentId}_${Date.now()}.jpg`);
-            
-            const response = await fetch('https://leadingedge.com.bd/api/upload_image.php', { method: 'POST', body: formData });
-            const data = await response.json();
-            
-            if (!data.success) throw new Error(data.error || 'Failed to upload image to Hostinger');
-            const imgPath = data.url;
+            const imgPath = await uploadOptimizedImage(buffer, `ship_${shipmentId}`);
             await supabase.from('bill_shipping').update({ packaging_image_path: imgPath, updated_by: updatedBy, status: 'ready_to_ship', updated_at: new Date().toISOString() }).eq('id', shipmentId);
             await supabase.from('shipping_status_log').insert({ shipment_id: shipmentId, bill_id: billId, status: 'ready_to_ship', note: 'Packaging photo uploaded, ready to ship', image_path: imgPath, updated_by: updatedBy, updated_by_role: userRole });
             await writeAuditLog({ module: 'Shipping', action: 'PACKAGING_IMAGE_UPLOADED', entity_type: 'shipment', entity_id: shipmentId, description: `Photo uploaded by ${updatedBy}`, performed_by: updatedBy });

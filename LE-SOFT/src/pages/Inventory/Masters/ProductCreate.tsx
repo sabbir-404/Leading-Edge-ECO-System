@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { ArrowLeft, Save, ImagePlus, X } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { resolveImageSrc } from '../../../utils/imageSrc';
 import '../../Accounting/Masters/Masters.css';
 
 const ProductCreate: React.FC = () => {
@@ -112,7 +113,7 @@ const ProductCreate: React.FC = () => {
                             <div style={{ position: 'relative' }}>
                                 {/* Show file:// for local paths, direct src for data URIs */}
                                 <img
-                                    src={imagePath.startsWith('data:') || imagePath.startsWith('http') ? imagePath : `file://${imagePath}`}
+                                    src={resolveImageSrc(imagePath)}
                                     alt="Product"
                                     style={{ width: '80px', height: '80px', objectFit: 'cover', borderRadius: '10px', border: '2px solid var(--border-color)' }}
                                     onError={(e: any) => { e.target.style.opacity = '0.3'; }}

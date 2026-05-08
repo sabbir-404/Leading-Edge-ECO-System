@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Search, Edit3, Save, Clock, ChevronDown, ChevronUp, Minus, Plus, Trash2, Star, Package } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAutoRefresh } from '../../hooks/useAutoRefresh';
+import { resolveImageSrc } from '../../utils/imageSrc';
 import { getCallerContext } from '../../utils/permissions';
 
 import DashboardLayout from '../../components/DashboardLayout';
@@ -66,7 +67,8 @@ const AlterBill: React.FC = () => {
     const [paymentMethods, setPaymentMethods] = useState<any[]>([]);
     const [selectedPayment, setSelectedPayment] = useState('');
     const [paymentRef, setPaymentRef] = useState('');
-    const [pendingSave, setPendingSave] = useState(false);
+    const [pendingSave, setPendingSave] = useState(false);
+
 
     const ensureProductsLoaded = useCallback(async () => {
         if (productsLoaded) return;
@@ -407,7 +409,7 @@ const AlterBill: React.FC = () => {
                                                     <td style={{ padding: '0.6rem 1rem' }}>
                                                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                                                             {item.image_path && (
-                                                                <img src={`file://${item.image_path}`} alt="" style={{ width: '32px', height: '32px', borderRadius: '4px', objectFit: 'cover', border: '1px solid #eee' }} />
+                                                                <img src={resolveImageSrc(item.image_path)} alt="" style={{ width: '32px', height: '32px', borderRadius: '4px', objectFit: 'cover', border: '1px solid #eee' }} />
                                                             )}
                                                             <div>
                                                                 <div style={{ fontWeight: 600 }}>{safeDecrypt(item.product_name)}</div>

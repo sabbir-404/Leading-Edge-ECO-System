@@ -4,6 +4,7 @@ import { Plus, Search, Trash2, Edit2, Barcode } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useAutoRefresh } from '../../../hooks/useAutoRefresh';
 import BarcodeStickerModal, { StickerSize } from '../../../components/BarcodeStickerModal';
+import { resolveImageSrc } from '../../../utils/imageSrc';
 import '../../Accounting/Masters/Masters.css';
 
 const ProductList: React.FC = () => {
@@ -218,7 +219,7 @@ const ProductList: React.FC = () => {
                                     </td>
                                     <td>
                                         {product.image_path ? (
-                                            <img src={`file://${product.image_path}`} alt="" style={{ width: '36px', height: '36px', objectFit: 'cover', borderRadius: '6px' }} onError={(e: any) => { e.target.style.display = 'none'; }} />
+                                            <img src={resolveImageSrc(product.image_path)} alt="" style={{ width: '36px', height: '36px', objectFit: 'cover', borderRadius: '6px' }} onError={(e: any) => { e.target.style.display = 'none'; }} />
                                         ) : (
                                             <div style={{ width: '36px', height: '36px', borderRadius: '6px', background: 'var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.6rem', opacity: 0.4 }}>N/A</div>
                                         )}
