@@ -2,8 +2,8 @@ name: Build & Publish macOS
 
 on:
   push:
-    branches:
-      - main-mac
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 jobs:

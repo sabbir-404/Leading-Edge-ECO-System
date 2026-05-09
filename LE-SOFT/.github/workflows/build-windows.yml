@@ -2,8 +2,8 @@ name: Build & Publish Windows
 
 on:
   push:
-    branches:
-      - main-windows
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 jobs:
