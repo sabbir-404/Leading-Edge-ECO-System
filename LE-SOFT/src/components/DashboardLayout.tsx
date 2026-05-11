@@ -34,7 +34,8 @@ import {
   Target,
   Calendar,
   ShieldAlert,
-  ArrowLeftRight
+  ArrowLeftRight,
+  ShoppingBag
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTheme } from '../context/ThemeContext';
@@ -176,6 +177,15 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
       ]
     }] : []),
     ...(hasPermission('read_group') || hasPermission('read_ledger') || hasPermission('read_stock_items') ? [{ icon: <Database size={20} />, label: 'Masters', path: '/masters' }] : []),
+    ...(hasPermission('read_products') ? [{
+      icon: <ShoppingBag size={20} />,
+      label: 'Procurement',
+      path: '/masters/purchase-requisitions',
+      subItems: [
+        { icon: <ClipboardList size={18} />, label: 'Purchase Requisitions', path: '/masters/purchase-requisitions' },
+        { icon: <Truck size={18} />, label: 'Suppliers', path: '/masters/suppliers' },
+      ]
+    }] : []),
     ...(hasPermission('read_accounts') || hasPermission('write_accounts') ? [{ icon: <FileText size={20} />, label: 'Vouchers', path: '/vouchers' }] : []),
     ...(hasPermission('read_accounts') ? [{ icon: <BarChart2 size={20} />, label: 'Reports', path: '/reports' }] : []),
     ...(hasPermission('manage_users') || hasPermission('manage_groups') ? [{ 

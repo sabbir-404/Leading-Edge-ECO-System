@@ -490,9 +490,23 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('create-ledger', async (_e, ledger) => {
-        const { name, group, openingBalance, type, mailingName, address, gstin } = ledger;
+        const { name, group, openingBalance, type, mailingName, address, gstin, contactPerson, contactNumber, email, notes, paymentStatus } = ledger;
         const { data: grp } = await supabase.from('groups').select('id').eq('name', group).maybeSingle();
-        const { data, error } = await supabase.from('ledgers').insert({ name, group_id: grp?.id || null, opening_balance: openingBalance || 0, opening_balance_type: type || 'Dr', mailing_name: mailingName || '', address: address || '', tax_reg_no: gstin || '', company_id: 1 }).select('id').single();
+        const { data, error } = await supabase.from('ledgers').insert({
+            name,
+            group_id: grp?.id || null,
+            opening_balance: openingBalance || 0,
+            opening_balance_type: type || 'Dr',
+            mailing_name: mailingName || '',
+            address: address || '',
+            tax_reg_no: gstin || '',
+            contact_person: contactPerson || '',
+            contact_number: contactNumber || '',
+            email: email || '',
+            notes: notes || '',
+            payment_status: paymentStatus || 'OPEN',
+            company_id: 1,
+        }).select('id').single();
         if (error) throw error;
         return { success: true, id: data.id };
     });
@@ -3391,6 +3405,671 @@ export function registerHandlers() {
 
         const formatted = (prefix + body).match(/.{1,4}/g)!.join('-');
         return { success: true, key: formatted };
+    });
+
+
+    // ═══ PURCHASE REQUISITIONS ═══════════════════════════════════════════════════
+    ipcMain.handle('get-purchase-requisitions', async (_e, filters?: any) => {
+        try {
+            let query = supabase
+                .from('purchase_requisitions')
+                .select('*')
+                .is('deleted_at', null)
+                .order('created_at', { ascending: false });
+
+            if (filters?.status) {
+                query = query.eq('status', filters.status);
+            }
+            if (filters?.approvalStatus) {
+                query = query.eq('approval_status', filters.approvalStatus);
+            }
+            if (filters?.limit) {
+                query = query.limit(filters.limit);
+            }
+            if (filters?.offset) {
+                query = query.range(filters.offset, filters.offset + (filters.limit || 50) - 1);
+            }
+
+            const { data, error } = await query;
+            if (error) throw error;
+
+            const requisitions = data || [];
+            const requisitionIds = requisitions.map((req: any) => req.id);
+            if (requisitionIds.length === 0) return requisitions;
+
+            const { data: itemsData } = await supabase
+                .from('purchase_requisition_items')
+                .select('id, requisition_id, product_id, quantity, quantity_unit, remarks, line_no')
+                .in('requisition_id', requisitionIds)
+                .order('line_no', { ascending: true });
+
+            const productIds = [...new Set((itemsData || []).map((item: any) => item.product_id).filter(Boolean))];
+            const { data: productsData } = productIds.length
+                ? await supabase
+                    .from('products')
+                    .select('id, name, sku')
+                    .in('id', productIds)
+                : { data: [] as any[] };
+
+            const productMap = new Map((productsData || []).map((product: any) => [String(product.id), product]));
+            const groupedItems = new Map<string, any[]>();
+
+            (itemsData || []).forEach((item: any) => {
+                const product = productMap.get(String(item.product_id));
+                const lineItem = {
+                    ...item,
+                    product_name: product?.name || 'Unknown Product',
+                    product_code: product?.sku || '',
+                };
+                if (!groupedItems.has(item.requisition_id)) groupedItems.set(item.requisition_id, []);
+                groupedItems.get(item.requisition_id)!.push(lineItem);
+            });
+
+            return requisitions.map((req: any) => {
+                const items = groupedItems.get(req.id) || [];
+                return {
+                    ...req,
+                    items,
+                    item_count: items.length,
+                    product_name: items[0]?.product_name || req.product_name || 'Unknown',
+                };
+            });
+        } catch (e: any) {
+            console.error('[purchase-requisitions] Error:', e.message);
+            return [];
+        }
+    });
+
+    ipcMain.handle('get-purchase-requisition-by-id', async (_e, id: string) => {
+        try {
+            const { data, error } = await supabase
+                .from('purchase_requisitions')
+                .select('*')
+                .eq('id', id)
+                .single();
+            if (error) throw error;
+
+            const { data: itemsData } = await supabase
+                .from('purchase_requisition_items')
+                .select('id, requisition_id, product_id, quantity, quantity_unit, remarks, line_no')
+                .eq('requisition_id', id)
+                .order('line_no', { ascending: true });
+
+            const productIds = [...new Set((itemsData || []).map((item: any) => item.product_id).filter(Boolean))];
+            const { data: productsData } = productIds.length
+                ? await supabase
+                    .from('products')
+                    .select('id, name, sku')
+                    .in('id', productIds)
+                : { data: [] as any[] };
+
+            const productMap = new Map((productsData || []).map((product: any) => [String(product.id), product]));
+            const items = (itemsData || []).map((item: any) => ({
+                ...item,
+                product_name: productMap.get(String(item.product_id))?.name || 'Unknown Product',
+                product_code: productMap.get(String(item.product_id))?.sku || '',
+            }));
+
+            return {
+                ...data,
+                items,
+                item_count: items.length,
+                product_name: items[0]?.product_name || data.product_name || 'Unknown',
+            };
+        } catch (e: any) {
+            console.error('[purchase-requisition-detail] Error:', e.message);
+            return null;
+        }
+    });
+
+    async function recordPurchaseRequisitionHistory(params: {
+        requisitionId: string;
+        fromStatus?: string | null;
+        toStatus: string;
+        action: string;
+        remarks?: string | null;
+        oldValue?: any;
+        newValue?: any;
+        performedByName?: string;
+    }) {
+        const performedByName = params.performedByName || 'desktop-user';
+        await supabase.from('purchase_requisition_status_history').insert({
+            requisition_id: params.requisitionId,
+            from_status: params.fromStatus || null,
+            to_status: params.toStatus,
+            action: params.action,
+            remarks: params.remarks || null,
+            old_value: params.oldValue || null,
+            new_value: params.newValue || null,
+            performed_by: null,
+            performed_by_name: performedByName,
+        });
+
+        await writeAuditLog({
+            module: 'Procurement',
+            action: params.action,
+            entity_type: 'purchase_requisition',
+            entity_id: params.requisitionId,
+            description: `${params.action} -> ${params.toStatus}`,
+            old_value: params.oldValue,
+            new_value: params.newValue,
+            performed_by: performedByName,
+        });
+    }
+
+    async function notifyProcurementWorkflow(title: string, message: string) {
+        await supabase.from('notifications').insert({
+            title,
+            message,
+            sender_id: null,
+            recipient_id: null,
+        });
+    }
+
+    ipcMain.handle('get-purchase-requisition-history', async (_e, requisitionId: string) => {
+        const { data, error } = await supabase
+            .from('purchase_requisition_status_history')
+            .select('*')
+            .eq('requisition_id', requisitionId)
+            .order('performed_at', { ascending: false });
+        if (error) throw error;
+        return data || [];
+    });
+
+    ipcMain.handle('create-purchase-requisition', async (_e, input: any) => {
+        try {
+            const userName = 'desktop-user';
+            const companyId = Number(input?.companyId || 1);
+            const rawItems = Array.isArray(input?.items) ? input.items : [];
+            const normalizedItems = rawItems
+                .map((item: any, index: number) => ({
+                    lineNo: Number(item.lineNo || index + 1),
+                    productId: Number(item.productId ?? item.product_id),
+                    quantity: Number(item.quantity),
+                    quantityUnit: item.quantityUnit || item.quantity_unit || 'piece',
+                    remarks: item.remarks || '',
+                }))
+                .filter((item: any) => Number.isFinite(item.productId) && item.productId > 0 && Number.isFinite(item.quantity) && item.quantity > 0);
+
+            if (normalizedItems.length === 0 && input?.productId) {
+                normalizedItems.push({
+                    lineNo: 1,
+                    productId: Number(input.productId),
+                    quantity: Number(input.quantity || 1),
+                    quantityUnit: input.quantityUnit || 'piece',
+                    remarks: input.remarks || '',
+                });
+            }
+
+            if (normalizedItems.length === 0) {
+                throw new Error('At least one requisition item is required.');
+            }
+
+            const primaryItem = normalizedItems[0];
+            
+            const { data, error } = await supabase
+                .from('purchase_requisitions')
+                .insert({
+                    product_id: primaryItem.productId,
+                    quantity: primaryItem.quantity,
+                    quantity_unit: primaryItem.quantityUnit,
+                    priority_level: input.priorityLevel,
+                    status: 'DRAFT',
+                    approval_status: 'PENDING',
+                    audit_status: 'PENDING',
+                    director_status: 'PENDING',
+                    requisition_date: new Date().toISOString(),
+                    required_delivery_date: input.requiredDeliveryDate,
+                    remarks: input.remarks || primaryItem.remarks || '',
+                    company_id: Number.isFinite(companyId) ? companyId : 1,
+                    created_by: null as any,
+                })
+                .select('*')
+                .single();
+            
+            if (error) throw error;
+
+            const { error: itemsError } = await supabase.from('purchase_requisition_items').insert(
+                normalizedItems.map((item: any) => ({
+                    requisition_id: data.id,
+                    product_id: item.productId,
+                    quantity: item.quantity,
+                    quantity_unit: item.quantityUnit,
+                    remarks: item.remarks || null,
+                    line_no: item.lineNo,
+                    company_id: Number.isFinite(companyId) ? companyId : 1,
+                }))
+            );
+
+            if (itemsError) {
+                await supabase.from('purchase_requisitions').delete().eq('id', data.id);
+                throw itemsError;
+            }
+
+            await recordPurchaseRequisitionHistory({
+                requisitionId: data.id,
+                fromStatus: null,
+                toStatus: 'DRAFT',
+                action: 'REQUISITION_CREATED',
+                remarks: input.remarks,
+                newValue: { ...data, items: normalizedItems },
+                performedByName: userName,
+            });
+            await notifyProcurementWorkflow('Purchase requisition created', `REQ ${data.requisition_number} was created for approval.`);
+            return { success: true, data };
+        } catch (e: any) {
+            console.error('[create-purchase-requisition] Error:', e.message);
+            return { success: false, error: e.message };
+        }
+    });
+
+    ipcMain.handle('update-purchase-requisition', async (_e, id: string, updates: any) => {
+        try {
+            const userName = 'desktop-user';
+            const { data: before } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
+            
+            const { error } = await supabase
+                .from('purchase_requisitions')
+                .update({
+                    product_id: Number(updates.productId),
+                    quantity: updates.quantity,
+                    quantity_unit: updates.quantityUnit,
+                    priority_level: updates.priorityLevel,
+                    required_delivery_date: updates.requiredDeliveryDate,
+                    remarks: updates.remarks,
+                    updated_at: new Date().toISOString(),
+                    updated_by: null,
+                })
+                .eq('id', id)
+                .eq('status', 'DRAFT'); // Only allow editing DRAFT requisitions
+            
+            if (error) throw error;
+            const { data: after } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
+            await recordPurchaseRequisitionHistory({
+                requisitionId: id,
+                fromStatus: before?.status || 'DRAFT',
+                toStatus: after?.status || 'DRAFT',
+                action: 'REQUISITION_UPDATED',
+                oldValue: before,
+                newValue: after,
+                performedByName: userName,
+            });
+            return { success: true };
+        } catch (e: any) {
+            console.error('[update-purchase-requisition] Error:', e.message);
+            return { success: false, error: e.message };
+        }
+    });
+
+    ipcMain.handle('approve-purchase-requisition', async (_e, id: string, _status: string, notes: string) => {
+        try {
+            const userName = 'desktop-user';
+            const approvalDate = new Date().toISOString();
+            const { data: before } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
+            
+            const { error } = await supabase
+                .from('purchase_requisitions')
+                .update({
+                    approval_status: 'APPROVED',
+                    status: 'APPROVED',
+                    approval_date: approvalDate,
+                    approved_by: null,
+                    store_head_notes: notes || '',
+                    updated_at: approvalDate,
+                    updated_by: null,
+                })
+                .eq('id', id)
+                .eq('status', 'DRAFT');
+            
+            if (error) throw error;
+            
+            // Record approval in audit table
+            await supabase
+                .from('purchase_requisition_approvals')
+                .insert({
+                    requisition_id: id,
+                    approval_level: 1,
+                    approver_id: null,
+                    status: 'APPROVED',
+                    remarks: notes,
+                });
+
+            const { data: after } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
+            await recordPurchaseRequisitionHistory({
+                requisitionId: id,
+                fromStatus: before?.status || 'DRAFT',
+                toStatus: 'APPROVED',
+                action: 'STORE_HEAD_APPROVED',
+                remarks: notes,
+                oldValue: before,
+                newValue: after,
+                performedByName: userName,
+            });
+            await notifyProcurementWorkflow('Purchase requisition approved', `REQ ${after?.requisition_number || id} was approved by Store Head.`);
+            
+            return { success: true };
+        } catch (e: any) {
+            console.error('[approve-purchase-requisition] Error:', e.message);
+            return { success: false, error: e.message };
+        }
+    });
+
+    ipcMain.handle('audit-review-purchase-requisition', async (_e, id: string, status: 'APPROVED' | 'REJECTED', notes: string) => {
+        try {
+            const userName = 'desktop-user';
+            const reviewedAt = new Date().toISOString();
+            const { data: before } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
+
+            const { error } = await supabase
+                .from('purchase_requisitions')
+                .update({
+                    audit_status: status,
+                    audit_notes: notes || '',
+                    audit_reviewed_at: reviewedAt,
+                    audit_reviewed_by_name: userName,
+                    updated_at: reviewedAt,
+                    updated_by: null,
+                    director_status: status === 'APPROVED' ? 'PENDING' : 'REJECTED',
+                })
+                .eq('id', id)
+                .eq('status', 'APPROVED');
+
+            if (error) throw error;
+
+            const { data: after } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
+            await recordPurchaseRequisitionHistory({
+                requisitionId: id,
+                fromStatus: before?.audit_status || 'PENDING',
+                toStatus: `AUDIT_${status}`,
+                action: 'AUDIT_REVIEWED',
+                remarks: notes,
+                oldValue: before,
+                newValue: after,
+                performedByName: userName,
+            });
+            await notifyProcurementWorkflow(
+                status === 'APPROVED' ? 'Audit approved requisition' : 'Audit rejected requisition',
+                `REQ ${after?.requisition_number || id} audit review: ${status}.`
+            );
+            return { success: true };
+        } catch (e: any) {
+            console.error('[audit-review-purchase-requisition] Error:', e.message);
+            return { success: false, error: e.message };
+        }
+    });
+
+    ipcMain.handle('director-review-purchase-requisition', async (_e, id: string, status: 'APPROVED' | 'REJECTED', notes: string) => {
+        try {
+            const userName = 'desktop-user';
+            const reviewedAt = new Date().toISOString();
+            const { data: before } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
+
+            const { error } = await supabase
+                .from('purchase_requisitions')
+                .update({
+                    director_status: status,
+                    director_notes: notes || '',
+                    director_reviewed_at: reviewedAt,
+                    director_reviewed_by_name: userName,
+                    updated_at: reviewedAt,
+                    updated_by: null,
+                })
+                .eq('id', id)
+                .eq('status', 'APPROVED');
+
+            if (error) throw error;
+
+            const { data: after } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
+            await recordPurchaseRequisitionHistory({
+                requisitionId: id,
+                fromStatus: before?.director_status || 'PENDING',
+                toStatus: `DIRECTOR_${status}`,
+                action: 'DIRECTOR_REVIEWED',
+                remarks: notes,
+                oldValue: before,
+                newValue: after,
+                performedByName: userName,
+            });
+            await notifyProcurementWorkflow(
+                status === 'APPROVED' ? 'Director approved requisition' : 'Director rejected requisition',
+                `REQ ${after?.requisition_number || id} director review: ${status}.`
+            );
+            return { success: true };
+        } catch (e: any) {
+            console.error('[director-review-purchase-requisition] Error:', e.message);
+            return { success: false, error: e.message };
+        }
+    });
+
+    ipcMain.handle('purchase-purchase-requisition', async (_e, id: string, warehouseLocation: string) => {
+        try {
+            const userName = 'desktop-user';
+            const purchaseDate = new Date().toISOString();
+            const { data: before } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
+
+            // Guard: director must have approved before purchase can proceed
+            if (!before) throw new Error('Requisition not found.');
+            if (before.director_status !== 'APPROVED') {
+                throw new Error('Director approval is required before marking as purchased. Current director status: ' + (before.director_status || 'PENDING'));
+            }
+            
+            const { error } = await supabase
+                .from('purchase_requisitions')
+                .update({
+                    status: 'PURCHASED',
+                    warehouse_location: warehouseLocation,
+                    purchase_date: purchaseDate,
+                    purchased_by: null,
+                    updated_at: purchaseDate,
+                    updated_by: null,
+                })
+                .eq('id', id)
+                .eq('status', 'APPROVED');
+            
+            if (error) throw error;
+            const { data: after } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
+            await recordPurchaseRequisitionHistory({
+                requisitionId: id,
+                fromStatus: before?.status || 'APPROVED',
+                toStatus: 'PURCHASED',
+                action: 'PURCHASE_RECORDED',
+                remarks: warehouseLocation,
+                oldValue: before,
+                newValue: after,
+                performedByName: userName,
+            });
+            await notifyProcurementWorkflow('Purchase recorded', `REQ ${after?.requisition_number || id} has been marked purchased.`);
+            return { success: true };
+        } catch (e: any) {
+            console.error('[purchase-purchase-requisition] Error:', e.message);
+            return { success: false, error: e.message };
+        }
+    });
+
+    ipcMain.handle('receive-purchase-requisition', async (_e, id: string) => {
+        try {
+            const userName = 'desktop-user';
+            const receivedDate = new Date().toISOString();
+            const { data: before } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
+            
+            const { error } = await supabase
+                .from('purchase_requisitions')
+                .update({
+                    status: 'RECEIVED',
+                    received_date: receivedDate,
+                    updated_at: receivedDate,
+                    updated_by: null,
+                })
+                .eq('id', id)
+                .eq('status', 'PURCHASED');
+            
+            if (error) throw error;
+            const { data: after } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
+            await recordPurchaseRequisitionHistory({
+                requisitionId: id,
+                fromStatus: before?.status || 'PURCHASED',
+                toStatus: 'RECEIVED',
+                action: 'GOODS_RECEIVED',
+                oldValue: before,
+                newValue: after,
+                performedByName: userName,
+            });
+            await notifyProcurementWorkflow('Goods received', `REQ ${after?.requisition_number || id} goods were received.`);
+            return { success: true };
+        } catch (e: any) {
+            console.error('[receive-purchase-requisition] Error:', e.message);
+            return { success: false, error: e.message };
+        }
+    });
+
+    ipcMain.handle('complete-purchase-requisition', async (_e, id: string) => {
+        try {
+            const userName = 'desktop-user';
+            const completedDate = new Date().toISOString();
+            
+            // Fetch the requisition to get product_id and quantity
+            const { data: requisition, error: fetchError } = await supabase
+                .from('purchase_requisitions')
+                .select('product_id, quantity, requisition_number, status')
+                .eq('id', id)
+                .single();
+            
+            if (fetchError) throw fetchError;
+            
+            // Update requisition status
+            const { data: before } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
+            const { error: updateError } = await supabase
+                .from('purchase_requisitions')
+                .update({
+                    status: 'COMPLETED',
+                    completed_date: completedDate,
+                    updated_at: completedDate,
+                    updated_by: null,
+                })
+                .eq('id', id)
+                .eq('status', 'RECEIVED');
+            
+            if (updateError) throw updateError;
+            
+            // Update product stock quantity (column is 'quantity' not 'current_stock')
+            const { data: product, error: productError } = await supabase
+                .from('products')
+                .select('quantity')
+                .eq('id', requisition.product_id)
+                .single();
+
+            // Stock update is best-effort — log but don't block completion if product row is missing
+            if (!productError && product !== null) {
+                const newStock = (product?.quantity || 0) + requisition.quantity;
+                const { error: stockError } = await supabase
+                    .from('products')
+                    .update({ quantity: newStock })
+                    .eq('id', requisition.product_id);
+                if (stockError) console.error('[complete-requisition] Stock update failed:', stockError.message);
+            } else if (productError) {
+                console.error('[complete-requisition] Could not fetch product for stock update:', productError.message);
+            }
+
+            const { data: after } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
+            await recordPurchaseRequisitionHistory({
+                requisitionId: id,
+                fromStatus: before?.status || 'RECEIVED',
+                toStatus: 'COMPLETED',
+                action: 'REQUISITION_COMPLETED',
+                remarks: `Added quantity: ${requisition.quantity}`,
+                oldValue: before,
+                newValue: after,
+                performedByName: userName,
+            });
+            await notifyProcurementWorkflow('Goods stocked', `REQ ${requisition.requisition_number || id} was completed and stock updated.`);
+            
+            return { success: true, addedQuantity: requisition.quantity };
+        } catch (e: any) {
+            console.error('[complete-purchase-requisition] Error:', e.message);
+            return { success: false, error: e.message };
+        }
+    });
+
+    ipcMain.handle('delete-purchase-requisition', async (_e, id: string) => {
+        try {
+            const { data: before } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
+            const { error } = await supabase
+                .from('purchase_requisitions')
+                .update({ deleted_at: new Date().toISOString() })
+                .eq('id', id)
+                .eq('status', 'DRAFT'); // Only allow deleting DRAFT requisitions
+            
+            if (error) throw error;
+            await recordPurchaseRequisitionHistory({
+                requisitionId: id,
+                fromStatus: before?.status || 'DRAFT',
+                toStatus: 'DELETED',
+                action: 'REQUISITION_DELETED',
+                oldValue: before,
+                performedByName: 'desktop-user',
+            });
+            return { success: true };
+        } catch (e: any) {
+            console.error('[delete-purchase-requisition] Error:', e.message);
+            return { success: false, error: e.message };
+        }
+    });
+
+    // ═══ SUPPLIER SETTLEMENTS ═══════════════════════════════════════════════════
+    ipcMain.handle('get-supplier-settlements', async (_e, supplierLedgerId?: number) => {
+        let q = supabase
+            .from('supplier_settlements')
+            .select('*, purchase_bill:purchase_bills(bill_number, bill_date, grand_total), supplier:ledgers(name)')
+            .is('deleted_at', null)
+            .order('settlement_date', { ascending: false });
+        if (supplierLedgerId) q = q.eq('supplier_ledger_id', supplierLedgerId);
+        const { data, error } = await q;
+        if (error) throw error;
+        return decryptRows(data || []).map((row: any) => ({
+            ...row,
+            supplier_name: row.supplier?.name || null,
+            purchase_bill_number: row.purchase_bill?.bill_number || null,
+        }));
+    });
+
+    ipcMain.handle('create-supplier-settlement', async (_e, settlement: any) => {
+        const payload = {
+            supplier_ledger_id: Number(settlement.supplierLedgerId),
+            purchase_bill_id: settlement.purchaseBillId ? Number(settlement.purchaseBillId) : null,
+            settlement_date: settlement.settlementDate || new Date().toISOString(),
+            settlement_amount: Number(settlement.settlementAmount) || 0,
+            payment_method: settlement.paymentMethod || '',
+            reference_number: settlement.referenceNumber || '',
+            settlement_status: settlement.settlementStatus || 'POSTED',
+            remarks: settlement.remarks || '',
+            company_id: 1,
+            created_by: null,
+            created_by_name: 'desktop-user',
+            updated_by: null,
+            updated_by_name: 'desktop-user',
+        };
+        const { data, error } = await supabase.from('supplier_settlements').insert(payload).select('id').single();
+        if (error) throw error;
+
+        const paymentStatus = payload.settlement_status === 'SETTLED'
+            ? 'SETTLED'
+            : payload.settlement_status === 'PARTIAL'
+                ? 'PARTIAL'
+                : 'OPEN';
+        await supabase.from('ledgers').update({ payment_status: paymentStatus }).eq('id', payload.supplier_ledger_id);
+
+        await writeAuditLog({
+            module: 'Procurement',
+            action: 'SUPPLIER_SETTLEMENT_CREATED',
+            entity_type: 'supplier_ledger',
+            entity_id: payload.supplier_ledger_id,
+            description: `Settlement ${payload.settlement_status} for supplier ledger ${payload.supplier_ledger_id}`,
+            new_value: payload,
+            performed_by: 'desktop-user',
+        });
+
+        await notifyProcurementWorkflow('Supplier settlement recorded', `Settlement posted for supplier ledger ${payload.supplier_ledger_id}.`);
+        return { success: true, id: data.id };
     });
 
 } // end registerHandlers
