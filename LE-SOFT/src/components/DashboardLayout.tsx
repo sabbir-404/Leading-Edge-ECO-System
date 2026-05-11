@@ -35,7 +35,6 @@ import {
   Calendar,
   ShieldAlert,
   ArrowLeftRight,
-  ShoppingBag,
   BookOpen,
   Layers,
   Scale,
@@ -185,22 +184,15 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
       label: 'Masters',
       path: '/masters',
       subItems: [
-        { icon: <FolderTree size={18} />, label: 'Account Groups', path: '/masters/groups' },
-        { icon: <BookOpen size={18} />, label: 'Ledgers', path: '/masters/ledgers' },
-        { icon: <FileText size={18} />, label: 'Voucher Types', path: '/masters/voucher-types' },
-        { icon: <Package size={18} />, label: 'Products', path: '/masters/products' },
-        { icon: <Layers size={18} />, label: 'Stock Groups', path: '/masters/stock-groups' },
-        { icon: <Scale size={18} />, label: 'Units', path: '/masters/units' },
-        { icon: <Warehouse size={18} />, label: 'Godowns', path: '/masters/godowns' },
-      ]
-    }] : []),
-    ...(hasPermission('read_products') ? [{
-      icon: <ShoppingBag size={20} />,
-      label: 'Procurement',
-      path: '/masters/purchase-requisitions',
-      subItems: [
+        { icon: <FolderTree size={18} />, label: 'Account Groups',   path: '/masters/groups' },
+        { icon: <BookOpen size={18} />,   label: 'Ledgers',           path: '/masters/ledgers' },
+        { icon: <FileText size={18} />,   label: 'Voucher Types',     path: '/masters/voucher-types' },
+        { icon: <Package size={18} />,    label: 'Products',          path: '/masters/products' },
+        { icon: <Layers size={18} />,     label: 'Stock Groups',      path: '/masters/stock-groups' },
+        { icon: <Scale size={18} />,      label: 'Units',             path: '/masters/units' },
+        { icon: <Warehouse size={18} />,  label: 'Godowns',           path: '/masters/godowns' },
+        { icon: <Truck size={18} />,      label: 'Suppliers',         path: '/masters/suppliers' },
         { icon: <ClipboardList size={18} />, label: 'Purchase Requisitions', path: '/masters/purchase-requisitions' },
-        { icon: <Truck size={18} />, label: 'Suppliers', path: '/masters/suppliers' },
       ]
     }] : []),
     ...(hasPermission('read_accounts') || hasPermission('write_accounts') ? [{ icon: <FileText size={20} />, label: 'Vouchers', path: '/vouchers' }] : []),
@@ -271,12 +263,16 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
   const handleNavClick = (item: any) => {
     if (item.subItems) {
       if (!isSidebarOpen) setSidebarOpen(true);
-      // Toggle: add or remove from expanded list
+      // Toggle sub-menu expansion
       setExpandedMenus(prev =>
         prev.includes(item.label)
           ? prev.filter(l => l !== item.label)
           : [...prev, item.label]
       );
+      // Also navigate to the parent path if one is defined
+      if (item.path) {
+        navigate(item.path);
+      }
     } else {
       navigate(item.path);
     }
