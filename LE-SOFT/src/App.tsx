@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
+import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import ProtectedRoute from './components/ProtectedRoute';
 import Login from './pages/Auth/Login';
 import SetupScreen from './pages/Auth/SetupScreen';
@@ -319,6 +319,7 @@ function App() {
         <Route path="/website" element={<ProtectedRoute><WebsiteDashboard /></ProtectedRoute>} />
 
         {/* MAKE Module */}
+        <Route path="/make" element={<Navigate to="/make/dashboard" replace />} />
         <Route path="/make/dashboard" element={<ProtectedRoute><MakeDashboard /></ProtectedRoute>} />
         <Route path="/make/place-order" element={<ProtectedRoute><PlaceOrder /></ProtectedRoute>} />
         <Route path="/make/track" element={<ProtectedRoute><TrackOrders /></ProtectedRoute>} />
