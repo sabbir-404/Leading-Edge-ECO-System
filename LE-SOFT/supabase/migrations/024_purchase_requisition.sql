@@ -129,25 +129,16 @@ CREATE POLICY "Service role can manage purchase_requisition_approvals"
 ALTER TABLE purchase_requisitions ALTER COLUMN created_by DROP NOT NULL;
 
 -- ============================================================
--- 5. Modify products table - Remove stock/warehouse columns
--- (These are handled by purchase requisitions now)
+-- 5 & 6. NOTE: products table stock is managed via the `quantity` column.
+-- Do NOT drop or rename quantity — the entire codebase depends on it.
+-- Location columns (location_row, location_rack, location_bin) are also kept.
+-- The procurement workflow updates `quantity` when requisitions are completed.
 -- ============================================================
-ALTER TABLE products 
-    DROP COLUMN IF EXISTS quantity,
-    DROP COLUMN IF EXISTS warehouse,
-    DROP COLUMN IF EXISTS location_row,
-    DROP COLUMN IF EXISTS location_rack,
-    DROP COLUMN IF EXISTS location_bin;
 
--- ============================================================
--- 6. Update products table to add current_stock (calculated/managed field)
--- This field will be updated when requisitions are completed
--- ============================================================
-ALTER TABLE products
-    ADD COLUMN IF NOT EXISTS current_stock INTEGER DEFAULT 0,
-    ADD COLUMN IF NOT EXISTS current_warehouse VARCHAR(255);
+-- Ensure quantity column exists (idempotent)
+ALTER TABLE products ADD COLUMN IF NOT EXISTS quantity INTEGER DEFAULT 0;
 
-CREATE INDEX IF NOT EXISTS idx_products_current_stock ON products(current_stock);
+CREATE INDEX IF NOT EXISTS idx_products_quantity ON products(quantity);
 
 -- ============================================================
 -- Migration complete
