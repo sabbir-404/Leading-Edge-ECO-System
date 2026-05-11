@@ -35,7 +35,11 @@ import {
   Calendar,
   ShieldAlert,
   ArrowLeftRight,
-  ShoppingBag
+  ShoppingBag,
+  BookOpen,
+  Layers,
+  Scale,
+  Warehouse
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTheme } from '../context/ThemeContext';
@@ -176,7 +180,20 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
         ] : []),
       ]
     }] : []),
-    ...(hasPermission('read_group') || hasPermission('read_ledger') || hasPermission('read_stock_items') ? [{ icon: <Database size={20} />, label: 'Masters', path: '/masters' }] : []),
+    ...(hasPermission('read_group') || hasPermission('read_ledger') || hasPermission('read_stock_items') ? [{
+      icon: <Database size={20} />,
+      label: 'Masters',
+      path: '/masters',
+      subItems: [
+        { icon: <FolderTree size={18} />, label: 'Account Groups', path: '/masters/groups' },
+        { icon: <BookOpen size={18} />, label: 'Ledgers', path: '/masters/ledgers' },
+        { icon: <FileText size={18} />, label: 'Voucher Types', path: '/masters/voucher-types' },
+        { icon: <Package size={18} />, label: 'Products', path: '/masters/products' },
+        { icon: <Layers size={18} />, label: 'Stock Groups', path: '/masters/stock-groups' },
+        { icon: <Scale size={18} />, label: 'Units', path: '/masters/units' },
+        { icon: <Warehouse size={18} />, label: 'Godowns', path: '/masters/godowns' },
+      ]
+    }] : []),
     ...(hasPermission('read_products') ? [{
       icon: <ShoppingBag size={20} />,
       label: 'Procurement',

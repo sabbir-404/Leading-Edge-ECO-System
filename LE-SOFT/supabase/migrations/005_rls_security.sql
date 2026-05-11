@@ -59,6 +59,9 @@ ALTER TABLE crm_tracking ENABLE ROW LEVEL SECURITY;
 -- Mobile app specific granular policies will be applied later based on role.
 
 -- Users Table
+-- Drop existing policies if present to allow idempotent migration
+DROP POLICY IF EXISTS "Authenticated users can read users" ON users;
+DROP POLICY IF EXISTS "Admins can manage users" ON users;
 CREATE POLICY "Authenticated users can read users" ON users FOR SELECT USING (auth.role() = 'authenticated');
 CREATE POLICY "Admins can manage users" ON users FOR ALL USING (auth.jwt()->>'role' = 'admin');
 
@@ -66,6 +69,15 @@ CREATE POLICY "Admins can manage users" ON users FOR ALL USING (auth.jwt()->>'ro
 -- In a real hardened scenario, we would split these by user role ('admin' vs 'operator').
 -- For LE-SOFT, any authenticated employee operates the system.
 
+DROP POLICY IF EXISTS "Allow authenticated full access to HRM Employees" ON hrm_employees;
+DROP POLICY IF EXISTS "Allow authenticated full access to HRM Attendance" ON hrm_attendance;
+DROP POLICY IF EXISTS "Allow authenticated full access to HRM Leaves" ON hrm_leaves;
+DROP POLICY IF EXISTS "Allow authenticated full access to HRM Payroll" ON hrm_payroll;
+DROP POLICY IF EXISTS "Allow authenticated full access to CRM Customers" ON crm_customers;
+DROP POLICY IF EXISTS "Allow authenticated full access to CRM Tracking" ON crm_tracking;
+
+DROP POLICY IF EXISTS "Allow authenticated read access companies" ON companies;
+DROP POLICY IF EXISTS "Allow authenticated read access user_groups" ON user_groups;
 CREATE POLICY "Allow authenticated full access to HRM Employees" ON hrm_employees FOR ALL USING (auth.role() = 'authenticated');
 CREATE POLICY "Allow authenticated full access to HRM Attendance" ON hrm_attendance FOR ALL USING (auth.role() = 'authenticated');
 CREATE POLICY "Allow authenticated full access to HRM Leaves" ON hrm_leaves FOR ALL USING (auth.role() = 'authenticated');

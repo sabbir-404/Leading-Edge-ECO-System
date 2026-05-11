@@ -4,14 +4,17 @@
 
 -- 1. users table
 DROP POLICY IF EXISTS "Admins can manage users" ON users;
+DROP POLICY IF EXISTS "Allow authenticated full access to users" ON users;
 CREATE POLICY "Allow authenticated full access to users" ON users FOR ALL USING (auth.role() = 'authenticated');
 
 -- 2. user_groups table (currently only has SELECT)
 DROP POLICY IF EXISTS "Allow authenticated read access user_groups" ON user_groups;
+DROP POLICY IF EXISTS "Allow authenticated full access to user_groups" ON user_groups;
 CREATE POLICY "Allow authenticated full access to user_groups" ON user_groups FOR ALL USING (auth.role() = 'authenticated');
 
 -- 3. companies table
 DROP POLICY IF EXISTS "Allow authenticated read access companies" ON companies;
+DROP POLICY IF EXISTS "Allow authenticated full access to companies" ON companies;
 CREATE POLICY "Allow authenticated full access to companies" ON companies FOR ALL USING (auth.role() = 'authenticated');
 
 -- 4. app_license table (if RLS is enabled, ensure policies exist)

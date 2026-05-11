@@ -12,7 +12,6 @@ const ProductList: React.FC = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [categoryFilter, setCategoryFilter] = useState('All');
     const [groupFilter, setGroupFilter] = useState('All');
-    const [stockStatus, setStockStatus] = useState('All');
     const [products, setProducts] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -61,11 +60,8 @@ const ProductList: React.FC = () => {
         
         const matchesCategory = categoryFilter === 'All' || (p.category || 'Uncategorized') === categoryFilter;
         const matchesGroup = groupFilter === 'All' || (p.group_name || 'No Group') === groupFilter;
-        const matchesStock = stockStatus === 'All' || 
-            (stockStatus === 'In Stock' && (p.quantity || 0) > 0) ||
-            (stockStatus === 'Out of Stock' && (p.quantity || 0) <= 0);
 
-        return matchesSearch && matchesCategory && matchesGroup && matchesStock;
+        return matchesSearch && matchesCategory && matchesGroup;
     });
 
     const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -144,18 +140,11 @@ const ProductList: React.FC = () => {
                         {groups.filter(g => g !== 'All').map(g => <option key={g} value={g}>{g}</option>)}
                     </select>
 
-                    <select value={stockStatus} onChange={(e) => setStockStatus(e.target.value)}>
-                        <option value="All">All Stock</option>
-                        <option value="In Stock">In Stock</option>
-                        <option value="Out of Stock">Out of Stock</option>
-                    </select>
-
-                    { (searchTerm || categoryFilter !== 'All' || groupFilter !== 'All' || stockStatus !== 'All') && (
+                    { (searchTerm || categoryFilter !== 'All' || groupFilter !== 'All') && (
                         <button className="clear-filters" onClick={() => {
                             setSearchTerm('');
                             setCategoryFilter('All');
                             setGroupFilter('All');
-                            setStockStatus('All');
                         }}>Clear</button>
                     )}
                 </div>
@@ -195,7 +184,6 @@ const ProductList: React.FC = () => {
                             <th>SKU</th>
                             <th>Category</th>
                             <th>Unit</th>
-                            <th style={{ textAlign: 'right' }}>Qty</th>
                             <th style={{ textAlign: 'right' }}>Purchase ৳</th>
                             <th style={{ textAlign: 'right' }}>Selling ৳</th>
                             <th style={{ textAlign: 'right' }}>Tax %</th>
@@ -204,9 +192,9 @@ const ProductList: React.FC = () => {
                     </thead>
                     <tbody>
                         {loading ? (
-                            <tr><td colSpan={10} className="empty-state">Loading...</td></tr>
+                            <tr><td colSpan={9} className="empty-state">Loading...</td></tr>
                         ) : filtered.length === 0 ? (
-                            <tr><td colSpan={10} className="empty-state">No products found. Click "Add Product" to create one.</td></tr>
+                            <tr><td colSpan={9} className="empty-state">No products found. Click "Add Product" to create one.</td></tr>
                         ) : (
                             filtered.map((product) => (
                                 <motion.tr key={product.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ background: selectedIds.has(product.id) ? 'var(--hover-bg)' : 'transparent' }}>
@@ -228,7 +216,6 @@ const ProductList: React.FC = () => {
                                     <td><span style={{ padding: '2px 8px', borderRadius: '4px', background: 'rgba(99,102,241,0.1)', color: '#6366f1', fontWeight: 500, fontSize: '0.85rem' }}>{product.sku || '—'}</span></td>
                                     <td>{product.category || '—'}</td>
                                     <td>{product.unit_symbol || product.unit_name || '—'}</td>
-                                    <td style={{ textAlign: 'right', fontFamily: "'JetBrains Mono', monospace" }}>{product.quantity ?? 0}</td>
                                     <td style={{ textAlign: 'right', fontFamily: "'JetBrains Mono', monospace" }}>৳ {(product.purchase_price || 0).toLocaleString()}</td>
                                     <td style={{ textAlign: 'right', fontFamily: "'JetBrains Mono', monospace", fontWeight: 600 }}>৳ {(product.selling_price || 0).toLocaleString()}</td>
                                     <td style={{ textAlign: 'right' }}>{product.tax_rate || 0}%</td>

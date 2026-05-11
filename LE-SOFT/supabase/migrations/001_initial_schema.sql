@@ -353,6 +353,7 @@ VALUES ('Leading Edge Demo', 'Leading Edge', 'Bangladesh', '৳')
 ON CONFLICT DO NOTHING;
 
 -- Ledger Groups
+-- Insert root ledger groups first (no parent references)
 INSERT INTO groups (name, parent_group_id, nature, company_id) VALUES
 ('Capital Account', NULL, 'Liabilities', 1),
 ('Current Assets', NULL, 'Assets', 1),
@@ -361,11 +362,16 @@ INSERT INTO groups (name, parent_group_id, nature, company_id) VALUES
 ('Direct Expenses', NULL, 'Expenses', 1),
 ('Indirect Expenses', NULL, 'Expenses', 1),
 ('Sales Accounts', NULL, 'Income', 1),
-('Purchase Accounts', NULL, 'Expenses', 1),
-('Cash-in-hand', 2, 'Assets', 1),
-('Bank Accounts', 2, 'Assets', 1),
-('Sundry Debtors', 2, 'Assets', 1),
-('Sundry Creditors', 3, 'Liabilities', 1)
+('Purchase Accounts', NULL, 'Expenses', 1)
+ON CONFLICT DO NOTHING;
+
+-- Then insert child groups by resolving parent IDs by name to avoid hard-coded numeric IDs
+INSERT INTO groups (name, parent_group_id, nature, company_id)
+VALUES
+('Cash-in-hand', (SELECT id FROM groups WHERE name = 'Current Assets' LIMIT 1), 'Assets', 1),
+('Bank Accounts', (SELECT id FROM groups WHERE name = 'Current Assets' LIMIT 1), 'Assets', 1),
+('Sundry Debtors', (SELECT id FROM groups WHERE name = 'Current Assets' LIMIT 1), 'Assets', 1),
+('Sundry Creditors', (SELECT id FROM groups WHERE name = 'Current Liabilities' LIMIT 1), 'Liabilities', 1)
 ON CONFLICT DO NOTHING;
 
 -- User Groups
@@ -377,5 +383,12 @@ ON CONFLICT (name) DO NOTHING;
 
 -- Default Admin User (password: admin — change immediately!)
 INSERT INTO users (username, password_hash, full_name, role, group_id, email)
-VALUES ('admin', 'admin', 'Administrator', 'admin', 1, 'admin@leadingedge.com')
+VALUES (
+    'admin',
+    'admin',
+    'Administrator',
+    'admin',
+    (SELECT id FROM user_groups WHERE name = 'Admin Full Access' LIMIT 1),
+    'admin@leadingedge.com'
+)
 ON CONFLICT (username) DO NOTHING;

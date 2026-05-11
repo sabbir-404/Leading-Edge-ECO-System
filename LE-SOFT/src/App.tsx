@@ -14,6 +14,7 @@ import GroupList from './pages/Accounting/Masters/GroupList';
 import GroupCreate from './pages/Accounting/Masters/GroupCreate';
 import LedgerList from './pages/Accounting/Masters/LedgerList';
 import LedgerCreate from './pages/Accounting/Masters/LedgerCreate';
+import SupplierManagement from './pages/Accounting/Masters/SupplierManagement';
 
 // Inventory Masters
 import UnitList from './pages/Inventory/Masters/UnitList';
@@ -24,6 +25,7 @@ import StockItemList from './pages/Inventory/Masters/StockItemList';
 import StockItemCreate from './pages/Inventory/Masters/StockItemCreate';
 import ProductList from './pages/Inventory/Masters/ProductList';
 import ProductCreate from './pages/Inventory/Masters/ProductCreate';
+import PurchaseRequisitions from './pages/Inventory/Masters/PurchaseRequisitions';
 
 // Master Stubs
 import VoucherTypes from './pages/Stubs/VoucherTypes';
@@ -261,6 +263,7 @@ function App() {
            <Route path="groups/create" element={<GroupCreate />} />
            <Route path="ledgers" element={<LedgerList />} />
            <Route path="ledgers/create" element={<LedgerCreate />} />
+           <Route path="suppliers" element={<SupplierManagement />} />
            <Route path="voucher-types" element={<VoucherTypes />} />
            <Route path="currencies" element={<Currencies />} />
 
@@ -273,6 +276,7 @@ function App() {
            <Route path="stock-items/create" element={<StockItemCreate />} />
            <Route path="products" element={<ProductList />} />
            <Route path="products/create" element={<ProductCreate />} />
+          <Route path="purchase-requisitions" element={<PurchaseRequisitions />} />
            <Route path="godowns" element={<Godowns />} />
         </Route>
 
