@@ -1,0 +1,65 @@
+version: 2
+
+updates:
+  # ─── LE-SOFT Desktop App ──────────────────────────────────────────────────
+  - package-ecosystem: "npm"
+    directory: "/LE-SOFT"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "04:00"
+      timezone: "Asia/Dhaka"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "le-soft"
+    # Ignore packages we manage manually to prevent conflicts
+    ignore:
+      # Managed manually due to Electron version compatibility requirements
+      - dependency-name: "electron"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "electron-builder"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "vite"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@vitejs/plugin-react"
+        update-types: ["version-update:semver-major"]
+      # xlsx replaced by exceljs — ignore all xlsx updates
+      - dependency-name: "xlsx"
+      # Native modules — managed via electron-rebuild
+      - dependency-name: "better-sqlite3"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@electron/rebuild"
+        update-types: ["version-update:semver-major"]
+    groups:
+      # Group all minor/patch React updates into one PR
+      react-deps:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "react-router-dom"
+          - "@types/react"
+          - "@types/react-dom"
+      # Group TypeScript toolchain updates
+      typescript-toolchain:
+        patterns:
+          - "typescript"
+          - "@typescript-eslint/*"
+          - "eslint*"
+      # Group Supabase updates
+      supabase:
+        patterns:
+          - "@supabase/*"
+          - "supabase"
+
+  # ─── GitHub Actions ────────────────────────────────────────────────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+      time: "04:00"
+      timezone: "Asia/Dhaka"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    open-pull-requests-limit: 3
