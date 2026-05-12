@@ -29,4 +29,4 @@ core/main.cjs
 core/preload.cjs
 
 # Vite build output — regenerated every build
-resource/assets/
+resource/assets/.manuscript-profile/
