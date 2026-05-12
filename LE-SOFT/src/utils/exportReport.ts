@@ -1,6 +1,6 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 
 // ─── PDF Export ──────────────────────────────────────────
 
@@ -17,7 +17,6 @@ export const exportPDF = (options: PDFOptions) => {
     const { title, subtitle, columns, rows, footerRow, orientation = 'portrait' } = options;
     const doc = new jsPDF({ orientation });
 
-    // Header
     doc.setFontSize(18);
     doc.setFont('helvetica', 'bold');
     doc.text(title, 14, 20);
@@ -30,45 +29,27 @@ export const exportPDF = (options: PDFOptions) => {
         doc.setTextColor(0);
     }
 
-    // Table
     const body = [...rows];
-    if (footerRow) {
-        body.push(footerRow);
-    }
+    if (footerRow) body.push(footerRow);
 
     autoTable(doc, {
         head: [columns],
         body,
         startY: subtitle ? 34 : 28,
         theme: 'grid',
-        headStyles: {
-            fillColor: [99, 102, 241],
-            textColor: 255,
-            fontStyle: 'bold',
-            fontSize: 9,
-        },
-        bodyStyles: {
-            fontSize: 8.5,
-        },
-        footStyles: {
-            fillColor: [240, 240, 255],
-            textColor: [30, 30, 30],
-            fontStyle: 'bold',
-        },
-        alternateRowStyles: {
-            fillColor: [248, 248, 252],
-        },
+        headStyles: { fillColor: [99, 102, 241], textColor: 255, fontStyle: 'bold', fontSize: 9 },
+        bodyStyles: { fontSize: 8.5 },
+        footStyles: { fillColor: [240, 240, 255], textColor: [30, 30, 30], fontStyle: 'bold' },
+        alternateRowStyles: { fillColor: [248, 248, 252] },
         margin: { top: 10, left: 14, right: 14 },
         didParseCell: (data) => {
-            // Bold footer row
             if (footerRow && data.row.index === body.length - 1) {
                 data.cell.styles.fontStyle = 'bold';
                 data.cell.styles.fillColor = [235, 235, 248];
             }
-        }
+        },
     });
 
-    // Footer with date
     const pageCount = doc.getNumberOfPages();
     for (let i = 1; i <= pageCount; i++) {
         doc.setPage(i);
@@ -83,7 +64,7 @@ export const exportPDF = (options: PDFOptions) => {
 };
 
 
-// ─── Excel Export ────────────────────────────────────────
+// ─── Excel Export (exceljs — replaces vulnerable xlsx) ───
 
 interface ExcelOptions {
     title: string;
@@ -92,30 +73,60 @@ interface ExcelOptions {
     sheetName?: string;
 }
 
-export const exportExcel = (options: ExcelOptions) => {
+export const exportExcel = async (options: ExcelOptions): Promise<void> => {
     const { title, columns, rows, sheetName = 'Report' } = options;
 
-    // Build worksheet data: title row, empty row, header, data rows
-    const wsData = [
-        [title],
-        [`Generated: ${new Date().toLocaleString()}`],
-        [],
-        columns,
-        ...rows,
-    ];
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'LE-SOFT';
+    wb.created = new Date();
 
-    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    const ws = wb.addWorksheet(sheetName);
 
-    // Style column widths
-    ws['!cols'] = columns.map(col => ({ wch: Math.max(col.length + 4, 15) }));
+    // Title row
+    const titleRow = ws.addRow([title]);
+    titleRow.font = { bold: true, size: 14 };
+    ws.mergeCells(1, 1, 1, columns.length);
 
-    // Merge title row
-    ws['!merges'] = [
-        { s: { r: 0, c: 0 }, e: { r: 0, c: columns.length - 1 } },
-        { s: { r: 1, c: 0 }, e: { r: 1, c: columns.length - 1 } },
-    ];
+    // Generated timestamp row
+    const genRow = ws.addRow([`Generated: ${new Date().toLocaleString()}`]);
+    genRow.font = { italic: true, size: 9, color: { argb: 'FF888888' } };
+    ws.mergeCells(2, 1, 2, columns.length);
 
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, sheetName);
-    XLSX.writeFile(wb, `${title.replace(/[^a-zA-Z0-9]/g, '_')}.xlsx`);
+    ws.addRow([]); // spacer
+
+    // Header row
+    const headerRow = ws.addRow(columns);
+    headerRow.eachCell(cell => {
+        cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF6366F1' } };
+        cell.alignment = { vertical: 'middle', horizontal: 'center' };
+        cell.border = { bottom: { style: 'thin', color: { argb: 'FF4F46E5' } } };
+    });
+
+    // Data rows with alternating background
+    rows.forEach((dataRow, i) => {
+        const row = ws.addRow(dataRow);
+        if (i % 2 === 1) {
+            row.eachCell(cell => {
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8F8FC' } };
+            });
+        }
+    });
+
+    // Auto column widths
+    ws.columns = columns.map(col => ({ width: Math.max(col.length + 4, 15) }));
+
+    // Write buffer and trigger browser download
+    const buffer = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buffer], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${title.replace(/[^a-zA-Z0-9]/g, '_')}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
 };
