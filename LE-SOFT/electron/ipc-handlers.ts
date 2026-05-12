@@ -3301,12 +3301,19 @@ export function registerHandlers() {
     ipcMain.handle('set-theme', (event, theme: string) => {
         const win = BrowserWindow.fromWebContents(event.sender);
         if (!win) return;
-        
-        // Dynamically style the native Windows controls over the React web contents
-        if (theme === 'dark') {
-            win.setTitleBarOverlay({ color: '#141414', symbolColor: '#f5f5f5' });
-        } else {
-            win.setTitleBarOverlay({ color: '#c0c0c0', symbolColor: '#111111' });
+
+        // setTitleBarOverlay is only available on Windows with titleBarOverlay enabled.
+        // On macOS (hiddenInset style) this method does not exist — guard it.
+        if (process.platform === 'win32' && typeof (win as any).setTitleBarOverlay === 'function') {
+            try {
+                if (theme === 'dark') {
+                    win.setTitleBarOverlay({ color: '#141414', symbolColor: '#f5f5f5', height: 64 });
+                } else {
+                    win.setTitleBarOverlay({ color: '#c0c0c0', symbolColor: '#111111', height: 64 });
+                }
+            } catch {
+                // Silently ignore — some older Electron builds may not support this
+            }
         }
     });
 
