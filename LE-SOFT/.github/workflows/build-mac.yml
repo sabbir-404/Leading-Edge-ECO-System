@@ -17,20 +17,28 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 20
           cache: 'npm'
 
       - name: Install Dependencies
-        run: npm install
+        # Skip postinstall (electron-rebuild) — not needed for macOS build on CI
+        run: npm install --ignore-scripts
+        env:
+          npm_config_arch: x64
+
+      - name: Install Python (for native module builds)
+        run: pip3 install setuptools || true
+
+      - name: Rebuild better-sqlite3 for Electron
+        run: npx electron-rebuild -f -w better-sqlite3
+        env:
+          npm_config_arch: x64
 
       - name: Build & Publish macOS Release
-        # electron-builder --mac -p always:
-        #   - Builds the .dmg and .zip
-        #   - Uploads them plus latest-mac.yml to a GitHub Release
-        #   - latest-mac.yml is what electron-updater reads on macOS end-user machines
         run: npm run dist:mac:publish
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: false
 
       - name: Upload macOS Artifacts
         uses: actions/upload-artifact@v4
@@ -40,3 +48,4 @@ jobs:
             release/*.dmg
             release/*.zip
             release/latest-mac.yml
+          if-no-files-found: warn
