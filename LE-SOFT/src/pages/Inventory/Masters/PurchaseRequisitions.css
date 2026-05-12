@@ -1,0 +1,433 @@
+/* ── Purchase Requisitions Layout ─────────────────────────────── */
+.purchase-requisitions-container {
+    padding: 0;
+}
+
+/* ── Tabs ─────────────────────────────────────────────────────── */
+.tabs {
+    display: flex;
+    gap: 0;
+    margin-bottom: 2rem;
+    border-bottom: 2px solid var(--border-color);
+    overflow-x: auto;
+}
+
+.tab {
+    padding: 0.75rem 1.4rem;
+    border: none;
+    background: none;
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    transition: all 0.2s ease;
+    border-bottom: 3px solid transparent;
+    margin-bottom: -2px;
+    white-space: nowrap;
+}
+
+.tab:hover { color: var(--text-primary); }
+
+.tab.active {
+    color: var(--accent-color);
+    border-bottom-color: var(--accent-color);
+    font-weight: 600;
+}
+
+/* ── Filters ──────────────────────────────────────────────────── */
+.filters {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+}
+
+.filter-select {
+    padding: 0.55rem 1rem;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--input-bg);
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: border-color 0.2s;
+    min-width: 160px;
+}
+
+.filter-select:hover { border-color: var(--accent-color); }
+.filter-select:focus {
+    outline: none;
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.1);
+}
+
+/* ── States ───────────────────────────────────────────────────── */
+.loading {
+    text-align: center;
+    padding: 2rem;
+    color: var(--text-secondary);
+}
+
+.empty-state {
+    text-align: center;
+    padding: 4rem 2rem;
+    color: var(--text-secondary);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.empty-state svg { opacity: 0.4; margin-bottom: 0.5rem; }
+.empty-state h3 { margin: 0.25rem 0; font-size: 1.1rem; color: var(--text-primary); }
+.empty-state p { margin: 0; font-size: 0.9rem; }
+
+/* ── Table ────────────────────────────────────────────────────── */
+.table-wrapper {
+    overflow-x: auto;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+}
+
+.requisitions-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--card-bg);
+}
+
+.requisitions-table thead {
+    background: var(--hover-bg);
+    border-bottom: 2px solid var(--border-color);
+}
+
+.requisitions-table th {
+    padding: 0.85rem 1rem;
+    text-align: left;
+    font-weight: 600;
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    white-space: nowrap;
+}
+
+.requisitions-table td {
+    padding: 0.9rem 1rem;
+    border-bottom: 1px solid var(--border-color);
+    color: var(--text-primary);
+    vertical-align: middle;
+}
+
+.requisitions-table tbody tr:hover td { background: var(--hover-bg); }
+.requisitions-table tbody tr:last-child td { border-bottom: none; }
+
+.font-mono {
+    font-family: 'Courier New', monospace;
+    font-weight: 600;
+    color: var(--accent-color);
+}
+
+.text-right { text-align: right; }
+
+/* ── Badges ───────────────────────────────────────────────────── */
+.badge {
+    display: inline-block;
+    padding: 0.3rem 0.65rem;
+    border-radius: 5px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+}
+
+/* ── Action Buttons ───────────────────────────────────────────── */
+.actions {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+}
+
+.action-btn {
+    padding: 0.45rem;
+    border: none;
+    border-radius: 6px;
+    background: var(--hover-bg);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+}
+
+.action-btn:hover { background: var(--border-color); }
+.action-btn.edit:hover { background: rgba(59,130,246,0.15); color: #3b82f6; }
+.action-btn.delete:hover { background: rgba(239,68,68,0.15); color: #ef4444; }
+.action-btn.approve:hover { background: rgba(34,197,94,0.15); color: #22c55e; }
+.action-btn.purchase:hover { background: rgba(249,115,22,0.15); color: #f97316; }
+.action-btn.receive:hover { background: rgba(168,85,247,0.15); color: #a855f7; }
+.action-btn.complete:hover { background: rgba(34,197,94,0.15); color: #22c55e; }
+
+/* ── Requisition Create Form ──────────────────────────────────── */
+.create-view {
+    padding-bottom: 2rem;
+}
+
+.requisition-form {
+    background: var(--card-bg);
+    padding: 1.5rem 1.75rem 1.75rem;
+    border-radius: 14px;
+    border: 1px solid var(--border-color);
+    box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+    color: var(--text-primary);
+}
+
+.requisition-form-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 1.5rem;
+    align-items: flex-start;
+    padding-bottom: 1.25rem;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 1.5rem;
+}
+
+.requisition-eyebrow {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent-color);
+    margin-bottom: 0.4rem;
+}
+
+.requisition-form-header h2 { margin: 0; font-size: 1.5rem; color: var(--text-primary); }
+.requisition-form-header p { margin: 0.35rem 0 0; color: var(--text-secondary); font-size: 0.9rem; }
+
+.requisition-meta-grid {
+    display: grid;
+    grid-template-columns: 220px 180px;
+    gap: 1rem;
+    min-width: 420px;
+}
+
+/* ── Line Items Table inside form ─────────────────────────────── */
+.line-items-shell {
+    overflow-x: auto;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    background: var(--hover-bg);
+    margin-bottom: 0.75rem;
+}
+
+.line-items-table {
+    width: 100%;
+    min-width: 700px;
+    border-collapse: collapse;
+}
+
+.line-items-table thead {
+    background: transparent;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.line-items-table th {
+    padding: 0.8rem 0.9rem;
+    text-align: left;
+    font-size: 0.75rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    font-weight: 600;
+}
+
+.line-items-table td {
+    padding: 0.7rem 0.9rem;
+    border-bottom: 1px solid var(--border-color);
+    vertical-align: middle;
+}
+
+/* Inputs inside the line-items table get their own scoped styles */
+.line-items-table td input,
+.line-items-table td select {
+    width: 100%;
+    padding: 0.5rem 0.65rem;
+    border: 1px solid var(--border-color);
+    border-radius: 7px;
+    background: var(--card-bg);
+    color: var(--text-primary);
+    font-size: 0.88rem;
+    transition: border-color 0.2s;
+    box-sizing: border-box;
+    font-family: inherit;
+}
+
+.line-items-table td input:focus,
+.line-items-table td select:focus {
+    outline: none;
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 2px rgba(249,115,22,0.12);
+}
+
+.line-items-table tbody tr:last-child td { border-bottom: none; }
+
+.line-item-hint {
+    margin-top: 0.3rem;
+    font-size: 0.72rem;
+    color: var(--accent-color);
+    font-weight: 600;
+}
+
+.add-line-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+    padding: 0.5rem 1rem;
+    border: 1.5px dashed var(--border-color);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--accent-color);
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.9rem;
+    transition: all 0.2s;
+}
+
+.add-line-btn:hover {
+    border-color: var(--accent-color);
+    background: rgba(249,115,22,0.06);
+}
+
+/* ── Form Actions Row ─────────────────────────────────────────── */
+.form-actions {
+    display: flex;
+    gap: 1rem;
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border-color);
+}
+
+.requisition-actions {
+    justify-content: space-between;
+    align-items: center;
+}
+
+/* ── History Summary ──────────────────────────────────────────── */
+.line-items-summary {
+    display: grid;
+    gap: 0.5rem;
+    margin: 0.75rem 0 1.25rem;
+}
+
+.line-item-summary-row {
+    display: grid;
+    grid-template-columns: 1.7fr 0.6fr 1.2fr;
+    gap: 0.75rem;
+    padding: 0.65rem 0.9rem;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--hover-bg);
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    align-items: center;
+}
+
+.line-item-summary-row span { color: var(--text-secondary); }
+.line-item-summary-row strong { font-weight: 600; }
+
+/* ── Button Variants ──────────────────────────────────────────── */
+.btn-primary,
+.btn-secondary,
+.btn-success {
+    padding: 0.65rem 1.4rem;
+    border: none;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    font-size: 0.9rem;
+}
+
+.btn-primary { background: var(--accent-color); color: white; }
+.btn-primary:hover { filter: brightness(1.1); box-shadow: 0 4px 12px rgba(249,115,22,0.25); }
+
+.btn-secondary { background: var(--hover-bg); color: var(--text-primary); border: 1px solid var(--border-color); }
+.btn-secondary:hover { background: var(--border-color); }
+
+.btn-success { background: #22c55e; color: white; }
+.btn-success:hover { background: #16a34a; }
+
+/* ── Modals ───────────────────────────────────────────────────── */
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(10, 15, 30, 0.65);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    padding: 1rem;
+}
+
+.modal-content {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    padding: 2rem;
+    max-width: 480px;
+    width: 100%;
+    box-shadow: 0 25px 50px rgba(0,0,0,0.25);
+    color: var(--text-primary);
+}
+
+.modal-content h2 { margin: 0 0 0.5rem; font-size: 1.25rem; }
+.modal-content p { color: var(--text-secondary); margin-bottom: 1.25rem; font-size: 0.9rem; }
+
+.modal-content textarea,
+.modal-content input {
+    width: 100%;
+    padding: 0.75rem;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-family: inherit;
+    margin-bottom: 1.25rem;
+    background: var(--input-bg);
+    color: var(--text-primary);
+    box-sizing: border-box;
+    resize: vertical;
+}
+
+.modal-content textarea:focus,
+.modal-content input:focus {
+    outline: none;
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 3px rgba(249,115,22,0.1);
+}
+
+.modal-actions { display: flex; gap: 0.75rem; }
+.modal-actions button { flex: 1; }
+
+/* ── Responsive ───────────────────────────────────────────────── */
+@media (max-width: 960px) {
+    .requisition-form-header { flex-direction: column; }
+    .requisition-meta-grid { width: 100%; min-width: 0; grid-template-columns: 1fr 1fr; }
+}
+
+@media (max-width: 768px) {
+    .tabs { overflow-x: auto; }
+    .filters { flex-direction: column; }
+    .filter-select { width: 100%; min-width: 0; }
+    .form-actions { flex-direction: column; }
+    .btn-primary, .btn-secondary, .btn-success { width: 100%; justify-content: center; }
+    .modal-actions { flex-direction: column; }
+    .modal-actions button { width: 100%; }
+    .requisitions-table th, .requisitions-table td { padding: 0.65rem 0.5rem; font-size: 0.85rem; }
+}

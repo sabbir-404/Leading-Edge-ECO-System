@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import DashboardLayout from '../../components/DashboardLayout';
+import { resolveImageSrc } from '../../utils/imageSrc';
 import { canAdjustBillPrice } from '../../utils/permissions';
 
 interface Product {
@@ -438,7 +439,7 @@ const Billing: React.FC = () => {
                                                     onMouseLeave={e => (e.currentTarget.style.background = '#fff')}>
                                                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                                                         {p.image_path
-                                                            ? <img src={`file://${p.image_path}`} alt="" style={{ width: '30px', height: '30px', borderRadius: '4px', objectFit: 'cover', border: '1px solid #eee' }} />
+                                                            ? <img src={resolveImageSrc(p.image_path)} alt="" style={{ width: '30px', height: '30px', borderRadius: '4px', objectFit: 'cover', border: '1px solid #eee' }} />
                                                             : <div style={{ width: '30px', height: '30px', borderRadius: '4px', background: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.6rem', color: '#94a3b8' }}>IMG</div>}
                                                         <div>
                                                             <div style={{ fontWeight: 600, fontSize: '0.87rem' }}>{p.name}</div>
@@ -490,7 +491,7 @@ const Billing: React.FC = () => {
                                                 <td style={{ padding: '0.5rem 0.75rem' }}>
                                                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
                                                         {item.image_path
-                                                            ? <img src={`file://${item.image_path}`} alt="" style={{ width: '28px', height: '28px', borderRadius: '4px', objectFit: 'cover', border: '1px solid #eee', flexShrink: 0 }} />
+                                                            ? <img src={resolveImageSrc(item.image_path)} alt="" style={{ width: '28px', height: '28px', borderRadius: '4px', objectFit: 'cover', border: '1px solid #eee', flexShrink: 0 }} />
                                                             : <div style={{ width: '28px', height: '28px', borderRadius: '4px', background: '#f1f5f9', flexShrink: 0 }} />}
                                                         <div>
                                                             <div style={{ fontWeight: 600, lineHeight: 1.2 }}>{item.product_name}</div>

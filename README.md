@@ -45,6 +45,58 @@ Furniture businesses often struggle with disconnected tools across departments. 
 - Goods receiving
 - Supplier due tracking (optional)
 
+#### Expanded Purchase Requisition & Procurement Requirements
+
+##### 1) Product Management
+- Dedicated product page for creating and managing products.
+- Product fields: product name, auto-generated product ID, product type, product group, stock group, and unit of measurement.
+- Product type must support local and imported items.
+
+##### 2) Product ID Generation
+- Product IDs must be generated automatically from the product group and local/imported category.
+- Admin-defined prefixes must be supported per product group and category.
+- Example: Hardware + Imported can map to prefix `50`, producing an ID such as `50-1234`.
+- Product IDs must be unique and sequential.
+
+##### 3) Purchase Requisition Workflow
+- Create a requisition from a dedicated purchase requisition page.
+- Requisition fields: requisition ID, product name, created date, quantity requested, priority, and requested by.
+- Users must be able to create, view, search, and filter requisitions.
+
+##### 4) Role-Based Workflow
+- Store users create requisitions.
+- Store Head reviews, edits, approves, or rejects requisitions.
+- Purchase Department adds procurement details after Store Head approval.
+- Audit users review procurement details and may add remarks only.
+- Director gives final approval or disapproval.
+
+##### 5) Supplier Management
+- Dedicated supplier page with supplier name, contact person, phone number, address, email, dues, payment status, and product history.
+- Supplier details should auto-load when an existing supplier is selected.
+- If no supplier exists, the system should allow creating a new one during procurement entry.
+
+##### 6) Purchase Details
+- Purchase Department must capture estimated price, supplier contact details, supplier reference, invoice ID, payment status, quantity purchased, and remarks.
+- The system should track purchase status from requisition creation through completion.
+
+##### 7) Goods Receiving and Stock Update
+- Once goods are received, the system must update inventory automatically.
+- Stock movements must be linked to the requisition and invoice.
+- Current stock should be updated separately from product master creation.
+
+##### 8) Audit Trail
+- Every edit, approval, rejection, supplier change, payment change, and stock update must be logged.
+- Audit entries should capture user, action, date/time, old value, and new value.
+
+##### 9) Notifications
+- Relevant departments must be notified when Store Head approvals, audit remarks, director approval/disapproval, and goods received events occur.
+
+##### 10) Suggested Extensions
+- Role-based access control for Store, Store Head, Purchase Department, Audit, Director, and Admin.
+- Dashboards for pending approvals, requisition counts, supplier dues, purchase trends, and inventory levels.
+- Attachment upload support for quotations, invoices, and audit files.
+- Multi-level approval, budget control, vendor comparison, barcode/QR support, reporting, and accounting integration.
+
 ### Delivery / Logistics
 - Delivery note / challan
 - Delivery status tracking (optional)

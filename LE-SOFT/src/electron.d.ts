@@ -165,6 +165,15 @@ export interface ElectronAPI {
     // System Audit
     getAuditLog: (params: any) => Promise<any[]>;
 
+    // Purchase Requisitions
+    getPurchaseRequisitionHistory: (requisitionId: string) => Promise<any[]>;
+    auditReviewPurchaseRequisition: (id: string, status: string, notes?: string) => Promise<any>;
+    directorReviewPurchaseRequisition: (id: string, status: string, notes?: string) => Promise<any>;
+
+    // Supplier Settlements
+    getSupplierSettlements: (supplierLedgerId?: number) => Promise<any[]>;
+    createSupplierSettlement: (settlement: any) => Promise<any>;
+
     // Session & Auth extras
     getActiveSessions: () => Promise<any[]>;
     kickUserSession: (userId: number) => Promise<any>;

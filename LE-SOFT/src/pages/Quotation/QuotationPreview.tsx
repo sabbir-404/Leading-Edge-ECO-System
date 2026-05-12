@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Printer, ArrowLeft } from 'lucide-react';
+import { resolveImageSrc } from '../../utils/imageSrc';
 import './Quotation.css';
 
 // ── Number to words (Bangladeshi) ─────────────────────────────────────────────
@@ -156,7 +157,7 @@ export default function QuotationPreview() {
           </thead>
           <tbody>
             {items.map((item: any, idx: number) => {
-              const imgSrc = item.imagePreview || (item.image_path ? `file://${item.image_path}` : '');
+              const imgSrc = item.imagePreview || resolveImageSrc(item.image_path);
               const qty = item.quantity || item.qty || 0;
               const rate = item.rate || 0;
               const amt = qty * rate;

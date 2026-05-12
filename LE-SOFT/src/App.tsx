@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
+import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import ProtectedRoute from './components/ProtectedRoute';
 import Login from './pages/Auth/Login';
 import SetupScreen from './pages/Auth/SetupScreen';
@@ -14,6 +14,7 @@ import GroupList from './pages/Accounting/Masters/GroupList';
 import GroupCreate from './pages/Accounting/Masters/GroupCreate';
 import LedgerList from './pages/Accounting/Masters/LedgerList';
 import LedgerCreate from './pages/Accounting/Masters/LedgerCreate';
+import SupplierManagement from './pages/Accounting/Masters/SupplierManagement';
 
 // Inventory Masters
 import UnitList from './pages/Inventory/Masters/UnitList';
@@ -24,6 +25,7 @@ import StockItemList from './pages/Inventory/Masters/StockItemList';
 import StockItemCreate from './pages/Inventory/Masters/StockItemCreate';
 import ProductList from './pages/Inventory/Masters/ProductList';
 import ProductCreate from './pages/Inventory/Masters/ProductCreate';
+import PurchaseRequisitions from './pages/Inventory/Masters/PurchaseRequisitions';
 
 // Master Stubs
 import VoucherTypes from './pages/Stubs/VoucherTypes';
@@ -171,12 +173,23 @@ function App() {
 
   // Auto-logout on idle — clears ALL session keys to prevent stale state (BUG-02 fix)
   const handleAutoLogout = () => {
-    localStorage.removeItem('user_role');
-    localStorage.removeItem('user_permissions');
-    localStorage.removeItem('user_name');
-    localStorage.removeItem('user_id');
-    localStorage.removeItem('user');
-    localStorage.removeItem('license_warning');
+    const keepKeys = ['app_license_key', 'supabase_admin_key', 'barcode_sticker_size', 'barcode_printer', 'auto_logout_enabled', 'auto_logout_minutes', 'theme'];
+    const keysToKeep = keepKeys.reduce((acc, key) => {
+      const val = localStorage.getItem(key);
+      if (val !== null) acc[key] = val;
+      return acc;
+    }, {} as Record<string, string>);
+
+    localStorage.clear();
+    sessionStorage.clear();
+
+    Object.entries(keysToKeep).forEach(([k, v]) => localStorage.setItem(k, v));
+    
+    // Also notify main process if needed
+    if ((window as any).electron?.clearSession) {
+      (window as any).electron.clearSession();
+    }
+    
     navigate('/');
   };
 
@@ -234,7 +247,7 @@ function App() {
         <IdleWarningModal show={showWarning} countdown={countdown} onStay={stayLoggedIn} />
         
         {/* Render the unified loading screen over the protected routes until the offline cache is fully warmed up */}
-        {location.pathname !== '/' && location.pathname !== '/login' && location.pathname !== '/setup' && !isAppReady && (
+        {!isAuthPage && !isAppReady && (
             <AppLoadingScreen onReady={() => setIsAppReady(true)} />
         )}
 
@@ -250,6 +263,7 @@ function App() {
            <Route path="groups/create" element={<GroupCreate />} />
            <Route path="ledgers" element={<LedgerList />} />
            <Route path="ledgers/create" element={<LedgerCreate />} />
+           <Route path="suppliers" element={<SupplierManagement />} />
            <Route path="voucher-types" element={<VoucherTypes />} />
            <Route path="currencies" element={<Currencies />} />
 
@@ -262,6 +276,7 @@ function App() {
            <Route path="stock-items/create" element={<StockItemCreate />} />
            <Route path="products" element={<ProductList />} />
            <Route path="products/create" element={<ProductCreate />} />
+          <Route path="purchase-requisitions" element={<PurchaseRequisitions />} />
            <Route path="godowns" element={<Godowns />} />
         </Route>
 
@@ -304,6 +319,7 @@ function App() {
         <Route path="/website" element={<ProtectedRoute><WebsiteDashboard /></ProtectedRoute>} />
 
         {/* MAKE Module */}
+        <Route path="/make" element={<Navigate to="/make/dashboard" replace />} />
         <Route path="/make/dashboard" element={<ProtectedRoute><MakeDashboard /></ProtectedRoute>} />
         <Route path="/make/place-order" element={<ProtectedRoute><PlaceOrder /></ProtectedRoute>} />
         <Route path="/make/track" element={<ProtectedRoute><TrackOrders /></ProtectedRoute>} />

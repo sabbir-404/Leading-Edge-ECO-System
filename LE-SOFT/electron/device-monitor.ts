@@ -1,4 +1,5 @@
 import { app } from 'electron';
+import { autoUpdater } from 'electron-updater';
 import os from 'os';
 import path from 'path';
 import fs from 'fs';
@@ -103,7 +104,6 @@ export function startBroadcastListener(): void {
         .on('broadcast', { event: 'force-update' }, () => {
             console.log('[DEVICE] Received Global Force Update Signal');
             try {
-                const autoUpdater = require('electron-updater').autoUpdater;
                 autoUpdater.checkForUpdates();
                 // We don't downloadUpdate() immediately because Mac unsigned logic 
                 // requires the renderer to manually process the info.

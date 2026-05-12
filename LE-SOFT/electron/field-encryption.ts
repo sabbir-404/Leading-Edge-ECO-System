@@ -55,19 +55,54 @@ function getKey(): Buffer {
     return _key!;
 }
 
-// ── Core encrypt / decrypt ─────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Core encrypt / decrypt
+//
+// ENCRYPTION FORMAT (all new writes):
+//   e1:<base64( IV[12 bytes] + AuthTag[16 bytes] + Ciphertext )>
+//   Algorithm: AES-256-GCM
+//   - GCM provides authenticated encryption: any bit-flip to the ciphertext
+//     causes decryption to throw, preventing silent data corruption.
+//   - IV is random 12 bytes per field (GCM standard).
+//   - AuthTag is 16 bytes appended after the IV in the base64 blob.
+//
+// BACKWARD COMPAT:
+//   e2: format (AES-256-CBC, no auth tag) is still DECRYPTED but never written.
+//   It exists for rows written between v1.3.x and v1.3.6 before this fix.
+//   Over time, as data gets re-saved via the app, e2: rows will be replaced
+//   with e1: GCM rows automatically.
+// ─────────────────────────────────────────────────────────────────────────────
 
 export function encryptField(text: string): string {
+    // Return empty strings as-is — encrypting blank fields adds no security
+    // and causes problems when comparing/searching for empty values.
+    // KNOWN GAP (H5): if a user clears a field, the empty string is stored plaintext.
+    // This is acceptable because an empty string reveals no sensitive data.
     if (!text) return text || '';
     const key = getKey();
     try {
-        const iv = crypto.randomBytes(16);
-        const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
-        let encrypted = cipher.update(text, 'utf8', 'hex');
-        encrypted += cipher.final('hex');
-        return `e2:${iv.toString('hex')}:${encrypted}`;
+        // AES-256-GCM: authenticated encryption.
+        // IV must be 12 bytes for GCM (NIST recommendation; 96-bit IV is most efficient).
+        const iv = crypto.randomBytes(IV_LEN); // IV_LEN = 12 bytes
+        const cipher = crypto.createCipheriv(CIPHER, key, iv); // CIPHER = 'aes-256-gcm'
+
+        // Encrypt the plaintext — two-step: update() + final()
+        const encryptedBuf = Buffer.concat([
+            cipher.update(text, 'utf8'),
+            cipher.final()
+        ]);
+
+        // GCM produces an authentication tag after final() is called.
+        // This 16-byte tag is stored alongside the ciphertext and verified on decrypt.
+        const tag = cipher.getAuthTag(); // TAG_LEN = 16 bytes
+
+        // Pack everything into a single base64 blob: [IV][AuthTag][Ciphertext]
+        const combined = Buffer.concat([iv, tag, encryptedBuf]);
+        return `${PREFIX}${combined.toString('base64')}`; // PREFIX = 'e1:'
     } catch (e) {
-        console.error('Encryption failed:', e);
+        console.error('[Encrypt] GCM encryption failed:', e);
+        // Fallback: return plaintext rather than crashing the app.
+        // This should never happen in practice — log it as a critical error.
         return text;
     }
 }
@@ -78,39 +113,51 @@ export function decryptField(encryptedText: string | null): string {
     }
     const key = getKey();
 
-    // ── Handle NEW format: e2:iv:ciphertext (AES-256-CBC) ─────────────────────
+    // ── Handle CURRENT format: e1:<base64(iv[12]+tag[16]+ciphertext)> (AES-256-GCM) ─
+    // This handles BOTH the original legacy GCM (v1.0-v1.2) AND the new GCM (v1.3.7+).
+    // The binary layout is identical — same IV size, same tag size, same algorithm.
+    if (encryptedText.startsWith('e1:')) {
+        try {
+            const combined = Buffer.from(encryptedText.slice(3), 'base64');
+            const iv         = combined.subarray(0, IV_LEN);           // 12 bytes
+            const tag        = combined.subarray(IV_LEN, IV_LEN + TAG_LEN); // 16 bytes
+            const ciphertext = combined.subarray(IV_LEN + TAG_LEN);    // rest = ciphertext
+
+            const decipher = crypto.createDecipheriv(CIPHER, key, iv);
+            decipher.setAuthTag(tag);
+            // If the data has been tampered with, setAuthTag verification fails here
+            // and an error is thrown — preventing silent data corruption.
+            return decipher.update(ciphertext).toString('utf8') + decipher.final('utf8');
+        } catch {
+            // GCM auth failure = data tampered OR encrypted with a different key.
+            // Return ciphertext as-is rather than crashing — prevents data loss.
+            // These rows should be investigated: they may need re-encryption.
+            console.warn('[Decrypt e1] GCM auth failed — key mismatch or tampered data.');
+            return encryptedText;
+        }
+    }
+
+    // ── Handle LEGACY format: e2:iv:ciphertext (AES-256-CBC) ─────────────────────
+    // Written between v1.3.x and v1.3.6 (before the GCM standardisation fix).
+    // This path is PERMANENT for backward compatibility — never remove it until
+    // all e2: rows have been re-saved (and thus re-encrypted as e1: GCM).
+    // CBC has no auth tag so tampered data decrypts silently to garbage.
     if (encryptedText.startsWith('e2:')) {
         try {
             const parts = encryptedText.split(':');
             if (parts.length !== 3) return encryptedText;
-            const iv = Buffer.from(parts[1], 'hex');
+            const iv = Buffer.from(parts[1], 'hex'); // 16-byte hex IV for CBC
             const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
             let decrypted = decipher.update(parts[2], 'hex', 'utf8');
             decrypted += decipher.final('utf8');
             return decrypted;
         } catch (e) {
-            console.error('[Decrypt e2] Failed:', (e as Error).message);
+            console.error('[Decrypt e2] CBC decryption failed:', (e as Error).message);
             return encryptedText;
         }
     }
 
-    // ── Handle LEGACY format: e1:<base64(iv[12]+tag[16]+ciphertext)> (AES-256-GCM) ─
-    if (encryptedText.startsWith('e1:')) {
-        try {
-            const combined = Buffer.from(encryptedText.slice(3), 'base64');
-            const iv = combined.subarray(0, 12);
-            const tag = combined.subarray(12, 28);
-            const ciphertext = combined.subarray(28);
-            const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
-            decipher.setAuthTag(tag);
-            return decipher.update(ciphertext) + decipher.final('utf8');
-        } catch {
-            // If GCM fails (key mismatch from old machineId-based key), return as-is 
-            // — this prevents crashes on data encrypted by a different machine.
-            return encryptedText;
-        }
-    }
-
+    // Plaintext (not encrypted) — return as-is
     return encryptedText;
 }
 

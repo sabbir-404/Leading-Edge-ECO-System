@@ -56,6 +56,7 @@ contextBridge.exposeInMainWorld('electron', {
     updateUser: (user: any) => ipcRenderer.invoke('update-user', user),
     deleteUser: (id: number) => ipcRenderer.invoke('delete-user', id),
     authenticateUser: (creds: any) => ipcRenderer.invoke('authenticate-user', creds),
+    clearSession: () => ipcRenderer.invoke('clear-session'),
     getActiveSessions: () => ipcRenderer.invoke('get-active-sessions'),
     kickUserSession: (userId: number) => ipcRenderer.invoke('kick-user-session', userId),
     verifyAdminPassword: (data: any) => ipcRenderer.invoke('verify-admin-password', data),
@@ -378,4 +379,24 @@ contextBridge.exposeInMainWorld('electron', {
 
     // ─── WINDOW CONTROLS ───
     setTheme: (theme: string) => ipcRenderer.invoke('set-theme', theme),
+
+    // ─── PURCHASE REQUISITIONS ───
+    getPurchaseRequisitions: (filters?: any) => ipcRenderer.invoke('get-purchase-requisitions', filters),
+    getPurchaseRequisitionById: (id: string) => ipcRenderer.invoke('get-purchase-requisition-by-id', id),
+    getPurchaseRequisitionHistory: (requisitionId: string) => ipcRenderer.invoke('get-purchase-requisition-history', requisitionId),
+    createPurchaseRequisition: (input: any) => ipcRenderer.invoke('create-purchase-requisition', input),
+    updatePurchaseRequisition: (id: string, updates: any) => ipcRenderer.invoke('update-purchase-requisition', id, updates),
+    approvePurchaseRequisition: (id: string, status: string, notes?: string) => ipcRenderer.invoke('approve-purchase-requisition', id, status, notes),
+    auditReviewPurchaseRequisition: (id: string, status: string, notes?: string) => ipcRenderer.invoke('audit-review-purchase-requisition', id, status, notes),
+    directorReviewPurchaseRequisition: (id: string, status: string, notes?: string) => ipcRenderer.invoke('director-review-purchase-requisition', id, status, notes),
+    purchasePurchaseRequisition: (id: string, warehouseLocation: string) => ipcRenderer.invoke('purchase-purchase-requisition', id, warehouseLocation),
+    receivePurchaseRequisition: (id: string) => ipcRenderer.invoke('receive-purchase-requisition', id),
+    completePurchaseRequisition: (id: string) => ipcRenderer.invoke('complete-purchase-requisition', id),
+    deletePurchaseRequisition: (id: string) => ipcRenderer.invoke('delete-purchase-requisition', id),
+
+    // ─── SUPPLIER SETTLEMENTS ───
+    getSupplierSettlements: (supplierLedgerId?: number) => ipcRenderer.invoke('get-supplier-settlements', supplierLedgerId),
+    createSupplierSettlement: (settlement: any) => ipcRenderer.invoke('create-supplier-settlement', settlement),
+
+
 });

@@ -34,7 +34,11 @@ import {
   Target,
   Calendar,
   ShieldAlert,
-  ArrowLeftRight
+  ArrowLeftRight,
+  BookOpen,
+  Layers,
+  Scale,
+  Warehouse
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTheme } from '../context/ThemeContext';
@@ -135,12 +139,23 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
   }, [location.pathname]);
 
   const handleLogout = useCallback(() => {
-    localStorage.removeItem('user_role');
-    localStorage.removeItem('user_name');
-    localStorage.removeItem('user_id');
-    localStorage.removeItem('user_permissions');
-    localStorage.removeItem('user');
-    localStorage.removeItem('license_warning');
+    const keepKeys = ['app_license_key', 'supabase_admin_key', 'barcode_sticker_size', 'barcode_printer', 'auto_logout_enabled', 'auto_logout_minutes', 'theme'];
+    const keysToKeep = keepKeys.reduce((acc, key) => {
+      const val = localStorage.getItem(key);
+      if (val !== null) acc[key] = val;
+      return acc;
+    }, {} as Record<string, string>);
+
+    localStorage.clear();
+    sessionStorage.clear();
+
+    Object.entries(keysToKeep).forEach(([k, v]) => localStorage.setItem(k, v));
+    
+    // Also notify main process if needed
+    if ((window as any).electron?.clearSession) {
+      (window as any).electron.clearSession();
+    }
+    
     navigate('/');
   }, [navigate]);
 
@@ -164,7 +179,22 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
         ] : []),
       ]
     }] : []),
-    ...(hasPermission('read_group') || hasPermission('read_ledger') || hasPermission('read_stock_items') ? [{ icon: <Database size={20} />, label: 'Masters', path: '/masters' }] : []),
+    ...(hasPermission('read_group') || hasPermission('read_ledger') || hasPermission('read_stock_items') ? [{
+      icon: <Database size={20} />,
+      label: 'Masters',
+      path: '/masters',
+      subItems: [
+        { icon: <FolderTree size={18} />, label: 'Account Groups',   path: '/masters/groups' },
+        { icon: <BookOpen size={18} />,   label: 'Ledgers',           path: '/masters/ledgers' },
+        { icon: <FileText size={18} />,   label: 'Voucher Types',     path: '/masters/voucher-types' },
+        { icon: <Package size={18} />,    label: 'Products',          path: '/masters/products' },
+        { icon: <Layers size={18} />,     label: 'Stock Groups',      path: '/masters/stock-groups' },
+        { icon: <Scale size={18} />,      label: 'Units',             path: '/masters/units' },
+        { icon: <Warehouse size={18} />,  label: 'Godowns',           path: '/masters/godowns' },
+        { icon: <Truck size={18} />,      label: 'Suppliers',         path: '/masters/suppliers' },
+        { icon: <ClipboardList size={18} />, label: 'Purchase Requisitions', path: '/masters/purchase-requisitions' },
+      ]
+    }] : []),
     ...(hasPermission('read_accounts') || hasPermission('write_accounts') ? [{ icon: <FileText size={20} />, label: 'Vouchers', path: '/vouchers' }] : []),
     ...(hasPermission('read_accounts') ? [{ icon: <BarChart2 size={20} />, label: 'Reports', path: '/reports' }] : []),
     ...(hasPermission('manage_users') || hasPermission('manage_groups') ? [{ 
@@ -233,12 +263,16 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
   const handleNavClick = (item: any) => {
     if (item.subItems) {
       if (!isSidebarOpen) setSidebarOpen(true);
-      // Toggle: add or remove from expanded list
+      // Toggle sub-menu expansion
       setExpandedMenus(prev =>
         prev.includes(item.label)
           ? prev.filter(l => l !== item.label)
           : [...prev, item.label]
       );
+      // Also navigate to the parent path if one is defined
+      if (item.path) {
+        navigate(item.path);
+      }
     } else {
       navigate(item.path);
     }

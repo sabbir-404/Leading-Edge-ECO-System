@@ -18,8 +18,8 @@
 
 .masters-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-    gap: 1.5rem;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 1rem;
 }
 
 .master-card {
@@ -55,13 +55,23 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    min-width: 0;
+    gap: 0.5rem;
+}
+
+.master-card .content > div {
+    min-width: 0;
+    flex: 1;
 }
 
 .master-card h3 {
     margin: 0;
-    font-size: 1.05rem;
+    font-size: 0.97rem;
     font-weight: 600;
     color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .master-card .arrow {

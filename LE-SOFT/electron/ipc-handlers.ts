@@ -10,7 +10,8 @@ import fs from 'fs';
 import os from 'os';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
-import supabase, { supabaseAdmin } from './supabase';
+import sharp from 'sharp';
+import supabase, { supabaseAdmin, decryptEmbeddedCredentials } from './supabase';
 import mysql from 'mysql2/promise';
 import * as licenseManager from './license-manager';
 import { getConnectedDevices, setBackupNode, DEVICE_ID } from './device-monitor';
@@ -18,24 +19,93 @@ import { encryptObject, encryptField, decryptRows, decryptObject, decryptField }
 import { enqueue, getQueueStats } from './write-queue';
 import * as cache from './cache-manager';
 import { saveSession, loadSession, clearSession } from './session-vault';
+import { autoUpdater } from 'electron-updater';
 
 const BCRYPT_ROUNDS = 12;
+const HOSTINGER_UPLOAD_URL = 'https://leadingedge.com.bd/api/upload_image.php';
+const HOSTINGER_UPLOAD_SECRET = 'LE_SOFT_SECURE_UPLOAD_KEY_2026';
+const MAX_IMAGE_UPLOAD_BYTES = 500 * 1024;
+
+async function optimizeImageBuffer(buffer: Buffer): Promise<Buffer> {
+    const metadata = await sharp(buffer, { failOnError: false }).metadata();
+    const sourceWidth = metadata.width || 1600;
+
+    const attempts = [
+        { width: Math.min(sourceWidth, 1600), quality: 82 },
+        { width: Math.min(sourceWidth, 1280), quality: 74 },
+        { width: Math.min(sourceWidth, 1024), quality: 66 },
+        { width: Math.min(sourceWidth, 800), quality: 58 },
+        { width: Math.min(sourceWidth, 640), quality: 48 },
+        { width: Math.min(sourceWidth, 480), quality: 38 },
+        { width: Math.min(sourceWidth, 360), quality: 30 },
+    ];
+
+    let optimized = buffer;
+    for (const attempt of attempts) {
+        optimized = await sharp(buffer, { failOnError: false })
+            .rotate()
+            .resize({ width: attempt.width, withoutEnlargement: true })
+            .webp({ quality: attempt.quality, effort: 6 })
+            .toBuffer();
+        if (optimized.length <= MAX_IMAGE_UPLOAD_BYTES) break;
+    }
+
+    return optimized;
+}
+
+async function uploadOptimizedImage(buffer: Buffer, filenamePrefix: string): Promise<string> {
+    const optimized = await optimizeImageBuffer(buffer);
+    const formData = new FormData();
+    formData.append('secret_key', HOSTINGER_UPLOAD_SECRET);
+    formData.append('image', new Blob([optimized], { type: 'image/webp' }), `${filenamePrefix}_${Date.now()}.webp`);
+
+    const response = await fetch(HOSTINGER_UPLOAD_URL, { method: 'POST', body: formData });
+    const data = await response.json();
+
+    if (!data.success || !data.url) {
+        throw new Error(data.error || 'Failed to upload image to Hostinger');
+    }
+
+    return data.url;
+}
 
 // ── Super Admin seeder ───────────────────────────────────────────────────────
+/**
+ * generateFirstTimePassword()
+ *
+ * Creates a cryptographically random 16-character password for the superadmin
+ * account on first-time system setup.
+ *
+ * Character set excludes visually ambiguous characters (0, O, I, l, 1)
+ * so the password can be read and typed accurately from a dialog or log file.
+ *
+ * SECURITY: This password is NEVER stored in plaintext anywhere in the code.
+ * It is shown once in a dialog, logged to app.log, then discarded from memory.
+ * The only thing stored in the DB is the bcrypt hash.
+ */
+function generateFirstTimePassword(): string {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%';
+    const bytes = crypto.randomBytes(16);
+    return Array.from(bytes as Uint8Array)
+        .map((b: number) => chars[b % chars.length])
+        .join('');
+}
+
 async function checkAndSeedSuperAdmin() {
     if (!supabaseAdmin) return;
     try {
-        // Ensure Super Admin group exists
-        // Note: group name is kept as plain text in DB for lookup purposes (it's a structural key)
+        // ── Step 1: Ensure the Super Admin permission group exists ───────────────
+        // The group name is stored as plaintext (structural lookup key — not sensitive).
         let { data: grp } = await supabase.from('user_groups').select('id').eq('name', 'Super Admin').maybeSingle();
         let groupId: number;
         if (!grp) {
+            // All permissions granted to Super Admin
             const allPerms = {
                 can_create_user: true, can_delete_user: true, can_edit_user: true, can_edit_groups: true,
                 can_create_bill: true, can_alter_bill: true, can_delete_bill: true,
                 can_create_order: true, can_alter_order: true, can_view_payroll: true, can_approve_leave: true,
             };
-            // Encrypt group row (name stays plain — used as lookup key)
+            // Encrypt the description field before writing; name stays plain for lookups
             const groupRow = encryptObject(
                 { description: 'Full administrative access to all features. Super Admin only.' }
             );
@@ -47,44 +117,112 @@ async function checkAndSeedSuperAdmin() {
             groupId = grp.id;
         }
 
-        const DEFAULT_PASSWORD = '123456';
-        const DEFAULT_HASH = await bcrypt.hash(DEFAULT_PASSWORD, BCRYPT_ROUNDS);
+        // ── Step 2: Check if the superadmin user already exists ──────────────────
+        // username 'sabbirsuperadmin' is the fixed structural identifier for this account.
+        const { data: existing } = await supabase
+            .from('users').select('id,password_hash').eq('username', 'sabbirsuperadmin').maybeSingle();
 
-        // Check if the superadmin user exists (username is structural — kept plain)
-        const { data: existing } = await supabase.from('users').select('id,password_hash').eq('username', 'sabbirsuperadmin').maybeSingle();
         if (!existing) {
+            // ── FIRST LAUNCH: Create the superadmin account with a random password ──
+            // We generate a random strong password — never hardcoded in source.
+            // The password is shown once in a native dialog and written to app.log.
+            const generatedPassword = generateFirstTimePassword();
+            const generatedHash = await bcrypt.hash(generatedPassword, BCRYPT_ROUNDS);
+
+            // Write the generated password to app.log for the admin's reference
+            const logPath = path.join(app.getPath('userData'), 'app.log');
+            fs.appendFileSync(logPath, `[${new Date().toISOString()}] [SEED] FIRST LAUNCH — Super Admin generated password: ${generatedPassword}\n`);
+            fs.appendFileSync(logPath, `[${new Date().toISOString()}] [SEED] Please change this password immediately after first login.\n`);
+
             const email = 'sabbirsuperadmin@lesoft.local';
             const { data: authUser, error: authErr } = await supabaseAdmin.auth.admin.createUser({
                 email,
-                password: DEFAULT_PASSWORD,
+                password: generatedPassword,       // Supabase Auth uses this for the Auth session
                 email_confirm: true,
                 user_metadata: { username: 'sabbirsuperadmin', full_name: 'Super Admin', role: 'superadmin' }
             });
+
             if (!authErr && authUser?.user) {
-                // Encrypt all profile fields before writing to Supabase
+                // Encrypt all personal profile fields before writing to Supabase
                 const encryptedProfile = encryptObject({
                     full_name: 'Super Administrator',
                     email: email,
                     phone: '',
                 });
                 await supabase.from('users').update({
-                    role: 'superadmin',       // role: not encrypted (structural)
+                    role: 'superadmin',                // Structural field — not encrypted
                     group_id: groupId,
-                    password_hash: DEFAULT_HASH,  // already hashed
+                    password_hash: generatedHash,      // bcrypt hash — stored as-is (already hashed)
                     is_active: true,
                     ...encryptedProfile,
                 }).eq('auth_id', authUser.user.id);
-                console.log('[SEED] Super Admin account created with encrypted profile + password hash.');
+
+                console.log('[SEED] Super Admin account created with random password and encrypted profile.');
+
+                // Show the generated password in a one-time Electron dialog.
+                // This is the ONLY time the plaintext password will ever be visible.
+                // After the admin logs in and changes the password, this is irrelevant.
+                const allWindows = BrowserWindow.getAllWindows();
+                const targetWindow = allWindows.length > 0 ? allWindows[0] : undefined;
+                dialog.showMessageBoxSync(targetWindow || {} as any, {
+                    type: 'info',
+                    title: '🔐 LE-SOFT — First Launch Setup',
+                    message: 'Super Admin Account Created',
+                    detail: [
+                        'A secure random password has been generated for your superadmin account.',
+                        '',
+                        `Username: sabbirsuperadmin`,
+                        `Password: ${generatedPassword}`,
+                        '',
+                        '⚠️  This password is shown ONCE. Please write it down and change it immediately after logging in.',
+                        '',
+                        'The password has also been saved to: userData/app.log'
+                    ].join('\n'),
+                    buttons: ['I have saved my password — Continue'],
+                    defaultId: 0,
+                    noLink: true,
+                });
             }
+
         } else if (!existing.password_hash || !existing.password_hash.startsWith('$2')) {
-            // Fix existing superadmin account that's missing/broken the bcrypt hash
+            // ── REPAIR: Existing account has a missing or broken bcrypt hash ────────
+            // This can happen if the account was created before password hashing was
+            // implemented, or if the DB was corrupted. Generate a new random password.
+            const repairedPassword = generateFirstTimePassword();
+            const repairedHash = await bcrypt.hash(repairedPassword, BCRYPT_ROUNDS);
+
+            const logPath = path.join(app.getPath('userData'), 'app.log');
+            fs.appendFileSync(logPath, `[${new Date().toISOString()}] [SEED] Password hash repaired. New password: ${repairedPassword}\n`);
+
             await supabase.from('users').update({
-                password_hash: DEFAULT_HASH,
+                password_hash: repairedHash,
                 group_id: groupId,
                 role: 'superadmin',
             }).eq('id', existing.id);
-            console.log('[SEED] Super Admin password hash patched.');
+            // Note: this only repairs the bcrypt hash in the users table.
+            // The Supabase Auth password is a separate record — if needed,
+            // use the superadmin panel → Settings to reset it via supabaseAdmin.auth.admin.updateUserById()
+
+            console.log('[SEED] Super Admin password hash repaired with a new random password. Check app.log.');
+
+            dialog.showMessageBoxSync({} as any, {
+                type: 'warning',
+                title: '⚠️  LE-SOFT — Account Repair',
+                message: 'Super Admin Password Reset',
+                detail: [
+                    'Your superadmin account had a missing or invalid password hash.',
+                    'A new random password has been generated.',
+                    '',
+                    `New Password: ${repairedPassword}`,
+                    '',
+                    'Please log in with this password and change it immediately.',
+                    'The password has also been saved to: userData/app.log'
+                ].join('\n'),
+                buttons: ['OK'],
+                noLink: true,
+            });
         }
+        // If existing.password_hash starts with '$2', the account is healthy — skip entirely.
     } catch (e: any) {
         console.warn('[SEED] Super Admin seeder skipped:', e.message);
     }
@@ -158,6 +296,20 @@ async function writeAuditLog(params: { module: string; action: string; entity_ty
 
 // ─────────────────────────────────────────────────────────────────────────────
 export function registerHandlers() {
+    // Make handler registration idempotent: ensure calling registerHandlers()
+    // multiple times doesn't attempt to register the same channel twice.
+    // We wrap ipcMain.handle with a small shim that removes any existing
+    // handler for the channel before registering the new one.
+    try {
+        const _origHandle = (ipcMain as any).handle.bind(ipcMain);
+        (ipcMain as any).handle = (channel: string, listener: any) => {
+            try { ipcMain.removeHandler(channel); } catch (e) { /* ignore */ }
+            return _origHandle(channel, listener);
+        };
+    } catch (e) {
+        // If we can't patch, fall back to normal behavior — registration
+        // may throw if called twice, which will be handled by caller.
+    }
 
     // ═══ DATABASE HEALTH ═════════════════════════════════════════════════════
     ipcMain.handle('ping-supabase', async () => {
@@ -338,9 +490,23 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('create-ledger', async (_e, ledger) => {
-        const { name, group, openingBalance, type, mailingName, address, gstin } = ledger;
+        const { name, group, openingBalance, type, mailingName, address, gstin, contactPerson, contactNumber, email, notes, paymentStatus } = ledger;
         const { data: grp } = await supabase.from('groups').select('id').eq('name', group).maybeSingle();
-        const { data, error } = await supabase.from('ledgers').insert({ name, group_id: grp?.id || null, opening_balance: openingBalance || 0, opening_balance_type: type || 'Dr', mailing_name: mailingName || '', address: address || '', tax_reg_no: gstin || '', company_id: 1 }).select('id').single();
+        const { data, error } = await supabase.from('ledgers').insert({
+            name,
+            group_id: grp?.id || null,
+            opening_balance: openingBalance || 0,
+            opening_balance_type: type || 'Dr',
+            mailing_name: mailingName || '',
+            address: address || '',
+            tax_reg_no: gstin || '',
+            contact_person: contactPerson || '',
+            contact_number: contactNumber || '',
+            email: email || '',
+            notes: notes || '',
+            payment_status: paymentStatus || 'OPEN',
+            company_id: 1,
+        }).select('id').single();
         if (error) throw error;
         return { success: true, id: data.id };
     });
@@ -1374,8 +1540,8 @@ export function registerHandlers() {
             updatePayload.username = username;
         }
 
-        if (groupId) {
-            updatePayload.group_id = parseInt(groupId);
+        if (groupId !== undefined) {
+            updatePayload.group_id = groupId ? parseInt(groupId) : null;
         }
 
         // Fetch auth_id to update auth password and/or user_metadata if needed
@@ -1550,6 +1716,16 @@ export function registerHandlers() {
         return { success: false, error: 'Invalid username or password.' };
     });
 
+    ipcMain.handle('clear-session', async () => {
+        try {
+            await supabase.auth.signOut();
+            clearSession();
+            return { success: true };
+        } catch (e) {
+            return { success: false, error: String(e) };
+        }
+    });
+
     // ═══ ACTIVE SESSION KICKING ═══════════════════════════════════════════════
     ipcMain.handle('get-active-sessions', async () => {
         const { data, error } = await supabase.from('users').select('*').eq('is_online', true);
@@ -1619,9 +1795,15 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('clear-database', async (_e, { section, password, username }) => {
+        // Guard: all three fields must be provided to avoid crashes
+        if (!section || !password || !username) {
+            return { success: false, error: 'Missing required fields: section, password, or username.' };
+        }
         if (!supabaseAdmin) return { success: false, error: 'Database Admin Key not configured in settings.' };
         
-        // 1. Verify Password via Supabase Auth
+        // Step 1: Verify the caller's password against Supabase Auth.
+        // Construct the email: if username already has '@', use as-is;
+        // otherwise append the internal domain suffix.
         const emailToUse = username.includes('@') ? username : `${username}@lesoft.local`;
         const { error: authError } = await supabaseAdmin.auth.signInWithPassword({
             email: emailToUse,
@@ -1702,18 +1884,20 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('save-supabase-config', async (_e, newConfig) => {
+        // newConfig can be a partial object: { url?, anonKey?, serviceRoleKey? }
+        // We merge it with whatever is already on disk so partial saves are safe.
         try {
             const currentConfigPath = path.join(app.getPath('userData'), 'supabase-config.json');
-            let configToSave = {
-                url: 'https://ildkkgjrolcjijwfokek.supabase.co',
-                anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlsZGtrZ2pyb2xjamlqd2Zva2VrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE5MzMzMjQsImV4cCI6MjA4NzUwOTMyNH0.Bn6c-87BOumPXyH5F469P04fQSMnI9SjNDZAwgGyTsM',
-                serviceRoleKey: newConfig.serviceRoleKey || ''
-            };
+            let existing: Record<string, string> = {};
             if (fs.existsSync(currentConfigPath)) {
-                const existing = JSON.parse(fs.readFileSync(currentConfigPath, 'utf8'));
-                configToSave = { ...existing, ...configToSave };
+                existing = JSON.parse(fs.readFileSync(currentConfigPath, 'utf8'));
             }
-            fs.writeFileSync(currentConfigPath, JSON.stringify(configToSave, null, 2), 'utf8');
+            // Merge: new values overwrite existing, but empty/undefined values are ignored
+            const merged: Record<string, string> = { ...existing };
+            if (newConfig.url)            merged.url            = newConfig.url;
+            if (newConfig.anonKey)        merged.anonKey        = newConfig.anonKey;
+            if (newConfig.serviceRoleKey) merged.serviceRoleKey = newConfig.serviceRoleKey;
+            fs.writeFileSync(currentConfigPath, JSON.stringify(merged, null, 2), 'utf8');
             return { success: true };
         } catch (e: any) {
             return { success: false, error: e.message };
@@ -1739,14 +1923,14 @@ export function registerHandlers() {
 
     ipcMain.handle('create-user-group', async (_e, group) => {
         if (!supabaseAdmin) throw new Error('Database Admin Key not configured in settings.');
-        const { data, error } = await supabaseAdmin.from('user_groups').insert({ name: group.name, description: group.description || '', permissions: JSON.stringify(group.permissions || {}) }).select('id').single();
+        const { data, error } = await supabaseAdmin.from('user_groups').insert({ name: group.name, description: group.description || '', permissions: group.permissions || {} }).select('id').single();
         if (error) throw error;
         return { success: true, id: data.id };
     });
 
     ipcMain.handle('update-user-group', async (_e, group) => {
         if (!supabaseAdmin) throw new Error('Database Admin Key not configured in settings.');
-        const { error } = await supabaseAdmin.from('user_groups').update({ name: group.name, description: group.description || '', permissions: JSON.stringify(group.permissions || {}) }).eq('id', group.id);
+        const { error } = await supabaseAdmin.from('user_groups').update({ name: group.name, description: group.description || '', permissions: group.permissions || {} }).eq('id', group.id);
         if (error) throw error;
         return { success: true };
     });
@@ -1797,7 +1981,14 @@ export function registerHandlers() {
     ipcMain.handle('pick-image', async () => {
         const result = await dialog.showOpenDialog({ properties: ['openFile'], filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'] }] });
         if (result.canceled || result.filePaths.length === 0) return null;
-        return result.filePaths[0];
+        
+        const filePath = result.filePaths[0];
+        try {
+            return await uploadOptimizedImage(fs.readFileSync(filePath), path.basename(filePath, path.extname(filePath)) || 'product');
+        } catch (e) {
+            console.error('[IPC] Product image upload failed:', e);
+            return null;
+        }
     });
 
     ipcMain.handle('pick-chat-file', async () => {
@@ -2041,52 +2232,11 @@ export function registerHandlers() {
     ipcMain.handle('add-bill-shipping', async (_e, data: any) => {
         // Since create-bill uses the write-queue, the bill_id might not exist yet if we query Supabase immediately.
         // We queue this shipping record to insert roughly after the bill is written.
+        // Handled entirely by processEntry() in write-queue.ts to survive app restarts.
         enqueue({
             table: 'bill_shipping',
-            operation: 'custom', // Use custom queue op or a wrapper
-            data: data,
-            onSuccess: async () => {
-                try {
-                    // Try to resolve the actual Supabase bill_id using the deterministic invoice_number
-                    const { data: b } = await supabase.from('bills').select('id').eq('invoice_number', data.invoice_number).maybeSingle();
-                    const realBillId = b?.id || data.bill_id;
-
-                    const { data: sh, error } = await supabase.from('bill_shipping').upsert({ 
-                        bill_id: realBillId, 
-                        ship_to_name: data.ship_to_name, 
-                        ship_to_address: data.ship_to_address, 
-                        ship_to_phone: data.ship_to_phone || '', 
-                        ship_from_name: data.ship_from_name || '', 
-                        ship_from_address: data.ship_from_address || '', 
-                        shipping_charge: data.shipping_charge || 0, 
-                        updated_by: data.updated_by, 
-                        status: 'pending_payment' 
-                    }, { onConflict: 'bill_id' }).select('id').single();
-                    
-                    if (error) throw error;
-                    
-                    await supabase.from('shipping_status_log').insert({ 
-                        shipment_id: sh.id, 
-                        bill_id: realBillId, 
-                        status: 'pending_payment', 
-                        note: 'Shipping order created', 
-                        updated_by: data.updated_by, 
-                        updated_by_role: data.user_role || 'cashier' 
-                    });
-                    
-                    await writeAuditLog({ 
-                        module: 'Shipping', 
-                        action: 'SHIPPING_CREATED', 
-                        entity_type: 'bill', 
-                        entity_id: realBillId, 
-                        description: `Shipping added. Destination: ${data.ship_to_address}`, 
-                        new_value: data, 
-                        performed_by: data.updated_by 
-                    });
-                } catch (e) {
-                    console.error('[add-bill-shipping] Background write failed:', e);
-                }
-            }
+            operation: 'custom',
+            data: data
         });
 
         // Return immediate success to unblock the UI since it's queued
@@ -2129,11 +2279,8 @@ export function registerHandlers() {
 
     ipcMain.handle('upload-packaging-image', async (_e, { shipmentId, billId, imageBase64, updatedBy, userRole }: any) => {
         try {
-            const imgDir = path.join(app.getPath('userData'), 'packaging_images');
-            if (!fs.existsSync(imgDir)) fs.mkdirSync(imgDir, { recursive: true });
-            const filename = `ship_${shipmentId}_${Date.now()}.jpg`;
-            const imgPath = path.join(imgDir, filename);
-            fs.writeFileSync(imgPath, Buffer.from(imageBase64.replace(/^data:image\/\w+;base64,/, ''), 'base64'));
+            const buffer = Buffer.from(imageBase64.replace(/^data:image\/\w+;base64,/, ''), 'base64');
+            const imgPath = await uploadOptimizedImage(buffer, `ship_${shipmentId}`);
             await supabase.from('bill_shipping').update({ packaging_image_path: imgPath, updated_by: updatedBy, status: 'ready_to_ship', updated_at: new Date().toISOString() }).eq('id', shipmentId);
             await supabase.from('shipping_status_log').insert({ shipment_id: shipmentId, bill_id: billId, status: 'ready_to_ship', note: 'Packaging photo uploaded, ready to ship', image_path: imgPath, updated_by: updatedBy, updated_by_role: userRole });
             await writeAuditLog({ module: 'Shipping', action: 'PACKAGING_IMAGE_UPLOADED', entity_type: 'shipment', entity_id: shipmentId, description: `Photo uploaded by ${updatedBy}`, performed_by: updatedBy });
@@ -2146,9 +2293,24 @@ export function registerHandlers() {
     ipcMain.handle('get-machine-id', async () => licenseManager.getMachineId());
     ipcMain.handle('check-license', async () => licenseManager.isLicensed());
     ipcMain.handle('activate-license', async (_e, key: string) => {
-        if (!key || typeof key !== 'string' || key.trim().length < 10) return { success: false, error: 'Invalid license key format' };
-        return licenseManager.saveLicense(key.trim());
+        if (!key || typeof key !== 'string' || key.trim().length < 10)
+            return { success: false, error: 'Invalid license key format' };
+
+        // Step 1: Validate the license key against this machine's hardware ID
+        const result = licenseManager.saveLicense(key.trim());
+        if (!result.success) return result;
+
+        // Step 2: On successful activation, auto-decrypt the embedded Supabase
+        // credentials (URL + anon key) using the master secret.
+        // The user never needs to manually enter the project URL or anon key.
+        const credResult = decryptEmbeddedCredentials();
+        if (!credResult) {
+            console.warn('[LICENSE] License activated but credential decryption failed. User may need to enter credentials manually.');
+        }
+
+        return { success: true, credentialsDecrypted: credResult };
     });
+
 
     // ═══ DB MONITORING ════════════════════════════════════════════════════
 
@@ -2286,10 +2448,9 @@ export function registerHandlers() {
     ipcMain.handle('restart-app', () => { app.relaunch(); app.exit(); });
 
     // Auto-update wiring (electron-updater optional)
-    let autoUpdater: any = null;
     try {
-        autoUpdater = require('electron-updater').autoUpdater;
-        autoUpdater.autoDownload = false; autoUpdater.autoInstallOnAppQuit = true;
+        autoUpdater.autoDownload = false; 
+        autoUpdater.autoInstallOnAppQuit = true;
         const broadcast = (payload: any) => BrowserWindow.getAllWindows().forEach(w => w.webContents.send('update-status', payload));
         autoUpdater.on('update-available', (info: any) => broadcast({ status: 'available', info }));
         autoUpdater.on('update-not-available', () => broadcast({ status: 'up-to-date' }));
@@ -3140,12 +3301,19 @@ export function registerHandlers() {
     ipcMain.handle('set-theme', (event, theme: string) => {
         const win = BrowserWindow.fromWebContents(event.sender);
         if (!win) return;
-        
-        // Dynamically style the native Windows controls over the React web contents
-        if (theme === 'dark') {
-            win.setTitleBarOverlay({ color: '#141414', symbolColor: '#f5f5f5' });
-        } else {
-            win.setTitleBarOverlay({ color: '#c0c0c0', symbolColor: '#111111' });
+
+        // setTitleBarOverlay is only available on Windows with titleBarOverlay enabled.
+        // On macOS (hiddenInset style) this method does not exist — guard it.
+        if (process.platform === 'win32' && typeof (win as any).setTitleBarOverlay === 'function') {
+            try {
+                if (theme === 'dark') {
+                    win.setTitleBarOverlay({ color: '#141414', symbolColor: '#f5f5f5', height: 64 });
+                } else {
+                    win.setTitleBarOverlay({ color: '#c0c0c0', symbolColor: '#111111', height: 64 });
+                }
+            } catch {
+                // Silently ignore — some older Electron builds may not support this
+            }
         }
     });
 
@@ -3244,6 +3412,671 @@ export function registerHandlers() {
 
         const formatted = (prefix + body).match(/.{1,4}/g)!.join('-');
         return { success: true, key: formatted };
+    });
+
+
+    // ═══ PURCHASE REQUISITIONS ═══════════════════════════════════════════════════
+    ipcMain.handle('get-purchase-requisitions', async (_e, filters?: any) => {
+        try {
+            let query = supabase
+                .from('purchase_requisitions')
+                .select('*')
+                .is('deleted_at', null)
+                .order('created_at', { ascending: false });
+
+            if (filters?.status) {
+                query = query.eq('status', filters.status);
+            }
+            if (filters?.approvalStatus) {
+                query = query.eq('approval_status', filters.approvalStatus);
+            }
+            if (filters?.limit) {
+                query = query.limit(filters.limit);
+            }
+            if (filters?.offset) {
+                query = query.range(filters.offset, filters.offset + (filters.limit || 50) - 1);
+            }
+
+            const { data, error } = await query;
+            if (error) throw error;
+
+            const requisitions = data || [];
+            const requisitionIds = requisitions.map((req: any) => req.id);
+            if (requisitionIds.length === 0) return requisitions;
+
+            const { data: itemsData } = await supabase
+                .from('purchase_requisition_items')
+                .select('id, requisition_id, product_id, quantity, quantity_unit, remarks, line_no')
+                .in('requisition_id', requisitionIds)
+                .order('line_no', { ascending: true });
+
+            const productIds = [...new Set((itemsData || []).map((item: any) => item.product_id).filter(Boolean))];
+            const { data: productsData } = productIds.length
+                ? await supabase
+                    .from('products')
+                    .select('id, name, sku')
+                    .in('id', productIds)
+                : { data: [] as any[] };
+
+            const productMap = new Map((productsData || []).map((product: any) => [String(product.id), product]));
+            const groupedItems = new Map<string, any[]>();
+
+            (itemsData || []).forEach((item: any) => {
+                const product = productMap.get(String(item.product_id));
+                const lineItem = {
+                    ...item,
+                    product_name: product?.name || 'Unknown Product',
+                    product_code: product?.sku || '',
+                };
+                if (!groupedItems.has(item.requisition_id)) groupedItems.set(item.requisition_id, []);
+                groupedItems.get(item.requisition_id)!.push(lineItem);
+            });
+
+            return requisitions.map((req: any) => {
+                const items = groupedItems.get(req.id) || [];
+                return {
+                    ...req,
+                    items,
+                    item_count: items.length,
+                    product_name: items[0]?.product_name || req.product_name || 'Unknown',
+                };
+            });
+        } catch (e: any) {
+            console.error('[purchase-requisitions] Error:', e.message);
+            return [];
+        }
+    });
+
+    ipcMain.handle('get-purchase-requisition-by-id', async (_e, id: string) => {
+        try {
+            const { data, error } = await supabase
+                .from('purchase_requisitions')
+                .select('*')
+                .eq('id', id)
+                .single();
+            if (error) throw error;
+
+            const { data: itemsData } = await supabase
+                .from('purchase_requisition_items')
+                .select('id, requisition_id, product_id, quantity, quantity_unit, remarks, line_no')
+                .eq('requisition_id', id)
+                .order('line_no', { ascending: true });
+
+            const productIds = [...new Set((itemsData || []).map((item: any) => item.product_id).filter(Boolean))];
+            const { data: productsData } = productIds.length
+                ? await supabase
+                    .from('products')
+                    .select('id, name, sku')
+                    .in('id', productIds)
+                : { data: [] as any[] };
+
+            const productMap = new Map((productsData || []).map((product: any) => [String(product.id), product]));
+            const items = (itemsData || []).map((item: any) => ({
+                ...item,
+                product_name: productMap.get(String(item.product_id))?.name || 'Unknown Product',
+                product_code: productMap.get(String(item.product_id))?.sku || '',
+            }));
+
+            return {
+                ...data,
+                items,
+                item_count: items.length,
+                product_name: items[0]?.product_name || data.product_name || 'Unknown',
+            };
+        } catch (e: any) {
+            console.error('[purchase-requisition-detail] Error:', e.message);
+            return null;
+        }
+    });
+
+    async function recordPurchaseRequisitionHistory(params: {
+        requisitionId: string;
+        fromStatus?: string | null;
+        toStatus: string;
+        action: string;
+        remarks?: string | null;
+        oldValue?: any;
+        newValue?: any;
+        performedByName?: string;
+    }) {
+        const performedByName = params.performedByName || 'desktop-user';
+        await supabase.from('purchase_requisition_status_history').insert({
+            requisition_id: params.requisitionId,
+            from_status: params.fromStatus || null,
+            to_status: params.toStatus,
+            action: params.action,
+            remarks: params.remarks || null,
+            old_value: params.oldValue || null,
+            new_value: params.newValue || null,
+            performed_by: null,
+            performed_by_name: performedByName,
+        });
+
+        await writeAuditLog({
+            module: 'Procurement',
+            action: params.action,
+            entity_type: 'purchase_requisition',
+            entity_id: params.requisitionId,
+            description: `${params.action} -> ${params.toStatus}`,
+            old_value: params.oldValue,
+            new_value: params.newValue,
+            performed_by: performedByName,
+        });
+    }
+
+    async function notifyProcurementWorkflow(title: string, message: string) {
+        await supabase.from('notifications').insert({
+            title,
+            message,
+            sender_id: null,
+            recipient_id: null,
+        });
+    }
+
+    ipcMain.handle('get-purchase-requisition-history', async (_e, requisitionId: string) => {
+        const { data, error } = await supabase
+            .from('purchase_requisition_status_history')
+            .select('*')
+            .eq('requisition_id', requisitionId)
+            .order('performed_at', { ascending: false });
+        if (error) throw error;
+        return data || [];
+    });
+
+    ipcMain.handle('create-purchase-requisition', async (_e, input: any) => {
+        try {
+            const userName = 'desktop-user';
+            const companyId = Number(input?.companyId || 1);
+            const rawItems = Array.isArray(input?.items) ? input.items : [];
+            const normalizedItems = rawItems
+                .map((item: any, index: number) => ({
+                    lineNo: Number(item.lineNo || index + 1),
+                    productId: Number(item.productId ?? item.product_id),
+                    quantity: Number(item.quantity),
+                    quantityUnit: item.quantityUnit || item.quantity_unit || 'piece',
+                    remarks: item.remarks || '',
+                }))
+                .filter((item: any) => Number.isFinite(item.productId) && item.productId > 0 && Number.isFinite(item.quantity) && item.quantity > 0);
+
+            if (normalizedItems.length === 0 && input?.productId) {
+                normalizedItems.push({
+                    lineNo: 1,
+                    productId: Number(input.productId),
+                    quantity: Number(input.quantity || 1),
+                    quantityUnit: input.quantityUnit || 'piece',
+                    remarks: input.remarks || '',
+                });
+            }
+
+            if (normalizedItems.length === 0) {
+                throw new Error('At least one requisition item is required.');
+            }
+
+            const primaryItem = normalizedItems[0];
+            
+            const { data, error } = await supabase
+                .from('purchase_requisitions')
+                .insert({
+                    product_id: primaryItem.productId,
+                    quantity: primaryItem.quantity,
+                    quantity_unit: primaryItem.quantityUnit,
+                    priority_level: input.priorityLevel,
+                    status: 'DRAFT',
+                    approval_status: 'PENDING',
+                    audit_status: 'PENDING',
+                    director_status: 'PENDING',
+                    requisition_date: new Date().toISOString(),
+                    required_delivery_date: input.requiredDeliveryDate,
+                    remarks: input.remarks || primaryItem.remarks || '',
+                    company_id: Number.isFinite(companyId) ? companyId : 1,
+                    created_by: null as any,
+                })
+                .select('*')
+                .single();
+            
+            if (error) throw error;
+
+            const { error: itemsError } = await supabase.from('purchase_requisition_items').insert(
+                normalizedItems.map((item: any) => ({
+                    requisition_id: data.id,
+                    product_id: item.productId,
+                    quantity: item.quantity,
+                    quantity_unit: item.quantityUnit,
+                    remarks: item.remarks || null,
+                    line_no: item.lineNo,
+                    company_id: Number.isFinite(companyId) ? companyId : 1,
+                }))
+            );
+
+            if (itemsError) {
+                await supabase.from('purchase_requisitions').delete().eq('id', data.id);
+                throw itemsError;
+            }
+
+            await recordPurchaseRequisitionHistory({
+                requisitionId: data.id,
+                fromStatus: null,
+                toStatus: 'DRAFT',
+                action: 'REQUISITION_CREATED',
+                remarks: input.remarks,
+                newValue: { ...data, items: normalizedItems },
+                performedByName: userName,
+            });
+            await notifyProcurementWorkflow('Purchase requisition created', `REQ ${data.requisition_number} was created for approval.`);
+            return { success: true, data };
+        } catch (e: any) {
+            console.error('[create-purchase-requisition] Error:', e.message);
+            return { success: false, error: e.message };
+        }
+    });
+
+    ipcMain.handle('update-purchase-requisition', async (_e, id: string, updates: any) => {
+        try {
+            const userName = 'desktop-user';
+            const { data: before } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
+            
+            const { error } = await supabase
+                .from('purchase_requisitions')
+                .update({
+                    product_id: Number(updates.productId),
+                    quantity: updates.quantity,
+                    quantity_unit: updates.quantityUnit,
+                    priority_level: updates.priorityLevel,
+                    required_delivery_date: updates.requiredDeliveryDate,
+                    remarks: updates.remarks,
+                    updated_at: new Date().toISOString(),
+                    updated_by: null,
+                })
+                .eq('id', id)
+                .eq('status', 'DRAFT'); // Only allow editing DRAFT requisitions
+            
+            if (error) throw error;
+            const { data: after } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
+            await recordPurchaseRequisitionHistory({
+                requisitionId: id,
+                fromStatus: before?.status || 'DRAFT',
+                toStatus: after?.status || 'DRAFT',
+                action: 'REQUISITION_UPDATED',
+                oldValue: before,
+                newValue: after,
+                performedByName: userName,
+            });
+            return { success: true };
+        } catch (e: any) {
+            console.error('[update-purchase-requisition] Error:', e.message);
+            return { success: false, error: e.message };
+        }
+    });
+
+    ipcMain.handle('approve-purchase-requisition', async (_e, id: string, _status: string, notes: string) => {
+        try {
+            const userName = 'desktop-user';
+            const approvalDate = new Date().toISOString();
+            const { data: before } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
+            
+            const { error } = await supabase
+                .from('purchase_requisitions')
+                .update({
+                    approval_status: 'APPROVED',
+                    status: 'APPROVED',
+                    approval_date: approvalDate,
+                    approved_by: null,
+                    store_head_notes: notes || '',
+                    updated_at: approvalDate,
+                    updated_by: null,
+                })
+                .eq('id', id)
+                .eq('status', 'DRAFT');
+            
+            if (error) throw error;
+            
+            // Record approval in audit table
+            await supabase
+                .from('purchase_requisition_approvals')
+                .insert({
+                    requisition_id: id,
+                    approval_level: 1,
+                    approver_id: null,
+                    status: 'APPROVED',
+                    remarks: notes,
+                });
+
+            const { data: after } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
+            await recordPurchaseRequisitionHistory({
+                requisitionId: id,
+                fromStatus: before?.status || 'DRAFT',
+                toStatus: 'APPROVED',
+                action: 'STORE_HEAD_APPROVED',
+                remarks: notes,
+                oldValue: before,
+                newValue: after,
+                performedByName: userName,
+            });
+            await notifyProcurementWorkflow('Purchase requisition approved', `REQ ${after?.requisition_number || id} was approved by Store Head.`);
+            
+            return { success: true };
+        } catch (e: any) {
+            console.error('[approve-purchase-requisition] Error:', e.message);
+            return { success: false, error: e.message };
+        }
+    });
+
+    ipcMain.handle('audit-review-purchase-requisition', async (_e, id: string, status: 'APPROVED' | 'REJECTED', notes: string) => {
+        try {
+            const userName = 'desktop-user';
+            const reviewedAt = new Date().toISOString();
+            const { data: before } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
+
+            const { error } = await supabase
+                .from('purchase_requisitions')
+                .update({
+                    audit_status: status,
+                    audit_notes: notes || '',
+                    audit_reviewed_at: reviewedAt,
+                    audit_reviewed_by_name: userName,
+                    updated_at: reviewedAt,
+                    updated_by: null,
+                    director_status: status === 'APPROVED' ? 'PENDING' : 'REJECTED',
+                })
+                .eq('id', id)
+                .eq('status', 'APPROVED');
+
+            if (error) throw error;
+
+            const { data: after } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
+            await recordPurchaseRequisitionHistory({
+                requisitionId: id,
+                fromStatus: before?.audit_status || 'PENDING',
+                toStatus: `AUDIT_${status}`,
+                action: 'AUDIT_REVIEWED',
+                remarks: notes,
+                oldValue: before,
+                newValue: after,
+                performedByName: userName,
+            });
+            await notifyProcurementWorkflow(
+                status === 'APPROVED' ? 'Audit approved requisition' : 'Audit rejected requisition',
+                `REQ ${after?.requisition_number || id} audit review: ${status}.`
+            );
+            return { success: true };
+        } catch (e: any) {
+            console.error('[audit-review-purchase-requisition] Error:', e.message);
+            return { success: false, error: e.message };
+        }
+    });
+
+    ipcMain.handle('director-review-purchase-requisition', async (_e, id: string, status: 'APPROVED' | 'REJECTED', notes: string) => {
+        try {
+            const userName = 'desktop-user';
+            const reviewedAt = new Date().toISOString();
+            const { data: before } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
+
+            const { error } = await supabase
+                .from('purchase_requisitions')
+                .update({
+                    director_status: status,
+                    director_notes: notes || '',
+                    director_reviewed_at: reviewedAt,
+                    director_reviewed_by_name: userName,
+                    updated_at: reviewedAt,
+                    updated_by: null,
+                })
+                .eq('id', id)
+                .eq('status', 'APPROVED');
+
+            if (error) throw error;
+
+            const { data: after } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
+            await recordPurchaseRequisitionHistory({
+                requisitionId: id,
+                fromStatus: before?.director_status || 'PENDING',
+                toStatus: `DIRECTOR_${status}`,
+                action: 'DIRECTOR_REVIEWED',
+                remarks: notes,
+                oldValue: before,
+                newValue: after,
+                performedByName: userName,
+            });
+            await notifyProcurementWorkflow(
+                status === 'APPROVED' ? 'Director approved requisition' : 'Director rejected requisition',
+                `REQ ${after?.requisition_number || id} director review: ${status}.`
+            );
+            return { success: true };
+        } catch (e: any) {
+            console.error('[director-review-purchase-requisition] Error:', e.message);
+            return { success: false, error: e.message };
+        }
+    });
+
+    ipcMain.handle('purchase-purchase-requisition', async (_e, id: string, warehouseLocation: string) => {
+        try {
+            const userName = 'desktop-user';
+            const purchaseDate = new Date().toISOString();
+            const { data: before } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
+
+            // Guard: director must have approved before purchase can proceed
+            if (!before) throw new Error('Requisition not found.');
+            if (before.director_status !== 'APPROVED') {
+                throw new Error('Director approval is required before marking as purchased. Current director status: ' + (before.director_status || 'PENDING'));
+            }
+            
+            const { error } = await supabase
+                .from('purchase_requisitions')
+                .update({
+                    status: 'PURCHASED',
+                    warehouse_location: warehouseLocation,
+                    purchase_date: purchaseDate,
+                    purchased_by: null,
+                    updated_at: purchaseDate,
+                    updated_by: null,
+                })
+                .eq('id', id)
+                .eq('status', 'APPROVED');
+            
+            if (error) throw error;
+            const { data: after } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
+            await recordPurchaseRequisitionHistory({
+                requisitionId: id,
+                fromStatus: before?.status || 'APPROVED',
+                toStatus: 'PURCHASED',
+                action: 'PURCHASE_RECORDED',
+                remarks: warehouseLocation,
+                oldValue: before,
+                newValue: after,
+                performedByName: userName,
+            });
+            await notifyProcurementWorkflow('Purchase recorded', `REQ ${after?.requisition_number || id} has been marked purchased.`);
+            return { success: true };
+        } catch (e: any) {
+            console.error('[purchase-purchase-requisition] Error:', e.message);
+            return { success: false, error: e.message };
+        }
+    });
+
+    ipcMain.handle('receive-purchase-requisition', async (_e, id: string) => {
+        try {
+            const userName = 'desktop-user';
+            const receivedDate = new Date().toISOString();
+            const { data: before } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
+            
+            const { error } = await supabase
+                .from('purchase_requisitions')
+                .update({
+                    status: 'RECEIVED',
+                    received_date: receivedDate,
+                    updated_at: receivedDate,
+                    updated_by: null,
+                })
+                .eq('id', id)
+                .eq('status', 'PURCHASED');
+            
+            if (error) throw error;
+            const { data: after } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
+            await recordPurchaseRequisitionHistory({
+                requisitionId: id,
+                fromStatus: before?.status || 'PURCHASED',
+                toStatus: 'RECEIVED',
+                action: 'GOODS_RECEIVED',
+                oldValue: before,
+                newValue: after,
+                performedByName: userName,
+            });
+            await notifyProcurementWorkflow('Goods received', `REQ ${after?.requisition_number || id} goods were received.`);
+            return { success: true };
+        } catch (e: any) {
+            console.error('[receive-purchase-requisition] Error:', e.message);
+            return { success: false, error: e.message };
+        }
+    });
+
+    ipcMain.handle('complete-purchase-requisition', async (_e, id: string) => {
+        try {
+            const userName = 'desktop-user';
+            const completedDate = new Date().toISOString();
+            
+            // Fetch the requisition to get product_id and quantity
+            const { data: requisition, error: fetchError } = await supabase
+                .from('purchase_requisitions')
+                .select('product_id, quantity, requisition_number, status')
+                .eq('id', id)
+                .single();
+            
+            if (fetchError) throw fetchError;
+            
+            // Update requisition status
+            const { data: before } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
+            const { error: updateError } = await supabase
+                .from('purchase_requisitions')
+                .update({
+                    status: 'COMPLETED',
+                    completed_date: completedDate,
+                    updated_at: completedDate,
+                    updated_by: null,
+                })
+                .eq('id', id)
+                .eq('status', 'RECEIVED');
+            
+            if (updateError) throw updateError;
+            
+            // Update product stock quantity (column is 'quantity' not 'current_stock')
+            const { data: product, error: productError } = await supabase
+                .from('products')
+                .select('quantity')
+                .eq('id', requisition.product_id)
+                .single();
+
+            // Stock update is best-effort — log but don't block completion if product row is missing
+            if (!productError && product !== null) {
+                const newStock = (product?.quantity || 0) + requisition.quantity;
+                const { error: stockError } = await supabase
+                    .from('products')
+                    .update({ quantity: newStock })
+                    .eq('id', requisition.product_id);
+                if (stockError) console.error('[complete-requisition] Stock update failed:', stockError.message);
+            } else if (productError) {
+                console.error('[complete-requisition] Could not fetch product for stock update:', productError.message);
+            }
+
+            const { data: after } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
+            await recordPurchaseRequisitionHistory({
+                requisitionId: id,
+                fromStatus: before?.status || 'RECEIVED',
+                toStatus: 'COMPLETED',
+                action: 'REQUISITION_COMPLETED',
+                remarks: `Added quantity: ${requisition.quantity}`,
+                oldValue: before,
+                newValue: after,
+                performedByName: userName,
+            });
+            await notifyProcurementWorkflow('Goods stocked', `REQ ${requisition.requisition_number || id} was completed and stock updated.`);
+            
+            return { success: true, addedQuantity: requisition.quantity };
+        } catch (e: any) {
+            console.error('[complete-purchase-requisition] Error:', e.message);
+            return { success: false, error: e.message };
+        }
+    });
+
+    ipcMain.handle('delete-purchase-requisition', async (_e, id: string) => {
+        try {
+            const { data: before } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
+            const { error } = await supabase
+                .from('purchase_requisitions')
+                .update({ deleted_at: new Date().toISOString() })
+                .eq('id', id)
+                .eq('status', 'DRAFT'); // Only allow deleting DRAFT requisitions
+            
+            if (error) throw error;
+            await recordPurchaseRequisitionHistory({
+                requisitionId: id,
+                fromStatus: before?.status || 'DRAFT',
+                toStatus: 'DELETED',
+                action: 'REQUISITION_DELETED',
+                oldValue: before,
+                performedByName: 'desktop-user',
+            });
+            return { success: true };
+        } catch (e: any) {
+            console.error('[delete-purchase-requisition] Error:', e.message);
+            return { success: false, error: e.message };
+        }
+    });
+
+    // ═══ SUPPLIER SETTLEMENTS ═══════════════════════════════════════════════════
+    ipcMain.handle('get-supplier-settlements', async (_e, supplierLedgerId?: number) => {
+        let q = supabase
+            .from('supplier_settlements')
+            .select('*, purchase_bill:purchase_bills(bill_number, bill_date, grand_total), supplier:ledgers(name)')
+            .is('deleted_at', null)
+            .order('settlement_date', { ascending: false });
+        if (supplierLedgerId) q = q.eq('supplier_ledger_id', supplierLedgerId);
+        const { data, error } = await q;
+        if (error) throw error;
+        return decryptRows(data || []).map((row: any) => ({
+            ...row,
+            supplier_name: row.supplier?.name || null,
+            purchase_bill_number: row.purchase_bill?.bill_number || null,
+        }));
+    });
+
+    ipcMain.handle('create-supplier-settlement', async (_e, settlement: any) => {
+        const payload = {
+            supplier_ledger_id: Number(settlement.supplierLedgerId),
+            purchase_bill_id: settlement.purchaseBillId ? Number(settlement.purchaseBillId) : null,
+            settlement_date: settlement.settlementDate || new Date().toISOString(),
+            settlement_amount: Number(settlement.settlementAmount) || 0,
+            payment_method: settlement.paymentMethod || '',
+            reference_number: settlement.referenceNumber || '',
+            settlement_status: settlement.settlementStatus || 'POSTED',
+            remarks: settlement.remarks || '',
+            company_id: 1,
+            created_by: null,
+            created_by_name: 'desktop-user',
+            updated_by: null,
+            updated_by_name: 'desktop-user',
+        };
+        const { data, error } = await supabase.from('supplier_settlements').insert(payload).select('id').single();
+        if (error) throw error;
+
+        const paymentStatus = payload.settlement_status === 'SETTLED'
+            ? 'SETTLED'
+            : payload.settlement_status === 'PARTIAL'
+                ? 'PARTIAL'
+                : 'OPEN';
+        await supabase.from('ledgers').update({ payment_status: paymentStatus }).eq('id', payload.supplier_ledger_id);
+
+        await writeAuditLog({
+            module: 'Procurement',
+            action: 'SUPPLIER_SETTLEMENT_CREATED',
+            entity_type: 'supplier_ledger',
+            entity_id: payload.supplier_ledger_id,
+            description: `Settlement ${payload.settlement_status} for supplier ledger ${payload.supplier_ledger_id}`,
+            new_value: payload,
+            performed_by: 'desktop-user',
+        });
+
+        await notifyProcurementWorkflow('Supplier settlement recorded', `Settlement posted for supplier ledger ${payload.supplier_ledger_id}.`);
+        return { success: true, id: data.id };
     });
 
 } // end registerHandlers

@@ -130,11 +130,13 @@ ${competitorText}
             }
         });
 
-        const resultText = response.text();
+        // response.text is a getter property in @google/genai SDK — NOT a method.
+        // Do not call it with () as that causes a TypeScript error and runtime crash.
+        const resultText = response.text;
         if (!resultText) throw new Error("AI returned empty response.");
 
         // Clean potentially wrapped markdown blocks
-        const cleanerJson = resultText.replace(/```json/g, '').replace(/```/g, '').trim();
+        const cleanerJson = (resultText as string).replace(/```json/g, '').replace(/```/g, '').trim();
         const parsed: MarketAnalysisResult = JSON.parse(cleanerJson);
 
         console.log(`[AI-Agent] Successfully analyzed competitor price: ${parsed.competitor_price}`);

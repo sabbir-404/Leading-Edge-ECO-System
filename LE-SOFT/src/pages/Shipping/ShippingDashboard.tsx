@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import DashboardLayout from '../../components/DashboardLayout';
 import { useAutoRefresh } from '../../hooks/useAutoRefresh';
+import { resolveImageSrc } from '../../utils/imageSrc';
 import '../Accounting/Masters/Masters.css';
 
 // ── Status metadata ────────────────────────────────────────────────────────
@@ -474,7 +475,7 @@ const ShippingDashboard: React.FC = () => {
                                                         {s.packaging_image_path && (
                                                             <div style={{ marginTop: '0.75rem' }}>
                                                                 <div style={{ fontSize: '0.78rem', fontWeight: 600, marginBottom: '4px', color: '#7c3aed' }}>📸 Packaging Photo:</div>
-                                                                <img src={`file://${s.packaging_image_path}`} alt="Packaging" style={{ width: '100%', maxHeight: '110px', objectFit: 'cover', borderRadius: '8px', border: '1px solid var(--border-color)' }} />
+                                                                <img src={resolveImageSrc(s.packaging_image_path)} alt="Packaging" style={{ width: '100%', maxHeight: '110px', objectFit: 'cover', borderRadius: '8px', border: '1px solid var(--border-color)' }} />
                                                             </div>
                                                         )}
                                                     </div>

@@ -1,0 +1,508 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+2 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>
+endobj
+3 0 obj
+<< /Length 4017 >>
+stream
+BT
+/F2 18 Tf
+1 0 0 1 48 792.00 Tm
+(LE-SOFT Manuscript) Tj
+/F2 13 Tf
+1 0 0 1 48 752.00 Tm
+(Scope) Tj
+/F1 10 Tf
+1 0 0 1 48 733.00 Tm
+(This manuscript documents the desktop LE-SOFT application from a superadmin perspective.) Tj
+1 0 0 1 48 720.00 Tm
+(The superadmin role bypasses the route guard in `ProtectedRoute` and also bypasses feature) Tj
+1 0 0 1 48 707.00 Tm
+(permission checks in the dashboard navigation, so every page in the app is available.) Tj
+/F2 13 Tf
+1 0 0 1 48 682.00 Tm
+(Access Model) Tj
+/F1 10 Tf
+1 0 0 1 60 663.00 Tm
+(- `ProtectedRoute` returns the requested page immediately when `user_role ===) Tj
+1 0 0 1 60 650.00 Tm
+('superadmin'`.) Tj
+1 0 0 1 60 637.00 Tm
+(- `DashboardLayout` also treats superadmin as full access for menu visibility.) Tj
+1 0 0 1 60 624.00 Tm
+(- This manuscript assumes the superadmin can open, create, edit, approve, delete,) Tj
+1 0 0 1 60 611.00 Tm
+(preview, and configure any page that exposes those actions.) Tj
+/F2 13 Tf
+1 0 0 1 48 586.00 Tm
+(Core Shell Pages) Tj
+/F1 10 Tf
+1 0 0 1 60 567.00 Tm
+(- Login: sign in to the application and restore the user session.) Tj
+1 0 0 1 60 554.00 Tm
+(- SetupScreen: configure first-run application settings and Supabase connection details.) Tj
+1 0 0 1 60 541.00 Tm
+(- LicenseGate: activate or validate the app license before entering the system.) Tj
+1 0 0 1 60 528.00 Tm
+(- Dashboard: view the main operational overview, live activity, and shortcuts.) Tj
+1 0 0 1 60 515.00 Tm
+(- Masters: entry hub for accounting, inventory, and procurement master data.) Tj
+1 0 0 1 60 502.00 Tm
+(- Vouchers: entry hub for accounting vouchers and purchase bills.) Tj
+1 0 0 1 60 489.00 Tm
+(- Reports: entry hub for financial, inventory, and market reports.) Tj
+1 0 0 1 60 476.00 Tm
+(- Settings: manage app-level preferences, theme, and operational settings.) Tj
+1 0 0 1 60 463.00 Tm
+(- Notifications: review system notifications and workflow alerts.) Tj
+1 0 0 1 60 450.00 Tm
+(- Email: manage internal or outbound email workflows.) Tj
+1 0 0 1 60 437.00 Tm
+(- CreateCompany: create a new company profile and start a new dataset.) Tj
+/F2 13 Tf
+1 0 0 1 48 412.00 Tm
+(Accounting Masters) Tj
+/F1 10 Tf
+1 0 0 1 60 393.00 Tm
+(- GroupList: view, search, create, edit, and delete ledger groups.) Tj
+1 0 0 1 60 380.00 Tm
+(- GroupCreate: create a new group and place it under the correct parent group.) Tj
+1 0 0 1 60 367.00 Tm
+(- LedgerList: review all ledgers and their balances.) Tj
+1 0 0 1 60 354.00 Tm
+(- LedgerCreate: create or update ledger records used in accounting and billing.) Tj
+1 0 0 1 60 341.00 Tm
+(- SupplierManagement: manage supplier ledgers, contact details, and payment settlement) Tj
+1 0 0 1 60 328.00 Tm
+(status.) Tj
+/F2 13 Tf
+1 0 0 1 48 303.00 Tm
+(Inventory Masters) Tj
+/F1 10 Tf
+1 0 0 1 60 284.00 Tm
+(- UnitList: manage units of measurement such as piece, kg, box, and liter.) Tj
+1 0 0 1 60 271.00 Tm
+(- UnitCreate: create a new unit with symbol and decimal settings.) Tj
+1 0 0 1 60 258.00 Tm
+(- StockGroupList: organize stock groups and inventory category structure.) Tj
+1 0 0 1 60 245.00 Tm
+(- StockGroupCreate: create new stock group hierarchies.) Tj
+1 0 0 1 60 232.00 Tm
+(- StockItemList: browse raw materials and stock item records.) Tj
+1 0 0 1 60 219.00 Tm
+(- StockItemCreate: create stock items and assign groups and units.) Tj
+1 0 0 1 60 206.00 Tm
+(- ProductList: browse the product catalog with search and filters.) Tj
+1 0 0 1 60 193.00 Tm
+(- ProductCreate: create or update products, pricing, and inventory metadata.) Tj
+1 0 0 1 60 180.00 Tm
+(- PurchaseRequisitions: create multi-line purchase requisitions, track approval states,) Tj
+1 0 0 1 60 167.00 Tm
+(and view requisition history.) Tj
+/F2 13 Tf
+1 0 0 1 48 142.00 Tm
+(Inventory Stubs) Tj
+/F1 10 Tf
+1 0 0 1 60 123.00 Tm
+(- VoucherTypes: define voucher type templates used by accounting entries.) Tj
+1 0 0 1 60 110.00 Tm
+(- Currencies: manage currencies and exchange rate settings.) Tj
+1 0 0 1 60 97.00 Tm
+(- Godowns: manage warehouse, store, or storage-location records.) Tj
+ET
+endstream
+endobj
+4 0 obj
+<< /Length 3865 >>
+stream
+BT
+/F2 13 Tf
+1 0 0 1 48 786.00 Tm
+(Vouchers and Purchases) Tj
+/F1 10 Tf
+1 0 0 1 60 767.00 Tm
+(- VoucherList: browse accounting vouchers and open them for review.) Tj
+1 0 0 1 60 754.00 Tm
+(- VoucherEntry: create or edit voucher transactions.) Tj
+1 0 0 1 60 741.00 Tm
+(- PurchaseBillList: review purchase bills and supplier-linked entries.) Tj
+1 0 0 1 60 728.00 Tm
+(- PurchaseBillCreate: create a purchase bill and add line items.) Tj
+/F2 13 Tf
+1 0 0 1 48 703.00 Tm
+(Users and Security) Tj
+/F1 10 Tf
+1 0 0 1 60 684.00 Tm
+(- UserList: view, search, edit, enable, disable, and delete users.) Tj
+1 0 0 1 60 671.00 Tm
+(- UserCreate: create a new user account and assign a group and role.) Tj
+1 0 0 1 60 658.00 Tm
+(- UserGroupList: view, edit, and delete permission groups.) Tj
+1 0 0 1 60 645.00 Tm
+(- UserGroupCreate: create a new permission group and assign capabilities.) Tj
+1 0 0 1 60 632.00 Tm
+(- ActiveUsers: review active sessions and connected users.) Tj
+1 0 0 1 60 619.00 Tm
+(- PermissionLevels: define approval workflows for controlled actions.) Tj
+/F2 13 Tf
+1 0 0 1 48 594.00 Tm
+(Billing and CRM) Tj
+/F1 10 Tf
+1 0 0 1 60 575.00 Tm
+(- Billing: run the POS/billing screen, search products, and create invoices.) Tj
+1 0 0 1 60 562.00 Tm
+(- BillHistory: browse historical bills, print copies, and review bill details.) Tj
+1 0 0 1 60 549.00 Tm
+(- AlterBill: modify an existing bill when authorized.) Tj
+1 0 0 1 60 536.00 Tm
+(- PendingAlterations: review bills waiting for approval or review.) Tj
+1 0 0 1 60 523.00 Tm
+(- CRMDirectory: manage customer and CRM records.) Tj
+1 0 0 1 60 510.00 Tm
+(- CRMProgress: track sales or customer progress stages.) Tj
+1 0 0 1 60 497.00 Tm
+(- CustomerLedgerList: browse customer ledger accounts.) Tj
+1 0 0 1 60 484.00 Tm
+(- CustomerLedgerDetail: inspect an individual customer ledger and transaction history.) Tj
+1 0 0 1 60 471.00 Tm
+(- ExchangeOrders: manage exchange and return workflows.) Tj
+1 0 0 1 60 458.00 Tm
+(- ExchangeCreate: create a new exchange request.) Tj
+/F2 13 Tf
+1 0 0 1 48 433.00 Tm
+(Quotation Module) Tj
+/F1 10 Tf
+1 0 0 1 60 414.00 Tm
+(- QuotationList: browse quotations, preview them, and delete stale records.) Tj
+1 0 0 1 60 401.00 Tm
+(- QuotationCreate: create a new quotation and add products or services.) Tj
+1 0 0 1 60 388.00 Tm
+(- QuotationPreview: preview or print a quotation before sending it.) Tj
+/F2 13 Tf
+1 0 0 1 48 363.00 Tm
+(HRM Module) Tj
+/F1 10 Tf
+1 0 0 1 60 344.00 Tm
+(- HRMDashboard: view human-resources metrics and shortcuts.) Tj
+1 0 0 1 60 331.00 Tm
+(- HRMEmployees: manage employee records and profiles.) Tj
+1 0 0 1 60 318.00 Tm
+(- HRMAttendance: review and adjust attendance data.) Tj
+1 0 0 1 60 305.00 Tm
+(- HRMLeaves: process leave requests and approval actions.) Tj
+1 0 0 1 60 292.00 Tm
+(- HRMPayroll: generate and review payroll records.) Tj
+/F2 13 Tf
+1 0 0 1 48 267.00 Tm
+(MAKE Module) Tj
+/F1 10 Tf
+1 0 0 1 60 248.00 Tm
+(- MakeDashboard: monitor manufacturing or production activity.) Tj
+1 0 0 1 60 235.00 Tm
+(- PlaceOrder: place a new MAKE order.) Tj
+1 0 0 1 60 222.00 Tm
+(- TrackOrders: monitor the status of production orders.) Tj
+1 0 0 1 60 209.00 Tm
+(- AlterOrder: adjust an existing MAKE order when required.) Tj
+/F2 13 Tf
+1 0 0 1 48 184.00 Tm
+(Shipping Module) Tj
+/F1 10 Tf
+1 0 0 1 60 165.00 Tm
+(- ShippingDashboard: manage shipment tracking and shipping-status updates.) Tj
+/F2 13 Tf
+1 0 0 1 48 140.00 Tm
+(Website Admin Module) Tj
+/F1 10 Tf
+1 0 0 1 60 121.00 Tm
+(- WebsiteDashboard: view website commerce metrics and live activity.) Tj
+1 0 0 1 60 108.00 Tm
+(- WebsiteProducts: manage products exposed to the website.) Tj
+1 0 0 1 60 95.00 Tm
+(- WebsiteOrders: review and process website orders.) Tj
+1 0 0 1 60 82.00 Tm
+(- WebsiteCategories: manage website category structure.) Tj
+1 0 0 1 60 69.00 Tm
+(- WebsiteProjects: manage project or portfolio-style website content.) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Length 3133 >>
+stream
+BT
+/F1 10 Tf
+1 0 0 1 60 792.00 Tm
+(- WebsitePages: create and edit website pages.) Tj
+1 0 0 1 60 779.00 Tm
+(- WebsiteMedia: manage uploaded website media assets.) Tj
+1 0 0 1 60 766.00 Tm
+(- WebsiteNewsletter: manage newsletter subscriptions and campaign data.) Tj
+1 0 0 1 60 753.00 Tm
+(- WebsiteSettings: configure website behavior and integration settings.) Tj
+/F2 13 Tf
+1 0 0 1 48 728.00 Tm
+(Reports Module) Tj
+/F1 10 Tf
+1 0 0 1 60 709.00 Tm
+(- TrialBalance: review trial balance totals.) Tj
+1 0 0 1 60 696.00 Tm
+(- BalanceSheet: inspect balance sheet structure and totals.) Tj
+1 0 0 1 60 683.00 Tm
+(- ProfitAndLoss: view income, expense, and profit analysis.) Tj
+1 0 0 1 60 670.00 Tm
+(- StockSummary: review current stock summary and movement.) Tj
+1 0 0 1 60 657.00 Tm
+(- DayBook: inspect day-by-day voucher entries.) Tj
+1 0 0 1 60 644.00 Tm
+(- MarketAnalysis: analyze product and competitor market data.) Tj
+1 0 0 1 60 631.00 Tm
+(- ProductHistoryReport: review product price and history trends.) Tj
+/F2 13 Tf
+1 0 0 1 48 606.00 Tm
+(Other Application Pages) Tj
+/F1 10 Tf
+1 0 0 1 60 587.00 Tm
+(- Gateway: routing or landing entry used by the app for access flow.) Tj
+1 0 0 1 60 574.00 Tm
+(- Auth pages are superadmin accessible through the login and setup flow, but they mainly) Tj
+1 0 0 1 60 561.00 Tm
+(control onboarding and licensing rather than business operations.) Tj
+/F2 13 Tf
+1 0 0 1 48 536.00 Tm
+(Superadmin Usage Summary) Tj
+/F1 10 Tf
+1 0 0 1 48 517.00 Tm
+(A superadmin can use the application to manage the full cycle of operations: company) Tj
+1 0 0 1 48 504.00 Tm
+(setup, accounting masters, inventory masters, requisitions, vouchers, billing, quotations,) Tj
+1 0 0 1 48 491.00 Tm
+(CRM, HRM, shipping, website content, email, notifications, user administration, and) Tj
+1 0 0 1 48 478.00 Tm
+(reporting.) Tj
+/F2 13 Tf
+1 0 0 1 48 453.00 Tm
+(Page Index) Tj
+/F1 10 Tf
+1 0 0 1 48 434.00 Tm
+(The following application pages are included in this manuscript and are intended to be) Tj
+1 0 0 1 48 421.00 Tm
+(reachable under superadmin access:) Tj
+1 0 0 1 60 408.00 Tm
+(- Login) Tj
+1 0 0 1 60 395.00 Tm
+(- SetupScreen) Tj
+1 0 0 1 60 382.00 Tm
+(- LicenseGate) Tj
+1 0 0 1 60 369.00 Tm
+(- Dashboard) Tj
+1 0 0 1 60 356.00 Tm
+(- Masters) Tj
+1 0 0 1 60 343.00 Tm
+(- Vouchers) Tj
+1 0 0 1 60 330.00 Tm
+(- Reports) Tj
+1 0 0 1 60 317.00 Tm
+(- Settings) Tj
+1 0 0 1 60 304.00 Tm
+(- Notifications) Tj
+1 0 0 1 60 291.00 Tm
+(- Email) Tj
+1 0 0 1 60 278.00 Tm
+(- CreateCompany) Tj
+1 0 0 1 60 265.00 Tm
+(- GroupList) Tj
+1 0 0 1 60 252.00 Tm
+(- GroupCreate) Tj
+1 0 0 1 60 239.00 Tm
+(- LedgerList) Tj
+1 0 0 1 60 226.00 Tm
+(- LedgerCreate) Tj
+1 0 0 1 60 213.00 Tm
+(- SupplierManagement) Tj
+1 0 0 1 60 200.00 Tm
+(- UnitList) Tj
+1 0 0 1 60 187.00 Tm
+(- UnitCreate) Tj
+1 0 0 1 60 174.00 Tm
+(- StockGroupList) Tj
+1 0 0 1 60 161.00 Tm
+(- StockGroupCreate) Tj
+1 0 0 1 60 148.00 Tm
+(- StockItemList) Tj
+1 0 0 1 60 135.00 Tm
+(- StockItemCreate) Tj
+1 0 0 1 60 122.00 Tm
+(- ProductList) Tj
+1 0 0 1 60 109.00 Tm
+(- ProductCreate) Tj
+1 0 0 1 60 96.00 Tm
+(- PurchaseRequisitions) Tj
+1 0 0 1 60 83.00 Tm
+(- VoucherTypes) Tj
+1 0 0 1 60 70.00 Tm
+(- Currencies) Tj
+ET
+endstream
+endobj
+6 0 obj
+<< /Length 2576 >>
+stream
+BT
+/F1 10 Tf
+1 0 0 1 60 792.00 Tm
+(- Godowns) Tj
+1 0 0 1 60 779.00 Tm
+(- VoucherList) Tj
+1 0 0 1 60 766.00 Tm
+(- VoucherEntry) Tj
+1 0 0 1 60 753.00 Tm
+(- PurchaseBillList) Tj
+1 0 0 1 60 740.00 Tm
+(- PurchaseBillCreate) Tj
+1 0 0 1 60 727.00 Tm
+(- UserList) Tj
+1 0 0 1 60 714.00 Tm
+(- UserCreate) Tj
+1 0 0 1 60 701.00 Tm
+(- UserGroupList) Tj
+1 0 0 1 60 688.00 Tm
+(- UserGroupCreate) Tj
+1 0 0 1 60 675.00 Tm
+(- ActiveUsers) Tj
+1 0 0 1 60 662.00 Tm
+(- PermissionLevels) Tj
+1 0 0 1 60 649.00 Tm
+(- Billing) Tj
+1 0 0 1 60 636.00 Tm
+(- BillHistory) Tj
+1 0 0 1 60 623.00 Tm
+(- AlterBill) Tj
+1 0 0 1 60 610.00 Tm
+(- PendingAlterations) Tj
+1 0 0 1 60 597.00 Tm
+(- CRMDirectory) Tj
+1 0 0 1 60 584.00 Tm
+(- CRMProgress) Tj
+1 0 0 1 60 571.00 Tm
+(- CustomerLedgerList) Tj
+1 0 0 1 60 558.00 Tm
+(- CustomerLedgerDetail) Tj
+1 0 0 1 60 545.00 Tm
+(- ExchangeOrders) Tj
+1 0 0 1 60 532.00 Tm
+(- ExchangeCreate) Tj
+1 0 0 1 60 519.00 Tm
+(- QuotationList) Tj
+1 0 0 1 60 506.00 Tm
+(- QuotationCreate) Tj
+1 0 0 1 60 493.00 Tm
+(- QuotationPreview) Tj
+1 0 0 1 60 480.00 Tm
+(- HRMDashboard) Tj
+1 0 0 1 60 467.00 Tm
+(- HRMEmployees) Tj
+1 0 0 1 60 454.00 Tm
+(- HRMAttendance) Tj
+1 0 0 1 60 441.00 Tm
+(- HRMLeaves) Tj
+1 0 0 1 60 428.00 Tm
+(- HRMPayroll) Tj
+1 0 0 1 60 415.00 Tm
+(- MakeDashboard) Tj
+1 0 0 1 60 402.00 Tm
+(- PlaceOrder) Tj
+1 0 0 1 60 389.00 Tm
+(- TrackOrders) Tj
+1 0 0 1 60 376.00 Tm
+(- AlterOrder) Tj
+1 0 0 1 60 363.00 Tm
+(- ShippingDashboard) Tj
+1 0 0 1 60 350.00 Tm
+(- WebsiteDashboard) Tj
+1 0 0 1 60 337.00 Tm
+(- WebsiteProducts) Tj
+1 0 0 1 60 324.00 Tm
+(- WebsiteOrders) Tj
+1 0 0 1 60 311.00 Tm
+(- WebsiteCategories) Tj
+1 0 0 1 60 298.00 Tm
+(- WebsiteProjects) Tj
+1 0 0 1 60 285.00 Tm
+(- WebsitePages) Tj
+1 0 0 1 60 272.00 Tm
+(- WebsiteMedia) Tj
+1 0 0 1 60 259.00 Tm
+(- WebsiteNewsletter) Tj
+1 0 0 1 60 246.00 Tm
+(- WebsiteSettings) Tj
+1 0 0 1 60 233.00 Tm
+(- TrialBalance) Tj
+1 0 0 1 60 220.00 Tm
+(- BalanceSheet) Tj
+1 0 0 1 60 207.00 Tm
+(- ProfitAndLoss) Tj
+1 0 0 1 60 194.00 Tm
+(- StockSummary) Tj
+1 0 0 1 60 181.00 Tm
+(- DayBook) Tj
+1 0 0 1 60 168.00 Tm
+(- MarketAnalysis) Tj
+1 0 0 1 60 155.00 Tm
+(- ProductHistoryReport) Tj
+/F2 13 Tf
+1 0 0 1 48 130.00 Tm
+(Notes) Tj
+/F1 10 Tf
+1 0 0 1 60 111.00 Tm
+(- This manuscript is intentionally written for superadmin access, because superadmin) Tj
+1 0 0 1 60 98.00 Tm
+(bypasses protected-route and menu permission checks.) Tj
+1 0 0 1 60 85.00 Tm
+(- If the product team wants a customer-facing version later, the content should be split) Tj
+1 0 0 1 60 72.00 Tm
+(into role-specific manuscripts for admin, manager, operator, and superadmin.) Tj
+ET
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 11 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R /F2 2 0 R >> >> /Contents 3 0 R >>
+endobj
+8 0 obj
+<< /Type /Page /Parent 11 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R /F2 2 0 R >> >> /Contents 4 0 R >>
+endobj
+9 0 obj
+<< /Type /Page /Parent 11 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R /F2 2 0 R >> >> /Contents 5 0 R >>
+endobj
+10 0 obj
+<< /Type /Page /Parent 11 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R /F2 2 0 R >> >> /Contents 6 0 R >>
+endobj
+11 0 obj
+<< /Type /Pages /Kids [7 0 R 8 0 R 9 0 R 10 0 R] /Count 4 >>
+endobj
+12 0 obj
+<< /Type /Catalog /Pages 11 0 R >>
+endobj
+xref
+0 13
+0000000000 65535 f 
+0000000009 00000 n 
+0000000079 00000 n 
+0000000154 00000 n 
+0000004223 00000 n 
+0000008140 00000 n 
+0000011325 00000 n 
+0000013953 00000 n 
+0000014090 00000 n 
+0000014227 00000 n 
+0000014364 00000 n 
+0000014502 00000 n 
+0000014579 00000 n 
+trailer
+<< /Size 13 /Root 12 0 R >>
+startxref
+14630
+%%EOF
