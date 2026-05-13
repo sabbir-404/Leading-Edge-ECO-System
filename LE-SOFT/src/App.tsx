@@ -15,7 +15,7 @@ import GroupCreate from './pages/Accounting/Masters/GroupCreate';
 import LedgerList from './pages/Accounting/Masters/LedgerList';
 import LedgerCreate from './pages/Accounting/Masters/LedgerCreate';
 import SupplierManagement from './pages/Accounting/Masters/SupplierManagement';
-
+import SupplierLedgerDetail from './pages/Accounting/Masters/SupplierLedgerDetail';
 // Inventory Masters
 import UnitList from './pages/Inventory/Masters/UnitList';
 import UnitCreate from './pages/Inventory/Masters/UnitCreate';
@@ -264,6 +264,7 @@ function App() {
            <Route path="ledgers" element={<LedgerList />} />
            <Route path="ledgers/create" element={<LedgerCreate />} />
            <Route path="suppliers" element={<SupplierManagement />} />
+           <Route path="suppliers/ledger/:id" element={<SupplierLedgerDetail />} />
            <Route path="voucher-types" element={<VoucherTypes />} />
            <Route path="currencies" element={<Currencies />} />
 

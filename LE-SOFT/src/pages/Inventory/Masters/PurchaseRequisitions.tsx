@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Plus, Edit2, Trash2, Check, X, Package, ShoppingCart, AlertCircle, Clock } from 'lucide-react';
+import { Plus, Edit2, Trash2, Check, X, Package, ShoppingCart, AlertCircle, Clock, FileText } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useAutoRefresh } from '../../../hooks/useAutoRefresh';
 import './PurchaseRequisitions.css';
@@ -78,15 +78,25 @@ const PurchaseRequisitions: React.FC = () => {
     const [tab, setTab] = useState<'list' | 'create' | 'approvals' | 'history'>('list');
     const [requisitions, setRequisitions] = useState<PurchaseRequisition[]>([]);
     const [products, setProducts] = useState<Product[]>([]);
+    const [suppliers, setSuppliers] = useState<any[]>([]);
     const [loading, setLoading] = useState(false);
     const [showApprovalModal, setShowApprovalModal] = useState(false);
     const [showAuditModal, setShowAuditModal] = useState(false);
+    const [showEstimatesModal, setShowEstimatesModal] = useState(false);
+    const [estimates, setEstimates] = useState<any[]>([{ supplierId: '', estimatedPrice: '', remarks: '' }]);
+    const [fetchedQuotes, setFetchedQuotes] = useState<any[]>([]);
+    const [directorHistory, setDirectorHistory] = useState<any[]>([]);
     const [showDirectorModal, setShowDirectorModal] = useState(false);
     const [showPurchaseModal, setShowPurchaseModal] = useState(false);
     const [approvalNotes, setApprovalNotes] = useState('');
     const [auditNotes, setAuditNotes] = useState('');
     const [directorNotes, setDirectorNotes] = useState('');
     const [warehouseLocation, setWarehouseLocation] = useState('');
+    const [purchaseInvoiceId, setPurchaseInvoiceId] = useState('');
+    const [purchasedQuantity, setPurchasedQuantity] = useState('');
+    const [purchaseRemarks, setPurchaseRemarks] = useState('');
+    const [selectedSupplierId, setSelectedSupplierId] = useState<string>('');
+    const [newSupplier, setNewSupplier] = useState({ name: '', storeName: '', contactNumber: '', contactPerson: '', paymentMethod: '' });
     const [selectedRequisition, setSelectedRequisition] = useState<PurchaseRequisition | null>(null);
     const [statusFilter, setStatusFilter] = useState<string>('');
     const [approvalFilter, setApprovalFilter] = useState<string>('');
@@ -112,16 +122,18 @@ const PurchaseRequisitions: React.FC = () => {
     const fetchData = useCallback(async () => {
         try {
             setLoading(true);
-            const [reqsData, productsData] = await Promise.all([
+            const [reqsData, productsData, ledgersData] = await Promise.all([
                 (window as any).electron?.getPurchaseRequisitions?.({
                     status: statusFilter || undefined,
                     approvalStatus: approvalFilter || undefined,
                 }) || [],
                 (window as any).electron?.getProducts?.() || [],
+                (window as any).electron?.getLedgers?.() || [],
             ]);
 
             setRequisitions(reqsData || []);
             setProducts(productsData || []);
+            setSuppliers((ledgersData || []).filter((l: any) => l.group_name === 'Sundry Creditors'));
         } catch (error) {
             console.error('Error fetching data:', error);
         } finally {
@@ -196,6 +208,51 @@ const PurchaseRequisitions: React.FC = () => {
         }
     };
 
+    const handleSubmitEstimates = async () => {
+        if (!selectedRequisition) return;
+        try {
+            // Pre-process estimates to create new suppliers
+            const processedEstimates = [];
+            for (const est of estimates) {
+                if (est.supplierId === 'NEW' && est.newSupplier) {
+                    const newLedger = await (window as any).electron?.createLedger({
+                        name: est.newSupplier.name,
+                        group: 'Sundry Creditors',
+                        openingBalance: 0,
+                        type: 'Cr',
+                        mailingName: est.newSupplier.contactPerson,
+                        contactPerson: est.newSupplier.contactPerson,
+                        contactNumber: est.newSupplier.contactNumber,
+                        paymentStatus: 'OPEN',
+                        storeName: est.newSupplier.storeName,
+                        paymentMethod: est.newSupplier.paymentMethod
+                    });
+                    if (newLedger?.id) {
+                        processedEstimates.push({ ...est, supplierId: newLedger.id.toString() });
+                    } else {
+                        throw new Error('Failed to create new supplier');
+                    }
+                } else {
+                    processedEstimates.push(est);
+                }
+            }
+
+            const result = await (window as any).electron?.submitPurchaseEstimates?.(
+                selectedRequisition.id,
+                processedEstimates
+            );
+            if (result?.success) {
+                setShowEstimatesModal(false);
+                setEstimates([{ supplierId: '', estimatedPrice: '', remarks: '' }]);
+                setSelectedRequisition(null);
+                fetchData();
+            }
+        } catch (error) {
+            console.error('Error submitting estimates:', error);
+            alert('Error submitting estimates. Please check the inputs.');
+        }
+    };
+
     const handleAuditReview = async (nextStatus: 'APPROVED' | 'REJECTED') => {
         if (!selectedRequisition) return;
         try {
@@ -212,6 +269,30 @@ const PurchaseRequisitions: React.FC = () => {
             }
         } catch (error) {
             console.error('Error recording audit review:', error);
+        }
+    };
+
+    const openAuditModal = async (req: PurchaseRequisition) => {
+        setSelectedRequisition(req);
+        setShowAuditModal(true);
+        try {
+            const quotes = await (window as any).electron?.getPurchaseRequisitionQuotes?.(req.id);
+            setFetchedQuotes(quotes || []);
+        } catch (e) {
+            console.error(e);
+        }
+    };
+
+    const openDirectorModal = async (req: PurchaseRequisition) => {
+        setSelectedRequisition(req);
+        setShowDirectorModal(true);
+        try {
+            const hist = await (window as any).electron?.getProductPurchaseHistory?.(req.product_id);
+            setDirectorHistory(hist || []);
+            const quotes = await (window as any).electron?.getPurchaseRequisitionQuotes?.(req.id);
+            setFetchedQuotes(quotes || []);
+        } catch (e) {
+            console.error(e);
         }
     };
 
@@ -251,18 +332,51 @@ const PurchaseRequisitions: React.FC = () => {
     const handlePurchase = async () => {
         if (!selectedRequisition) return;
         try {
+            let finalSupplierId = selectedSupplierId;
+            if (selectedSupplierId === 'NEW') {
+                const newLedger = await (window as any).electron?.createLedger({
+                    name: newSupplier.name,
+                    group: 'Sundry Creditors',
+                    openingBalance: 0,
+                    type: 'Cr',
+                    mailingName: newSupplier.contactPerson,
+                    contactPerson: newSupplier.contactPerson,
+                    contactNumber: newSupplier.contactNumber,
+                    paymentStatus: 'OPEN',
+                    storeName: newSupplier.storeName,
+                    paymentMethod: newSupplier.paymentMethod
+                });
+                if (newLedger?.id) {
+                    finalSupplierId = newLedger.id.toString();
+                } else {
+                    throw new Error('Failed to create supplier on the spot');
+                }
+            }
+
             const result = await (window as any).electron?.purchasePurchaseRequisition?.(
                 selectedRequisition.id,
-                warehouseLocation
+                {
+                    warehouseLocation,
+                    purchaseInvoiceId,
+                    purchasedQuantity: Number(purchasedQuantity) || selectedRequisition.quantity,
+                    purchaseRemarks,
+                    supplierId: finalSupplierId ? Number(finalSupplierId) : null
+                }
             );
             if (result?.success) {
                 setShowPurchaseModal(false);
                 setWarehouseLocation('');
+                setPurchaseInvoiceId('');
+                setPurchasedQuantity('');
+                setPurchaseRemarks('');
+                setSelectedSupplierId('');
+                setNewSupplier({ name: '', storeName: '', contactNumber: '', contactPerson: '', paymentMethod: '' });
                 setSelectedRequisition(null);
                 fetchData();
             }
         } catch (error) {
             console.error('Error purchasing requisition:', error);
+            alert('Error purchasing requisition');
         }
     };
 
@@ -530,96 +644,33 @@ const PurchaseRequisitions: React.FC = () => {
                                                 <td className="actions">
                                                     {req.status === 'DRAFT' && (
                                                         <>
-                                                            <button
-                                                                className="action-btn edit"
-                                                                title="Edit"
-                                                                onClick={() => setTab('create')}
-                                                            >
-                                                                <Edit2 size={16} />
-                                                            </button>
-                                                            <button
-                                                                className="action-btn delete"
-                                                                title="Delete"
-                                                                onClick={() => handleDelete(req.id)}
-                                                            >
-                                                                <Trash2 size={16} />
-                                                            </button>
+                                                            <button className="action-btn edit" title="Edit" onClick={() => setTab('create')}><Edit2 size={16} /></button>
+                                                            <button className="action-btn delete" title="Delete" onClick={() => handleDelete(req.id)}><Trash2 size={16} /></button>
+                                                            <button className="action-btn approve" title="Approve" onClick={() => { setSelectedRequisition(req); setShowApprovalModal(true); }}><Check size={16} /></button>
                                                         </>
                                                     )}
-                                                    {req.status === 'DRAFT' &&
-                                                        req.approval_status === 'PENDING' && (
-                                                            <button
-                                                                className="action-btn approve"
-                                                                title="Approve"
-                                                                onClick={() => {
-                                                                    setSelectedRequisition(req);
-                                                                    setShowApprovalModal(true);
-                                                                }}
-                                                            >
-                                                                <Check size={16} />
-                                                            </button>
-                                                        )}
-                                                    {req.status === 'APPROVED' && req.audit_status === 'PENDING' && (
-                                                        <button
-                                                            className="action-btn approve"
-                                                            title="Audit Review"
-                                                            onClick={() => {
-                                                                setSelectedRequisition(req);
-                                                                setShowAuditModal(true);
-                                                            }}
-                                                        >
-                                                            <AlertCircle size={16} />
-                                                        </button>
+                                                    {req.status === 'PENDING_ESTIMATE' && (
+                                                        <button className="action-btn" title="Add Estimates" onClick={() => { setSelectedRequisition(req); setShowEstimatesModal(true); }}><FileText size={16} /></button>
                                                     )}
-                                                    {req.status === 'APPROVED' && req.audit_status === 'APPROVED' && req.director_status === 'PENDING' && (
-                                                        <button
-                                                            className="action-btn approve"
-                                                            title="Director Review"
-                                                            onClick={() => {
-                                                                setSelectedRequisition(req);
-                                                                setShowDirectorModal(true);
-                                                            }}
-                                                        >
-                                                            <Check size={16} />
-                                                        </button>
+                                                    {req.status === 'PENDING_AUDIT' && (
+                                                        <button className="action-btn approve" title="Audit Review" onClick={() => openAuditModal(req)}><AlertCircle size={16} /></button>
+                                                    )}
+                                                    {req.status === 'PENDING_DIRECTOR' && (
+                                                        <button className="action-btn approve" title="Director Review" onClick={() => openDirectorModal(req)}><Check size={16} /></button>
                                                     )}
                                                     {req.status === 'APPROVED' && (
-                                                        <button
-                                                            className="action-btn purchase"
-                                                            title="Purchase"
-                                                            onClick={() => {
-                                                                setSelectedRequisition(req);
-                                                                setShowPurchaseModal(true);
-                                                            }}
-                                                        >
-                                                            <ShoppingCart size={16} />
-                                                        </button>
+                                                        <>
+                                                            <button className="action-btn print" title="Print Document" onClick={() => alert('Printing Document...')}><FileText size={16} /></button>
+                                                            <button className="action-btn purchase" title="Purchase" onClick={() => { setSelectedRequisition(req); setShowPurchaseModal(true); }}><ShoppingCart size={16} /></button>
+                                                        </>
                                                     )}
                                                     {req.status === 'PURCHASED' && (
-                                                        <button
-                                                            className="action-btn receive"
-                                                            title="Receive"
-                                                            onClick={() => handleReceive(req.id)}
-                                                        >
-                                                            <Package size={16} />
-                                                        </button>
+                                                        <button className="action-btn receive" title="Receive" onClick={() => handleReceive(req.id)}><Package size={16} /></button>
                                                     )}
                                                     {req.status === 'RECEIVED' && (
-                                                        <button
-                                                            className="action-btn complete"
-                                                            title="Complete"
-                                                            onClick={() => handleComplete(req.id)}
-                                                        >
-                                                            <Check size={16} />
-                                                        </button>
+                                                        <button className="action-btn complete" title="Complete" onClick={() => handleComplete(req.id)}><Check size={16} /></button>
                                                     )}
-                                                    <button
-                                                        className="action-btn"
-                                                        title="History"
-                                                        onClick={() => openHistory(req)}
-                                                    >
-                                                        <Clock size={16} />
-                                                    </button>
+                                                    <button className="action-btn" title="History" onClick={() => openHistory(req)}><Clock size={16} /></button>
                                                 </td>
                                             </tr>
                                         ))}
@@ -935,7 +986,19 @@ const PurchaseRequisitions: React.FC = () => {
                         <motion.div className="modal-content" initial={{ scale: 0.9 }} animate={{ scale: 1 }} onClick={(e) => e.stopPropagation()}>
                             <h2>Audit Review</h2>
                             <p>Requisition <strong>{selectedRequisition.requisition_number}</strong></p>
-                            <textarea placeholder="Audit remarks..." value={auditNotes} onChange={(e) => setAuditNotes(e.target.value)} rows={4} />
+                            
+                            <div style={{ marginTop: '1rem', background: '#f8fafc', padding: '1rem', borderRadius: '8px' }}>
+                                <h4>Submitted Quotes</h4>
+                                {fetchedQuotes.length === 0 ? <p style={{ fontSize: '0.9rem', color: '#666' }}>No quotes available.</p> : (
+                                    <ul style={{ fontSize: '0.9rem', paddingLeft: '1.2rem', marginTop: '0.5rem' }}>
+                                        {fetchedQuotes.map((q, i) => (
+                                            <li key={i}><strong>{q.supplier?.name}</strong> - ৳{q.estimated_price} {q.remarks ? `(${q.remarks})` : ''}</li>
+                                        ))}
+                                    </ul>
+                                )}
+                            </div>
+
+                            <textarea placeholder="Audit remarks..." value={auditNotes} onChange={(e) => setAuditNotes(e.target.value)} rows={4} style={{ marginTop: '1rem' }} />
                             <div className="modal-actions">
                                 <button className="btn-success" onClick={() => handleAuditReview('APPROVED')}><Check size={18} /> Approve</button>
                                 <button className="btn-secondary" onClick={() => handleAuditReview('REJECTED')}><X size={18} /> Reject</button>
@@ -944,12 +1007,80 @@ const PurchaseRequisitions: React.FC = () => {
                     </motion.div>
                 )}
 
+                {showEstimatesModal && selectedRequisition && (
+                    <motion.div className="modal-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} onClick={() => setShowEstimatesModal(false)}>
+                        <motion.div className="modal-content" style={{ maxWidth: '600px' }} initial={{ scale: 0.9 }} animate={{ scale: 1 }} onClick={(e) => e.stopPropagation()}>
+                            <h2>Add Purchase Estimates (Quotes)</h2>
+                            <p>Requisition <strong>{selectedRequisition.requisition_number}</strong></p>
+                            
+                            <div style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                                {estimates.map((est, i) => (
+                                    <div key={i} style={{ border: '1px solid #e2e8f0', padding: '1rem', borderRadius: '8px', background: '#f8fafc' }}>
+                                        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 2fr auto', gap: '0.5rem', alignItems: 'center' }}>
+                                            <select 
+                                                value={est.supplierId} 
+                                                onChange={(e) => { const newEst = [...estimates]; newEst[i].supplierId = e.target.value; setEstimates(newEst); }}
+                                                style={{ padding: '0.5rem' }}
+                                            >
+                                                <option value="">-- Select Vendor --</option>
+                                                {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                                                <option value="NEW">+ Create New Supplier</option>
+                                            </select>
+                                            <input type="number" placeholder="Est. Price" value={est.estimatedPrice} onChange={(e) => { const newEst = [...estimates]; newEst[i].estimatedPrice = e.target.value; setEstimates(newEst); }} style={{ padding: '0.5rem' }} />
+                                            <input type="text" placeholder="Remarks" value={est.remarks} onChange={(e) => { const newEst = [...estimates]; newEst[i].remarks = e.target.value; setEstimates(newEst); }} style={{ padding: '0.5rem' }} />
+                                            <button className="btn-secondary" onClick={() => setEstimates(estimates.filter((_, idx) => idx !== i))} style={{ padding: '0.5rem' }}><Trash2 size={16} /></button>
+                                        </div>
+                                        {est.supplierId === 'NEW' && (
+                                            <div style={{ marginTop: '1rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                                                <input type="text" placeholder="Supplier Name *" value={est.newSupplier?.name || ''} onChange={(e) => { const newEst = [...estimates]; newEst[i].newSupplier = { ...newEst[i].newSupplier, name: e.target.value }; setEstimates(newEst); }} style={{ padding: '0.5rem' }} />
+                                                <input type="text" placeholder="Store Name" value={est.newSupplier?.storeName || ''} onChange={(e) => { const newEst = [...estimates]; newEst[i].newSupplier = { ...newEst[i].newSupplier, storeName: e.target.value }; setEstimates(newEst); }} style={{ padding: '0.5rem' }} />
+                                                <input type="text" placeholder="Contact Person" value={est.newSupplier?.contactPerson || ''} onChange={(e) => { const newEst = [...estimates]; newEst[i].newSupplier = { ...newEst[i].newSupplier, contactPerson: e.target.value }; setEstimates(newEst); }} style={{ padding: '0.5rem' }} />
+                                                <input type="text" placeholder="Contact Number" value={est.newSupplier?.contactNumber || ''} onChange={(e) => { const newEst = [...estimates]; newEst[i].newSupplier = { ...newEst[i].newSupplier, contactNumber: e.target.value }; setEstimates(newEst); }} style={{ padding: '0.5rem' }} />
+                                                <input type="text" placeholder="Payment Method" value={est.newSupplier?.paymentMethod || ''} onChange={(e) => { const newEst = [...estimates]; newEst[i].newSupplier = { ...newEst[i].newSupplier, paymentMethod: e.target.value }; setEstimates(newEst); }} style={{ padding: '0.5rem', gridColumn: '1 / -1' }} />
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
+                                <button className="btn-secondary" onClick={() => setEstimates([...estimates, { supplierId: '', estimatedPrice: '', remarks: '' }])} style={{ width: 'fit-content' }}>+ Add Vendor Quote</button>
+                            </div>
+
+                            <div className="modal-actions" style={{ marginTop: '2rem' }}>
+                                <button className="btn-success" onClick={handleSubmitEstimates}><Check size={18} /> Submit Estimates</button>
+                                <button className="btn-secondary" onClick={() => setShowEstimatesModal(false)}>Cancel</button>
+                            </div>
+                        </motion.div>
+                    </motion.div>
+                )}
+
                 {showDirectorModal && selectedRequisition && (
                     <motion.div className="modal-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} onClick={() => setShowDirectorModal(false)}>
-                        <motion.div className="modal-content" initial={{ scale: 0.9 }} animate={{ scale: 1 }} onClick={(e) => e.stopPropagation()}>
+                        <motion.div className="modal-content" style={{ maxWidth: '600px' }} initial={{ scale: 0.9 }} animate={{ scale: 1 }} onClick={(e) => e.stopPropagation()}>
                             <h2>Director Approval</h2>
                             <p>Requisition <strong>{selectedRequisition.requisition_number}</strong></p>
-                            <textarea placeholder="Director comments..." value={directorNotes} onChange={(e) => setDirectorNotes(e.target.value)} rows={4} />
+                            
+                            <div style={{ marginTop: '1rem', background: '#f8fafc', padding: '1rem', borderRadius: '8px' }}>
+                                <h4>Submitted Quotes</h4>
+                                {fetchedQuotes.length === 0 ? <p style={{ fontSize: '0.9rem', color: '#666' }}>No quotes available.</p> : (
+                                    <ul style={{ fontSize: '0.9rem', paddingLeft: '1.2rem', marginTop: '0.5rem' }}>
+                                        {fetchedQuotes.map((q, i) => (
+                                            <li key={i}><strong>{q.supplier?.name}</strong> - ৳{q.estimated_price} {q.remarks ? `(${q.remarks})` : ''}</li>
+                                        ))}
+                                    </ul>
+                                )}
+                            </div>
+
+                            <div style={{ marginTop: '1rem', background: '#f8fafc', padding: '1rem', borderRadius: '8px' }}>
+                                <h4>Past Purchase History</h4>
+                                {directorHistory.length === 0 ? <p style={{ fontSize: '0.9rem', color: '#666' }}>No past purchase history available.</p> : (
+                                    <ul style={{ fontSize: '0.9rem', paddingLeft: '1.2rem', marginTop: '0.5rem' }}>
+                                        {directorHistory.map((h, i) => (
+                                            <li key={i}>{new Date(h.purchase_bill.bill_date).toLocaleDateString()} - <strong>৳{h.price}</strong> from {h.purchase_bill.supplier?.name}</li>
+                                        ))}
+                                    </ul>
+                                )}
+                            </div>
+
+                            <textarea placeholder="Director comments..." value={directorNotes} onChange={(e) => setDirectorNotes(e.target.value)} rows={4} style={{ marginTop: '1rem' }} />
                             <div className="modal-actions">
                                 <button className="btn-success" onClick={() => handleDirectorReview('APPROVED')}><Check size={18} /> Approve</button>
                                 <button className="btn-secondary" onClick={() => handleDirectorReview('REJECTED')}><X size={18} /> Reject</button>
@@ -975,16 +1106,70 @@ const PurchaseRequisitions: React.FC = () => {
                             <p>
                                 Requisition <strong>{selectedRequisition.requisition_number}</strong>
                             </p>
-                            <div className="form-group">
-                                <label>Warehouse Location (e.g., A-1-5)*</label>
+                            <div className="form-group" style={{ marginBottom: '1rem' }}>
+                                <label>Warehouse Location (e.g., A-1-5)</label>
                                 <input
                                     type="text"
                                     placeholder="Row-Rack-Bin format"
                                     value={warehouseLocation}
                                     onChange={(e) => setWarehouseLocation(e.target.value)}
-                                    required
                                 />
                             </div>
+                            <div className="form-group" style={{ marginBottom: '1rem', display: 'flex', gap: '1rem' }}>
+                                <div style={{ flex: 1 }}>
+                                    <label>Invoice ID / Bill Number *</label>
+                                    <input
+                                        type="text"
+                                        placeholder="INV-XXXX"
+                                        value={purchaseInvoiceId}
+                                        onChange={(e) => setPurchaseInvoiceId(e.target.value)}
+                                        required
+                                    />
+                                </div>
+                                <div style={{ flex: 1 }}>
+                                    <label>Quantity Purchased *</label>
+                                    <input
+                                        type="number"
+                                        placeholder="Quantity"
+                                        value={purchasedQuantity}
+                                        onChange={(e) => setPurchasedQuantity(e.target.value)}
+                                        required
+                                    />
+                                </div>
+                            </div>
+                            <div className="form-group" style={{ marginBottom: '1rem' }}>
+                                <label>Remarks</label>
+                                <input
+                                    type="text"
+                                    placeholder="Any purchase remarks..."
+                                    value={purchaseRemarks}
+                                    onChange={(e) => setPurchaseRemarks(e.target.value)}
+                                />
+                            </div>
+                            <div className="form-group" style={{ marginBottom: '1rem' }}>
+                                <label>Supplier / Vendor</label>
+                                <select 
+                                    value={selectedSupplierId} 
+                                    onChange={(e) => setSelectedSupplierId(e.target.value)}
+                                    style={{ width: '100%', padding: '0.6rem', borderRadius: '4px', border: '1px solid #ccc' }}
+                                >
+                                    <option value="">-- Select Existing Supplier --</option>
+                                    {suppliers.map(s => <option key={s.id} value={s.id}>{s.name} {s.contact_number ? `(${s.contact_number})` : ''}</option>)}
+                                    <option value="NEW">+ Create New Supplier</option>
+                                </select>
+                            </div>
+                            {selectedSupplierId === 'NEW' && (
+                                <div style={{ background: '#f8fafc', padding: '1rem', borderRadius: '8px', border: '1px solid #e2e8f0', marginBottom: '1rem' }}>
+                                    <h4 style={{ margin: '0 0 10px 0', fontSize: '0.9rem' }}>New Supplier Details</h4>
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                                        <input type="text" placeholder="Supplier Name *" required value={newSupplier.name} onChange={e => setNewSupplier(p => ({ ...p, name: e.target.value }))} style={{ padding: '0.5rem', borderRadius: '4px', border: '1px solid #ccc' }} />
+                                        <input type="text" placeholder="Store Name" value={newSupplier.storeName} onChange={e => setNewSupplier(p => ({ ...p, storeName: e.target.value }))} style={{ padding: '0.5rem', borderRadius: '4px', border: '1px solid #ccc' }} />
+                                        <input type="text" placeholder="Contact Person" value={newSupplier.contactPerson} onChange={e => setNewSupplier(p => ({ ...p, contactPerson: e.target.value }))} style={{ padding: '0.5rem', borderRadius: '4px', border: '1px solid #ccc' }} />
+                                        <input type="text" placeholder="Contact Number" value={newSupplier.contactNumber} onChange={e => setNewSupplier(p => ({ ...p, contactNumber: e.target.value }))} style={{ padding: '0.5rem', borderRadius: '4px', border: '1px solid #ccc' }} />
+                                        <input type="text" placeholder="Payment Method (e.g. Bank, Cash, Bkash)" value={newSupplier.paymentMethod} onChange={e => setNewSupplier(p => ({ ...p, paymentMethod: e.target.value }))} style={{ padding: '0.5rem', borderRadius: '4px', border: '1px solid #ccc', gridColumn: '1 / -1' }} />
+                                    </div>
+                                </div>
+                            )}
                             <div className="modal-actions">
                                 <button className="btn-success" onClick={handlePurchase}>
                                     <ShoppingCart size={18} /> Purchase

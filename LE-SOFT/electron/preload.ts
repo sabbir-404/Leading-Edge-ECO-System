@@ -387,9 +387,12 @@ contextBridge.exposeInMainWorld('electron', {
     createPurchaseRequisition: (input: any) => ipcRenderer.invoke('create-purchase-requisition', input),
     updatePurchaseRequisition: (id: string, updates: any) => ipcRenderer.invoke('update-purchase-requisition', id, updates),
     approvePurchaseRequisition: (id: string, status: string, notes?: string) => ipcRenderer.invoke('approve-purchase-requisition', id, status, notes),
+    submitPurchaseEstimates: (id: string, quotes: any[]) => ipcRenderer.invoke('submit-purchase-estimates', id, quotes),
+    getPurchaseRequisitionQuotes: (id: string) => ipcRenderer.invoke('get-purchase-requisition-quotes', id),
+    getProductPurchaseHistory: (productId: number) => ipcRenderer.invoke('get-product-purchase-history', productId),
     auditReviewPurchaseRequisition: (id: string, status: string, notes?: string) => ipcRenderer.invoke('audit-review-purchase-requisition', id, status, notes),
     directorReviewPurchaseRequisition: (id: string, status: string, notes?: string) => ipcRenderer.invoke('director-review-purchase-requisition', id, status, notes),
-    purchasePurchaseRequisition: (id: string, warehouseLocation: string) => ipcRenderer.invoke('purchase-purchase-requisition', id, warehouseLocation),
+    purchasePurchaseRequisition: (id: string, payload: any) => ipcRenderer.invoke('purchase-purchase-requisition', id, payload),
     receivePurchaseRequisition: (id: string) => ipcRenderer.invoke('receive-purchase-requisition', id),
     completePurchaseRequisition: (id: string) => ipcRenderer.invoke('complete-purchase-requisition', id),
     deletePurchaseRequisition: (id: string) => ipcRenderer.invoke('delete-purchase-requisition', id),
@@ -397,6 +400,7 @@ contextBridge.exposeInMainWorld('electron', {
     // ─── SUPPLIER SETTLEMENTS ───
     getSupplierSettlements: (supplierLedgerId?: number) => ipcRenderer.invoke('get-supplier-settlements', supplierLedgerId),
     createSupplierSettlement: (settlement: any) => ipcRenderer.invoke('create-supplier-settlement', settlement),
+    getSupplierLedgerDetail: (id: number) => ipcRenderer.invoke('get-supplier-ledger-detail', id),
 
 
 });

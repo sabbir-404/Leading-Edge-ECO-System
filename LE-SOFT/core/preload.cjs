@@ -330,13 +330,17 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   createPurchaseRequisition: (input) => import_electron.ipcRenderer.invoke("create-purchase-requisition", input),
   updatePurchaseRequisition: (id, updates) => import_electron.ipcRenderer.invoke("update-purchase-requisition", id, updates),
   approvePurchaseRequisition: (id, status, notes) => import_electron.ipcRenderer.invoke("approve-purchase-requisition", id, status, notes),
+  submitPurchaseEstimates: (id, quotes) => import_electron.ipcRenderer.invoke("submit-purchase-estimates", id, quotes),
+  getPurchaseRequisitionQuotes: (id) => import_electron.ipcRenderer.invoke("get-purchase-requisition-quotes", id),
+  getProductPurchaseHistory: (productId) => import_electron.ipcRenderer.invoke("get-product-purchase-history", productId),
   auditReviewPurchaseRequisition: (id, status, notes) => import_electron.ipcRenderer.invoke("audit-review-purchase-requisition", id, status, notes),
   directorReviewPurchaseRequisition: (id, status, notes) => import_electron.ipcRenderer.invoke("director-review-purchase-requisition", id, status, notes),
-  purchasePurchaseRequisition: (id, warehouseLocation) => import_electron.ipcRenderer.invoke("purchase-purchase-requisition", id, warehouseLocation),
+  purchasePurchaseRequisition: (id, payload) => import_electron.ipcRenderer.invoke("purchase-purchase-requisition", id, payload),
   receivePurchaseRequisition: (id) => import_electron.ipcRenderer.invoke("receive-purchase-requisition", id),
   completePurchaseRequisition: (id) => import_electron.ipcRenderer.invoke("complete-purchase-requisition", id),
   deletePurchaseRequisition: (id) => import_electron.ipcRenderer.invoke("delete-purchase-requisition", id),
   // ─── SUPPLIER SETTLEMENTS ───
   getSupplierSettlements: (supplierLedgerId) => import_electron.ipcRenderer.invoke("get-supplier-settlements", supplierLedgerId),
-  createSupplierSettlement: (settlement) => import_electron.ipcRenderer.invoke("create-supplier-settlement", settlement)
+  createSupplierSettlement: (settlement) => import_electron.ipcRenderer.invoke("create-supplier-settlement", settlement),
+  getSupplierLedgerDetail: (id) => import_electron.ipcRenderer.invoke("get-supplier-ledger-detail", id)
 });

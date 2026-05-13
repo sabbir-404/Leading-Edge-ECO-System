@@ -13,6 +13,7 @@
 const { _electron: electron } = require('playwright-core');
 const fs   = require('fs');
 const path = require('path');
+const { buildPDF } = require('./pdf-builder.cjs');
 const { execSync } = require('child_process');
 
 // ─── Config ────────────────────────────────────────────────────────────────
@@ -60,10 +61,8 @@ const PAGES = [
   { path: '/email', title: 'Email Campaigns', description: 'Bulk email campaign tool integrated with the newsletter subscriber list. Supports HTML template editing, image blocks, send scheduling, and delivery status tracking.' },
 ];
 
-// ─── PDF Builder ───────────────────────────────────────────────────────────
-function buildPDF(entries) {
-  const A4W = 595, A4H = 842, ML = 40, MR = 40, MT = 44;
-  const IW = A4W - ML - MR, IH = 340;
+// ─── PDF Builder is in ./pdf-builder.cjs ─────────────────────────────────
+// (imported at top)
   const objects = [];
   const addObj  = body => { objects.push(body); return objects.length; };
   const F_REG   = addObj('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');

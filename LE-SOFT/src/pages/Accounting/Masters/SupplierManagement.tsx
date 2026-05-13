@@ -25,6 +25,8 @@ const SupplierManagement: React.FC = () => {
         address: '',
         openingBalance: 0,
         notes: '',
+        storeName: '',
+        paymentMethod: '',
     });
 
     const [settlementForm, setSettlementForm] = useState({
@@ -92,8 +94,10 @@ const SupplierManagement: React.FC = () => {
                 email: formData.email,
                 notes: formData.notes,
                 paymentStatus: 'OPEN',
+                storeName: formData.storeName,
+                paymentMethod: formData.paymentMethod,
             });
-            setFormData({ name: '', contactPerson: '', contactNumber: '', email: '', address: '', openingBalance: 0, notes: '' });
+            setFormData({ name: '', contactPerson: '', contactNumber: '', email: '', address: '', openingBalance: 0, notes: '', storeName: '', paymentMethod: '' });
             setShowCreateForm(false);
             await fetchData();
         } catch (error) {
@@ -190,6 +194,10 @@ const SupplierManagement: React.FC = () => {
                                         <input style={inputStyle} value={formData.name} onChange={e => setFormData(p => ({ ...p, name: e.target.value }))} required placeholder="e.g., ABC Traders" />
                                     </div>
                                     <div>
+                                        <label style={labelStyle}>Store Name</label>
+                                        <input style={inputStyle} value={formData.storeName} onChange={e => setFormData(p => ({ ...p, storeName: e.target.value }))} placeholder="e.g., ABC Store" />
+                                    </div>
+                                    <div>
                                         <label style={labelStyle}>Contact Person</label>
                                         <input style={inputStyle} value={formData.contactPerson} onChange={e => setFormData(p => ({ ...p, contactPerson: e.target.value }))} placeholder="e.g., Mr. Rahman" />
                                     </div>
@@ -200,6 +208,10 @@ const SupplierManagement: React.FC = () => {
                                     <div>
                                         <label style={labelStyle}>Email</label>
                                         <input type="email" style={inputStyle} value={formData.email} onChange={e => setFormData(p => ({ ...p, email: e.target.value }))} placeholder="supplier@email.com" />
+                                    </div>
+                                    <div>
+                                        <label style={labelStyle}>Payment Method</label>
+                                        <input style={inputStyle} value={formData.paymentMethod} onChange={e => setFormData(p => ({ ...p, paymentMethod: e.target.value }))} placeholder="e.g., Cash, Bank, Mobile" />
                                     </div>
                                 </div>
                                 <div style={{ marginBottom: '1rem' }}>
@@ -267,8 +279,8 @@ const SupplierManagement: React.FC = () => {
                                 key={supplier.id}
                                 initial={{ opacity: 0 }}
                                 animate={{ opacity: 1 }}
-                                style={{ cursor: 'pointer', background: selectedSupplierId === supplier.id ? 'rgba(249,115,22,0.06)' : undefined }}
-                                onClick={() => setSelectedSupplierId(supplier.id === selectedSupplierId ? null : supplier.id)}
+                                style={{ cursor: 'pointer' }}
+                                onClick={() => navigate(`/masters/suppliers/ledger/${supplier.id}`)}
                             >
                                 <td style={{ fontWeight: 600, color: 'var(--accent-color)' }}>{supplier.name}</td>
                                 <td>{supplier.contact_person || '—'}</td>
@@ -296,148 +308,7 @@ const SupplierManagement: React.FC = () => {
                 </table>
             </div>
 
-            {/* ── Supplier Detail Panel (expands inline when selected) ── */}
-            <AnimatePresence>
-                {selectedSupplier && (
-                    <motion.div
-                        key="detail-panel"
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: 'auto' }}
-                        exit={{ opacity: 0, height: 0 }}
-                        style={{ overflow: 'hidden' }}
-                    >
-                        <div style={{ border: '1px solid var(--border-color)', borderRadius: '12px', overflow: 'hidden', marginBottom: '1.5rem' }}>
-                            {/* Detail Header */}
-                            <div style={{ background: 'var(--hover-bg)', padding: '1rem 1.25rem', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <div>
-                                    <div style={{ fontWeight: 700, fontSize: '1.05rem', color: 'var(--text-primary)' }}>{selectedSupplier.name}</div>
-                                    <div style={{ display: 'flex', gap: '1rem', marginTop: '0.3rem', fontSize: '0.85rem', color: 'var(--text-secondary)', flexWrap: 'wrap' }}>
-                                        {selectedSupplier.contact_person && <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><FileText size={12} /> {selectedSupplier.contact_person}</span>}
-                                        {selectedSupplier.contact_number && <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><Phone size={12} /> {selectedSupplier.contact_number}</span>}
-                                        {selectedSupplier.email && <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><Mail size={12} /> {selectedSupplier.email}</span>}
-                                        {selectedSupplier.address && <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><MapPin size={12} /> {selectedSupplier.address}</span>}
-                                    </div>
-                                </div>
-                                <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-                                    <div style={{ textAlign: 'right' }}>
-                                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Outstanding</div>
-                                        <div style={{ fontSize: '1.3rem', fontWeight: 700, color: outstandingBalance > 0 ? '#ef4444' : '#22c55e' }}>
-                                            ৳ {outstandingBalance.toLocaleString()}
-                                        </div>
-                                    </div>
-                                    <button className="delete-btn" onClick={() => setSelectedSupplierId(null)} title="Close"><X size={16} /></button>
-                                </div>
-                            </div>
 
-                            {/* Stats Row */}
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0', borderBottom: '1px solid var(--border-color)' }}>
-                                {[
-                                    { label: 'Total Purchases', value: `৳ ${supplierPurchaseTotal.toLocaleString()}`, color: '#3b82f6' },
-                                    { label: 'Total Settled', value: `৳ ${supplierSettlementTotal.toLocaleString()}`, color: '#22c55e' },
-                                    { label: 'Outstanding Due', value: `৳ ${outstandingBalance.toLocaleString()}`, color: outstandingBalance > 0 ? '#ef4444' : '#22c55e' },
-                                ].map((stat, i) => (
-                                    <div key={i} style={{ padding: '0.9rem 1.25rem', borderRight: i < 2 ? '1px solid var(--border-color)' : undefined, background: 'var(--card-bg)' }}>
-                                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 500, marginBottom: '0.2rem' }}>{stat.label}</div>
-                                        <div style={{ fontSize: '1.1rem', fontWeight: 700, color: stat.color }}>{stat.value}</div>
-                                    </div>
-                                ))}
-                            </div>
-
-                            {/* Bills & Settlements */}
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', background: 'var(--card-bg)' }}>
-                                {/* Purchase Bills */}
-                                <div style={{ padding: '1.25rem', borderRight: '1px solid var(--border-color)' }}>
-                                    <div style={{ fontWeight: 600, marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.9rem' }}>
-                                        <Clock size={15} /> Recent Purchase Bills
-                                    </div>
-                                    {supplierBills.length === 0 ? (
-                                        <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', padding: '1rem 0', textAlign: 'center' }}>No purchase bills yet</div>
-                                    ) : supplierBills.slice(0, 5).map((bill: any) => (
-                                        <div key={bill.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid var(--border-color)', fontSize: '0.88rem' }}>
-                                            <span style={{ fontWeight: 600 }}>{bill.bill_number}</span>
-                                            <span>৳ {(bill.grand_total || 0).toLocaleString()}</span>
-                                        </div>
-                                    ))}
-                                </div>
-
-                                {/* Settlements */}
-                                <div style={{ padding: '1.25rem' }}>
-                                    <div style={{ fontWeight: 600, marginBottom: '0.75rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.9rem' }}>
-                                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}><CreditCard size={15} /> Settlements</span>
-                                        <button className="create-btn" style={{ padding: '0.3rem 0.75rem', fontSize: '0.8rem' }} onClick={() => setShowSettlementForm(v => !v)}>
-                                            {showSettlementForm ? <X size={13} /> : <Plus size={13} />} {showSettlementForm ? 'Cancel' : 'Record'}
-                                        </button>
-                                    </div>
-                                    {supplierSettlements.length === 0 && !showSettlementForm ? (
-                                        <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', padding: '1rem 0', textAlign: 'center' }}>No settlements recorded</div>
-                                    ) : supplierSettlements.slice(0, 4).map((s: any) => (
-                                        <div key={s.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid var(--border-color)', fontSize: '0.88rem' }}>
-                                            <span>{s.payment_method || '—'}</span>
-                                            <span style={{ fontWeight: 600 }}>৳ {(s.settlement_amount || 0).toLocaleString()}</span>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-
-                            {/* Settlement Form (inline) */}
-                            <AnimatePresence>
-                                {showSettlementForm && (
-                                    <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} style={{ overflow: 'hidden' }}>
-                                        <div style={{ padding: '1.25rem', borderTop: '1px solid var(--border-color)', background: 'var(--hover-bg)' }}>
-                                            <div style={{ fontWeight: 600, marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.9rem' }}>
-                                                <CreditCard size={15} /> Record Settlement
-                                            </div>
-                                            <form onSubmit={handleCreateSettlement}>
-                                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
-                                                    <div>
-                                                        <label style={labelStyle}>Date</label>
-                                                        <input type="date" style={inputStyle} value={settlementForm.settlementDate} onChange={e => setSettlementForm(p => ({ ...p, settlementDate: e.target.value }))} />
-                                                    </div>
-                                                    <div>
-                                                        <label style={labelStyle}>Amount (৳)</label>
-                                                        <input type="number" style={inputStyle} value={settlementForm.settlementAmount} onChange={e => setSettlementForm(p => ({ ...p, settlementAmount: e.target.value }))} placeholder="0" required />
-                                                    </div>
-                                                    <div>
-                                                        <label style={labelStyle}>Payment Method</label>
-                                                        <input style={inputStyle} value={settlementForm.paymentMethod} onChange={e => setSettlementForm(p => ({ ...p, paymentMethod: e.target.value }))} />
-                                                    </div>
-                                                </div>
-                                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
-                                                    <div>
-                                                        <label style={labelStyle}>Reference No.</label>
-                                                        <input style={inputStyle} value={settlementForm.referenceNumber} onChange={e => setSettlementForm(p => ({ ...p, referenceNumber: e.target.value }))} />
-                                                    </div>
-                                                    <div>
-                                                        <label style={labelStyle}>Status</label>
-                                                        <select style={inputStyle} value={settlementForm.settlementStatus} onChange={e => setSettlementForm(p => ({ ...p, settlementStatus: e.target.value }))}>
-                                                            <option value="POSTED">Posted</option>
-                                                            <option value="PARTIAL">Partial</option>
-                                                            <option value="SETTLED">Settled</option>
-                                                            <option value="VOID">Void</option>
-                                                        </select>
-                                                    </div>
-                                                    <div>
-                                                        <label style={labelStyle}>Linked Bill</label>
-                                                        <select style={inputStyle} value={settlementForm.purchaseBillId} onChange={e => setSettlementForm(p => ({ ...p, purchaseBillId: e.target.value }))}>
-                                                            <option value="">— Optional —</option>
-                                                            {supplierBills.map((b: any) => <option key={b.id} value={b.id}>{b.bill_number}</option>)}
-                                                        </select>
-                                                    </div>
-                                                </div>
-                                                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                                                    <button type="submit" className="save-btn" disabled={settlementSaving}>
-                                                        <Plus size={16} /> {settlementSaving ? 'Saving…' : 'Save Settlement'}
-                                                    </button>
-                                                </div>
-                                            </form>
-                                        </div>
-                                    </motion.div>
-                                )}
-                            </AnimatePresence>
-                        </div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
         </motion.div>
     );
 };

@@ -490,7 +490,7 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('create-ledger', async (_e, ledger) => {
-        const { name, group, openingBalance, type, mailingName, address, gstin, contactPerson, contactNumber, email, notes, paymentStatus } = ledger;
+        const { name, group, openingBalance, type, mailingName, address, gstin, contactPerson, contactNumber, email, notes, paymentStatus, storeName, paymentMethod } = ledger;
         const { data: grp } = await supabase.from('groups').select('id').eq('name', group).maybeSingle();
         const { data, error } = await supabase.from('ledgers').insert({
             name,
@@ -505,6 +505,8 @@ export function registerHandlers() {
             email: email || '',
             notes: notes || '',
             payment_status: paymentStatus || 'OPEN',
+            store_name: storeName || '',
+            payment_method: paymentMethod || '',
             company_id: 1,
         }).select('id').single();
         if (error) throw error;
@@ -3718,7 +3720,7 @@ export function registerHandlers() {
                 .from('purchase_requisitions')
                 .update({
                     approval_status: 'APPROVED',
-                    status: 'APPROVED',
+                    status: 'PENDING_ESTIMATE',
                     approval_date: approvalDate,
                     approved_by: null,
                     store_head_notes: notes || '',
@@ -3745,7 +3747,7 @@ export function registerHandlers() {
             await recordPurchaseRequisitionHistory({
                 requisitionId: id,
                 fromStatus: before?.status || 'DRAFT',
-                toStatus: 'APPROVED',
+                toStatus: 'PENDING_ESTIMATE',
                 action: 'STORE_HEAD_APPROVED',
                 remarks: notes,
                 oldValue: before,
@@ -3761,6 +3763,72 @@ export function registerHandlers() {
         }
     });
 
+    ipcMain.handle('submit-purchase-estimates', async (_e, id: string, quotes: any[]) => {
+        try {
+            const userName = 'desktop-user';
+            const { data: before } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
+
+            if (!before || before.status !== 'PENDING_ESTIMATE') {
+                throw new Error('Requisition is not in PENDING_ESTIMATE state.');
+            }
+
+            // Insert quotes
+            for (const q of quotes) {
+                await supabase.from('purchase_requisition_quotes').insert({
+                    requisition_id: id,
+                    supplier_ledger_id: q.supplierId,
+                    estimated_price: q.estimatedPrice,
+                    remarks: q.remarks || ''
+                });
+            }
+
+            const { error } = await supabase
+                .from('purchase_requisitions')
+                .update({ status: 'PENDING_AUDIT', updated_at: new Date().toISOString() })
+                .eq('id', id);
+
+            if (error) throw error;
+
+            await recordPurchaseRequisitionHistory({
+                requisitionId: id,
+                fromStatus: 'PENDING_ESTIMATE',
+                toStatus: 'PENDING_AUDIT',
+                action: 'ESTIMATES_SUBMITTED',
+                remarks: `Submitted ${quotes.length} quotes.`,
+                oldValue: before,
+                newValue: { ...before, status: 'PENDING_AUDIT' },
+                performedByName: userName,
+            });
+            await notifyProcurementWorkflow('Estimates Submitted', `Quotes submitted for REQ ${before.requisition_number}.`);
+            return { success: true };
+        } catch (e: any) {
+            console.error('[submit-purchase-estimates] Error:', e.message);
+            return { success: false, error: e.message };
+        }
+    });
+
+    ipcMain.handle('get-purchase-requisition-quotes', async (_e, id: string) => {
+        const { data, error } = await supabase
+            .from('purchase_requisition_quotes')
+            .select('*, supplier:ledgers(*)')
+            .eq('requisition_id', id)
+            .order('created_at', { ascending: true });
+        if (error) throw error;
+        return data || [];
+    });
+
+    ipcMain.handle('get-product-purchase-history', async (_e, productId: number) => {
+        // Fetch from purchase_bill_items joined with purchase_bills and supplier ledgers
+        const { data, error } = await supabase
+            .from('purchase_bill_items')
+            .select('price, purchase_bill:purchase_bills(bill_date, supplier:ledgers(name))')
+            .eq('product_id', productId)
+            .order('id', { ascending: false })
+            .limit(5);
+        if (error) throw error;
+        return data || [];
+    });
+
     ipcMain.handle('audit-review-purchase-requisition', async (_e, id: string, status: 'APPROVED' | 'REJECTED', notes: string) => {
         try {
             const userName = 'desktop-user';
@@ -3771,6 +3839,7 @@ export function registerHandlers() {
                 .from('purchase_requisitions')
                 .update({
                     audit_status: status,
+                    status: status === 'APPROVED' ? 'PENDING_DIRECTOR' : 'REJECTED',
                     audit_notes: notes || '',
                     audit_reviewed_at: reviewedAt,
                     audit_reviewed_by_name: userName,
@@ -3779,15 +3848,15 @@ export function registerHandlers() {
                     director_status: status === 'APPROVED' ? 'PENDING' : 'REJECTED',
                 })
                 .eq('id', id)
-                .eq('status', 'APPROVED');
+                .eq('status', 'PENDING_AUDIT');
 
             if (error) throw error;
 
             const { data: after } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
             await recordPurchaseRequisitionHistory({
                 requisitionId: id,
-                fromStatus: before?.audit_status || 'PENDING',
-                toStatus: `AUDIT_${status}`,
+                fromStatus: before?.status || 'PENDING_AUDIT',
+                toStatus: status === 'APPROVED' ? 'PENDING_DIRECTOR' : 'REJECTED',
                 action: 'AUDIT_REVIEWED',
                 remarks: notes,
                 oldValue: before,
@@ -3815,6 +3884,7 @@ export function registerHandlers() {
                 .from('purchase_requisitions')
                 .update({
                     director_status: status,
+                    status: status === 'APPROVED' ? 'APPROVED' : 'REJECTED',
                     director_notes: notes || '',
                     director_reviewed_at: reviewedAt,
                     director_reviewed_by_name: userName,
@@ -3822,15 +3892,15 @@ export function registerHandlers() {
                     updated_by: null,
                 })
                 .eq('id', id)
-                .eq('status', 'APPROVED');
+                .eq('status', 'PENDING_DIRECTOR');
 
             if (error) throw error;
 
             const { data: after } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
             await recordPurchaseRequisitionHistory({
                 requisitionId: id,
-                fromStatus: before?.director_status || 'PENDING',
-                toStatus: `DIRECTOR_${status}`,
+                fromStatus: before?.status || 'PENDING_DIRECTOR',
+                toStatus: status === 'APPROVED' ? 'APPROVED' : 'REJECTED',
                 action: 'DIRECTOR_REVIEWED',
                 remarks: notes,
                 oldValue: before,
@@ -3848,23 +3918,26 @@ export function registerHandlers() {
         }
     });
 
-    ipcMain.handle('purchase-purchase-requisition', async (_e, id: string, warehouseLocation: string) => {
+    ipcMain.handle('purchase-purchase-requisition', async (_e, id: string, payload: any) => {
         try {
             const userName = 'desktop-user';
             const purchaseDate = new Date().toISOString();
             const { data: before } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
 
-            // Guard: director must have approved before purchase can proceed
             if (!before) throw new Error('Requisition not found.');
-            if (before.director_status !== 'APPROVED') {
-                throw new Error('Director approval is required before marking as purchased. Current director status: ' + (before.director_status || 'PENDING'));
+            if (before.status !== 'APPROVED') {
+                throw new Error('Requisition must be APPROVED before purchase.');
             }
             
             const { error } = await supabase
                 .from('purchase_requisitions')
                 .update({
                     status: 'PURCHASED',
-                    warehouse_location: warehouseLocation,
+                    warehouse_location: payload.warehouseLocation || null,
+                    supplier_ledger_id: payload.supplierId,
+                    purchase_invoice_id: payload.purchaseInvoiceId || null,
+                    purchased_quantity: payload.purchasedQuantity || before.quantity,
+                    purchase_remarks: payload.purchaseRemarks || null,
                     purchase_date: purchaseDate,
                     purchased_by: null,
                     updated_at: purchaseDate,
@@ -3880,7 +3953,7 @@ export function registerHandlers() {
                 fromStatus: before?.status || 'APPROVED',
                 toStatus: 'PURCHASED',
                 action: 'PURCHASE_RECORDED',
-                remarks: warehouseLocation,
+                remarks: payload.warehouseLocation,
                 oldValue: before,
                 newValue: after,
                 performedByName: userName,
@@ -4079,6 +4152,13 @@ export function registerHandlers() {
         return { success: true, id: data.id };
     });
 
+    // ─── SUPPLIER LEDGER DETAIL ───
+    ipcMain.handle('get-supplier-ledger-detail', async (_e, id: number) => {
+        const { data: supplier } = await supabase.from('ledgers').select('*').eq('id', id).single();
+        const { data: bills } = await supabase.from('purchase_bills').select('*, items:purchase_bill_items(*)').eq('supplier_ledger_id', id).order('id', { ascending: false });
+        const { data: settlements } = await supabase.from('supplier_settlements').select('*').eq('supplier_ledger_id', id).order('id', { ascending: false });
+        const { data: requisitions } = await supabase.from('purchase_requisitions').select('*').eq('supplier_ledger_id', id).order('id', { ascending: false });
+        return { supplier, bills: bills || [], settlements: settlements || [], requisitions: requisitions || [] };
+    });
+
 } // end registerHandlers
-
-
