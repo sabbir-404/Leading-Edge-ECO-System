@@ -4,8 +4,16 @@ import { motion, AnimatePresence } from 'framer-motion';
 import DashboardLayout from '../../components/DashboardLayout';
 import { useToast } from '../../context/ToastContext';
 import '../Accounting/Masters/Masters.css';
+import './Users.css';
 
 const FEATURE_PRESETS = [
+    { label: 'PR Store Head Approval', value: 'purchase_requisition_store_head', description: 'Store Head reviews and approves store-created purchase requisitions', workflowKey: 'purchase_requisition', workflowStep: 1 },
+    { label: 'PR Accounts Estimate', value: 'purchase_requisition_accounts_estimate', description: 'Accounts adds supplier/vendor estimates and approximate purchase amount', workflowKey: 'purchase_requisition', workflowStep: 2 },
+    { label: 'PR Audit Review', value: 'purchase_requisition_audit_review', description: 'Audit reviews supplier estimates and records justification', workflowKey: 'purchase_requisition', workflowStep: 3 },
+    { label: 'PR Director Approval', value: 'purchase_requisition_director_approval', description: 'Director approves or rejects after audit justification', workflowKey: 'purchase_requisition', workflowStep: 4 },
+    { label: 'PR Purchase Recording', value: 'purchase_requisition_purchase_recording', description: 'Purchase department records invoice, vendor, and purchase details', workflowKey: 'purchase_requisition', workflowStep: 5 },
+    { label: 'PR Goods Receipt', value: 'purchase_requisition_goods_receipt', description: 'Receiving team confirms purchased goods were received', workflowKey: 'purchase_requisition', workflowStep: 6 },
+    { label: 'PR Stock Completion', value: 'purchase_requisition_stock_completion', description: 'Inventory/store completes requisition and posts stock quantities', workflowKey: 'purchase_requisition', workflowStep: 7 },
     { label: 'Bill Alteration', value: 'bill_alteration', description: 'When a billing operator alters a final bill' },
     { label: 'MAKE Order Placement', value: 'make_order_placed', description: 'When a new manufacturing/make order is placed' },
     { label: 'MAKE Order Status Change', value: 'make_order_status', description: 'When the status of a make order is updated' },
@@ -26,6 +34,8 @@ interface PermissionLevel {
     approver_user_id: number | null;
     approver_user_name?: string;
     is_active: boolean;
+    workflow_key?: string | null;
+    workflow_step?: number | null;
 }
 
 const ROLES = ['superadmin', 'admin', 'manager'];
@@ -40,13 +50,15 @@ const PermissionLevels: React.FC = () => {
     const [editing, setEditing] = useState<PermissionLevel | null>(null);
 
     // Form state
-    const [featureKey, setFeatureKey] = useState('bill_alteration');
+    const [featureKey, setFeatureKey] = useState(FEATURE_PRESETS[0].value);
     const [customFeatureName, setCustomFeatureName] = useState('');
     const [customFeatureKey, setCustomFeatureKey] = useState('');
     const [description, setDescription] = useState('');
     const [approverRole, setApproverRole] = useState('admin');
     const [approverUserId, setApproverUserId] = useState<number | null>(null);
     const [saving, setSaving] = useState(false);
+
+    const selectedPreset = FEATURE_PRESETS.find(p => p.value === featureKey);
 
     const fetchData = async () => {
         setLoading(true);
@@ -71,7 +83,7 @@ const PermissionLevels: React.FC = () => {
 
     const openCreate = () => {
         setEditing(null);
-        setFeatureKey('bill_alteration');
+        setFeatureKey(FEATURE_PRESETS[0].value);
         setCustomFeatureName('');
         setCustomFeatureKey('');
         setDescription(FEATURE_PRESETS[0].description);
@@ -104,6 +116,9 @@ const PermissionLevels: React.FC = () => {
         const preset = FEATURE_PRESETS.find(p => p.value === val);
         if (preset && val !== '__custom__') {
             setDescription(preset.description);
+            if ((preset as any).workflowKey === 'purchase_requisition') {
+                setApproverRole((preset as any).workflowStep === 4 ? 'admin' : 'manager');
+            }
         } else {
             setDescription('');
         }
@@ -126,6 +141,8 @@ const PermissionLevels: React.FC = () => {
                 description: description.trim(),
                 approver_role: approverUserId ? null : approverRole,
                 approver_user_id: approverUserId || null,
+                workflow_key: (FEATURE_PRESETS.find(p => p.value === resolvedKey) as any)?.workflowKey || null,
+                workflow_step: (FEATURE_PRESETS.find(p => p.value === resolvedKey) as any)?.workflowStep || null,
             };
             if (editing) {
                 // @ts-ignore
@@ -170,7 +187,7 @@ const PermissionLevels: React.FC = () => {
 
     return (
         <DashboardLayout title="Permission Levels">
-            <div className="master-list-container">
+            <div className="users-page">
                 {/* Header */}
                 <div className="list-header">
                     <div>
@@ -182,21 +199,6 @@ const PermissionLevels: React.FC = () => {
                     <button className="create-btn" onClick={openCreate}>
                         <Plus size={18} /> Add Permission Level
                     </button>
-                </div>
-
-                {/* Info Banner */}
-                <div style={{
-                    background: 'rgba(249,115,22,0.08)', border: '1px solid rgba(249,115,22,0.3)',
-                    borderRadius: '10px', padding: '12px 16px', marginBottom: '1.5rem',
-                    display: 'flex', alignItems: 'flex-start', gap: '10px', fontSize: '0.85rem'
-                }}>
-                    <Shield size={16} style={{ color: 'var(--accent-color)', marginTop: '2px', flexShrink: 0 }} />
-                    <div>
-                        <strong style={{ color: 'var(--accent-color)' }}>How it works:</strong>
-                        <span style={{ opacity: 0.8 }}> When a user performs a controlled action (e.g. alters a bill, places a MAKE order),
-                        the system checks if an approval flow is defined here. If yes, the action is staged for approval
-                        by the designated approver role/user before being finalized.</span>
-                    </div>
                 </div>
 
                 {/* Table */}
@@ -255,11 +257,11 @@ const PermissionLevels: React.FC = () => {
                                             </button>
                                         </td>
                                         <td>
-                                            <div className="action-buttons" style={{ justifyContent: 'flex-end' }}>
-                                                <button className="edit-btn" onClick={() => openEdit(level)} title="Edit">
+                                            <div className="user-row-actions">
+                                                <button className="icon-btn" onClick={() => openEdit(level)} title="Edit">
                                                     <Edit2 size={15} />
                                                 </button>
-                                                <button className="delete-btn" onClick={() => handleDelete(level.id, level.feature_name)} title="Delete">
+                                                <button className="icon-btn danger" onClick={() => handleDelete(level.id, level.feature_name)} title="Delete">
                                                     <Trash2 size={15} />
                                                 </button>
                                             </div>
@@ -297,6 +299,12 @@ const PermissionLevels: React.FC = () => {
                                         </select>
                                         <ChevronDown size={16} style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', opacity: 0.5, pointerEvents: 'none' }} />
                                     </div>
+                                    {(selectedPreset as any)?.workflowKey === 'purchase_requisition' && (
+                                        <div className="selected-workflow-step">
+                                            <span>Purchase Requisition Step {(selectedPreset as any).workflowStep}</span>
+                                            <strong>{selectedPreset?.label.replace('PR ', '')}</strong>
+                                        </div>
+                                    )}
                                 </div>
 
                                 {/* Custom Feature Fields */}

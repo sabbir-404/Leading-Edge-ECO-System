@@ -25,6 +25,10 @@ import StockItemList from './pages/Inventory/Masters/StockItemList';
 import StockItemCreate from './pages/Inventory/Masters/StockItemCreate';
 import ProductList from './pages/Inventory/Masters/ProductList';
 import ProductCreate from './pages/Inventory/Masters/ProductCreate';
+import ProductLedger from './pages/Inventory/Masters/ProductLedger';
+import ProductModelRules from './pages/Inventory/Masters/ProductModelRules';
+import ProductAttributes from './pages/Inventory/Masters/ProductAttributes';
+import DamagedGoods from './pages/Inventory/Masters/DamagedGoods';
 import PurchaseRequisitions from './pages/Inventory/Masters/PurchaseRequisitions';
 
 // Master Stubs
@@ -174,7 +178,7 @@ function App() {
   // Auto-logout on idle — clears ALL session keys to prevent stale state (BUG-02 fix)
   const handleAutoLogout = () => {
     const keepKeys = ['app_license_key', 'supabase_admin_key', 'barcode_sticker_size', 'barcode_printer', 'auto_logout_enabled', 'auto_logout_minutes', 'theme'];
-    const keysToKeep = keepKeys.reduce((acc, key) => {
+    const keysToKeep = Object.keys(localStorage).filter((key) => keepKeys.includes(key) || key.startsWith('print_page_size_')).reduce((acc, key) => {
       const val = localStorage.getItem(key);
       if (val !== null) acc[key] = val;
       return acc;
@@ -277,6 +281,10 @@ function App() {
            <Route path="stock-items/create" element={<StockItemCreate />} />
            <Route path="products" element={<ProductList />} />
            <Route path="products/create" element={<ProductCreate />} />
+           <Route path="products/:id/ledger" element={<ProductLedger />} />
+           <Route path="product-model-rules" element={<ProductModelRules />} />
+           <Route path="product-attributes" element={<ProductAttributes />} />
+           <Route path="damaged-goods" element={<DamagedGoods />} />
           <Route path="purchase-requisitions" element={<PurchaseRequisitions />} />
            <Route path="godowns" element={<Godowns />} />
         </Route>

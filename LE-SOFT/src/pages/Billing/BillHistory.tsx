@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useAutoRefresh } from '../../hooks/useAutoRefresh';
 import DashboardLayout from '../../components/DashboardLayout';
 import { getCallerContext, canSeeAllBills } from '../../utils/permissions';
+import { getPrintPageSize } from '../../utils/printPageSize';
 import '../Accounting/Masters/Masters.css';
 
 
@@ -422,6 +423,7 @@ const BillHistory: React.FC = () => {
                 {/* Print styles */}
                 <style>{`
                     @media print {
+                        @page { size: ${getPrintPageSize('bill_history')}; margin: ${getPrintPageSize('bill_history') === 'A5' ? '7mm' : '10mm'}; }
                         body * { visibility: hidden; }
                         #bill-detail-print, #bill-detail-print * { visibility: visible; }
                         #bill-detail-print {

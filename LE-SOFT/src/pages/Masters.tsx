@@ -3,7 +3,7 @@ import { useNavigate, Outlet, useLocation } from 'react-router-dom';
 import {
     Package, ChevronRight, FolderTree, BookOpen, FileText,
     Layers, Scale, Warehouse, ShoppingBag,
-    Truck, DollarSign, ClipboardList
+    Truck, DollarSign, ClipboardList, History, Target, ClipboardCheck, PackageMinus
 } from 'lucide-react';
 import DashboardLayout from '../components/DashboardLayout';
 import { motion } from 'framer-motion';
@@ -64,6 +64,10 @@ const Masters: React.FC = () => {
             accent: '#f97316',
             items: [
                 { title: 'Products',          desc: 'Product catalogue & item registry',    path: '/products',         icon: ShoppingBag,   color: '#ec4899' },
+                { title: 'Product Ledger',    desc: 'Supplier, purchase & stock history',   path: '/products',         icon: History,       color: '#0ea5e9' },
+                { title: 'Model Rules',       desc: 'Configure generated product IDs',      path: '/product-model-rules', icon: Target,     color: '#8b5cf6' },
+                { title: 'Product Attributes',desc: 'Create specs like size and color',     path: '/product-attributes', icon: ClipboardCheck, color: '#10b981' },
+                { title: 'Damaged Goods',     desc: 'Track damaged, repair & write-off stock', path: '/damaged-goods', icon: PackageMinus, color: '#ef4444' },
                 { title: 'Stock Groups',      desc: 'Group products by category',           path: '/stock-groups',     icon: Layers,        color: '#6366f1' },
                 { title: 'Stock Items',       desc: 'Raw material & component items',       path: '/stock-items',      icon: Package,       color: '#f97316' },
                 { title: 'Units',             desc: 'Units of measurement (Pcs, Kg, m…)',   path: '/units',            icon: Scale,         color: '#14b8a6' },

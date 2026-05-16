@@ -9,6 +9,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useTheme } from '../../context/ThemeContext';
 import DashboardLayout from '../../components/DashboardLayout';
 import { useToast } from '../../context/ToastContext';
+import { PRINT_PAGE_SIZE_OPTIONS, getPrintPageSize, getPrintPageSizeKey } from '../../utils/printPageSize';
 import '../Accounting/Masters/Masters.css';
 
 type SettingsTab = 'profile' | 'system_hardware' | 'payment_methods' | 'database_api' | 'policy' | 'about' | 'license_generator' | 'versions';
@@ -41,6 +42,12 @@ const Settings: React.FC = () => {
     const [printers, setPrinters] = useState<{name: string; isDefault: boolean}[]>([]);
     const [selectedPrinter, setSelectedPrinter] = useState(localStorage.getItem('barcode_printer') || '');
     const [barcodeSaved, setBarcodeSaved] = useState(false);
+    const [printPageSizes, setPrintPageSizes] = useState(() =>
+        PRINT_PAGE_SIZE_OPTIONS.reduce((acc, option) => {
+            acc[option.key] = getPrintPageSize(option.key);
+            return acc;
+        }, {} as Record<string, 'A4' | 'A5'>)
+    );
 
     // ── Profile ───────────────────────────────────────────────────────────────
     const [profileName, setProfileName] = useState(localStorage.getItem('user_name') || '');
@@ -339,6 +346,9 @@ const Settings: React.FC = () => {
     const handleBarcodeSave = () => {
         localStorage.setItem('barcode_sticker_size', stickerSize);
         localStorage.setItem('barcode_printer', selectedPrinter);
+        Object.entries(printPageSizes).forEach(([key, value]) => {
+            localStorage.setItem(getPrintPageSizeKey(key), value);
+        });
         localStorage.setItem('auto_logout_enabled', autoLogoutEnabled.toString());
         localStorage.setItem('auto_logout_minutes', autoLogoutMinutes);
         setBarcodeSaved(true); setTimeout(() => setBarcodeSaved(false), 2500);
@@ -718,6 +728,37 @@ const Settings: React.FC = () => {
 
                                     <button onClick={handleBarcodeSave} style={{ ...btn(barcodeSaved ? '#22c55e' : 'var(--accent-color)'), marginTop: '1.5rem', transition: 'background 0.3s' }}>
                                         <Save size={15} /> {barcodeSaved ? '✓ Saved!' : 'Save Barcode Settings'}
+                                    </button>
+                                </div>
+
+                                {/* Document Print Page Sizes */}
+                                <div style={card}>
+                                    <div style={cardHeader}>
+                                        <div style={iconBox('#0ea5e9', 'rgba(14,165,233,0.12)')}><Printer size={20} /></div>
+                                        <div>
+                                            <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>Print Page Sizes</h2>
+                                            <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-secondary)' }}>Set A4 or A5 separately for each print document</p>
+                                        </div>
+                                    </div>
+
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '0.85rem' }}>
+                                        {PRINT_PAGE_SIZE_OPTIONS.map(option => (
+                                            <div key={option.key} style={{ padding: '0.85rem', borderRadius: '10px', border: '1px solid var(--border-color)', background: 'var(--input-bg)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem' }}>
+                                                <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{option.label}</span>
+                                                <select
+                                                    value={printPageSizes[option.key] || 'A4'}
+                                                    onChange={e => setPrintPageSizes(prev => ({ ...prev, [option.key]: e.target.value as 'A4' | 'A5' }))}
+                                                    style={{ ...input, width: '96px', padding: '0.55rem 0.65rem' }}
+                                                >
+                                                    <option value="A4">A4</option>
+                                                    <option value="A5">A5</option>
+                                                </select>
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    <button onClick={handleBarcodeSave} style={{ ...btn(barcodeSaved ? '#22c55e' : 'var(--accent-color)'), marginTop: '1.5rem', transition: 'background 0.3s' }}>
+                                        <Save size={15} /> {barcodeSaved ? '✓ Saved!' : 'Save Print Settings'}
                                     </button>
                                 </div>
 

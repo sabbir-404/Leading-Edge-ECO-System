@@ -4,6 +4,7 @@ import { ShieldAlert, Laptop, Smartphone, Search, RefreshCw, XCircle, UserX, Use
 import { motion, AnimatePresence } from 'framer-motion';
 import DashboardLayout from '../../components/DashboardLayout';
 import '../Accounting/Masters/Masters.css';
+import './Users.css';
 
 const ActiveUsers: React.FC = () => {
     const [sessions, setSessions] = useState<any[]>([]);
@@ -89,56 +90,46 @@ const ActiveUsers: React.FC = () => {
 
     const isOnline = (userId: number) => sessions.some(s => s.id === userId);
 
-    const tabStyle = (active: boolean) => ({
-        padding: '0.5rem 1.25rem',
-        borderRadius: '8px',
-        border: 'none',
-        background: active ? 'var(--accent-color)' : 'var(--input-bg)',
-        color: active ? 'white' : 'var(--text-secondary)',
-        fontWeight: 600,
-        cursor: 'pointer',
-        fontSize: '0.9rem',
-        transition: 'all 0.2s',
-    });
-
     return (
         <DashboardLayout title="Active Users">
-            <div className="master-list-container">
-                <div className="list-header">
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <div className="users-page">
+                <div className="users-toolbar">
+                    <div className="activity-heading">
                         <ShieldAlert size={22} style={{ color: 'var(--accent-color)' }} />
-                        <h2 style={{ margin: 0 }}>User Activity</h2>
-                        {/* Live dot */}
-                        <span style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'rgba(16,185,129,0.1)', color: '#10b981', padding: '2px 10px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 600 }}>
-                            <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#10b981', display: 'inline-block', animation: 'pulse 1.5s infinite' }} />
+                        <div className="users-title">
+                            <h2>User Activity</h2>
+                            <p>Monitor live sessions and block or disconnect users when needed.</p>
+                        </div>
+                        <span className="online-pill">
+                            <span />
                             {sessions.length} Online
                         </span>
                     </div>
-                    <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-                        <div className="search-bar">
+                    <div className="users-actions">
+                        <div className="users-search">
                             <Search size={16} />
                             <input type="text" placeholder="Search users..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
                         </div>
-                        <button onClick={fetchData} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.5rem 1rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--input-bg)', color: 'var(--text-primary)', cursor: 'pointer', fontWeight: 500 }}>
-                            <RefreshCw size={16} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} /> Refresh
+                        <button className="icon-btn" onClick={fetchData} title="Refresh" aria-label="Refresh">
+                            <RefreshCw size={16} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
                         </button>
                     </div>
                 </div>
 
                 {/* Tabs */}
-                <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.25rem' }}>
-                    <button style={tabStyle(tab === 'active')} onClick={() => setTab('active')}>
-                        <Activity size={14} style={{ verticalAlign: 'middle', marginRight: '4px' }} /> Live Sessions
+                <div className="activity-tabs">
+                    <button className={`activity-tab ${tab === 'active' ? 'active' : ''}`} onClick={() => setTab('active')}>
+                        <Activity size={14} /> Live Sessions
                     </button>
-                    <button style={tabStyle(tab === 'all')} onClick={() => setTab('all')}>
-                        <Users size={14} style={{ verticalAlign: 'middle', marginRight: '4px' }} /> All Users
+                    <button className={`activity-tab ${tab === 'all' ? 'active' : ''}`} onClick={() => setTab('all')}>
+                        <Users size={14} /> All Users
                     </button>
                 </div>
 
                 {/* ── LIVE SESSIONS TAB ── */}
                 {tab === 'active' && (
-                    <div className="table-container">
-                        <table className="master-table">
+                    <div className="users-panel users-table-wrap">
+                        <table className="users-table">
                             <thead>
                                 <tr>
                                     <th>Username</th>
@@ -155,9 +146,11 @@ const ActiveUsers: React.FC = () => {
                                     <tr><td colSpan={5} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>No active sessions right now.</td></tr>
                                 ) : filteredSessions.map((s, idx) => (
                                     <motion.tr key={s.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.04 }}>
-                                        <td style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                            <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#10b981', display: 'inline-block', flexShrink: 0, animation: 'pulse 1.5s infinite' }} />
-                                            {s.username}
+                                        <td style={{ fontWeight: 600 }}>
+                                            <div className="user-presence">
+                                                <span />
+                                                {s.username}
+                                            </div>
                                         </td>
                                         <td>{s.full_name || '—'}</td>
                                         <td>
@@ -172,20 +165,24 @@ const ActiveUsers: React.FC = () => {
                                             </div>
                                         </td>
                                         <td style={{ textAlign: 'right' }}>
-                                            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                                            <div className="user-row-actions">
                                                 <button
                                                     onClick={() => handleKick(s.id, s.username)}
                                                     disabled={actionLoading === s.id || s.id === currentUserId}
-                                                    title={s.id === currentUserId ? "Can't kick yourself" : "Force disconnect"}
-                                                    style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: '7px', border: 'none', background: 'rgba(239,68,68,0.1)', color: '#ef4444', cursor: s.id === currentUserId ? 'not-allowed' : 'pointer', fontWeight: 600, fontSize: '0.8rem', opacity: s.id === currentUserId ? 0.4 : 1 }}>
-                                                    <XCircle size={14} /> Disconnect
+                                                    title={s.id === currentUserId ? "Can't disconnect yourself" : "Disconnect user"}
+                                                    aria-label={s.id === currentUserId ? "Can't disconnect yourself" : "Disconnect user"}
+                                                    className="icon-btn danger"
+                                                    style={{ opacity: s.id === currentUserId ? 0.45 : 1 }}>
+                                                    <XCircle size={16} />
                                                 </button>
                                                 <button
                                                     onClick={() => handleBlock(s)}
                                                     disabled={actionLoading === s.id || s.id === currentUserId}
                                                     title="Block this user from logging in"
-                                                    style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: '7px', border: 'none', background: 'rgba(234,179,8,0.1)', color: '#ca8a04', cursor: s.id === currentUserId ? 'not-allowed' : 'pointer', fontWeight: 600, fontSize: '0.8rem', opacity: s.id === currentUserId ? 0.4 : 1 }}>
-                                                    <UserX size={14} /> Block
+                                                    aria-label="Block this user from logging in"
+                                                    className="icon-btn warning"
+                                                    style={{ opacity: s.id === currentUserId ? 0.45 : 1 }}>
+                                                    <UserX size={16} />
                                                 </button>
                                             </div>
                                         </td>
@@ -198,8 +195,8 @@ const ActiveUsers: React.FC = () => {
 
                 {/* ── ALL USERS TAB ── */}
                 {tab === 'all' && (
-                    <div className="table-container">
-                        <table className="master-table">
+                    <div className="users-panel users-table-wrap">
+                        <table className="users-table">
                             <thead>
                                 <tr>
                                     <th>Username</th>
@@ -224,8 +221,8 @@ const ActiveUsers: React.FC = () => {
                                             <td>{user.full_name || '—'}</td>
                                             <td><span style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '0.78rem', fontWeight: 600, background: 'rgba(99,102,241,0.1)', color: '#6366f1', textTransform: 'capitalize' }}>{user.role}</span></td>
                                             <td>
-                                                <span style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '0.78rem', fontWeight: 600, background: blocked ? 'rgba(239,68,68,0.1)' : 'rgba(34,197,94,0.1)', color: blocked ? '#ef4444' : '#22c55e' }}>
-                                                    {blocked ? '⛔ Blocked' : '✓ Active'}
+                                                <span className={`status-pill ${blocked ? 'blocked' : 'enabled'}`}>
+                                                    {blocked ? <><UserX size={13} /> Blocked</> : <><UserCheck size={13} /> Active</>}
                                                 </span>
                                             </td>
                                             <td>
@@ -238,20 +235,27 @@ const ActiveUsers: React.FC = () => {
                                                 )}
                                             </td>
                                             <td style={{ textAlign: 'right' }}>
-                                                <button
-                                                    onClick={() => handleBlock(user)}
-                                                    disabled={actionLoading === user.id || user.id === currentUserId}
-                                                    style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '5px 12px', borderRadius: '7px', border: 'none', background: blocked ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)', color: blocked ? '#22c55e' : '#ef4444', cursor: user.id === currentUserId ? 'not-allowed' : 'pointer', fontWeight: 600, fontSize: '0.8rem', opacity: user.id === currentUserId ? 0.4 : 1 }}>
-                                                    {blocked ? <><UserCheck size={14} /> Unblock</> : <><UserX size={14} /> Block</>}
-                                                </button>
-                                                {online && user.id !== currentUserId && (
+                                                <div className="user-row-actions">
                                                     <button
-                                                        onClick={() => handleKick(user.id, user.username)}
-                                                        disabled={actionLoading === user.id}
-                                                        style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: '7px', border: 'none', background: 'rgba(234,179,8,0.1)', color: '#ca8a04', cursor: 'pointer', fontWeight: 600, fontSize: '0.8rem', marginLeft: '0.5rem' }}>
-                                                        <XCircle size={14} /> Kick
+                                                        onClick={() => handleBlock(user)}
+                                                        disabled={actionLoading === user.id || user.id === currentUserId}
+                                                        className={`icon-btn ${blocked ? 'success' : 'danger'}`}
+                                                        title={blocked ? 'Unblock user' : 'Block user'}
+                                                        aria-label={blocked ? 'Unblock user' : 'Block user'}
+                                                        style={{ opacity: user.id === currentUserId ? 0.45 : 1 }}>
+                                                        {blocked ? <UserCheck size={16} /> : <UserX size={16} />}
                                                     </button>
-                                                )}
+                                                    {online && user.id !== currentUserId && (
+                                                        <button
+                                                            onClick={() => handleKick(user.id, user.username)}
+                                                            disabled={actionLoading === user.id}
+                                                            className="icon-btn warning"
+                                                            title="Disconnect user"
+                                                            aria-label="Disconnect user">
+                                                            <XCircle size={16} />
+                                                        </button>
+                                                    )}
+                                                </div>
                                             </td>
                                         </motion.tr>
                                     );

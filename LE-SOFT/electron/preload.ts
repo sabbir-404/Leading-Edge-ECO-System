@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('electron', {
     // Stock Groups
     getStockGroups: () => ipcRenderer.invoke('get-stock-groups'),
     createStockGroup: (group: any) => ipcRenderer.invoke('create-stock-group', group),
+    updateStockGroup: (id: number, group: any) => ipcRenderer.invoke('update-stock-group', id, group),
     deleteStockGroup: (id: number) => ipcRenderer.invoke('delete-stock-group', id),
 
     // Stock Items
@@ -34,10 +35,24 @@ contextBridge.exposeInMainWorld('electron', {
     // Products
     getProducts: () => ipcRenderer.invoke('get-products'),
     getProduct: (id: number) => ipcRenderer.invoke('get-product', id),
+    getProductLedgerDetail: (id: number) => ipcRenderer.invoke('get-product-ledger-detail', id),
+    getProductRequisitionSummary: (productId: number, filters?: any) => ipcRenderer.invoke('get-product-requisition-summary', productId, filters),
     getProductPriceHistory: () => ipcRenderer.invoke('get-product-price-history'),
     createProduct: (product: any) => ipcRenderer.invoke('create-product', product),
     updateProduct: (product: any) => ipcRenderer.invoke('update-product', product),
     deleteProduct: (id: number) => ipcRenderer.invoke('delete-product', id),
+    getProductModelRules: () => ipcRenderer.invoke('get-product-model-rules'),
+    saveProductModelRule: (rule: any) => ipcRenderer.invoke('save-product-model-rule', rule),
+    deleteProductModelRule: (id: number) => ipcRenderer.invoke('delete-product-model-rule', id),
+    getProductOrigins: () => ipcRenderer.invoke('get-product-origins'),
+    saveProductOrigin: (origin: any) => ipcRenderer.invoke('save-product-origin', origin),
+    deleteProductOrigin: (id: number) => ipcRenderer.invoke('delete-product-origin', id),
+    getProductAttributes: () => ipcRenderer.invoke('get-product-attributes'),
+    saveProductAttribute: (attribute: any) => ipcRenderer.invoke('save-product-attribute', attribute),
+    deleteProductAttribute: (id: number) => ipcRenderer.invoke('delete-product-attribute', id),
+    getDamagedGoods: () => ipcRenderer.invoke('get-damaged-goods'),
+    createDamagedGoods: (payload: any) => ipcRenderer.invoke('create-damaged-goods', payload),
+    updateDamagedGoodsStatus: (id: number, status: string, payload?: any) => ipcRenderer.invoke('update-damaged-goods-status', id, status, payload),
 
     // Godowns / Warehouses
     getGodowns: () => ipcRenderer.invoke('get-godowns'),
@@ -386,16 +401,16 @@ contextBridge.exposeInMainWorld('electron', {
     getPurchaseRequisitionHistory: (requisitionId: string) => ipcRenderer.invoke('get-purchase-requisition-history', requisitionId),
     createPurchaseRequisition: (input: any) => ipcRenderer.invoke('create-purchase-requisition', input),
     updatePurchaseRequisition: (id: string, updates: any) => ipcRenderer.invoke('update-purchase-requisition', id, updates),
-    approvePurchaseRequisition: (id: string, status: string, notes?: string) => ipcRenderer.invoke('approve-purchase-requisition', id, status, notes),
-    submitPurchaseEstimates: (id: string, quotes: any[]) => ipcRenderer.invoke('submit-purchase-estimates', id, quotes),
+    approvePurchaseRequisition: (id: string, status: string, notes?: string, performedByName?: string) => ipcRenderer.invoke('approve-purchase-requisition', id, status, notes, performedByName),
+    submitPurchaseEstimates: (id: string, quotes: any[], performedByName?: string) => ipcRenderer.invoke('submit-purchase-estimates', id, quotes, performedByName),
     getPurchaseRequisitionQuotes: (id: string) => ipcRenderer.invoke('get-purchase-requisition-quotes', id),
     getProductPurchaseHistory: (productId: number) => ipcRenderer.invoke('get-product-purchase-history', productId),
-    auditReviewPurchaseRequisition: (id: string, status: string, notes?: string) => ipcRenderer.invoke('audit-review-purchase-requisition', id, status, notes),
-    directorReviewPurchaseRequisition: (id: string, status: string, notes?: string) => ipcRenderer.invoke('director-review-purchase-requisition', id, status, notes),
+    auditReviewPurchaseRequisition: (id: string, status: string, notes?: string, performedByName?: string) => ipcRenderer.invoke('audit-review-purchase-requisition', id, status, notes, performedByName),
+    directorReviewPurchaseRequisition: (id: string, status: string, notes?: string, performedByName?: string) => ipcRenderer.invoke('director-review-purchase-requisition', id, status, notes, performedByName),
     purchasePurchaseRequisition: (id: string, payload: any) => ipcRenderer.invoke('purchase-purchase-requisition', id, payload),
-    receivePurchaseRequisition: (id: string) => ipcRenderer.invoke('receive-purchase-requisition', id),
-    completePurchaseRequisition: (id: string) => ipcRenderer.invoke('complete-purchase-requisition', id),
-    deletePurchaseRequisition: (id: string) => ipcRenderer.invoke('delete-purchase-requisition', id),
+    receivePurchaseRequisition: (id: string, performedByName?: string) => ipcRenderer.invoke('receive-purchase-requisition', id, performedByName),
+    completePurchaseRequisition: (id: string, performedByName?: string) => ipcRenderer.invoke('complete-purchase-requisition', id, performedByName),
+    deletePurchaseRequisition: (id: string, performedByName?: string) => ipcRenderer.invoke('delete-purchase-requisition', id, performedByName),
 
     // ─── SUPPLIER SETTLEMENTS ───
     getSupplierSettlements: (supplierLedgerId?: number) => ipcRenderer.invoke('get-supplier-settlements', supplierLedgerId),

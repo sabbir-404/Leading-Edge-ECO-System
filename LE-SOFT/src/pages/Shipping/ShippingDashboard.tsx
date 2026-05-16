@@ -8,6 +8,7 @@ import {
 import DashboardLayout from '../../components/DashboardLayout';
 import { useAutoRefresh } from '../../hooks/useAutoRefresh';
 import { resolveImageSrc } from '../../utils/imageSrc';
+import { getPrintPageSize } from '../../utils/printPageSize';
 import '../Accounting/Masters/Masters.css';
 
 // ── Status metadata ────────────────────────────────────────────────────────
@@ -61,17 +62,19 @@ function nextActionRole(currentStatus: string): { roleLabel: string; color: stri
 function printShippingLabel(s: any) {
     const printW = window.open('', '_blank', 'width=520,height=700');
     if (!printW) return;
+    const pageSize = getPrintPageSize('shipping_label');
     printW.document.write(`<!DOCTYPE html>
 <html>
 <head>
 <title>Shipping Label — ${s.invoice_number}</title>
 <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>
 <style>
-  @page { size: 4in 6in; margin: 0; }
+  @page { size: ${pageSize}; margin: ${pageSize === 'A5' ? '8mm' : '12mm'}; }
   * { box-sizing: border-box; }
-  body { font-family: Arial, sans-serif; padding: 18px; width: 4in; height: 6in; margin: 0; }
+  body { font-family: Arial, sans-serif; padding: 0; margin: 0; background: #fff; }
+  .page { min-height: ${pageSize === 'A5' ? '194mm' : '273mm'}; display: flex; align-items: flex-start; justify-content: center; }
   .label { border: 2px solid #000; border-radius: 8px; padding: 14px; height: 100%;
-           display: flex; flex-direction: column; justify-content: space-between; }
+           display: flex; flex-direction: column; justify-content: space-between; width: 4in; height: 6in; }
   .badge { font-size: 8pt; background:#000; color:#fff; padding:2px 7px; border-radius:3px;
            display:inline-block; margin-bottom:5px; letter-spacing:1px; font-weight:700; }
   .name { font-size: 13pt; font-weight: 800; margin: 0 0 3px; }
@@ -85,6 +88,7 @@ function printShippingLabel(s: any) {
 </style>
 </head>
 <body>
+<div class="page">
 <div class="label">
   <div>
     <div style="margin-bottom:12px">
@@ -106,6 +110,7 @@ function printShippingLabel(s: any) {
     <svg id="barcode"></svg>
     <div class="barcode-text">${s.invoice_number}</div>
   </div>
+</div>
 </div>
 <script>
   window.onload = function() {

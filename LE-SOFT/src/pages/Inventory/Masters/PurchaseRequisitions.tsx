@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Plus, Edit2, Trash2, Check, X, Package, ShoppingCart, AlertCircle, Clock, FileText } from 'lucide-react';
+import { Plus, Trash2, Check, X, Package, ShoppingCart, AlertCircle, Clock, FileText, Eye, Printer, Edit2, PackageMinus } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useAutoRefresh } from '../../../hooks/useAutoRefresh';
+import { getPrintPageSize } from '../../../utils/printPageSize';
 import './PurchaseRequisitions.css';
 
 interface Product {
@@ -10,6 +11,8 @@ interface Product {
     code?: string;
     sku?: string;
     unit?: string;
+    unit_name?: string;
+    unit_symbol?: string;
 }
 
 interface RequisitionLineItem {
@@ -21,6 +24,16 @@ interface RequisitionLineItem {
     remarks: string;
 }
 
+interface PurchaseRequisitionItem {
+    id: string;
+    requisition_id: string;
+    product_id: string;
+    product_name?: string;
+    quantity: number;
+    quantity_unit: string;
+    remarks?: string;
+}
+
 interface PurchaseRequisition {
     id: string;
     requisition_number: string;
@@ -30,7 +43,7 @@ interface PurchaseRequisition {
     quantity: number;
     quantity_unit: string;
     priority_level: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
-    status: 'DRAFT' | 'APPROVED' | 'PURCHASED' | 'RECEIVED' | 'COMPLETED';
+    status: 'DRAFT' | 'PENDING_ESTIMATE' | 'PENDING_AUDIT' | 'PENDING_DIRECTOR' | 'APPROVED' | 'PURCHASED' | 'RECEIVED' | 'COMPLETED' | 'REJECTED';
     approval_status: 'PENDING' | 'APPROVED' | 'REJECTED';
     requisition_date: string;
     required_delivery_date: string;
@@ -52,15 +65,11 @@ interface PurchaseRequisition {
     created_by?: string;
     approved_by?: string;
     purchased_by?: string;
-    items?: Array<{
-        id: string;
-        requisition_id: string;
-        product_id: string;
-        product_name?: string;
-        quantity: number;
-        quantity_unit: string;
-        remarks?: string;
-    }>;
+    supplier_ledger_id?: number;
+    purchase_invoice_id?: string;
+    purchased_quantity?: number;
+    purchase_remarks?: string;
+    items?: PurchaseRequisitionItem[];
 }
 
 interface PurchaseRequisitionHistory {
@@ -81,6 +90,7 @@ const PurchaseRequisitions: React.FC = () => {
     const [suppliers, setSuppliers] = useState<any[]>([]);
     const [loading, setLoading] = useState(false);
     const [showApprovalModal, setShowApprovalModal] = useState(false);
+    const [showItemsModal, setShowItemsModal] = useState(false);
     const [showAuditModal, setShowAuditModal] = useState(false);
     const [showEstimatesModal, setShowEstimatesModal] = useState(false);
     const [estimates, setEstimates] = useState<any[]>([{ supplierId: '', estimatedPrice: '', remarks: '' }]);
@@ -88,6 +98,20 @@ const PurchaseRequisitions: React.FC = () => {
     const [directorHistory, setDirectorHistory] = useState<any[]>([]);
     const [showDirectorModal, setShowDirectorModal] = useState(false);
     const [showPurchaseModal, setShowPurchaseModal] = useState(false);
+    const [viewQuotes, setViewQuotes] = useState<any[]>([]);
+    const [viewPurchaseHistory, setViewPurchaseHistory] = useState<Record<string, any[]>>({});
+    const [viewHistoryEntries, setViewHistoryEntries] = useState<PurchaseRequisitionHistory[]>([]);
+    const [viewLoading, setViewLoading] = useState(false);
+    const [showProductSummaryModal, setShowProductSummaryModal] = useState(false);
+    const [productSummary, setProductSummary] = useState<any>(null);
+    const [productSummaryLoading, setProductSummaryLoading] = useState(false);
+    const [productSummaryFilters, setProductSummaryFilters] = useState({ fromDate: '', toDate: '' });
+    const [selectedSummaryProductId, setSelectedSummaryProductId] = useState<string>('');
+    const [editingRequisition, setEditingRequisition] = useState<PurchaseRequisition | null>(null);
+    const [showDamageModal, setShowDamageModal] = useState(false);
+    const [damageProductId, setDamageProductId] = useState('');
+    const [damageQty, setDamageQty] = useState('');
+    const [damageNotes, setDamageNotes] = useState('');
     const [approvalNotes, setApprovalNotes] = useState('');
     const [auditNotes, setAuditNotes] = useState('');
     const [directorNotes, setDirectorNotes] = useState('');
@@ -119,6 +143,27 @@ const PurchaseRequisitions: React.FC = () => {
     });
     const [lineItems, setLineItems] = useState<RequisitionLineItem[]>([createEmptyLineItem()]);
 
+    const userRole = localStorage.getItem('user_role') || '';
+    const userName = localStorage.getItem('user_name') || 'desktop-user';
+    const userPermissions = useMemo(() => {
+        try {
+            return JSON.parse(localStorage.getItem('user_permissions') || '{}') as Record<string, boolean>;
+        } catch {
+            return {};
+        }
+    }, []);
+    const isAdminUser = userRole === 'superadmin' || userRole === 'admin';
+    const can = useCallback((permission: string) => isAdminUser || !!userPermissions[permission], [isAdminUser, userPermissions]);
+    const canViewPurchasePricing = isAdminUser || can('purchase_requisition') || can('director_approve_purchase_requisition') || can('view_purchase_requisition_pricing');
+    const canAlterRequisition = isAdminUser || can('director_approve_purchase_requisition') || can('alter_purchase_requisition');
+
+    const asArray = <T,>(value: unknown): T[] => Array.isArray(value) ? value : [];
+
+    const normalizeRequisition = (req: PurchaseRequisition): PurchaseRequisition => ({
+        ...req,
+        items: asArray(req.items),
+    });
+
     const fetchData = useCallback(async () => {
         try {
             setLoading(true);
@@ -131,9 +176,9 @@ const PurchaseRequisitions: React.FC = () => {
                 (window as any).electron?.getLedgers?.() || [],
             ]);
 
-            setRequisitions(reqsData || []);
-            setProducts(productsData || []);
-            setSuppliers((ledgersData || []).filter((l: any) => l.group_name === 'Sundry Creditors'));
+            setRequisitions(asArray<PurchaseRequisition>(reqsData).map(normalizeRequisition));
+            setProducts(asArray<Product>(productsData));
+            setSuppliers(asArray<any>(ledgersData).filter((l: any) => l.group_name === 'Sundry Creditors' || l.group?.name === 'Sundry Creditors'));
         } catch (error) {
             console.error('Error fetching data:', error);
         } finally {
@@ -164,7 +209,7 @@ const PurchaseRequisitions: React.FC = () => {
                 remarks: item.remarks,
             }));
 
-            const result = await (window as any).electron?.createPurchaseRequisition?.({
+            const payload = {
                 items,
                 priorityLevel: formData.priorityLevel,
                 requiredDeliveryDate: formData.requiredDeliveryDate,
@@ -172,7 +217,12 @@ const PurchaseRequisitions: React.FC = () => {
                 productId: items[0]?.productId,
                 quantity: items[0]?.quantity,
                 quantityUnit: items[0]?.quantityUnit,
-            });
+                performedByName: userName,
+            };
+
+            const result = editingRequisition
+                ? await (window as any).electron?.updatePurchaseRequisition?.(editingRequisition.id, payload)
+                : await (window as any).electron?.createPurchaseRequisition?.(payload);
 
             if (result?.success) {
                 setFormData({
@@ -181,8 +231,11 @@ const PurchaseRequisitions: React.FC = () => {
                     remarks: '',
                 });
                 setLineItems([createEmptyLineItem()]);
+                setEditingRequisition(null);
                 setTab('list');
                 fetchData();
+            } else if (result?.error) {
+                alert(result.error);
             }
         } catch (error) {
             console.error('Error creating requisition:', error);
@@ -195,7 +248,8 @@ const PurchaseRequisitions: React.FC = () => {
             const result = await (window as any).electron?.approvePurchaseRequisition?.(
                 selectedRequisition.id,
                 'APPROVED',
-                approvalNotes
+                approvalNotes,
+                userName
             );
             if (result?.success) {
                 setShowApprovalModal(false);
@@ -211,9 +265,17 @@ const PurchaseRequisitions: React.FC = () => {
     const handleSubmitEstimates = async () => {
         if (!selectedRequisition) return;
         try {
+            const usableEstimates = estimates.filter((est) =>
+                est.supplierId && Number(est.estimatedPrice) > 0 &&
+                (est.supplierId !== 'NEW' || est.newSupplier?.name?.trim())
+            );
+            if (usableEstimates.length === 0) {
+                alert('Add at least one vendor quote with supplier and estimated price.');
+                return;
+            }
             // Pre-process estimates to create new suppliers
             const processedEstimates = [];
-            for (const est of estimates) {
+            for (const est of usableEstimates) {
                 if (est.supplierId === 'NEW' && est.newSupplier) {
                     const newLedger = await (window as any).electron?.createLedger({
                         name: est.newSupplier.name,
@@ -239,7 +301,8 @@ const PurchaseRequisitions: React.FC = () => {
 
             const result = await (window as any).electron?.submitPurchaseEstimates?.(
                 selectedRequisition.id,
-                processedEstimates
+                processedEstimates,
+                userName
             );
             if (result?.success) {
                 setShowEstimatesModal(false);
@@ -259,7 +322,8 @@ const PurchaseRequisitions: React.FC = () => {
             const result = await (window as any).electron?.auditReviewPurchaseRequisition?.(
                 selectedRequisition.id,
                 nextStatus,
-                auditNotes
+                auditNotes,
+                userName
             );
             if (result?.success) {
                 setShowAuditModal(false);
@@ -302,7 +366,8 @@ const PurchaseRequisitions: React.FC = () => {
             const result = await (window as any).electron?.directorReviewPurchaseRequisition?.(
                 selectedRequisition.id,
                 nextStatus,
-                directorNotes
+                directorNotes,
+                userName
             );
             if (result?.success) {
                 setShowDirectorModal(false);
@@ -318,9 +383,9 @@ const PurchaseRequisitions: React.FC = () => {
     const openHistory = async (requisition: PurchaseRequisition) => {
         try {
             setHistoryLoading(true);
-            setHistoryRequisition(requisition);
+            setHistoryRequisition(normalizeRequisition(requisition));
             const entries = await (window as any).electron?.getPurchaseRequisitionHistory?.(requisition.id);
-            setHistoryEntries(entries || []);
+            setHistoryEntries(asArray(entries));
             setTab('history');
         } catch (error) {
             console.error('Error loading history:', error);
@@ -329,9 +394,89 @@ const PurchaseRequisitions: React.FC = () => {
         }
     };
 
+    const openItemsView = async (req: PurchaseRequisition) => {
+        const safeReq = normalizeRequisition(req);
+        setSelectedRequisition(safeReq);
+        setShowItemsModal(true);
+        setViewLoading(true);
+        setViewQuotes([]);
+        setViewPurchaseHistory({});
+        setViewHistoryEntries([]);
+        try {
+            const items = safeReq.items && safeReq.items.length > 0
+                ? safeReq.items
+                : [{
+                    product_id: safeReq.product_id,
+                    quantity: safeReq.quantity,
+                    quantity_unit: safeReq.quantity_unit,
+                }];
+            const [quotes, history, ...productHistories] = await Promise.all([
+                (window as any).electron?.getPurchaseRequisitionQuotes?.(safeReq.id) || [],
+                (window as any).electron?.getPurchaseRequisitionHistory?.(safeReq.id) || [],
+                ...items.map((item) => (window as any).electron?.getProductPurchaseHistory?.(Number(item.product_id)) || []),
+            ]);
+            const historyMap: Record<string, any[]> = {};
+            items.forEach((item, index) => {
+                historyMap[String(item.product_id)] = asArray(productHistories[index]);
+            });
+            setViewQuotes(asArray(quotes));
+            setViewHistoryEntries(asArray(history));
+            setViewPurchaseHistory(historyMap);
+        } catch (error) {
+            console.error('Error loading requisition details:', error);
+        } finally {
+            setViewLoading(false);
+        }
+    };
+
+    const loadProductSummary = async (productId: string, filters = productSummaryFilters) => {
+        if (!productId) return;
+        setProductSummaryLoading(true);
+        try {
+            const summary = await (window as any).electron?.getProductRequisitionSummary?.(Number(productId), {
+                fromDate: filters.fromDate || undefined,
+                toDate: filters.toDate || undefined,
+            });
+            setProductSummary(summary || null);
+        } catch (error) {
+            console.error('Error loading product summary:', error);
+            setProductSummary(null);
+        } finally {
+            setProductSummaryLoading(false);
+        }
+    };
+
+    const openProductSummary = async (productId: string) => {
+        if (!productId) {
+            alert('Select a product first.');
+            return;
+        }
+        setSelectedSummaryProductId(productId);
+        setProductSummaryFilters({ fromDate: '', toDate: '' });
+        setProductSummary(null);
+        setShowProductSummaryModal(true);
+        await loadProductSummary(productId, { fromDate: '', toDate: '' });
+    };
+
+    const applyProductSummaryFilter = async () => {
+        await loadProductSummary(selectedSummaryProductId, productSummaryFilters);
+    };
+
     const handlePurchase = async () => {
         if (!selectedRequisition) return;
         try {
+            if (!purchaseInvoiceId.trim()) {
+                alert('Invoice ID / Bill Number is required.');
+                return;
+            }
+            if (purchasedQuantity && Number(purchasedQuantity) <= 0) {
+                alert('Purchased quantity must be greater than zero.');
+                return;
+            }
+            if (selectedSupplierId === 'NEW' && !newSupplier.name.trim()) {
+                alert('Supplier name is required.');
+                return;
+            }
             let finalSupplierId = selectedSupplierId;
             if (selectedSupplierId === 'NEW') {
                 const newLedger = await (window as any).electron?.createLedger({
@@ -360,7 +505,8 @@ const PurchaseRequisitions: React.FC = () => {
                     purchaseInvoiceId,
                     purchasedQuantity: Number(purchasedQuantity) || selectedRequisition.quantity,
                     purchaseRemarks,
-                    supplierId: finalSupplierId ? Number(finalSupplierId) : null
+                    supplierId: finalSupplierId ? Number(finalSupplierId) : null,
+                    performedByName: userName,
                 }
             );
             if (result?.success) {
@@ -382,7 +528,7 @@ const PurchaseRequisitions: React.FC = () => {
 
     const handleReceive = async (id: string) => {
         try {
-            const result = await (window as any).electron?.receivePurchaseRequisition?.(id);
+            const result = await (window as any).electron?.receivePurchaseRequisition?.(id, userName);
             if (result?.success) {
                 fetchData();
             }
@@ -393,7 +539,7 @@ const PurchaseRequisitions: React.FC = () => {
 
     const handleComplete = async (id: string) => {
         try {
-            const result = await (window as any).electron?.completePurchaseRequisition?.(id);
+            const result = await (window as any).electron?.completePurchaseRequisition?.(id, userName);
             if (result?.success) {
                 fetchData();
             }
@@ -405,7 +551,7 @@ const PurchaseRequisitions: React.FC = () => {
     const handleDelete = async (id: string) => {
         if (!confirm('Are you sure you want to delete this requisition?')) return;
         try {
-            const result = await (window as any).electron?.deletePurchaseRequisition?.(id);
+            const result = await (window as any).electron?.deletePurchaseRequisition?.(id, userName);
             if (result?.success) {
                 fetchData();
             }
@@ -417,10 +563,14 @@ const PurchaseRequisitions: React.FC = () => {
     const getStatusColor = (status: string) => {
         const colors: Record<string, string> = {
             DRAFT: '#6b7280',
+            PENDING_ESTIMATE: '#f97316',
+            PENDING_AUDIT: '#0ea5e9',
+            PENDING_DIRECTOR: '#8b5cf6',
             APPROVED: '#3b82f6',
             PURCHASED: '#f97316',
             RECEIVED: '#a855f7',
             COMPLETED: '#22c55e',
+            REJECTED: '#ef4444',
         };
         return colors[status] || '#6b7280';
     };
@@ -437,30 +587,247 @@ const PurchaseRequisitions: React.FC = () => {
 
     const getStageLabel = (req: PurchaseRequisition) => {
         if (req.status === 'DRAFT') return 'Store Draft';
-        if (req.status === 'APPROVED' && req.audit_status === 'PENDING') return 'Audit Review Pending';
-        if (req.status === 'APPROVED' && req.audit_status === 'APPROVED' && req.director_status === 'PENDING') return 'Director Approval Pending';
-        if (req.status === 'APPROVED' && req.audit_status === 'REJECTED') return 'Audit Rejected';
-        if (req.status === 'APPROVED' && req.director_status === 'REJECTED') return 'Director Rejected';
+        if (req.status === 'PENDING_ESTIMATE') return 'Vendor Estimates';
+        if (req.status === 'PENDING_AUDIT') return 'Audit Review';
+        if (req.status === 'PENDING_DIRECTOR') return 'Director Approval';
+        if (req.status === 'REJECTED' && req.audit_status === 'REJECTED') return 'Audit Rejected';
+        if (req.status === 'REJECTED' && req.director_status === 'REJECTED') return 'Director Rejected';
+        if (req.status === 'APPROVED') return 'Ready to Purchase';
         if (req.status === 'PURCHASED') return 'Purchase Processing';
         if (req.status === 'RECEIVED') return 'Goods Received';
         if (req.status === 'COMPLETED') return 'Completed';
         return req.status;
     };
 
-    const filteredRequisitions = requisitions.map(req => ({
-        ...req,
+    const filteredRequisitions = asArray<PurchaseRequisition>(requisitions).map(req => {
+        const safeReq = normalizeRequisition(req);
+        return {
+        ...safeReq,
         product_name:
-            req.items?.[0]?.product_name ||
-            products.find(p => p.id === req.product_id)?.name ||
+            safeReq.items?.[0]?.product_name ||
+            products.find(p => String(p.id) === String(safeReq.product_id))?.name ||
             'Unknown',
-        item_count: req.items?.length || 1,
-    }));
+        item_count: safeReq.items?.length || 1,
+    };
+    });
+
+    const getProductSummary = (req: PurchaseRequisition) => {
+        const items = asArray<PurchaseRequisitionItem>(req.items);
+        if (items.length === 0) return req.product_name || 'Unknown';
+        const first = items[0];
+        return items.length > 1
+            ? `${first.product_name || 'Unknown Product'} +${items.length - 1} more`
+            : first.product_name || 'Unknown Product';
+    };
+
+    const getCurrentOwner = (req: PurchaseRequisition) => {
+        if (req.status === 'DRAFT') return 'Store Head';
+        if (req.status === 'PENDING_ESTIMATE') return 'Accounts Department';
+        if (req.status === 'PENDING_AUDIT') return 'Audit Department';
+        if (req.status === 'PENDING_DIRECTOR') return 'Director';
+        if (req.status === 'APPROVED') return 'Purchase Department';
+        if (req.status === 'PURCHASED') return 'Receiving Team';
+        if (req.status === 'RECEIVED') return 'Inventory / Store';
+        if (req.status === 'COMPLETED') return 'Completed';
+        if (req.status === 'REJECTED') return 'Closed';
+        return 'Store';
+    };
+
+    const getWorkflowSteps = (req: PurchaseRequisition) => [
+        { label: 'Store', status: 'Cleared', note: 'Created requisition' },
+        { label: 'Store Head', status: req.approval_status === 'APPROVED' ? 'Cleared' : req.status === 'DRAFT' ? 'Current' : req.approval_status === 'REJECTED' ? 'Rejected' : 'Pending', note: req.store_head_notes || 'Review and approve' },
+        { label: 'Accounts', status: ['PENDING_AUDIT', 'PENDING_DIRECTOR', 'APPROVED', 'PURCHASED', 'RECEIVED', 'COMPLETED'].includes(req.status) ? 'Cleared' : req.status === 'PENDING_ESTIMATE' ? 'Current' : 'Pending', note: 'Add supplier and estimated price' },
+        { label: 'Audit', status: req.audit_status === 'APPROVED' ? 'Cleared' : req.audit_status === 'REJECTED' ? 'Rejected' : req.status === 'PENDING_AUDIT' ? 'Current' : 'Pending', note: req.audit_notes || 'Audit justification' },
+        { label: 'Director', status: req.director_status === 'APPROVED' ? 'Cleared' : req.director_status === 'REJECTED' ? 'Rejected' : req.status === 'PENDING_DIRECTOR' ? 'Current' : 'Pending', note: req.director_notes || 'Final approval' },
+        { label: 'Purchase', status: ['PURCHASED', 'RECEIVED', 'COMPLETED'].includes(req.status) ? 'Cleared' : req.status === 'APPROVED' ? 'Current' : 'Pending', note: req.purchase_remarks || 'Purchase after approval' },
+    ];
+
+    const getBestEstimatedTotal = () => {
+        const values = asArray<any>(viewQuotes)
+            .map((quote) => Number(quote.estimated_price))
+            .filter((value) => Number.isFinite(value) && value > 0);
+        if (values.length === 0) return null;
+        return Math.min(...values);
+    };
+
+    const formatMoney = (value: number | null | undefined) => {
+        if (value === null || value === undefined || !Number.isFinite(Number(value))) return '—';
+        return `৳${Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+    };
+
+    const formatStatusLabel = (status: string) => status.replace(/_/g, ' ');
+
+    const formatDate = (value?: string) => {
+        if (!value) return '—';
+        const date = new Date(value);
+        return Number.isNaN(date.getTime()) ? '—' : date.toLocaleDateString();
+    };
+
+    const escapeHtml = (value: any) => String(value ?? '—')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+
+    const getPrintableItems = (req: PurchaseRequisition) => (
+        asArray<PurchaseRequisitionItem>(req.items).length > 0
+            ? asArray<PurchaseRequisitionItem>(req.items)
+            : [{
+                id: req.id,
+                requisition_id: req.id,
+                product_id: req.product_id,
+                product_name: req.product_name,
+                quantity: req.quantity,
+                quantity_unit: req.quantity_unit,
+                remarks: req.remarks,
+            }]
+    );
+
+    const handlePrintRequisition = async (req: PurchaseRequisition) => {
+        try {
+            const items = getPrintableItems(req);
+            const [quotes, ...productHistories] = await Promise.all([
+                (window as any).electron?.getPurchaseRequisitionQuotes?.(req.id) || [],
+                ...items.map((item) => (window as any).electron?.getProductPurchaseHistory?.(Number(item.product_id)) || []),
+            ]);
+            const historyMap = new Map<string, any[]>();
+            items.forEach((item, index) => historyMap.set(String(item.product_id), productHistories[index] || []));
+            const bestEstimate = (quotes || [])
+                .map((quote: any) => Number(quote.estimated_price))
+                .filter((value: number) => Number.isFinite(value) && value > 0)
+                .sort((a: number, b: number) => a - b)[0];
+            const approvedBy = req.director_reviewed_by_name || req.approved_by || '—';
+            const printedAt = new Date().toLocaleString();
+            const pageSize = getPrintPageSize('purchase_requisition');
+
+            const itemRows = items.map((item, index) => {
+                const previous = (historyMap.get(String(item.product_id)) || [])[0];
+                const previousRate = previous
+                    ? previous.rate ?? (previous.qty ? Number(previous.amount || 0) / Number(previous.qty) : previous.amount)
+                    : null;
+                return `
+                    <tr>
+                        <td>${index + 1}</td>
+                        <td>
+                            <strong>${escapeHtml(item.product_name || products.find((p) => p.id === item.product_id)?.name || 'Unknown Product')}</strong>
+                            ${item.remarks ? `<div class="muted">${escapeHtml(item.remarks)}</div>` : ''}
+                        </td>
+                        <td class="right">${escapeHtml(item.quantity)} ${escapeHtml(item.quantity_unit)}</td>
+                        <td class="right">${canViewPurchasePricing ? escapeHtml(formatMoney(previousRate)) : 'Restricted'}</td>
+                    </tr>
+                `;
+            }).join('');
+
+            const quoteRows = (quotes || []).length === 0
+                ? '<tr><td colspan="3" class="empty">No supplier/vendor estimate recorded.</td></tr>'
+                : (quotes || []).map((quote: any) => `
+                    <tr>
+                        <td>${escapeHtml(quote.supplier?.name || 'Unknown vendor')}</td>
+                        <td class="right">${escapeHtml(formatMoney(Number(quote.estimated_price)))}</td>
+                        <td>${escapeHtml(quote.remarks || '—')}</td>
+                    </tr>
+                `).join('');
+
+            const printWindow = window.open('', '_blank', 'width=900,height=1100');
+            if (!printWindow) {
+                alert('Unable to open print window. Please allow popups for this app.');
+                return;
+            }
+
+            printWindow.document.write(`<!DOCTYPE html>
+<html>
+<head>
+    <title>${escapeHtml(req.requisition_number)} - Purchase Requisition</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { margin: 0; padding: 28px; font-family: Arial, sans-serif; color: #111827; background: #fff; }
+        .sheet { width: 100%; max-width: 860px; margin: 0 auto; }
+        .top { display: flex; justify-content: space-between; gap: 24px; border-bottom: 2px solid #111827; padding-bottom: 18px; margin-bottom: 18px; }
+        .brand { font-size: 24px; font-weight: 800; letter-spacing: 0.04em; }
+        .brand span { color: #f97316; }
+        h1 { margin: 6px 0 0; font-size: 22px; }
+        h2 { margin: 22px 0 8px; font-size: 14px; text-transform: uppercase; letter-spacing: 0.08em; }
+        .meta { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 16px 0; }
+        .box { border: 1px solid #d1d5db; padding: 10px; min-height: 58px; }
+        .label { display: block; color: #6b7280; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; }
+        .value { font-weight: 700; font-size: 13px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+        th, td { border: 1px solid #d1d5db; padding: 8px; font-size: 12px; vertical-align: top; }
+        th { background: #f3f4f6; text-align: left; text-transform: uppercase; letter-spacing: 0.05em; font-size: 11px; }
+        .right { text-align: right; }
+        .muted { color: #6b7280; font-size: 11px; margin-top: 3px; }
+        .empty { text-align: center; color: #6b7280; padding: 18px; }
+        .remark { border-top: 0; background: #fafafa; }
+        .signatures { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; margin-top: 42px; }
+        .signature { border-top: 1px solid #111827; padding-top: 8px; text-align: center; font-size: 12px; }
+        @page { size: ${pageSize}; margin: ${pageSize === 'A5' ? '9mm' : '14mm'}; }
+        @media print { body { padding: 0; } .sheet { max-width: none; } }
+    </style>
+</head>
+<body>
+    <main class="sheet">
+        <section class="top">
+            <div>
+                <div class="brand">LE<span>A</span>DING EDGE</div>
+                <h1>Purchase Requisition</h1>
+            </div>
+            <div>
+                <div><span class="label">Requisition No.</span><span class="value">${escapeHtml(req.requisition_number)}</span></div>
+                <div style="margin-top: 8px;"><span class="label">Printed At</span><span class="value">${escapeHtml(printedAt)}</span></div>
+            </div>
+        </section>
+
+        <section class="meta">
+            <div class="box"><span class="label">Status</span><span class="value">${escapeHtml(formatStatusLabel(req.status))}</span></div>
+            <div class="box"><span class="label">Current Holder</span><span class="value">${escapeHtml(getCurrentOwner(req))}</span></div>
+            <div class="box"><span class="label">Priority</span><span class="value">${escapeHtml(req.priority_level)}</span></div>
+            <div class="box"><span class="label">Required Delivery</span><span class="value">${escapeHtml(formatDate(req.required_delivery_date))}</span></div>
+            <div class="box"><span class="label">Best Estimated Total</span><span class="value">${escapeHtml(formatMoney(bestEstimate))}</span></div>
+            <div class="box"><span class="label">Director Approval</span><span class="value">${escapeHtml(req.director_status || '—')} by ${escapeHtml(approvedBy)}</span></div>
+        </section>
+
+        <h2>Products</h2>
+        <table>
+            <thead><tr><th style="width: 44px;">#</th><th>Product</th><th class="right">Quantity</th><th class="right">Previous Purchase Price</th></tr></thead>
+            <tbody>${itemRows}</tbody>
+        </table>
+
+        <h2>Supplier / Vendor Details</h2>
+        <table>
+            <thead><tr><th>Supplier / Vendor</th><th class="right">Estimated Amount</th><th>Remarks</th></tr></thead>
+            <tbody>${quoteRows}</tbody>
+        </table>
+
+        <section class="signatures">
+            <div class="signature">Store Head</div>
+            <div class="signature">Accounts</div>
+            <div class="signature">Audit</div>
+            <div class="signature">Director</div>
+        </section>
+    </main>
+    <script>
+        window.onload = function() {
+            window.focus();
+            setTimeout(function() { window.print(); }, 250);
+        };
+    </script>
+</body>
+</html>`);
+            printWindow.document.close();
+        } catch (error) {
+            console.error('Error printing requisition:', error);
+            alert('Unable to print requisition. Please try again.');
+        }
+    };
 
     const productLabels = useMemo(() => products.map((product) => {
         const productCode = product.code || product.sku || '';
+        const defaultUnit = product.unit_symbol || product.unit_name || product.unit || 'piece';
         return {
             id: product.id,
             label: productCode ? `${product.name} (${productCode})` : product.name,
+            defaultUnit,
         };
     }), [products]);
 
@@ -476,7 +843,7 @@ const PurchaseRequisitions: React.FC = () => {
                     ...item,
                     productSearch: value,
                     productId: matchedProduct?.id || '',
-                    quantityUnit: matchedProduct ? (matchedProduct.label.includes('(') ? item.quantityUnit : item.quantityUnit) : item.quantityUnit,
+                    quantityUnit: matchedProduct?.defaultUnit || item.quantityUnit,
                 };
             }
 
@@ -502,6 +869,47 @@ const PurchaseRequisitions: React.FC = () => {
             remarks: '',
         });
         setLineItems([createEmptyLineItem()]);
+        setEditingRequisition(null);
+    };
+
+    const openEditRequisition = (req: PurchaseRequisition) => {
+        if (!canAlterRequisition && req.status !== 'DRAFT') {
+            alert('Only admin/director can alter requisitions after creation.');
+            return;
+        }
+        if (['PURCHASED', 'RECEIVED', 'COMPLETED'].includes(req.status)) {
+            alert('Purchased or stocked requisitions cannot be altered.');
+            return;
+        }
+        const sourceItems = asArray(req.items).length > 0
+            ? asArray<any>(req.items)
+            : [{
+                product_id: req.product_id,
+                product_name: req.product_name,
+                quantity: req.quantity,
+                quantity_unit: req.quantity_unit,
+                remarks: req.remarks,
+            }];
+        setEditingRequisition(req);
+        setFormData({
+            priorityLevel: req.priority_level || 'MEDIUM',
+            requiredDeliveryDate: req.required_delivery_date || '',
+            remarks: req.remarks || '',
+        });
+        setLineItems(sourceItems.map((item, index) => {
+            const product = products.find(p => String(p.id) === String(item.product_id));
+            const productCode = product?.code || product?.sku || item.product_code || '';
+            const productName = product?.name || item.product_name || 'Unknown Product';
+            return {
+                id: item.id || `${Date.now()}-${index}`,
+                productId: String(item.product_id || ''),
+                productSearch: productCode ? `${productName} (${productCode})` : productName,
+                quantity: String(item.quantity || ''),
+                quantityUnit: item.quantity_unit || product?.unit_symbol || product?.unit_name || product?.unit || 'piece',
+                remarks: item.remarks || '',
+            };
+        }));
+        setTab('create');
     };
 
     return (
@@ -517,12 +925,14 @@ const PurchaseRequisitions: React.FC = () => {
                     >
                         <ShoppingCart size={18} /> Requisitions
                     </button>
-                    <button
-                        className={`tab ${tab === 'create' ? 'active' : ''}`}
-                        onClick={() => setTab('create')}
-                    >
-                        <Plus size={18} /> New Requisition
-                    </button>
+                    {can('create_purchase_requisition') && (
+                        <button
+                            className={`tab ${tab === 'create' ? 'active' : ''}`}
+                            onClick={() => setTab('create')}
+                        >
+                            <Plus size={18} /> {editingRequisition ? 'Edit Requisition' : 'New Requisition'}
+                        </button>
+                    )}
                     <button
                         className={`tab ${tab === 'approvals' ? 'active' : ''}`}
                         onClick={() => setTab('approvals')}
@@ -551,10 +961,14 @@ const PurchaseRequisitions: React.FC = () => {
                             >
                                 <option value="">All Status</option>
                                 <option value="DRAFT">Draft</option>
+                                <option value="PENDING_ESTIMATE">Pending Estimate</option>
+                                <option value="PENDING_AUDIT">Pending Audit</option>
+                                <option value="PENDING_DIRECTOR">Pending Director</option>
                                 <option value="APPROVED">Approved</option>
                                 <option value="PURCHASED">Purchased</option>
                                 <option value="RECEIVED">Received</option>
                                 <option value="COMPLETED">Completed</option>
+                                <option value="REJECTED">Rejected</option>
                             </select>
 
                             <select
@@ -583,12 +997,10 @@ const PurchaseRequisitions: React.FC = () => {
                                     <thead>
                                         <tr>
                                             <th>Requisition #</th>
-                                            <th>Product</th>
-                                            <th>Qty</th>
-                                            <th>Unit</th>
                                             <th>Priority</th>
                                             <th>Status</th>
                                             <th>Approval</th>
+                                            <th>Current Holder</th>
                                             <th>Stage</th>
                                             <th>Delivery Date</th>
                                             <th>Actions</th>
@@ -598,9 +1010,6 @@ const PurchaseRequisitions: React.FC = () => {
                                         {filteredRequisitions.map((req) => (
                                             <tr key={req.id}>
                                                 <td className="font-mono">{req.requisition_number}</td>
-                                                <td>{req.product_name}</td>
-                                                <td className="text-right">{req.quantity}</td>
-                                                <td>{req.quantity_unit}</td>
                                                 <td>
                                                     <span
                                                         className="badge"
@@ -620,7 +1029,7 @@ const PurchaseRequisitions: React.FC = () => {
                                                             color: 'white',
                                                         }}
                                                     >
-                                                        {req.status}
+                                                        {formatStatusLabel(req.status)}
                                                     </span>
                                                 </td>
                                                 <td>
@@ -636,38 +1045,54 @@ const PurchaseRequisitions: React.FC = () => {
                                                             color: 'white',
                                                         }}
                                                     >
-                                                        {req.approval_status}
+                                                        {formatStatusLabel(req.approval_status)}
                                                     </span>
                                                 </td>
-                                                <td>{getStageLabel(req)}</td>
-                                                <td>{new Date(req.required_delivery_date).toLocaleDateString()}</td>
+                                                <td className="stage-cell">{getCurrentOwner(req)}</td>
+                                                <td className="stage-cell">{getStageLabel(req)}</td>
+                                                <td>{formatDate(req.required_delivery_date)}</td>
                                                 <td className="actions">
-                                                    {req.status === 'DRAFT' && (
+                                                    <button className="action-btn view" title="View Details" onClick={() => openItemsView(req)}><Eye size={16} /></button>
+                                                    {(req.status === 'DRAFT' || (canAlterRequisition && !['PURCHASED', 'RECEIVED', 'COMPLETED'].includes(req.status))) && (
+                                                        <button className="action-btn" title="Alter Products / Quantity" onClick={() => openEditRequisition(req)}><Edit2 size={16} /></button>
+                                                    )}
+                                                    {req.status === 'DRAFT' && can('approve_store_requisition') && (
                                                         <>
-                                                            <button className="action-btn edit" title="Edit" onClick={() => setTab('create')}><Edit2 size={16} /></button>
                                                             <button className="action-btn delete" title="Delete" onClick={() => handleDelete(req.id)}><Trash2 size={16} /></button>
                                                             <button className="action-btn approve" title="Approve" onClick={() => { setSelectedRequisition(req); setShowApprovalModal(true); }}><Check size={16} /></button>
                                                         </>
                                                     )}
-                                                    {req.status === 'PENDING_ESTIMATE' && (
+                                                    {req.status === 'PENDING_ESTIMATE' && can('add_purchase_estimates') && (
                                                         <button className="action-btn" title="Add Estimates" onClick={() => { setSelectedRequisition(req); setShowEstimatesModal(true); }}><FileText size={16} /></button>
                                                     )}
-                                                    {req.status === 'PENDING_AUDIT' && (
+                                                    {req.status === 'PENDING_AUDIT' && can('audit_purchase_requisition') && (
                                                         <button className="action-btn approve" title="Audit Review" onClick={() => openAuditModal(req)}><AlertCircle size={16} /></button>
                                                     )}
-                                                    {req.status === 'PENDING_DIRECTOR' && (
+                                                    {req.status === 'PENDING_DIRECTOR' && can('director_approve_purchase_requisition') && (
                                                         <button className="action-btn approve" title="Director Review" onClick={() => openDirectorModal(req)}><Check size={16} /></button>
                                                     )}
                                                     {req.status === 'APPROVED' && (
                                                         <>
-                                                            <button className="action-btn print" title="Print Document" onClick={() => alert('Printing Document...')}><FileText size={16} /></button>
-                                                            <button className="action-btn purchase" title="Purchase" onClick={() => { setSelectedRequisition(req); setShowPurchaseModal(true); }}><ShoppingCart size={16} /></button>
+                                                            <button className="action-btn print" title="Print Requisition" onClick={() => handlePrintRequisition(req)}><Printer size={16} /></button>
+                                                            {can('purchase_requisition') && (
+                                                                <button className="action-btn purchase" title="Purchase" onClick={() => { setSelectedRequisition(req); setShowPurchaseModal(true); }}><ShoppingCart size={16} /></button>
+                                                            )}
                                                         </>
                                                     )}
-                                                    {req.status === 'PURCHASED' && (
+                                                    {req.status === 'PURCHASED' && can('receive_purchase_requisition') && (
                                                         <button className="action-btn receive" title="Receive" onClick={() => handleReceive(req.id)}><Package size={16} /></button>
                                                     )}
-                                                    {req.status === 'RECEIVED' && (
+                                                    {['PURCHASED', 'RECEIVED'].includes(req.status) && can('manage_damaged_goods') && (
+                                                        <button className="action-btn delete" title="Record Damaged Goods" onClick={() => {
+                                                            setSelectedRequisition(req);
+                                                            const firstItem = asArray<any>(req.items)[0];
+                                                            setDamageProductId(String(firstItem?.product_id || req.product_id || ''));
+                                                            setDamageQty('');
+                                                            setDamageNotes('');
+                                                            setShowDamageModal(true);
+                                                        }}><PackageMinus size={16} /></button>
+                                                    )}
+                                                    {req.status === 'RECEIVED' && can('complete_purchase_requisition') && (
                                                         <button className="action-btn complete" title="Complete" onClick={() => handleComplete(req.id)}><Check size={16} /></button>
                                                     )}
                                                     <button className="action-btn" title="History" onClick={() => openHistory(req)}><Clock size={16} /></button>
@@ -678,6 +1103,321 @@ const PurchaseRequisitions: React.FC = () => {
                                 </table>
                             </div>
                         )}
+                    </motion.div>
+                )}
+
+                {showItemsModal && selectedRequisition && (
+                    <motion.div
+                        className="modal-overlay"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        onClick={() => setShowItemsModal(false)}
+                    >
+                        <motion.div
+                            className="modal-content requisition-items-modal"
+                            initial={{ scale: 0.9 }}
+                            animate={{ scale: 1 }}
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            <div className="modal-header-row">
+                                <div>
+                                    <h2>Requisition Details</h2>
+                                    <p><strong>{selectedRequisition.requisition_number}</strong> · Current holder: {getCurrentOwner(selectedRequisition)}</p>
+                                </div>
+                                <button
+                                    className="action-btn"
+                                    type="button"
+                                    title="Close"
+                                    onClick={() => {
+                                        setShowItemsModal(false);
+                                        setSelectedRequisition(null);
+                                    }}
+                                >
+                                    <X size={16} />
+                                </button>
+                            </div>
+
+                            <div className="detail-metrics-grid">
+                                <div>
+                                    <span>Products</span>
+                                    <strong>{asArray(selectedRequisition.items).length || 1}</strong>
+                                </div>
+                                <div>
+                                    <span>Best Estimated Total</span>
+                                    <strong>{formatMoney(getBestEstimatedTotal())}</strong>
+                                </div>
+                                <div>
+                                    <span>Delivery Date</span>
+                                    <strong>{formatDate(selectedRequisition.required_delivery_date)}</strong>
+                                </div>
+                            </div>
+
+                            <div className="workflow-strip">
+                                {getWorkflowSteps(selectedRequisition).map((step) => (
+                                    <div key={step.label} className={`workflow-step ${step.status.toLowerCase()}`}>
+                                        <strong>{step.label}</strong>
+                                        <span>{step.status}</span>
+                                        <p>{step.note}</p>
+                                    </div>
+                                ))}
+                            </div>
+
+                            <h3 className="detail-section-title">Products & Quantities</h3>
+                            <div className="items-detail-list">
+                                {(asArray<PurchaseRequisitionItem>(selectedRequisition.items).length > 0
+                                    ? asArray<PurchaseRequisitionItem>(selectedRequisition.items)
+                                    : [{
+                                        id: selectedRequisition.id,
+                                        requisition_id: selectedRequisition.id,
+                                        product_id: selectedRequisition.product_id,
+                                        product_name: selectedRequisition.product_name,
+                                        quantity: selectedRequisition.quantity,
+                                        quantity_unit: selectedRequisition.quantity_unit,
+                                        remarks: selectedRequisition.remarks,
+                                    }]
+                                ).map((item, index) => (
+                                    <div key={item.id || `${item.product_id}-${index}`} className="items-detail-row">
+                                        <div>
+                                            <span className="line-number">#{index + 1}</span>
+                                            <strong>{item.product_name || 'Unknown Product'}</strong>
+                                            {item.remarks ? <p>{item.remarks}</p> : null}
+                                            {canViewPurchasePricing && (
+                                                <div className="previous-price-list">
+                                                    {(viewPurchaseHistory[String(item.product_id)] || []).length === 0 ? (
+                                                        <span>No previous purchase price found</span>
+                                                    ) : (
+                                                        (viewPurchaseHistory[String(item.product_id)] || []).slice(0, 3).map((history, historyIndex) => (
+                                                            <span key={historyIndex}>
+                                                                Previous: {formatMoney(history.rate ?? (history.qty ? Number(history.amount || 0) / Number(history.qty) : history.amount || 0))}
+                                                                {' '}on {formatDate(history.purchase_bill?.bill_date)}
+                                                                {history.purchase_bill?.supplier?.name ? ` from ${history.purchase_bill.supplier.name}` : ''}
+                                                            </span>
+                                                        ))
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                        <span className="items-detail-qty">{item.quantity} {item.quantity_unit}</span>
+                                    </div>
+                                ))}
+                            </div>
+
+                            <h3 className="detail-section-title">Supplier / Vendor Estimates</h3>
+                            {viewLoading ? (
+                                <div className="loading">Loading details...</div>
+                            ) : asArray(viewQuotes).length === 0 ? (
+                                <div className="empty-inline">No supplier estimates added yet.</div>
+                            ) : (
+                                <div className="quote-detail-list">
+                                    {asArray<any>(viewQuotes).map((quote) => (
+                                        <div key={quote.id} className="quote-detail-row">
+                                            <strong>{quote.supplier?.name || 'Unknown vendor'}</strong>
+                                            <span>{formatMoney(Number(quote.estimated_price))}</span>
+                                            <p>{quote.remarks || 'No remarks'}</p>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                            {(isAdminUser || can('view_purchase_requisition_audit')) && (
+                                <>
+                                    <h3 className="detail-section-title">Audit Trail</h3>
+                                    {asArray(viewHistoryEntries).length === 0 ? (
+                                        <div className="empty-inline">No workflow history found.</div>
+                                    ) : (
+                                        <div className="history-detail-list">
+                                            {asArray<PurchaseRequisitionHistory>(viewHistoryEntries).map((entry) => (
+                                                <div key={entry.id} className="history-detail-row">
+                                                    <strong>{entry.action}</strong>
+                                                    <span>{entry.from_status || '—'} → {entry.to_status}</span>
+                                                    <p>{entry.performed_by_name || '—'} · {formatDate(entry.performed_at)} · {entry.remarks || 'No remarks'}</p>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </>
+                            )}
+                        </motion.div>
+                    </motion.div>
+                )}
+
+                {showProductSummaryModal && (
+                    <motion.div
+                        className="modal-overlay"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        onClick={() => setShowProductSummaryModal(false)}
+                    >
+                        <motion.div
+                            className="modal-content product-summary-modal"
+                            initial={{ scale: 0.9 }}
+                            animate={{ scale: 1 }}
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            <div className="modal-header-row">
+                                <div>
+                                    <h2>Product Summary</h2>
+                                    <p>Stock, last purchase, and sales record for the selected product.</p>
+                                </div>
+                                <button
+                                    className="action-btn"
+                                    type="button"
+                                    title="Close"
+                                    onClick={() => {
+                                        setShowProductSummaryModal(false);
+                                        setProductSummary(null);
+                                        setSelectedSummaryProductId('');
+                                    }}
+                                >
+                                    <X size={16} />
+                                </button>
+                            </div>
+
+                            {productSummaryLoading && !productSummary ? (
+                                <div className="loading">Loading product summary...</div>
+                            ) : !productSummary ? (
+                                <div className="empty-inline">No product summary found.</div>
+                            ) : (
+                                <>
+                                    <div className="product-summary-hero">
+                                        <div>
+                                            <span className="line-number">Product</span>
+                                            <strong>{productSummary.product?.name || 'Unknown Product'}</strong>
+                                            <p>{productSummary.product?.product_code || productSummary.product?.model_number || productSummary.product?.sku || 'No model number'} · {productSummary.product?.group_name || 'No stock group'}</p>
+                                        </div>
+                                        <div className="product-summary-stock">
+                                            <span>Current Stock</span>
+                                            <strong>{Number(productSummary.product?.quantity || 0).toLocaleString()} {productSummary.product?.unit_symbol || productSummary.product?.unit_name || ''}</strong>
+                                        </div>
+                                    </div>
+
+                                    <div className="detail-metrics-grid">
+                                        <div>
+                                            <span>Last Purchase Date</span>
+                                            <strong>{formatDate(productSummary.lastPurchase?.purchase_bill?.bill_date)}</strong>
+                                        </div>
+                                        <div>
+                                            <span>Last Purchase Price</span>
+                                            <strong>{formatMoney(productSummary.lastPurchase?.rate ?? (productSummary.lastPurchase?.qty ? Number(productSummary.lastPurchase?.amount || 0) / Number(productSummary.lastPurchase?.qty) : productSummary.lastPurchase?.amount))}</strong>
+                                        </div>
+                                        <div>
+                                            <span>Last Supplier</span>
+                                            <strong>{productSummary.lastPurchase?.purchase_bill?.supplier?.name || '—'}</strong>
+                                        </div>
+                                    </div>
+
+                                    <h3 className="detail-section-title">Sales Record</h3>
+                                    <div className="product-summary-filters">
+                                        <div className="form-group compact">
+                                            <label>From</label>
+                                            <input
+                                                type="date"
+                                                value={productSummaryFilters.fromDate}
+                                                onChange={(e) => setProductSummaryFilters(prev => ({ ...prev, fromDate: e.target.value }))}
+                                            />
+                                        </div>
+                                        <div className="form-group compact">
+                                            <label>To</label>
+                                            <input
+                                                type="date"
+                                                value={productSummaryFilters.toDate}
+                                                onChange={(e) => setProductSummaryFilters(prev => ({ ...prev, toDate: e.target.value }))}
+                                            />
+                                        </div>
+                                        <button type="button" className="btn-primary" onClick={applyProductSummaryFilter} disabled={productSummaryLoading}>
+                                            {productSummaryLoading ? 'Loading...' : 'Apply'}
+                                        </button>
+                                    </div>
+
+                                    <div className="detail-metrics-grid">
+                                        <div>
+                                            <span>Sale Entries</span>
+                                            <strong>{productSummary.salesSummary?.count || 0}</strong>
+                                        </div>
+                                        <div>
+                                            <span>Total Sold</span>
+                                            <strong>{Number(productSummary.salesSummary?.totalSoldQty || 0).toLocaleString()}</strong>
+                                        </div>
+                                        <div>
+                                            <span>Total Sales</span>
+                                            <strong>{formatMoney(productSummary.salesSummary?.totalSalesAmount)}</strong>
+                                        </div>
+                                    </div>
+
+                                    {asArray(productSummary.sales).length === 0 ? (
+                                        <div className="empty-inline">No sales found for this product in the selected date range.</div>
+                                    ) : (
+                                        <div className="product-summary-sales-list">
+                                            {asArray<any>(productSummary.sales).map((sale, index) => (
+                                                <div key={`${sale.bill?.id || index}-${index}`} className="product-summary-sale-row">
+                                                    <div>
+                                                        <strong>{sale.bill?.invoice_number || 'Invoice'}</strong>
+                                                        <span>{formatDate(sale.bill?.created_at)} · {sale.bill?.customer_name || 'Walk-in customer'}</span>
+                                                    </div>
+                                                    <span>{Number(sale.quantity || 0).toLocaleString()} sold</span>
+                                                    <strong>{formatMoney(sale.price)}</strong>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </>
+                            )}
+                        </motion.div>
+                    </motion.div>
+                )}
+
+                {showDamageModal && selectedRequisition && (
+                    <motion.div className="modal-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} onClick={() => setShowDamageModal(false)}>
+                        <motion.div className="modal-content" initial={{ scale: 0.9 }} animate={{ scale: 1 }} onClick={(e) => e.stopPropagation()}>
+                            <div className="modal-header-row">
+                                <div>
+                                    <h2>Record Damaged Goods</h2>
+                                    <p>Damaged quantity will be kept separate from usable stock for requisition <strong>{selectedRequisition.requisition_number}</strong>.</p>
+                                </div>
+                                <button className="action-btn" onClick={() => setShowDamageModal(false)}><X size={16} /></button>
+                            </div>
+                            <div className="form-group">
+                                <label>Product</label>
+                                <select value={damageProductId} onChange={(e) => setDamageProductId(e.target.value)}>
+                                    {(asArray(selectedRequisition.items).length > 0 ? asArray<any>(selectedRequisition.items) : [{
+                                        product_id: selectedRequisition.product_id,
+                                        product_name: selectedRequisition.product_name,
+                                        quantity: selectedRequisition.quantity,
+                                        quantity_unit: selectedRequisition.quantity_unit,
+                                    }]).map((item: any) => (
+                                        <option key={item.product_id} value={item.product_id}>{item.product_name || 'Unknown Product'} ({item.quantity} {item.quantity_unit})</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div className="form-group">
+                                <label>Damaged Quantity</label>
+                                <input type="number" min="0.001" step="0.001" value={damageQty} onChange={(e) => setDamageQty(e.target.value)} />
+                            </div>
+                            <div className="form-group">
+                                <label>Damage Notes</label>
+                                <textarea rows={3} value={damageNotes} onChange={(e) => setDamageNotes(e.target.value)} placeholder="Damage reason or receiving note" />
+                            </div>
+                            <div className="modal-actions">
+                                <button className="btn-secondary" onClick={() => setShowDamageModal(false)}>Cancel</button>
+                                <button className="btn-primary" onClick={async () => {
+                                    const result = await (window as any).electron?.createDamagedGoods?.({
+                                        productId: Number(damageProductId),
+                                        quantity: Number(damageQty),
+                                        notes: damageNotes,
+                                        sourceRequisitionId: selectedRequisition.id,
+                                        performedByName: userName,
+                                        userRole,
+                                        canManageDamaged: can('manage_damaged_goods'),
+                                    });
+                                    if (result?.success) {
+                                        setShowDamageModal(false);
+                                        fetchData();
+                                    } else {
+                                        alert(result?.error || 'Failed to record damaged goods.');
+                                    }
+                                }}><PackageMinus size={16} /> Record Damaged</button>
+                            </div>
+                        </motion.div>
                     </motion.div>
                 )}
 
@@ -693,13 +1433,13 @@ const PurchaseRequisitions: React.FC = () => {
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {filteredRequisitions.filter(req => req.status === 'APPROVED' && req.audit_status === 'PENDING').map(req => (
+                                        {filteredRequisitions.filter(req => req.status === 'PENDING_AUDIT').map(req => (
                                             <tr key={req.id}>
                                                 <td>{req.requisition_number}</td>
-                                                <td>{req.product_name}</td>
+                                                <td>{getProductSummary(req)}</td>
                                                 <td>{getStageLabel(req)}</td>
                                                 <td style={{ textAlign: 'right' }}>
-                                                    <button className="action-btn approve" onClick={() => { setSelectedRequisition(req); setShowAuditModal(true); }}><AlertCircle size={16} /></button>
+                                                    <button className="action-btn approve" onClick={() => openAuditModal(req)}><AlertCircle size={16} /></button>
                                                 </td>
                                             </tr>
                                         ))}
@@ -717,13 +1457,13 @@ const PurchaseRequisitions: React.FC = () => {
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {filteredRequisitions.filter(req => req.status === 'APPROVED' && req.audit_status === 'APPROVED' && req.director_status === 'PENDING').map(req => (
+                                        {filteredRequisitions.filter(req => req.status === 'PENDING_DIRECTOR').map(req => (
                                             <tr key={req.id}>
                                                 <td>{req.requisition_number}</td>
-                                                <td>{req.product_name}</td>
+                                                <td>{getProductSummary(req)}</td>
                                                 <td>{getStageLabel(req)}</td>
                                                 <td style={{ textAlign: 'right' }}>
-                                                    <button className="action-btn approve" onClick={() => { setSelectedRequisition(req); setShowDirectorModal(true); }}><Check size={16} /></button>
+                                                    <button className="action-btn approve" onClick={() => openDirectorModal(req)}><Check size={16} /></button>
                                                 </td>
                                             </tr>
                                         ))}
@@ -744,16 +1484,16 @@ const PurchaseRequisitions: React.FC = () => {
                             ) : historyRequisition ? (
                                 <div>
                                     <div style={{ marginBottom: '1rem' }}>
-                                        <strong>{historyRequisition.requisition_number}</strong> - {historyRequisition.product_name}
+                                        <strong>{historyRequisition.requisition_number}</strong> - {getProductSummary(historyRequisition)}
                                         {historyRequisition.item_count && historyRequisition.item_count > 1 ? (
                                             <span style={{ marginLeft: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
                                                 ({historyRequisition.item_count} items)
                                             </span>
                                         ) : null}
                                     </div>
-                                    {historyRequisition.items && historyRequisition.items.length > 0 && (
+                                    {asArray(historyRequisition.items).length > 0 && (
                                         <div className="line-items-summary">
-                                            {historyRequisition.items.map((item) => (
+                                            {asArray<PurchaseRequisitionItem>(historyRequisition.items).map((item) => (
                                                 <div key={item.id} className="line-item-summary-row">
                                                     <strong>{item.product_name || 'Unknown Product'}</strong>
                                                     <span>{item.quantity} {item.quantity_unit}</span>
@@ -762,7 +1502,7 @@ const PurchaseRequisitions: React.FC = () => {
                                             ))}
                                         </div>
                                     )}
-                                    {historyEntries.length === 0 ? (
+                                    {asArray(historyEntries).length === 0 ? (
                                         <div className="empty-state">No workflow history found</div>
                                     ) : (
                                         <div className="table-container">
@@ -773,7 +1513,7 @@ const PurchaseRequisitions: React.FC = () => {
                                                     </tr>
                                                 </thead>
                                                 <tbody>
-                                                    {historyEntries.map((entry) => (
+                                                    {asArray<PurchaseRequisitionHistory>(historyEntries).map((entry) => (
                                                         <tr key={entry.id}>
                                                             <td>{new Date(entry.performed_at).toLocaleString()}</td>
                                                             <td>{entry.action}</td>
@@ -805,8 +1545,8 @@ const PurchaseRequisitions: React.FC = () => {
                             <div className="requisition-form-header">
                                 <div>
                                     <div className="requisition-eyebrow">Purchase Requisition</div>
-                                    <h2>Create Requisition</h2>
-                                    <p>Add one or more products and submit the request for approval.</p>
+                                    <h2>{editingRequisition ? `Alter ${editingRequisition.requisition_number}` : 'Create Requisition'}</h2>
+                                    <p>{editingRequisition ? 'Admin/director alteration of product lines and quantities.' : 'Add one or more products and submit the request for approval.'}</p>
                                 </div>
                                 <div className="requisition-meta-grid">
                                     <div className="form-group compact">
@@ -839,7 +1579,8 @@ const PurchaseRequisitions: React.FC = () => {
                                 <table className="line-items-table">
                                     <thead>
                                         <tr>
-                                            <th style={{ width: '34%' }}>Product</th>
+                                            <th style={{ width: '32%' }}>Product</th>
+                                            <th style={{ width: '72px' }}>Info</th>
                                             <th style={{ width: '12%', textAlign: 'right' }}>Qty</th>
                                             <th style={{ width: '16%' }}>Unit</th>
                                             <th>Remarks</th>
@@ -864,6 +1605,17 @@ const PurchaseRequisitions: React.FC = () => {
                                                         ) : null}
                                                     </td>
                                                     <td>
+                                                        <button
+                                                            type="button"
+                                                            className="action-btn"
+                                                            onClick={() => openProductSummary(item.productId)}
+                                                            title="View product summary"
+                                                            disabled={!item.productId}
+                                                        >
+                                                            <Eye size={15} />
+                                                        </button>
+                                                    </td>
+                                                    <td>
                                                         <input
                                                             type="number"
                                                             min="1"
@@ -879,6 +1631,8 @@ const PurchaseRequisitions: React.FC = () => {
                                                             value={item.quantityUnit}
                                                             onChange={(e) => handleLineItemChange(index, 'quantityUnit', e.target.value)}
                                                             placeholder="piece"
+                                                            readOnly={!!matchedProduct}
+                                                            title={matchedProduct ? 'Uses the selected product unit' : 'Select a product to load its unit'}
                                                             required
                                                         />
                                                     </td>
@@ -929,10 +1683,10 @@ const PurchaseRequisitions: React.FC = () => {
 
                             <div className="form-actions requisition-actions">
                                 <button type="button" className="btn-secondary" onClick={resetCreateForm}>
-                                    Reset
+                                    {editingRequisition ? 'Cancel Edit' : 'Reset'}
                                 </button>
                                 <button type="submit" className="btn-primary">
-                                    Create Requisition
+                                    {editingRequisition ? 'Save Alteration' : 'Create Requisition'}
                                 </button>
                             </div>
                         </form>
@@ -1074,7 +1828,9 @@ const PurchaseRequisitions: React.FC = () => {
                                 {directorHistory.length === 0 ? <p style={{ fontSize: '0.9rem', color: '#666' }}>No past purchase history available.</p> : (
                                     <ul style={{ fontSize: '0.9rem', paddingLeft: '1.2rem', marginTop: '0.5rem' }}>
                                         {directorHistory.map((h, i) => (
-                                            <li key={i}>{new Date(h.purchase_bill.bill_date).toLocaleDateString()} - <strong>৳{h.price}</strong> from {h.purchase_bill.supplier?.name}</li>
+                                            <li key={i}>
+                                                {formatDate(h.purchase_bill?.bill_date)} - <strong>৳{h.rate ?? (h.qty ? Number(h.amount || 0) / Number(h.qty) : h.amount || 0)}</strong> from {h.purchase_bill?.supplier?.name || 'Unknown supplier'}
+                                            </li>
                                         ))}
                                     </ul>
                                 )}

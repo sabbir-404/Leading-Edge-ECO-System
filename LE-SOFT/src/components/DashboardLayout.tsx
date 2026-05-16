@@ -38,7 +38,8 @@ import {
   BookOpen,
   Layers,
   Scale,
-  Warehouse
+  Warehouse,
+  PackageMinus
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTheme } from '../context/ThemeContext';
@@ -125,6 +126,21 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
     return () => clearInterval(interval);
   }, [userId]);
 
+  const openNotification = useCallback(async (notification: any) => {
+    if (!notification?.id) return;
+    if (!notification.is_read) {
+      try {
+        // @ts-ignore
+        await window.electron.markNotificationRead(notification.id);
+        setNotifications(prev => prev.map(p => p.id === notification.id ? { ...p, is_read: 1 } : p));
+      } catch { }
+    }
+    setShowNotifDropdown(false);
+    if (notification.action_path) {
+      navigate(notification.action_path);
+    }
+  }, [navigate]);
+
   // Auto-expand submenu based on current route (including sub-item paths)
   useEffect(() => {
     navItems.forEach(item => {
@@ -140,7 +156,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
 
   const handleLogout = useCallback(() => {
     const keepKeys = ['app_license_key', 'supabase_admin_key', 'barcode_sticker_size', 'barcode_printer', 'auto_logout_enabled', 'auto_logout_minutes', 'theme'];
-    const keysToKeep = keepKeys.reduce((acc, key) => {
+    const keysToKeep = Object.keys(localStorage).filter((key) => keepKeys.includes(key) || key.startsWith('print_page_size_')).reduce((acc, key) => {
       const val = localStorage.getItem(key);
       if (val !== null) acc[key] = val;
       return acc;
@@ -179,7 +195,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
         ] : []),
       ]
     }] : []),
-    ...(hasPermission('read_group') || hasPermission('read_ledger') || hasPermission('read_stock_items') ? [{
+    ...(hasPermission('read_group') || hasPermission('read_ledger') || hasPermission('read_stock_items') || hasPermission('read_purchase_requisition') ? [{
       icon: <Database size={20} />,
       label: 'Masters',
       path: '/masters',
@@ -188,11 +204,15 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
         { icon: <BookOpen size={18} />,   label: 'Ledgers',           path: '/masters/ledgers' },
         { icon: <FileText size={18} />,   label: 'Voucher Types',     path: '/masters/voucher-types' },
         { icon: <Package size={18} />,    label: 'Products',          path: '/masters/products' },
+        ...(hasPermission('read_product_ledger') ? [{ icon: <History size={18} />, label: 'Product Ledger', path: '/masters/products' }] : []),
+        ...(hasPermission('manage_product_model_rules') ? [{ icon: <Target size={18} />, label: 'Product Model Rules', path: '/masters/product-model-rules' }] : []),
+        ...(hasPermission('manage_product_attributes') ? [{ icon: <ClipboardCheck size={18} />, label: 'Product Attributes', path: '/masters/product-attributes' }] : []),
+        ...(hasPermission('read_damaged_goods') ? [{ icon: <PackageMinus size={18} />, label: 'Damaged Goods', path: '/masters/damaged-goods' }] : []),
         { icon: <Layers size={18} />,     label: 'Stock Groups',      path: '/masters/stock-groups' },
         { icon: <Scale size={18} />,      label: 'Units',             path: '/masters/units' },
         { icon: <Warehouse size={18} />,  label: 'Godowns',           path: '/masters/godowns' },
         { icon: <Truck size={18} />,      label: 'Suppliers',         path: '/masters/suppliers' },
-        { icon: <ClipboardList size={18} />, label: 'Purchase Requisitions', path: '/masters/purchase-requisitions' },
+        ...(hasPermission('read_purchase_requisition') ? [{ icon: <ClipboardList size={18} />, label: 'Purchase Requisitions', path: '/masters/purchase-requisitions' }] : []),
       ]
     }] : []),
     ...(hasPermission('read_accounts') || hasPermission('write_accounts') ? [{ icon: <FileText size={20} />, label: 'Vouchers', path: '/vouchers' }] : []),
@@ -533,19 +553,14 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
                     <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
                       {notifications.slice(0, 5).map((n: any) => (
                         <div key={n.id} style={{ padding: '0.65rem 1rem', borderBottom: '1px solid var(--border-color)', background: n.is_read ? 'transparent' : 'rgba(99,102,241,0.04)', cursor: 'pointer', transition: 'background 0.15s' }}
-                          onClick={async () => {
-                            if (!n.is_read) {
-                              // @ts-ignore
-                              await window.electron.markNotificationRead(n.id);
-                              setNotifications(prev => prev.map(p => p.id === n.id ? { ...p, is_read: 1 } : p));
-                            }
-                          }}
+                          onClick={() => openNotification(n)}
                         >
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                             {!n.is_read && <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--accent-color)', flexShrink: 0 }} />}
                             <strong style={{ fontSize: '0.85rem', flex: 1 }}>{n.title}</strong>
                           </div>
                           {n.message && <p style={{ margin: '0.2rem 0 0', fontSize: '0.78rem', color: 'var(--text-secondary)', lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{n.message}</p>}
+                          {n.action_label && <div style={{ marginTop: '0.25rem', color: 'var(--accent-color)', fontSize: '0.72rem', fontWeight: 700 }}>{n.action_label}</div>}
                         </div>
                       ))}
                       {notifications.length === 0 && <div style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>No notifications</div>}

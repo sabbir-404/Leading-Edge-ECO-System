@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Search, Trash2, Edit2, Barcode } from 'lucide-react';
+import { Plus, Search, Trash2, Edit2, Barcode, Eye } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useAutoRefresh } from '../../../hooks/useAutoRefresh';
 import BarcodeStickerModal, { StickerSize } from '../../../components/BarcodeStickerModal';
@@ -113,6 +113,8 @@ const ProductList: React.FC = () => {
     let perms: any = {};
     try { perms = JSON.parse(localStorage.getItem('user_permissions') || '{}'); } catch {}
     const canDeleteProducts = userRole === 'superadmin' || userRole === 'admin' || perms.delete_products;
+    const canEditProducts = userRole === 'superadmin' || userRole === 'admin' || perms.write_products || perms.edit_product_information;
+    const canViewLedger = userRole === 'superadmin' || userRole === 'admin' || perms.read_product_ledger;
 
     return (
         <div className="master-list-container">
@@ -181,9 +183,10 @@ const ProductList: React.FC = () => {
                             </th>
                             <th style={{ width: '50px' }}>Image</th>
                             <th>Product Name</th>
-                            <th>SKU</th>
+                            <th>Product ID</th>
                             <th>Category</th>
                             <th>Unit</th>
+                            <th style={{ textAlign: 'right' }}>Stock</th>
                             <th style={{ textAlign: 'right' }}>Purchase ৳</th>
                             <th style={{ textAlign: 'right' }}>Selling ৳</th>
                             <th style={{ textAlign: 'right' }}>Tax %</th>
@@ -192,9 +195,9 @@ const ProductList: React.FC = () => {
                     </thead>
                     <tbody>
                         {loading ? (
-                            <tr><td colSpan={9} className="empty-state">Loading...</td></tr>
+                            <tr><td colSpan={10} className="empty-state">Loading...</td></tr>
                         ) : filtered.length === 0 ? (
-                            <tr><td colSpan={9} className="empty-state">No products found. Click "Add Product" to create one.</td></tr>
+                            <tr><td colSpan={10} className="empty-state">No products found. Click "Add Product" to create one.</td></tr>
                         ) : (
                             filtered.map((product) => (
                                 <motion.tr key={product.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ background: selectedIds.has(product.id) ? 'var(--hover-bg)' : 'transparent' }}>
@@ -213,14 +216,23 @@ const ProductList: React.FC = () => {
                                         )}
                                     </td>
                                     <td style={{ fontWeight: 500 }}>{product.name}</td>
-                                    <td><span style={{ padding: '2px 8px', borderRadius: '4px', background: 'rgba(99,102,241,0.1)', color: '#6366f1', fontWeight: 500, fontSize: '0.85rem' }}>{product.sku || '—'}</span></td>
+                                    <td><span style={{ padding: '2px 8px', borderRadius: '4px', background: 'rgba(99,102,241,0.1)', color: '#6366f1', fontWeight: 500, fontSize: '0.85rem' }}>{product.product_code || product.model_number || product.sku || '—'}</span></td>
                                     <td>{product.category || '—'}</td>
                                     <td>{product.unit_symbol || product.unit_name || '—'}</td>
+                                    <td style={{ textAlign: 'right', fontFamily: "'JetBrains Mono', monospace" }}>
+                                        {Number(product.quantity || 0).toLocaleString()}
+                                        {Number(product.damaged_quantity || 0) > 0 && (
+                                            <div style={{ color: '#ef4444', fontSize: '0.75rem', fontFamily: 'Inter, sans-serif' }}>
+                                                {Number(product.damaged_quantity || 0).toLocaleString()} of {Number(product.total_stock_including_damaged || 0).toLocaleString()} damaged
+                                            </div>
+                                        )}
+                                    </td>
                                     <td style={{ textAlign: 'right', fontFamily: "'JetBrains Mono', monospace" }}>৳ {(product.purchase_price || 0).toLocaleString()}</td>
                                     <td style={{ textAlign: 'right', fontFamily: "'JetBrains Mono', monospace", fontWeight: 600 }}>৳ {(product.selling_price || 0).toLocaleString()}</td>
                                     <td style={{ textAlign: 'right' }}>{product.tax_rate || 0}%</td>
                                     <td>
                                         <div className="action-buttons" style={{ justifyContent: 'flex-end' }}>
+                                            {canViewLedger && <button className="edit-btn" title="View Product Ledger" onClick={() => navigate(`/masters/products/${product.id}/ledger`)}><Eye size={16} /></button>}
                                             <button
                                                 className="edit-btn"
                                                 title="Print Barcode Sticker"
@@ -229,7 +241,7 @@ const ProductList: React.FC = () => {
                                             >
                                                 <Barcode size={16} />
                                             </button>
-                                            <button className="edit-btn" onClick={() => navigate('/masters/products/create', { state: { editProduct: product } })}><Edit2 size={16} /></button>
+                                            {canEditProducts && <button className="edit-btn" onClick={() => navigate('/masters/products/create', { state: { editProduct: product } })}><Edit2 size={16} /></button>}
                                             {canDeleteProducts && <button className="delete-btn" onClick={() => handleDelete(product.id)}><Trash2 size={16} /></button>}
                                         </div>
                                     </td>

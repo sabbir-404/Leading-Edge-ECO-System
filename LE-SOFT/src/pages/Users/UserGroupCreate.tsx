@@ -20,7 +20,33 @@ const PERMISSION_GROUPS = [
             { key: 'read_units', label: 'Read Units' }, { key: 'write_units', label: 'Write Units' },
             { key: 'read_products', label: 'Read Products' }, { key: 'write_products', label: 'Write Products' },
             { key: 'delete_products', label: 'Delete Products' },
+            { key: 'read_product_ledger', label: 'View Product Ledger' },
+            { key: 'edit_product_information', label: 'Edit Product Information' },
+            { key: 'manage_product_origins', label: 'Manage Product Origins' },
+            { key: 'manage_product_model_rules', label: 'Manage Product Model Rules' },
+            { key: 'manage_product_attributes', label: 'Manage Product Attributes' },
+            { key: 'manage_low_stock_alerts', label: 'Manage Low Stock Alerts' },
+            { key: 'read_damaged_goods', label: 'View Damaged Goods' },
+            { key: 'manage_damaged_goods', label: 'Manage Damaged Goods' },
             { key: 'read_godowns', label: 'Read Godowns' }, { key: 'write_godowns', label: 'Write Godowns' },
+        ]
+    },
+    {
+        category: 'Procurement',
+        desc: 'Purchase requisition workflow and approvals',
+        perms: [
+            { key: 'read_purchase_requisition', label: 'Read Purchase Requisitions' },
+            { key: 'create_purchase_requisition', label: 'Create Purchase Requisitions' },
+            { key: 'approve_store_requisition', label: 'Store Head Review & Approval' },
+            { key: 'add_purchase_estimates', label: 'Add Supplier Estimates' },
+            { key: 'audit_purchase_requisition', label: 'Audit Requisition' },
+            { key: 'director_approve_purchase_requisition', label: 'Director Approval' },
+            { key: 'purchase_requisition', label: 'Record Purchase' },
+            { key: 'receive_purchase_requisition', label: 'Receive Purchased Goods' },
+            { key: 'complete_purchase_requisition', label: 'Complete & Stock Requisition' },
+            { key: 'view_purchase_requisition_pricing', label: 'View Previous Purchase Prices' },
+            { key: 'view_purchase_requisition_audit', label: 'View Requisition Audit Trail' },
+            { key: 'alter_purchase_requisition', label: 'Alter Requisition Lines' },
         ]
     },
     {

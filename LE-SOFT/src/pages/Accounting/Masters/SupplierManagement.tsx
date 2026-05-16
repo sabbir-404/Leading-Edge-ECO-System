@@ -1,21 +1,16 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowLeft, Plus, Search, Truck, Phone, Mail, MapPin, FileText, Clock, CreditCard, X } from 'lucide-react';
+import { ArrowLeft, Plus, Search, Truck, Phone, Mail, FileText, X } from 'lucide-react';
 import './Masters.css';
 
 const SupplierManagement: React.FC = () => {
     const navigate = useNavigate();
     const [searchTerm, setSearchTerm] = useState('');
     const [ledgers, setLedgers] = useState<any[]>([]);
-    const [purchaseBills, setPurchaseBills] = useState<any[]>([]);
-    const [settlements, setSettlements] = useState<any[]>([]);
-    const [selectedSupplierId, setSelectedSupplierId] = useState<number | null>(null);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [showCreateForm, setShowCreateForm] = useState(false);
-    const [showSettlementForm, setShowSettlementForm] = useState(false);
-    const [settlementSaving, setSettlementSaving] = useState(false);
 
     const [formData, setFormData] = useState({
         name: '',
@@ -29,28 +24,12 @@ const SupplierManagement: React.FC = () => {
         paymentMethod: '',
     });
 
-    const [settlementForm, setSettlementForm] = useState({
-        purchaseBillId: '',
-        settlementDate: new Date().toISOString().split('T')[0],
-        settlementAmount: '',
-        paymentMethod: 'Cash',
-        referenceNumber: '',
-        settlementStatus: 'POSTED',
-        remarks: '',
-    });
-
     const fetchData = async () => {
         try {
             setLoading(true);
             // @ts-ignore
-            const [ledgerRows, billRows, settlementRows] = await Promise.all([
-                window.electron.getLedgers(),
-                window.electron.getPurchaseBills(),
-                (window as any).electron.getSupplierSettlements?.(selectedSupplierId || undefined),
-            ]);
+            const ledgerRows = await window.electron.getLedgers();
             setLedgers(ledgerRows || []);
-            setPurchaseBills(billRows || []);
-            setSettlements(settlementRows || []);
         } catch (error) {
             console.error('Failed to fetch suppliers:', error);
         } finally {
@@ -58,7 +37,7 @@ const SupplierManagement: React.FC = () => {
         }
     };
 
-    useEffect(() => { fetchData(); }, [selectedSupplierId]);
+    useEffect(() => { fetchData(); }, []);
 
     const suppliers = ledgers.filter((l: any) => l.group_name === 'Sundry Creditors');
 
@@ -68,13 +47,6 @@ const SupplierManagement: React.FC = () => {
                 .filter(Boolean).join(' ').toLowerCase()
                 .includes(searchTerm.toLowerCase())
         ), [suppliers, searchTerm]);
-
-    const selectedSupplier = suppliers.find((s: any) => s.id === selectedSupplierId) || null;
-    const supplierBills = purchaseBills.filter((b: any) => b.supplier_ledger_id === selectedSupplierId);
-    const supplierSettlements = settlements.filter((s: any) => s.supplier_ledger_id === selectedSupplierId);
-    const supplierPurchaseTotal = supplierBills.reduce((sum: number, b: any) => sum + (Number(b.grand_total) || 0), 0);
-    const supplierSettlementTotal = supplierSettlements.reduce((sum: number, s: any) => sum + (Number(s.settlement_amount) || 0), 0);
-    const outstandingBalance = (Number(selectedSupplier?.opening_balance) || 0) + supplierPurchaseTotal - supplierSettlementTotal;
 
     const handleCreateSupplier = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -105,33 +77,6 @@ const SupplierManagement: React.FC = () => {
             alert('Failed to create supplier');
         } finally {
             setSaving(false);
-        }
-    };
-
-    const handleCreateSettlement = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!selectedSupplierId) return;
-        try {
-            setSettlementSaving(true);
-            // @ts-ignore
-            await window.electron.createSupplierSettlement({
-                supplierLedgerId: selectedSupplierId,
-                purchaseBillId: settlementForm.purchaseBillId || null,
-                settlementDate: settlementForm.settlementDate,
-                settlementAmount: settlementForm.settlementAmount,
-                paymentMethod: settlementForm.paymentMethod,
-                referenceNumber: settlementForm.referenceNumber,
-                settlementStatus: settlementForm.settlementStatus,
-                remarks: settlementForm.remarks,
-            });
-            setSettlementForm({ purchaseBillId: '', settlementDate: new Date().toISOString().split('T')[0], settlementAmount: '', paymentMethod: 'Cash', referenceNumber: '', settlementStatus: 'POSTED', remarks: '' });
-            setShowSettlementForm(false);
-            await fetchData();
-        } catch (error) {
-            console.error('Failed to create settlement:', error);
-            alert('Failed to record supplier settlement');
-        } finally {
-            setSettlementSaving(false);
         }
     };
 
@@ -298,7 +243,7 @@ const SupplierManagement: React.FC = () => {
                                     </span>
                                 </td>
                                 <td style={{ textAlign: 'right' }}>
-                                    <button className="edit-btn" title="View Details" onClick={e => { e.stopPropagation(); setSelectedSupplierId(supplier.id); }}>
+                                    <button className="edit-btn" title="View Details" onClick={e => { e.stopPropagation(); navigate(`/masters/suppliers/ledger/${supplier.id}`); }}>
                                         <FileText size={15} />
                                     </button>
                                 </td>

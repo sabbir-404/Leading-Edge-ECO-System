@@ -22,6 +22,7 @@ export interface ElectronAPI {
     // Stock Groups
     getStockGroups: () => Promise<any[]>;
     createStockGroup: (group: any) => Promise<any>;
+    updateStockGroup: (id: number, group: any) => Promise<any>;
     deleteStockGroup: (id: number) => Promise<any>;
 
     // Stock Items
@@ -31,8 +32,23 @@ export interface ElectronAPI {
 
     // Products
     getProducts: () => Promise<any[]>;
+    getProductLedgerDetail: (id: number) => Promise<any>;
+    getProductRequisitionSummary: (productId: number, filters?: any) => Promise<any>;
     createProduct: (product: any) => Promise<any>;
+    updateProduct: (product: any) => Promise<any>;
     deleteProduct: (id: number) => Promise<any>;
+    getProductModelRules: () => Promise<any[]>;
+    saveProductModelRule: (rule: any) => Promise<any>;
+    deleteProductModelRule: (id: number) => Promise<any>;
+    getProductOrigins: () => Promise<any[]>;
+    saveProductOrigin: (origin: any) => Promise<any>;
+    deleteProductOrigin: (id: number) => Promise<any>;
+    getProductAttributes: () => Promise<any[]>;
+    saveProductAttribute: (attribute: any) => Promise<any>;
+    deleteProductAttribute: (id: number) => Promise<any>;
+    getDamagedGoods: () => Promise<any[]>;
+    createDamagedGoods: (payload: any) => Promise<any>;
+    updateDamagedGoodsStatus: (id: number, status: string, payload?: any) => Promise<any>;
 
     // Purchase Bills
     getPurchaseBills: () => Promise<any[]>;
@@ -166,9 +182,21 @@ export interface ElectronAPI {
     getAuditLog: (params: any) => Promise<any[]>;
 
     // Purchase Requisitions
+    getPurchaseRequisitions: (filters?: any) => Promise<any[]>;
+    getPurchaseRequisitionById: (id: string) => Promise<any>;
     getPurchaseRequisitionHistory: (requisitionId: string) => Promise<any[]>;
-    auditReviewPurchaseRequisition: (id: string, status: string, notes?: string) => Promise<any>;
-    directorReviewPurchaseRequisition: (id: string, status: string, notes?: string) => Promise<any>;
+    createPurchaseRequisition: (input: any) => Promise<any>;
+    updatePurchaseRequisition: (id: string, updates: any) => Promise<any>;
+    approvePurchaseRequisition: (id: string, status: string, notes?: string, performedByName?: string) => Promise<any>;
+    submitPurchaseEstimates: (id: string, quotes: any[], performedByName?: string) => Promise<any>;
+    getPurchaseRequisitionQuotes: (id: string) => Promise<any[]>;
+    getProductPurchaseHistory: (productId: number) => Promise<any[]>;
+    auditReviewPurchaseRequisition: (id: string, status: string, notes?: string, performedByName?: string) => Promise<any>;
+    directorReviewPurchaseRequisition: (id: string, status: string, notes?: string, performedByName?: string) => Promise<any>;
+    purchasePurchaseRequisition: (id: string, payload: any) => Promise<any>;
+    receivePurchaseRequisition: (id: string, performedByName?: string) => Promise<any>;
+    completePurchaseRequisition: (id: string, performedByName?: string) => Promise<any>;
+    deletePurchaseRequisition: (id: string, performedByName?: string) => Promise<any>;
 
     // Supplier Settlements
     getSupplierSettlements: (supplierLedgerId?: number) => Promise<any[]>;

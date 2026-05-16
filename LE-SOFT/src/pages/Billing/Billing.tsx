@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import DashboardLayout from '../../components/DashboardLayout';
 import { resolveImageSrc } from '../../utils/imageSrc';
 import { canAdjustBillPrice } from '../../utils/permissions';
+import { getPrintPageSize } from '../../utils/printPageSize';
 
 interface Product {
     id: number;
@@ -797,7 +798,7 @@ const Billing: React.FC = () => {
             {/* Print Styles */}
             <style>{`
                 @media print {
-                    @page { margin: 10mm; }
+                    @page { size: ${getPrintPageSize('billing_bill')}; margin: ${getPrintPageSize('billing_bill') === 'A5' ? '7mm' : '10mm'}; }
                     body * { visibility: hidden; }
                     #billing-page, #billing-page * { visibility: visible; }
                     #billing-page { position: absolute; left: 0; top: 0; width: 100%; height: auto !important; padding: 0 !important; }

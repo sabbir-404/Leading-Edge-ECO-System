@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Bell, Send, Trash2, CheckCheck, Users, Search } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import DashboardLayout from '../../components/DashboardLayout';
@@ -13,6 +14,9 @@ interface Notification {
     recipient_id: number | null;
     is_read: number;
     created_at: string;
+    action_path?: string | null;
+    action_label?: string | null;
+    metadata?: Record<string, any>;
 }
 
 interface UserItem {
@@ -23,6 +27,7 @@ interface UserItem {
 }
 
 const Notifications: React.FC = () => {
+    const navigate = useNavigate();
     const userId = parseInt(localStorage.getItem('user_id') || '0');
     const [notifications, setNotifications] = useState<Notification[]>([]);
     const [users, setUsers] = useState<UserItem[]>([]);
@@ -57,12 +62,6 @@ const Notifications: React.FC = () => {
 
     const unreadCount = notifications.filter(n => !n.is_read).length;
 
-    const handleMarkRead = async (id: number) => {
-        // @ts-ignore
-        await window.electron.markNotificationRead(id);
-        fetchNotifications();
-    };
-
     const handleMarkAllRead = async () => {
         // @ts-ignore
         await window.electron.markAllNotificationsRead(userId);
@@ -72,6 +71,18 @@ const Notifications: React.FC = () => {
     const handleDelete = async (id: number) => {
         // @ts-ignore
         await window.electron.deleteNotification(id);
+        fetchNotifications();
+    };
+
+    const handleOpenNotification = async (notification: Notification) => {
+        if (!notification.is_read) {
+            // @ts-ignore
+            await window.electron.markNotificationRead(notification.id);
+        }
+        if (notification.action_path) {
+            navigate(notification.action_path);
+            return;
+        }
         fetchNotifications();
     };
 
@@ -166,7 +177,7 @@ const Notifications: React.FC = () => {
                                             display: 'flex', alignItems: 'flex-start', gap: '1rem',
                                             transition: 'all 0.2s ease'
                                         }}
-                                        onClick={() => !n.is_read && handleMarkRead(n.id)}
+                                        onClick={() => handleOpenNotification(n)}
                                     >
                                         <div style={{
                                             width: '40px', height: '40px', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
@@ -184,6 +195,11 @@ const Notifications: React.FC = () => {
                                             <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.35rem', opacity: 0.7 }}>
                                                 From: {n.sender_name || 'System'} {n.recipient_id === null && '• Broadcast'}
                                             </div>
+                                            {n.action_label && (
+                                                <div style={{ marginTop: '0.45rem', color: 'var(--accent-color)', fontSize: '0.78rem', fontWeight: 700 }}>
+                                                    {n.action_label}
+                                                </div>
+                                            )}
                                         </div>
                                         <button onClick={e => { e.stopPropagation(); handleDelete(n.id); }} style={{ background: 'rgba(239,68,68,0.1)', color: '#ef4444', border: 'none', borderRadius: '6px', padding: '6px', cursor: 'pointer', flexShrink: 0 }}>
                                             <Trash2 size={14} />

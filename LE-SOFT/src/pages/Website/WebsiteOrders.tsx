@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Search, RefreshCw, Plus, Printer, CheckCircle, XCircle, User, MapPin, Phone, Mail } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import DashboardLayout from '../../components/DashboardLayout';
+import { getPrintPageSize } from '../../utils/printPageSize';
 import '../Accounting/Masters/Masters.css';
 
 const STATUS_COLORS: Record<string, string> = {
@@ -183,9 +184,15 @@ const WebsiteOrders: React.FC = () => {
         const height = 700;
         const left = (window.screen.width - width) / 2;
         const top = (window.screen.height - height) / 2;
+        const pageSize = getPrintPageSize('website_shipping_label');
         const printWindow = window.open('', '', `width=${width},height=${height},top=${top},left=${left}`);
         if(printWindow) {
-            printWindow.document.write(`<html><head><title>Shipping Label</title></head><body>${printRef.current.innerHTML}</body></html>`);
+            printWindow.document.write(`<html><head><title>Shipping Label</title><style>
+                @page { size: ${pageSize}; margin: ${pageSize === 'A5' ? '8mm' : '12mm'}; }
+                * { box-sizing: border-box; }
+                body { margin: 0; font-family: Arial, sans-serif; background: #fff; }
+                .print-page { min-height: ${pageSize === 'A5' ? '194mm' : '273mm'}; display: flex; align-items: flex-start; justify-content: center; }
+            </style></head><body><div class="print-page">${printRef.current.innerHTML}</div></body></html>`);
             printWindow.document.close();
             printWindow.focus();
             printWindow.print();

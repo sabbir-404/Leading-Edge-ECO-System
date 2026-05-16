@@ -450,6 +450,13 @@
     position: relative;
 }
 
+.print-size-a5 .quot-sheet {
+    width: 148mm;
+    min-height: 210mm;
+    padding: 9mm 10mm;
+    font-size: 8.5pt;
+}
+
 /* Sheet header */
 .qs-header {
     display: flex;

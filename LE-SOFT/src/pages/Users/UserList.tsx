@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import DashboardLayout from '../../components/DashboardLayout';
 import { useToast } from '../../context/ToastContext';
 import '../Accounting/Masters/Masters.css';
+import './Users.css';
 
 const UserList: React.FC = () => {
     const navigate = useNavigate();
@@ -152,23 +153,27 @@ const UserList: React.FC = () => {
 
     return (
         <DashboardLayout title="User Management">
-            <div className="master-list-container">
-                <div className="list-header">
-                    <h2>Users</h2>
-                    {canCreateUser && (
-                        <button className="create-btn" onClick={() => navigate('/users/create')}>
-                            <Plus size={18} /> Add User
-                        </button>
-                    )}
+            <div className="users-page">
+                <div className="users-toolbar">
+                    <div className="users-title">
+                        <h2>Users</h2>
+                        <p>Create accounts, assign groups, and control access status.</p>
+                    </div>
+                    <div className="users-actions">
+                        <div className="users-search">
+                            <Search size={18} />
+                            <input type="text" placeholder="Search users by name, username, email..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                        </div>
+                        {canCreateUser && (
+                            <button className="create-btn" onClick={() => navigate('/users/create')}>
+                                <Plus size={18} /> Add User
+                            </button>
+                        )}
+                    </div>
                 </div>
 
-                <div className="search-bar">
-                    <Search size={18} />
-                    <input type="text" placeholder="Search users by name, username, email..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
-                </div>
-
-                <div className="table-container">
-                    <table className="master-table">
+                <div className="users-panel users-table-wrap">
+                    <table className="users-table">
                         <thead>
                             <tr>
                                 <th>Username</th>
@@ -190,29 +195,29 @@ const UserList: React.FC = () => {
                                     const groupName = groups.find(g => g.id === user.group_id)?.name || '—';
                                     return (
                                         <motion.tr key={user.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-                                            <td style={{ fontWeight: 600 }}>
+                                            <td style={{ fontWeight: 700 }}>
                                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                                                     <Shield size={16} style={{ color: rc.color }} />
                                                     {user.username}
                                                 </div>
                                             </td>
                                             <td>{user.full_name || '—'}</td>
-                                            <td><span style={{ padding: '3px 10px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 600, background: rc.bg, color: rc.color, textTransform: 'capitalize' }}>{user.role}</span></td>
+                                            <td><span className="role-pill" style={{ background: rc.bg, color: rc.color, textTransform: 'capitalize' }}>{user.role}</span></td>
                                             <td style={{ color: 'var(--text-secondary)' }}>{groupName}</td>
                                             <td>
-                                                <button onClick={() => toggleActive(user)} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '4px 10px', borderRadius: '12px', border: 'none', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600, background: user.is_active ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)', color: user.is_active ? '#22c55e' : '#ef4444' }}>
+                                                <button onClick={() => toggleActive(user)} className="status-pill" style={{ border: 'none', cursor: 'pointer', background: user.is_active ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)', color: user.is_active ? '#22c55e' : '#ef4444' }}>
                                                     {user.is_active ? <><UserCheck size={14} /> Active</> : <><UserX size={14} /> Inactive</>}
                                                 </button>
                                             </td>
                                             <td>
-                                                <div className="action-buttons" style={{ justifyContent: 'flex-end', gap: '0.5rem' }}>
+                                                <div className="user-row-actions">
                                                     {canEditUser && (
-                                                        <button onClick={() => { setEditingUser({ ...user, new_password: '', new_username: user.username }); setUsernameError(''); }} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '30px', height: '30px', borderRadius: '8px', border: 'none', background: 'rgba(59,130,246,0.1)', color: '#3b82f6', cursor: 'pointer' }}>
+                                                        <button className="icon-btn" onClick={() => { setEditingUser({ ...user, new_password: '', new_username: user.username }); setUsernameError(''); }} title="Edit user">
                                                             <Edit2 size={16} />
                                                         </button>
                                                     )}
                                                     {canDeleteUser && (
-                                                        <button className="delete-btn" onClick={() => handleDelete(user.id)}><Trash2 size={16} /></button>
+                                                        <button className="icon-btn danger" onClick={() => handleDelete(user.id)} title="Delete user"><Trash2 size={16} /></button>
                                                     )}
                                                 </div>
                                             </td>

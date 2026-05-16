@@ -1,9 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Truck, Phone, Mail, FileText, CreditCard, ShoppingCart, ArrowLeftRight, Trash2, MapPin, Package } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { Truck, Phone, FileText, CreditCard, ShoppingCart, Trash2, Package } from 'lucide-react';
 import { useAutoRefresh } from '../../../hooks/useAutoRefresh';
-import DashboardLayout from '../../../components/DashboardLayout';
 import './Masters.css';
 
 interface LedgerData {
@@ -57,15 +55,11 @@ const SupplierLedgerDetail: React.FC = () => {
     };
 
     if (loading) return (
-        <DashboardLayout title="Supplier Ledger">
-            <div style={{ padding: '3rem', textAlign: 'center', opacity: 0.5 }}>Loading...</div>
-        </DashboardLayout>
+        <div style={{ padding: '3rem', textAlign: 'center', opacity: 0.5 }}>Loading...</div>
     );
 
     if (!data || !data.supplier) return (
-        <DashboardLayout title="Supplier Ledger">
-            <div style={{ padding: '3rem', textAlign: 'center', opacity: 0.8 }}>Supplier not found.</div>
-        </DashboardLayout>
+        <div style={{ padding: '3rem', textAlign: 'center', opacity: 0.8 }}>Supplier not found.</div>
     );
 
     const totalBilled = data.bills.reduce((sum, b) => sum + (b.grand_total || 0), 0);
@@ -87,8 +81,7 @@ const SupplierLedgerDetail: React.FC = () => {
     });
 
     return (
-        <DashboardLayout title={`Ledger: ${data.supplier.name}`}>
-            <div className="masters-container" style={{ height: 'calc(100vh - 80px)', display: 'flex', flexDirection: 'column', gap: '1rem', padding: '0 1rem' }}>
+        <div className="supplier-ledger-detail">
                 
                 {/* Header Profile */}
                 <div style={{ background: 'var(--card-bg)', borderRadius: '12px', border: '1px solid var(--border-color)', padding: '1.5rem', display: 'flex', gap: '2rem', alignItems: 'center', flexShrink: 0 }}>
@@ -147,7 +140,7 @@ const SupplierLedgerDetail: React.FC = () => {
                 </div>
 
                 {/* Content Area */}
-                <div style={{ flex: 1, background: 'var(--card-bg)', borderRadius: '12px', border: '1px solid var(--border-color)', overflowY: 'auto', padding: '1rem' }}>
+                <div style={{ flex: 1, background: 'var(--card-bg)', borderRadius: '12px', border: '1px solid var(--border-color)', overflow: 'auto', padding: '1rem' }}>
                     
                     {activeTab === 'products' && (
                         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
@@ -253,8 +246,7 @@ const SupplierLedgerDetail: React.FC = () => {
                         </table>
                     )}
                 </div>
-            </div>
-        </DashboardLayout>
+        </div>
     );
 };
 

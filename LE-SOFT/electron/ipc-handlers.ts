@@ -69,6 +69,61 @@ async function uploadOptimizedImage(buffer: Buffer, filenamePrefix: string): Pro
     return data.url;
 }
 
+async function createSystemNotification(input: {
+    title: string;
+    message?: string;
+    recipientId?: number | null;
+    actionPath?: string | null;
+    actionLabel?: string | null;
+    notificationKey?: string | null;
+    metadata?: Record<string, any>;
+}) {
+    if (input.notificationKey) {
+        const { data: existing } = await supabase
+            .from('notifications')
+            .select('id')
+            .eq('notification_key', input.notificationKey)
+            .eq('is_read', false)
+            .maybeSingle();
+        if (existing?.id) return existing;
+    }
+
+    const { data, error } = await supabase.from('notifications').insert({
+        title: input.title,
+        message: input.message || null,
+        recipient_id: input.recipientId ?? null,
+        action_path: input.actionPath || null,
+        action_label: input.actionLabel || null,
+        notification_key: input.notificationKey || null,
+        metadata: input.metadata || {},
+    }).select('id').single();
+    if (error) throw error;
+    return data;
+}
+
+async function checkLowStockForProduct(productId: number) {
+    if (!productId) return;
+    const { data: product, error } = await supabase
+        .from('products')
+        .select('id,name,quantity,low_stock_threshold,low_stock_alert_enabled')
+        .eq('id', productId)
+        .maybeSingle();
+    if (error || !product) return;
+
+    const threshold = Number(product.low_stock_threshold || 0);
+    const quantity = Number(product.quantity || 0);
+    if (!product.low_stock_alert_enabled || threshold <= 0 || quantity > threshold) return;
+
+    await createSystemNotification({
+        title: `Low stock: ${product.name}`,
+        message: `${product.name} has ${quantity.toLocaleString()} in usable stock. Threshold is ${threshold.toLocaleString()}.`,
+        actionPath: `/masters/products/${product.id}/ledger`,
+        actionLabel: 'Open product ledger',
+        notificationKey: `low_stock:${product.id}`,
+        metadata: { product_id: product.id, quantity, threshold, type: 'low_stock' },
+    }).catch(err => console.error('[low-stock-alert] failed:', err));
+}
+
 // ── Super Admin seeder ───────────────────────────────────────────────────────
 /**
  * generateFirstTimePassword()
@@ -104,13 +159,15 @@ async function checkAndSeedSuperAdmin() {
                 can_create_user: true, can_delete_user: true, can_edit_user: true, can_edit_groups: true,
                 can_create_bill: true, can_alter_bill: true, can_delete_bill: true,
                 can_create_order: true, can_alter_order: true, can_view_payroll: true, can_approve_leave: true,
+                read_purchase_requisition: true, create_purchase_requisition: true, approve_store_requisition: true,
+                add_purchase_estimates: true, audit_purchase_requisition: true, director_approve_purchase_requisition: true,
+                purchase_requisition: true, receive_purchase_requisition: true, complete_purchase_requisition: true,
+                view_purchase_requisition_pricing: true, view_purchase_requisition_audit: true,
+                read_product_ledger: true, manage_product_attributes: true, manage_product_model_rules: true,
+                create_imported_products: true, edit_product_information: true,
             };
-            // Encrypt the description field before writing; name stays plain for lookups
-            const groupRow = encryptObject(
-                { description: 'Full administrative access to all features. Super Admin only.' }
-            );
             const { data: newGrp } = await supabase.from('user_groups')
-                .insert({ name: 'Super Admin', permissions: allPerms, ...groupRow })
+                .insert({ name: 'Super Admin', description: 'Full administrative access to all features. Super Admin only.', permissions: allPerms })
                 .select('id').single();
             groupId = newGrp?.id;
         } else {
@@ -411,7 +468,10 @@ export function registerHandlers() {
             title: 'New Chat Message',
             message: messageType === 'text' ? (content.substring(0, 50) + (content.length > 50 ? '...' : '')) : 'Sent you an attachment',
             sender_id: senderId,
-            recipient_id: receiverId
+            recipient_id: receiverId,
+            action_path: '/email',
+            action_label: 'Open messages',
+            metadata: { type: 'chat_message', sender_id: senderId },
         });
 
         return { success: true, id: data.id };
@@ -588,6 +648,22 @@ export function registerHandlers() {
         return { success: true, id: data.id };
     });
 
+    ipcMain.handle('update-stock-group', async (_e, id: number, group: any) => {
+        if (group.parentId && Number(group.parentId) === Number(id)) {
+            throw new Error('A stock group cannot be under itself.');
+        }
+        const parentId = group.parentId ? Number(group.parentId) : null;
+        const { error } = await supabase
+            .from('stock_groups')
+            .update({
+                name: group.name,
+                parent_id: parentId,
+            })
+            .eq('id', id);
+        if (error) throw error;
+        return { success: true };
+    });
+
     ipcMain.handle('delete-stock-group', async (_e, id: number) => {
         const { error } = await supabase.from('stock_groups').delete().eq('id', id);
         if (error) throw error;
@@ -669,9 +745,9 @@ export function registerHandlers() {
             name: g.name, 
             location: g.location || '', 
             description: g.description || '', 
-            total_rows: g.totalRows || 0,
-            racks_per_row: g.racksPerRow || 0,
-            bins_per_rack: g.binsPerRack || 0,
+            total_rows: Number(g.totalRows ?? g.total_rows ?? 0),
+            racks_per_row: Number(g.racksPerRow ?? g.racks_per_row ?? 0),
+            bins_per_rack: Number(g.binsPerRack ?? g.bins_per_rack ?? 0),
             company_id: 1 
         });
         if (error) throw error;
@@ -683,9 +759,9 @@ export function registerHandlers() {
             name: g.name, 
             location: g.location || '', 
             description: g.description || '',
-            total_rows: g.totalRows || 0,
-            racks_per_row: g.racksPerRow || 0,
-            bins_per_rack: g.binsPerRack || 0
+            total_rows: Number(g.totalRows ?? g.total_rows ?? 0),
+            racks_per_row: Number(g.racksPerRow ?? g.racks_per_row ?? 0),
+            bins_per_rack: Number(g.binsPerRack ?? g.bins_per_rack ?? 0)
         }).eq('id', g.id);
         if (error) throw error;
         return { success: true };
@@ -721,12 +797,28 @@ export function registerHandlers() {
                     if (data.length < PAGE_SIZE) hasMore = false;
                 }
             }
+            const productIds = allData.map((p: any) => p.id).filter(Boolean);
+            const { data: damagedRows } = productIds.length
+                ? await supabase
+                    .from('damaged_goods')
+                    .select('product_id, quantity, status')
+                    .in('product_id', productIds)
+                    .in('status', ['DAMAGED', 'IN_REPAIR'])
+                : { data: [] as any[] };
+            const damagedMap = new Map<number, number>();
+            (damagedRows || []).forEach((row: any) => {
+                const productId = Number(row.product_id);
+                damagedMap.set(productId, (damagedMap.get(productId) || 0) + Number(row.quantity || 0));
+            });
+
             // BUG-20 fix: Decrypt rows consistently with search-products-detailed
             const mapped = allData.map((p: any) => ({
                 ...p,
                 unit_name: p.unit?.name || null,
                 unit_symbol: p.unit?.symbol || null,
-                group_name: p.group?.name || null
+                group_name: p.group?.name || null,
+                damaged_quantity: damagedMap.get(Number(p.id)) || 0,
+                total_stock_including_damaged: Number(p.quantity || 0) + (damagedMap.get(Number(p.id)) || 0),
             }));
             return decryptRows(mapped);
         } catch (error) {
@@ -736,43 +828,568 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('get-product', async (_e, id: number) => {
-        const { data, error } = await supabase.from('products').select('*, unit:units(name,symbol), group:stock_groups(name)').eq('id', id).maybeSingle();
+        const { data, error } = await supabase.from('products').select('*, unit:units(name,symbol), group:stock_groups(name), supplier:ledgers(id,name,store_name,contact_number,contact_person)').eq('id', id).maybeSingle();
         if (error) throw error;
         if (!data) return null;
-        return { ...data, unit_name: data.unit?.name || null, unit_symbol: data.unit?.symbol || null, group_name: data.group?.name || null };
+        const { data: attributeValues } = await supabase
+            .from('product_attribute_values')
+            .select('id, value, attribute:product_attributes(id,name,input_type,options)')
+            .eq('product_id', id);
+        return {
+            ...data,
+            unit_name: data.unit?.name || null,
+            unit_symbol: data.unit?.symbol || null,
+            group_name: data.group?.name || null,
+            supplier_name: data.supplier?.name || null,
+            attributes: attributeValues || []
+        };
     });
 
+    async function generateProductCode(product: any, stockGroupId: number | null) {
+        if (!stockGroupId) {
+            throw new Error('Stock group is required to generate the product model number.');
+        }
+        const originType = product.originType || 'LOCAL';
+        const { data: rule, error: ruleError } = await supabase
+            .from('product_model_rules')
+            .select('*')
+            .eq('origin_type', originType)
+            .eq('stock_group_id', stockGroupId)
+            .eq('is_active', true)
+            .maybeSingle();
+
+        if (ruleError) throw ruleError;
+        if (!rule) {
+            throw new Error(`No active product model rule found for ${originType} products in the selected stock group.`);
+        }
+
+        const { data: lastProduct, error: serialError } = await supabase
+            .from('products')
+            .select('serial_number')
+            .eq('origin_type', originType)
+            .eq('stock_group_id', stockGroupId)
+            .not('serial_number', 'is', null)
+            .order('serial_number', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+        if (serialError) throw serialError;
+
+        const serial = Number(lastProduct?.serial_number || 0) + 1;
+        const serialText = String(serial).padStart(Number(rule.serial_padding) || 4, '0');
+        const batchText = String(rule.batch_sequence || 1).padStart(2, '0');
+        return {
+            code: `${rule.origin_code}.${rule.group_code}.${batchText}.${serialText}`,
+            originCode: rule.origin_code,
+            groupCode: rule.group_code,
+            batchCode: batchText,
+            serial,
+        };
+    }
+
     ipcMain.handle('create-product', async (_e, product) => {
-        const { name, sku, category, purchasePrice, sellingPrice, taxRate, hsnCode, description, unit, stockGroup, imagePath, quantity, locationRow, locationRack, locationBin } = product;
+        const { name, category, purchasePrice, sellingPrice, taxRate, description, unit, stockGroup, imagePath, imageGallery, quantity, locationRow, locationRack, locationBin, originType, supplierLedgerId, importedSupplierName, importReference, importCountry, specs, attributes, lowStockThreshold, lowStockAlertEnabled } = product;
         const { data: uRow } = await supabase.from('units').select('id').eq('name', unit).maybeSingle();
         const { data: gRow } = await supabase.from('stock_groups').select('id').eq('name', stockGroup).maybeSingle();
-        const { data, error } = await supabase.from('products').insert({ name, sku: sku || '', category: category || '', purchase_price: purchasePrice || 0, selling_price: sellingPrice || 0, tax_rate: taxRate || 0, hsn_code: hsnCode || '', description: description || '', unit_id: uRow?.id || null, stock_group_id: gRow?.id || null, company_id: 1, image_path: imagePath || '', quantity: quantity || 0, location_row: locationRow || null, location_rack: locationRack || null, location_bin: locationBin || null }).select('id').single();
+        const { data: originRow, error: originError } = await supabase
+            .from('product_origins')
+            .select('*')
+            .eq('origin_key', originType || 'LOCAL')
+            .maybeSingle();
+        if (originError) throw originError;
+        if (originRow?.requires_superadmin && product.userRole !== 'superadmin') {
+            throw new Error(`${originRow.name} products can only be created by Super Admin.`);
+        }
+        const generated = await generateProductCode(product, gRow?.id || null);
+        const { data, error } = await supabase.from('products').insert({
+            name,
+            sku: generated.code,
+            product_code: generated.code,
+            model_number: generated.code,
+            import_type_code: generated.originCode,
+            model_group_code: generated.groupCode,
+            batch_code: generated.batchCode,
+            serial_number: generated.serial,
+            category: category || '',
+            purchase_price: purchasePrice || 0,
+            selling_price: sellingPrice || 0,
+            tax_rate: taxRate || 0,
+            description: description || '',
+            unit_id: uRow?.id || null,
+            stock_group_id: gRow?.id || null,
+            company_id: 1,
+            image_path: imagePath || '',
+            image_gallery: imageGallery || [],
+            quantity: quantity || 0,
+            location_row: locationRow || null,
+            location_rack: locationRack || null,
+            location_bin: locationBin || null,
+            origin_type: originType || 'LOCAL',
+            supplier_ledger_id: supplierLedgerId || null,
+            imported_supplier_name: importedSupplierName || null,
+            import_reference: importReference || null,
+            import_country: importCountry || null,
+            specs: specs || {},
+            low_stock_threshold: Number(lowStockThreshold || 0),
+            low_stock_alert_enabled: lowStockAlertEnabled !== false,
+        }).select('id').single();
         if (error) throw error;
-        syncProductToMySQL({ localId: data.id, name, sku: sku || '', category: category || '', sellingPrice: sellingPrice || 0, description: description || '', imagePath: imagePath || '', quantity: quantity || 0 });
+        if (attributes && Array.isArray(attributes) && attributes.length > 0) {
+            await supabase.from('product_attribute_values').upsert(
+                attributes
+                    .filter((entry: any) => entry.attributeId && entry.value !== undefined)
+                    .map((entry: any) => ({
+                        product_id: data.id,
+                        attribute_id: Number(entry.attributeId),
+                        value: String(entry.value || ''),
+                        updated_at: new Date().toISOString(),
+                    })),
+                { onConflict: 'product_id,attribute_id' }
+            );
+        }
+        syncProductToMySQL({ localId: data.id, name, sku: generated.code, category: category || '', sellingPrice: sellingPrice || 0, description: description || '', imagePath: imagePath || '', quantity: quantity || 0 });
+        await checkLowStockForProduct(data.id);
         return { success: true, id: data.id };
     });
 
     ipcMain.handle('update-product', async (_e, product) => {
-        const { id, name, sku, category, purchasePrice, sellingPrice, taxRate, hsnCode, description, unit, stockGroup, imagePath, quantity, locationRow, locationRack, locationBin, changedBy } = product;
+        const { id, name, category, purchasePrice, sellingPrice, taxRate, description, unit, stockGroup, imagePath, imageGallery, quantity, locationRow, locationRack, locationBin, changedBy, originType, supplierLedgerId, importedSupplierName, importReference, importCountry, specs, attributes, lowStockThreshold, lowStockAlertEnabled } = product;
         const { data: uRow } = await supabase.from('units').select('id').eq('name', unit).maybeSingle();
         const { data: gRow } = await supabase.from('stock_groups').select('id').eq('name', stockGroup).maybeSingle();
-        const { data: oldProd } = await supabase.from('products').select('purchase_price, selling_price').eq('id', id).maybeSingle();
-        const { error } = await supabase.from('products').update({ name, sku: sku || '', category: category || '', purchase_price: purchasePrice || 0, selling_price: sellingPrice || 0, tax_rate: taxRate || 0, hsn_code: hsnCode || '', description: description || '', unit_id: uRow?.id || null, stock_group_id: gRow?.id || null, image_path: imagePath || '', quantity: quantity || 0, location_row: locationRow || null, location_rack: locationRack || null, location_bin: locationBin || null, last_modified: new Date().toISOString() }).eq('id', id);
+        const { data: originRow, error: originError } = await supabase
+            .from('product_origins')
+            .select('*')
+            .eq('origin_key', originType || 'LOCAL')
+            .maybeSingle();
+        if (originError) throw originError;
+        if (originRow?.requires_superadmin && product.userRole !== 'superadmin') {
+            throw new Error(`${originRow.name} products can only be updated by Super Admin.`);
+        }
+        const { data: oldProd } = await supabase
+            .from('products')
+            .select('purchase_price, selling_price, sku, quantity, low_stock_threshold, low_stock_alert_enabled')
+            .eq('id', id)
+            .maybeSingle();
+        const nextPurchasePrice = purchasePrice ?? oldProd?.purchase_price ?? 0;
+        const nextSellingPrice = sellingPrice ?? oldProd?.selling_price ?? 0;
+        const nextQuantity = quantity ?? oldProd?.quantity ?? 0;
+        const { error } = await supabase.from('products').update({
+            name,
+            category: category || '',
+            purchase_price: nextPurchasePrice,
+            selling_price: nextSellingPrice,
+            tax_rate: taxRate || 0,
+            description: description || '',
+            unit_id: uRow?.id || null,
+            stock_group_id: gRow?.id || null,
+            image_path: imagePath || '',
+            image_gallery: imageGallery || [],
+            quantity: nextQuantity,
+            location_row: locationRow || null,
+            location_rack: locationRack || null,
+            location_bin: locationBin || null,
+            origin_type: originType || 'LOCAL',
+            supplier_ledger_id: supplierLedgerId || null,
+            imported_supplier_name: importedSupplierName || null,
+            import_reference: importReference || null,
+            import_country: importCountry || null,
+            specs: specs || {},
+            low_stock_threshold: lowStockThreshold ?? oldProd?.low_stock_threshold ?? 0,
+            low_stock_alert_enabled: lowStockAlertEnabled ?? oldProd?.low_stock_alert_enabled ?? true,
+            last_modified: new Date().toISOString()
+        }).eq('id', id);
         if (error) throw error;
+        if (attributes && Array.isArray(attributes)) {
+            await supabase.from('product_attribute_values').upsert(
+                attributes
+                    .filter((entry: any) => entry.attributeId && entry.value !== undefined)
+                    .map((entry: any) => ({
+                        product_id: id,
+                        attribute_id: Number(entry.attributeId),
+                        value: String(entry.value || ''),
+                        updated_at: new Date().toISOString(),
+                    })),
+                { onConflict: 'product_id,attribute_id' }
+            );
+        }
         
         // Log price changes if applicable
-        if (oldProd && (oldProd.purchase_price !== (purchasePrice || 0) || oldProd.selling_price !== (sellingPrice || 0))) {
+        if (oldProd && (oldProd.purchase_price !== nextPurchasePrice || oldProd.selling_price !== nextSellingPrice)) {
             await supabase.from('product_price_history').insert({
                 product_id: id,
                 old_purchase_price: oldProd.purchase_price,
-                new_purchase_price: purchasePrice || 0,
+                new_purchase_price: nextPurchasePrice,
                 old_selling_price: oldProd.selling_price,
-                new_selling_price: sellingPrice || 0,
+                new_selling_price: nextSellingPrice,
                 changed_by: changedBy || 'Admin'
             });
         }
         
-        syncProductToMySQL({ localId: id, name, sku: sku || '', category: category || '', sellingPrice: sellingPrice || 0, description: description || '', imagePath: imagePath || '', quantity: quantity || 0 });
+        syncProductToMySQL({ localId: id, name, sku: oldProd?.sku || '', category: category || '', sellingPrice: nextSellingPrice, description: description || '', imagePath: imagePath || '', quantity: nextQuantity });
+        await checkLowStockForProduct(id);
+        return { success: true };
+    });
+
+    ipcMain.handle('get-product-ledger-detail', async (_e, id: number) => {
+        const product = await (async () => {
+            const { data, error } = await supabase
+                .from('products')
+                .select('*, unit:units(name,symbol), group:stock_groups(name), supplier:ledgers(id,name,store_name,contact_number,contact_person,payment_method)')
+                .eq('id', id)
+                .maybeSingle();
+            if (error) throw error;
+            return data;
+        })();
+        if (!product) return null;
+
+        const [{ data: purchaseItems }, { data: requisitionItems }, { data: attributes }, { data: salesItems }, { data: priceHistory }, { data: damagedRows }] = await Promise.all([
+            supabase
+                .from('purchase_bill_items')
+                .select('*, purchase_bill:purchase_bills(id,bill_number,bill_date,grand_total,supplier:ledgers(id,name,store_name,contact_number))')
+                .eq('product_id', id)
+                .order('id', { ascending: false }),
+            supabase
+                .from('purchase_requisition_items')
+                .select('*, requisition:purchase_requisitions(id,requisition_number,status,required_delivery_date,supplier_ledger_id,created_at)')
+                .eq('product_id', id)
+                .order('id', { ascending: false }),
+            supabase
+                .from('product_attribute_values')
+                .select('id,value,attribute:product_attributes(id,name,input_type,options)')
+                .eq('product_id', id),
+            supabase
+                .from('bill_items')
+                .select('*, bill:bills(id,invoice_number,created_at,customer_name,billed_by,grand_total)')
+                .eq('product_id', id)
+                .order('id', { ascending: false }),
+            supabase
+                .from('product_price_history')
+                .select('*')
+                .eq('product_id', id)
+                .order('created_at', { ascending: false }),
+            supabase
+                .from('damaged_goods')
+                .select('*')
+                .eq('product_id', id)
+                .order('created_at', { ascending: false }),
+        ]);
+
+        const supplierMap = new Map<number, any>();
+        (purchaseItems || []).forEach((item: any) => {
+            const supplier = item.purchase_bill?.supplier;
+            if (supplier?.id) supplierMap.set(Number(supplier.id), supplier);
+        });
+        if (product.supplier?.id) supplierMap.set(Number(product.supplier.id), product.supplier);
+
+        return {
+            product: {
+                ...product,
+                unit_name: product.unit?.name || null,
+                unit_symbol: product.unit?.symbol || null,
+                group_name: product.group?.name || null,
+                supplier_name: product.supplier?.name || null,
+            },
+            suppliers: Array.from(supplierMap.values()),
+            purchaseItems: purchaseItems || [],
+            requisitionItems: requisitionItems || [],
+            salesItems: salesItems || [],
+            priceHistory: priceHistory || [],
+            damagedGoods: damagedRows || [],
+            activeDamagedQuantity: (damagedRows || [])
+                .filter((row: any) => row.status === 'DAMAGED' || row.status === 'IN_REPAIR')
+                .reduce((sum: number, row: any) => sum + Number(row.quantity || 0), 0),
+            attributes: attributes || [],
+            lastPurchase: (purchaseItems || [])[0] || null,
+        };
+    });
+
+    ipcMain.handle('get-product-requisition-summary', async (_e, productId: number, filters?: any) => {
+        const id = Number(productId);
+        if (!Number.isFinite(id) || id <= 0) throw new Error('Valid product ID is required.');
+
+        const productQuery = supabase
+            .from('products')
+            .select('id,name,sku,product_code,model_number,quantity,unit:units(name,symbol),group:stock_groups(name)')
+            .eq('id', id)
+            .maybeSingle();
+
+        const lastPurchaseQuery = supabase
+            .from('purchase_bill_items')
+            .select('rate, amount, qty, purchase_bill:purchase_bills(bill_date,bill_number,supplier:ledgers(name))')
+            .eq('product_id', id)
+            .order('id', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+        let salesQuery = supabase
+            .from('bill_items')
+            .select('quantity, price, bill:bills!inner(id,invoice_number,created_at,customer_name,billed_by,grand_total)')
+            .eq('product_id', id)
+            .order('id', { ascending: false })
+            .limit(25);
+
+        if (filters?.fromDate) {
+            salesQuery = salesQuery.gte('bill.created_at', `${filters.fromDate}T00:00:00`);
+        }
+        if (filters?.toDate) {
+            salesQuery = salesQuery.lte('bill.created_at', `${filters.toDate}T23:59:59`);
+        }
+
+        const [{ data: product, error: productError }, { data: lastPurchase, error: purchaseError }, { data: sales, error: salesError }] = await Promise.all([
+            productQuery,
+            lastPurchaseQuery,
+            salesQuery,
+        ]);
+
+        if (productError) throw productError;
+        if (purchaseError) throw purchaseError;
+        if (salesError) throw salesError;
+        if (!product) throw new Error('Product not found.');
+
+        const saleRows = sales || [];
+        const totalSoldQty = saleRows.reduce((sum: number, row: any) => sum + Number(row.quantity || 0), 0);
+        const totalSalesAmount = saleRows.reduce((sum: number, row: any) => sum + Number(row.price || 0), 0);
+
+        return {
+            product: {
+                ...product,
+                unit_name: product.unit?.name || null,
+                unit_symbol: product.unit?.symbol || null,
+                group_name: product.group?.name || null,
+            },
+            lastPurchase: lastPurchase || null,
+            sales: saleRows,
+            salesSummary: {
+                count: saleRows.length,
+                totalSoldQty,
+                totalSalesAmount,
+            },
+        };
+    });
+
+    ipcMain.handle('get-product-model-rules', async () => {
+        const { data, error } = await supabase
+            .from('product_model_rules')
+            .select('*, stock_group:stock_groups(id,name)')
+            .order('id', { ascending: true });
+        if (error) throw error;
+        return data || [];
+    });
+
+    ipcMain.handle('get-product-origins', async () => {
+        const { data, error } = await supabase
+            .from('product_origins')
+            .select('*')
+            .order('name', { ascending: true });
+        if (error) throw error;
+        return data || [];
+    });
+
+    ipcMain.handle('save-product-origin', async (_e, origin: any) => {
+        const name = String(origin.name || '').trim();
+        const originKey = String(origin.originKey || name)
+            .trim()
+            .toUpperCase()
+            .replace(/[^A-Z0-9]+/g, '_')
+            .replace(/^_+|_+$/g, '');
+        if (!name || !originKey) throw new Error('Origin name is required.');
+
+        const payload = {
+            name,
+            origin_key: originKey,
+            requires_superadmin: !!origin.requiresSuperadmin,
+            is_active: origin.isActive !== false,
+            company_id: 1,
+            updated_at: new Date().toISOString(),
+        };
+        const query = origin.id
+            ? supabase.from('product_origins').update(payload).eq('id', origin.id)
+            : supabase.from('product_origins').insert(payload);
+        const { error } = await query;
+        if (error) throw error;
+        return { success: true };
+    });
+
+    ipcMain.handle('delete-product-origin', async (_e, id: number) => {
+        const { data: origin } = await supabase.from('product_origins').select('origin_key').eq('id', id).maybeSingle();
+        if (!origin) return { success: true };
+
+        const [{ count: productCount }, { count: ruleCount }] = await Promise.all([
+            supabase.from('products').select('id', { count: 'exact', head: true }).eq('origin_type', origin.origin_key),
+            supabase.from('product_model_rules').select('id', { count: 'exact', head: true }).eq('origin_type', origin.origin_key),
+        ]);
+        if ((productCount || 0) > 0 || (ruleCount || 0) > 0) {
+            throw new Error('This origin is already used by products or model rules. Disable it instead of deleting.');
+        }
+
+        const { error } = await supabase.from('product_origins').delete().eq('id', id);
+        if (error) throw error;
+        return { success: true };
+    });
+
+    ipcMain.handle('save-product-model-rule', async (_e, rule: any) => {
+        const payload = {
+            name: rule.name,
+            origin_type: rule.originType || 'LOCAL',
+            origin_code: rule.originCode,
+            stock_group_id: rule.stockGroupId ? Number(rule.stockGroupId) : null,
+            group_code: rule.groupCode,
+            batch_sequence: Number(rule.batchSequence) || 1,
+            serial_padding: Number(rule.serialPadding) || 4,
+            is_active: rule.isActive !== false,
+            company_id: 1,
+            updated_at: new Date().toISOString(),
+        };
+        const query = rule.id
+            ? supabase.from('product_model_rules').update(payload).eq('id', rule.id)
+            : supabase.from('product_model_rules').insert(payload);
+        const { error } = await query;
+        if (error) throw error;
+        return { success: true };
+    });
+
+    ipcMain.handle('delete-product-model-rule', async (_e, id: number) => {
+        const { error } = await supabase.from('product_model_rules').delete().eq('id', id);
+        if (error) throw error;
+        return { success: true };
+    });
+
+    ipcMain.handle('get-product-attributes', async () => {
+        const { data, error } = await supabase.from('product_attributes').select('*').order('name');
+        if (error) throw error;
+        return data || [];
+    });
+
+    ipcMain.handle('save-product-attribute', async (_e, attribute: any) => {
+        const payload = {
+            name: attribute.name,
+            input_type: attribute.inputType || 'text',
+            options: attribute.options || [],
+            is_active: attribute.isActive !== false,
+            company_id: 1,
+            updated_at: new Date().toISOString(),
+        };
+        const query = attribute.id
+            ? supabase.from('product_attributes').update(payload).eq('id', attribute.id)
+            : supabase.from('product_attributes').insert(payload);
+        const { error } = await query;
+        if (error) throw error;
+        return { success: true };
+    });
+
+    ipcMain.handle('get-damaged-goods', async () => {
+        const { data, error } = await supabase
+            .from('damaged_goods')
+            .select('*, product:products(id,name,sku,product_code,model_number,quantity,unit:units(symbol,name),group:stock_groups(name)), requisition:purchase_requisitions(id,requisition_number,status)')
+            .order('created_at', { ascending: false });
+        if (error) throw error;
+        return (data || []).map((row: any) => ({
+            ...row,
+            product_name: row.product?.name || 'Unknown Product',
+            product_code: row.product?.product_code || row.product?.model_number || row.product?.sku || '',
+            unit_symbol: row.product?.unit?.symbol || row.product?.unit?.name || '',
+            usable_stock: row.product?.quantity || 0,
+        }));
+    });
+
+    ipcMain.handle('create-damaged-goods', async (_e, payload: any) => {
+        if (payload?.userRole !== 'superadmin' && !payload?.canManageDamaged) {
+            throw new Error('You do not have permission to transfer stock to damaged goods.');
+        }
+        const productId = Number(payload.productId);
+        const quantity = Number(payload.quantity);
+        if (!productId || quantity <= 0) throw new Error('Product and damaged quantity are required.');
+
+        const sourceType = payload.sourceRequisitionId ? 'PURCHASE_RECEIPT' : 'MANUAL';
+        if (sourceType === 'MANUAL') {
+            const { data: product, error: productError } = await supabase.from('products').select('quantity').eq('id', productId).maybeSingle();
+            if (productError) throw productError;
+            const currentQty = Number(product?.quantity || 0);
+            if (quantity > currentQty) throw new Error('Damaged quantity cannot exceed current usable stock.');
+            const { error: stockError } = await supabase.from('products').update({ quantity: currentQty - quantity }).eq('id', productId);
+            if (stockError) throw stockError;
+        }
+
+        const { data, error } = await supabase.from('damaged_goods').insert({
+            product_id: productId,
+            source_requisition_id: payload.sourceRequisitionId || null,
+            source_type: sourceType,
+            quantity,
+            status: 'DAMAGED',
+            damage_notes: payload.notes || null,
+            reported_by_name: payload.performedByName || 'desktop-user',
+            company_id: 1,
+        }).select('id').single();
+        if (error) throw error;
+        await checkLowStockForProduct(productId);
+
+        if (payload.sourceRequisitionId) {
+            await recordPurchaseRequisitionHistory({
+                requisitionId: payload.sourceRequisitionId,
+                toStatus: 'RECEIVED',
+                action: 'DAMAGED_GOODS_RECORDED',
+                remarks: `${quantity} damaged item(s) recorded during receipt.`,
+                newValue: { productId, quantity, notes: payload.notes || null },
+                performedByName: payload.performedByName || 'desktop-user',
+            });
+        }
+
+        return { success: true, id: data.id };
+    });
+
+    ipcMain.handle('update-damaged-goods-status', async (_e, id: number, status: string, payload?: any) => {
+        if (payload?.userRole !== 'superadmin' && !payload?.canManageDamaged) {
+            throw new Error('You do not have permission to update damaged goods.');
+        }
+        const nextStatus = String(status || '').toUpperCase();
+        if (!['IN_REPAIR', 'REPAIRED', 'WRITTEN_OFF'].includes(nextStatus)) throw new Error('Invalid damaged goods status.');
+
+        const { data: before, error: fetchError } = await supabase
+            .from('damaged_goods')
+            .select('*')
+            .eq('id', id)
+            .maybeSingle();
+        if (fetchError) throw fetchError;
+        if (!before) throw new Error('Damaged goods record not found.');
+
+        const now = new Date().toISOString();
+        const updatePayload: any = {
+            status: nextStatus,
+            updated_at: now,
+        };
+
+        if (nextStatus === 'IN_REPAIR') {
+            updatePayload.repair_started_at = now;
+            updatePayload.repair_notes = payload?.notes || before.repair_notes || null;
+            updatePayload.repaired_by_name = payload?.performedByName || null;
+        }
+
+        if (nextStatus === 'REPAIRED') {
+            if (before.status === 'REPAIRED') return { success: true };
+            const { data: product, error: productError } = await supabase.from('products').select('quantity').eq('id', before.product_id).maybeSingle();
+            if (productError) throw productError;
+            const newQty = Number(product?.quantity || 0) + Number(before.quantity || 0);
+            const { error: stockError } = await supabase.from('products').update({ quantity: newQty }).eq('id', before.product_id);
+            if (stockError) throw stockError;
+            await checkLowStockForProduct(before.product_id);
+            updatePayload.repaired_at = now;
+            updatePayload.repair_notes = payload?.notes || before.repair_notes || null;
+            updatePayload.repaired_by_name = payload?.performedByName || 'desktop-user';
+        }
+
+        if (nextStatus === 'WRITTEN_OFF') {
+            updatePayload.written_off_at = now;
+            updatePayload.write_off_notes = payload?.notes || null;
+            updatePayload.written_off_by_name = payload?.performedByName || 'desktop-user';
+        }
+
+        const { error } = await supabase.from('damaged_goods').update(updatePayload).eq('id', id);
+        if (error) throw error;
+        return { success: true };
+    });
+
+    ipcMain.handle('delete-product-attribute', async (_e, id: number) => {
+        const { error } = await supabase.from('product_attributes').delete().eq('id', id);
+        if (error) throw error;
         return { success: true };
     });
 
@@ -936,6 +1553,7 @@ export function registerHandlers() {
                                     filter: [{ column: 'id', value: item.product_id }],
                                     onSuccess: async () => {
                                         try { await supabase.rpc('decrement_product_qty', { p_id: item.product_id, qty: item.quantity }); } catch { }
+                                        await checkLowStockForProduct(Number(item.product_id));
                                         syncStockToMySQL(item.product_id, item.quantity);
                                     },
                                 } as any);
@@ -1149,6 +1767,7 @@ export function registerHandlers() {
             for (const i of items) {
                 if (i.product_id && i.quantity) {
                     try { await supabase.rpc('decrement_product_qty', { p_id: i.product_id, qty: i.quantity }); } catch { }
+                    await checkLowStockForProduct(Number(i.product_id));
                 }
             }
         }
@@ -1336,6 +1955,7 @@ export function registerHandlers() {
             for (const item of (new_items || [])) {
                 if (item.product_id && item.quantity) {
                     try { await supabase.rpc('decrement_product_qty', { p_id: item.product_id, qty: item.quantity }); } catch { }
+                    await checkLowStockForProduct(Number(item.product_id));
                 }
             }
         }
@@ -1579,13 +2199,46 @@ export function registerHandlers() {
 
     ipcMain.handle('delete-user', async (_e, id: number) => {
         if (!supabaseAdmin) throw new Error('Database Admin Key not configured in settings.');
-        // Find auth_id
-        const { data: row } = await supabaseAdmin.from('users').select('auth_id').eq('id', id).single();
-        if (row?.auth_id) {
-            await supabaseAdmin.auth.admin.deleteUser(row.auth_id);
-        }
+        const { data: row } = await supabaseAdmin.from('users').select('auth_id, username').eq('id', id).single();
+
+        const runCleanup = async (operation: () => Promise<any>, fallback?: () => Promise<any>) => {
+            const { error } = await operation();
+            const ignorableCodes = new Set(['42P01', '42703', 'PGRST204', 'PGRST205']);
+            if (error?.code === '23502' && fallback) {
+                const { error: fallbackError } = await fallback();
+                if (fallbackError && !ignorableCodes.has(fallbackError.code)) throw fallbackError;
+                return;
+            }
+            if (error && !ignorableCodes.has(error.code)) {
+                throw error;
+            }
+        };
+
+        await runCleanup(() => supabaseAdmin.from('notifications').update({ sender_id: null }).eq('sender_id', id));
+        await runCleanup(() => supabaseAdmin.from('notifications').update({ recipient_id: null }).eq('recipient_id', id));
+        await runCleanup(() => supabaseAdmin.from('permission_levels').update({ approver_user_id: null }).eq('approver_user_id', id));
+        await runCleanup(() => supabaseAdmin.from('app_license').update({ bound_user_id: null }).eq('bound_user_id', id));
+        await runCleanup(() => supabaseAdmin.from('make_orders').update({ salesman_id: null }).eq('salesman_id', id));
+        await runCleanup(() => supabaseAdmin.from('crm_tracking').update({ user_id: null }).eq('user_id', id));
+        await runCleanup(() => supabaseAdmin.from('crm_customers').update({ user_id: null }).eq('user_id', id));
+        await runCleanup(() => supabaseAdmin.from('system_emails').update({ receiver_id: null }).eq('receiver_id', id));
+        await runCleanup(
+            () => supabaseAdmin.from('system_emails').update({ sender_id: null }).eq('sender_id', id),
+            () => supabaseAdmin.from('system_emails').delete().eq('sender_id', id)
+        );
+        await runCleanup(() => supabaseAdmin.from('internal_messages').update({ receiver_id: null }).eq('receiver_id', id));
+        await runCleanup(
+            () => supabaseAdmin.from('internal_messages').update({ sender_id: null }).eq('sender_id', id),
+            () => supabaseAdmin.from('internal_messages').delete().eq('sender_id', id)
+        );
+
         const { error } = await supabaseAdmin.from('users').delete().eq('id', id);
         if (error) throw error;
+
+        if (row?.auth_id) {
+            const { error: authError } = await supabaseAdmin.auth.admin.deleteUser(row.auth_id);
+            if (authError) console.error('[delete-user] Could not delete auth user:', authError.message);
+        }
         return { success: true };
     });
 
@@ -1608,7 +2261,7 @@ export function registerHandlers() {
 
         if (!authError && authData.user) {
             // Auth succeeded — fetch user profile
-            const { data: row } = await supabase.from('users').select(`*, user_groups (permissions)`).eq('auth_id', authData.user.id).single();
+                const { data: row } = await supabase.from('users').select(`*, user_groups (permissions,is_active)`).eq('auth_id', authData.user.id).single();
 
             if (!row) {
                 await supabase.auth.signOut();
@@ -1635,7 +2288,7 @@ export function registerHandlers() {
             const { password_hash: _omit, user_groups, ...safeUser } = row;
             // BUG-11: Fall back to empty object (not string '{}') so JSON.stringify in Login.tsx
             // produces valid permissions JSON and doesn't double-encode the value.
-            safeUser.permissions = user_groups?.permissions ?? {};
+            safeUser.permissions = user_groups?.is_active === false ? {} : (user_groups?.permissions ?? {});
 
             resetLoginAttempts(username);
             await saveSession(row);
@@ -1660,7 +2313,7 @@ export function registerHandlers() {
         try {
             const { data: localRow } = await supabase
                 .from('users')
-                .select(`*, user_groups (permissions)`)
+                .select(`*, user_groups (permissions,is_active)`)
                 .or(`username.eq.${username},email.eq.${emailToUse}`)
                 .eq('is_active', 1)
                 .maybeSingle();
@@ -1703,7 +2356,7 @@ export function registerHandlers() {
                     await supabase.from('users').update({ is_online: true, device_type: 'PC' }).eq('id', localRow.id);
 
                     const { password_hash: _omit2, user_groups, ...safeUser } = localRow;
-                    safeUser.permissions = user_groups?.permissions || '{}';
+                    safeUser.permissions = user_groups?.is_active === false ? {} : (user_groups?.permissions || {});
 
                     resetLoginAttempts(username);
                     await saveSession(localRow);
@@ -1918,21 +2571,23 @@ export function registerHandlers() {
             isSuperAdmin = reqUser?.role === 'superadmin';
         }
 
+        const groups = (data || []).map((group: any) => decryptObject(group));
+
         // Filter out the Super Admin group from non-superadmin users
-        const filtered = (data || []).filter(g => isSuperAdmin || g.name !== 'Super Admin');
+        const filtered = groups.filter(g => isSuperAdmin || g.name !== 'Super Admin');
         return filtered;
     });
 
     ipcMain.handle('create-user-group', async (_e, group) => {
         if (!supabaseAdmin) throw new Error('Database Admin Key not configured in settings.');
-        const { data, error } = await supabaseAdmin.from('user_groups').insert({ name: group.name, description: group.description || '', permissions: group.permissions || {} }).select('id').single();
+        const { data, error } = await supabaseAdmin.from('user_groups').insert({ name: group.name, description: group.description || '', permissions: group.permissions || {}, is_active: group.is_active ?? true }).select('id').single();
         if (error) throw error;
         return { success: true, id: data.id };
     });
 
     ipcMain.handle('update-user-group', async (_e, group) => {
         if (!supabaseAdmin) throw new Error('Database Admin Key not configured in settings.');
-        const { error } = await supabaseAdmin.from('user_groups').update({ name: group.name, description: group.description || '', permissions: group.permissions || {} }).eq('id', group.id);
+        const { error } = await supabaseAdmin.from('user_groups').update({ name: group.name, description: group.description || '', permissions: group.permissions || {}, is_active: group.is_active ?? true }).eq('id', group.id);
         if (error) throw error;
         return { success: true };
     });
@@ -1952,13 +2607,22 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('send-notification', async (_e, notification: any) => {
-        const { title, message, senderId, recipientIds } = notification;
+        const { title, message, senderId, recipientIds, actionPath, actionLabel, metadata, notificationKey } = notification;
+        const baseRow = {
+            title,
+            message,
+            sender_id: senderId,
+            action_path: actionPath || null,
+            action_label: actionLabel || null,
+            notification_key: notificationKey || null,
+            metadata: metadata || {},
+        };
         if (!recipientIds || recipientIds.length === 0) {
-            const { data, error } = await supabase.from('notifications').insert({ title, message, sender_id: senderId, recipient_id: null }).select('id').single();
+            const { data, error } = await supabase.from('notifications').insert({ ...baseRow, recipient_id: null }).select('id').single();
             if (error) throw error;
             return { success: true, id: data.id };
         }
-        const rows = recipientIds.map((rid: number) => ({ title, message, sender_id: senderId, recipient_id: rid }));
+        const rows = recipientIds.map((rid: number) => ({ ...baseRow, recipient_id: rid }));
         const { error } = await supabase.from('notifications').insert(rows);
         if (error) throw error;
         return { success: true, count: recipientIds.length };
@@ -2090,7 +2754,10 @@ export function registerHandlers() {
                    title: 'Order Approved',
                    message: `The order for "${order.furniture_name}" has been approved.`,
                    sender_id: null,
-                   recipient_id: designer.id
+                   recipient_id: designer.id,
+                   action_path: '/make/track',
+                   action_label: 'Open MAKE orders',
+                   metadata: { type: 'make_order', order_id: orderId },
                });
            }
         }
@@ -2128,7 +2795,10 @@ export function registerHandlers() {
                 title: 'New Order for Approval',
                 message: `You have been assigned to approve the order for "${order.furniture_name}" by ${order.designer_name}.`,
                 sender_id: null,
-                recipient_id: order.salesman_id
+                recipient_id: order.salesman_id,
+                action_path: '/make/track',
+                action_label: 'Review order',
+                metadata: { type: 'make_order', order_id: data.id },
             });
         }
 
@@ -2787,31 +3457,6 @@ export function registerHandlers() {
         return decryptRows(data || []);
     });
 
-    // ═══ GODOWNS ════════════════════════════════════════════════════════
-    ipcMain.handle('get-godowns', async () => {
-        const { data, error } = await supabase.from('godowns').select('*').order('name');
-        if (error) throw error;
-        return decryptRows(data || []);
-    });
-
-    ipcMain.handle('create-godown', async (_e, godown) => {
-        const { data, error } = await supabase.from('godowns').insert(godown).select('id').single();
-        if (error) throw error;
-        return { success: true, id: data.id };
-    });
-
-    ipcMain.handle('update-godown', async (_e, godown) => {
-        const { error } = await supabase.from('godowns').update({ name: godown.name, location: godown.location, description: godown.description }).eq('id', godown.id);
-        if (error) throw error;
-        return { success: true };
-    });
-
-    ipcMain.handle('delete-godown', async (_e, id) => {
-        const { error } = await supabase.from('godowns').delete().eq('id', id);
-        if (error) throw error;
-        return { success: true };
-    });
-
     ipcMain.handle('hrm-generate-payroll', async (_e, pr) => {
         const net = (parseFloat(pr.basic_salary) || 0) + (parseFloat(pr.bonus) || 0) - (parseFloat(pr.deductions) || 0);
         const { error } = await supabase.from('hrm_payroll').upsert({
@@ -3140,6 +3785,8 @@ export function registerHandlers() {
         const { data, error } = await supabase
             .from('permission_levels')
             .select('*, approver:approver_user_id(full_name, username)')
+            .order('workflow_key', { ascending: true, nullsFirst: false })
+            .order('workflow_step', { ascending: true, nullsFirst: false })
             .order('feature_name');
         if (error) throw error;
         // Map approver to include the user's name
@@ -3150,13 +3797,15 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('create-permission-level', async (_e, payload) => {
-        const { feature_name, feature_key, description, approver_role, approver_user_id } = payload;
+        const { feature_name, feature_key, description, approver_role, approver_user_id, workflow_key, workflow_step } = payload;
         const { data, error } = await supabase.from('permission_levels').insert({
             feature_name,
             feature_key,
             description: description || '',
             approver_role: approver_role || null,
             approver_user_id: approver_user_id || null,
+            workflow_key: workflow_key || null,
+            workflow_step: workflow_step || null,
             is_active: true
         }).select('id').single();
         if (error) throw error;
@@ -3456,7 +4105,7 @@ export function registerHandlers() {
             const { data: productsData } = productIds.length
                 ? await supabase
                     .from('products')
-                    .select('id, name, sku')
+                    .select('id, name, sku, unit:units(name,symbol)')
                     .in('id', productIds)
                 : { data: [] as any[] };
 
@@ -3465,8 +4114,10 @@ export function registerHandlers() {
 
             (itemsData || []).forEach((item: any) => {
                 const product = productMap.get(String(item.product_id));
+                const productUnit = product?.unit?.symbol || product?.unit?.name || item.quantity_unit;
                 const lineItem = {
                     ...item,
+                    quantity_unit: productUnit,
                     product_name: product?.name || 'Unknown Product',
                     product_code: product?.sku || '',
                 };
@@ -3478,6 +4129,7 @@ export function registerHandlers() {
                 const items = groupedItems.get(req.id) || [];
                 return {
                     ...req,
+                    quantity_unit: items[0]?.quantity_unit || req.quantity_unit,
                     items,
                     item_count: items.length,
                     product_name: items[0]?.product_name || req.product_name || 'Unknown',
@@ -3508,19 +4160,21 @@ export function registerHandlers() {
             const { data: productsData } = productIds.length
                 ? await supabase
                     .from('products')
-                    .select('id, name, sku')
+                    .select('id, name, sku, unit:units(name,symbol)')
                     .in('id', productIds)
                 : { data: [] as any[] };
 
             const productMap = new Map((productsData || []).map((product: any) => [String(product.id), product]));
             const items = (itemsData || []).map((item: any) => ({
                 ...item,
+                quantity_unit: productMap.get(String(item.product_id))?.unit?.symbol || productMap.get(String(item.product_id))?.unit?.name || item.quantity_unit,
                 product_name: productMap.get(String(item.product_id))?.name || 'Unknown Product',
                 product_code: productMap.get(String(item.product_id))?.sku || '',
             }));
 
             return {
                 ...data,
+                quantity_unit: items[0]?.quantity_unit || data.quantity_unit,
                 items,
                 item_count: items.length,
                 product_name: items[0]?.product_name || data.product_name || 'Unknown',
@@ -3572,6 +4226,9 @@ export function registerHandlers() {
             message,
             sender_id: null,
             recipient_id: null,
+            action_path: '/masters/purchase-requisitions',
+            action_label: 'Open purchase requisitions',
+            metadata: { type: 'purchase_requisition' },
         });
     }
 
@@ -3587,7 +4244,7 @@ export function registerHandlers() {
 
     ipcMain.handle('create-purchase-requisition', async (_e, input: any) => {
         try {
-            const userName = 'desktop-user';
+            const userName = input?.performedByName || 'desktop-user';
             const companyId = Number(input?.companyId || 1);
             const rawItems = Array.isArray(input?.items) ? input.items : [];
             const normalizedItems = rawItems
@@ -3613,6 +4270,19 @@ export function registerHandlers() {
             if (normalizedItems.length === 0) {
                 throw new Error('At least one requisition item is required.');
             }
+
+            const normalizedProductIds = [...new Set(normalizedItems.map((item: any) => item.productId))];
+            const { data: unitProducts } = await supabase
+                .from('products')
+                .select('id, unit:units(name,symbol)')
+                .in('id', normalizedProductIds);
+            const productUnitMap = new Map((unitProducts || []).map((product: any) => [
+                Number(product.id),
+                product.unit?.symbol || product.unit?.name || 'piece'
+            ]));
+            normalizedItems.forEach((item: any) => {
+                item.quantityUnit = productUnitMap.get(Number(item.productId)) || item.quantityUnit || 'piece';
+            });
 
             const primaryItem = normalizedItems[0];
             
@@ -3674,25 +4344,66 @@ export function registerHandlers() {
 
     ipcMain.handle('update-purchase-requisition', async (_e, id: string, updates: any) => {
         try {
-            const userName = 'desktop-user';
+            const userName = updates?.performedByName || 'desktop-user';
             const { data: before } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
+            if (!before) throw new Error('Requisition not found.');
+            if (['PURCHASED', 'RECEIVED', 'COMPLETED'].includes(before.status)) {
+                throw new Error('Purchased or stocked requisitions cannot be altered.');
+            }
+
+            const rawItems = Array.isArray(updates?.items) ? updates.items : [];
+            const normalizedItems = rawItems
+                .map((item: any, index: number) => ({
+                    lineNo: Number(item.lineNo || index + 1),
+                    productId: Number(item.productId ?? item.product_id),
+                    quantity: Number(item.quantity),
+                    quantityUnit: item.quantityUnit || item.quantity_unit || 'piece',
+                    remarks: item.remarks || '',
+                }))
+                .filter((item: any) => Number.isFinite(item.productId) && item.productId > 0 && Number.isFinite(item.quantity) && item.quantity > 0);
+
+            const primaryItem = normalizedItems[0] || {
+                productId: Number(updates.productId || before.product_id),
+                quantity: Number(updates.quantity || before.quantity),
+                quantityUnit: updates.quantityUnit || before.quantity_unit,
+            };
             
             const { error } = await supabase
                 .from('purchase_requisitions')
                 .update({
-                    product_id: Number(updates.productId),
-                    quantity: updates.quantity,
-                    quantity_unit: updates.quantityUnit,
-                    priority_level: updates.priorityLevel,
-                    required_delivery_date: updates.requiredDeliveryDate,
-                    remarks: updates.remarks,
+                    product_id: primaryItem.productId,
+                    quantity: primaryItem.quantity,
+                    quantity_unit: primaryItem.quantityUnit,
+                    priority_level: updates.priorityLevel || before.priority_level,
+                    required_delivery_date: updates.requiredDeliveryDate || before.required_delivery_date,
+                    remarks: updates.remarks ?? before.remarks,
                     updated_at: new Date().toISOString(),
                     updated_by: null,
                 })
-                .eq('id', id)
-                .eq('status', 'DRAFT'); // Only allow editing DRAFT requisitions
+                .eq('id', id);
             
             if (error) throw error;
+
+            if (normalizedItems.length > 0) {
+                const { error: deleteItemsError } = await supabase
+                    .from('purchase_requisition_items')
+                    .delete()
+                    .eq('requisition_id', id);
+                if (deleteItemsError) throw deleteItemsError;
+
+                const { error: insertItemsError } = await supabase
+                    .from('purchase_requisition_items')
+                    .insert(normalizedItems.map((item: any) => ({
+                        requisition_id: id,
+                        line_no: item.lineNo,
+                        product_id: item.productId,
+                        quantity: item.quantity,
+                        quantity_unit: item.quantityUnit,
+                        remarks: item.remarks,
+                    })));
+                if (insertItemsError) throw insertItemsError;
+            }
+
             const { data: after } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
             await recordPurchaseRequisitionHistory({
                 requisitionId: id,
@@ -3710,9 +4421,9 @@ export function registerHandlers() {
         }
     });
 
-    ipcMain.handle('approve-purchase-requisition', async (_e, id: string, _status: string, notes: string) => {
+    ipcMain.handle('approve-purchase-requisition', async (_e, id: string, _status: string, notes: string, performedByName?: string) => {
         try {
-            const userName = 'desktop-user';
+            const userName = performedByName || 'desktop-user';
             const approvalDate = new Date().toISOString();
             const { data: before } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
             
@@ -3763,17 +4474,29 @@ export function registerHandlers() {
         }
     });
 
-    ipcMain.handle('submit-purchase-estimates', async (_e, id: string, quotes: any[]) => {
+    ipcMain.handle('submit-purchase-estimates', async (_e, id: string, quotes: any[], performedByName?: string) => {
         try {
-            const userName = 'desktop-user';
+            const userName = performedByName || 'desktop-user';
             const { data: before } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
 
             if (!before || before.status !== 'PENDING_ESTIMATE') {
                 throw new Error('Requisition is not in PENDING_ESTIMATE state.');
             }
 
+            const normalizedQuotes = (quotes || [])
+                .map((q: any) => ({
+                    supplierId: q.supplierId ? Number(q.supplierId) : null,
+                    estimatedPrice: Number(q.estimatedPrice),
+                    remarks: q.remarks || '',
+                }))
+                .filter((q: any) => q.supplierId && Number.isFinite(q.estimatedPrice) && q.estimatedPrice > 0);
+
+            if (normalizedQuotes.length === 0) {
+                throw new Error('At least one valid supplier quote is required.');
+            }
+
             // Insert quotes
-            for (const q of quotes) {
+            for (const q of normalizedQuotes) {
                 await supabase.from('purchase_requisition_quotes').insert({
                     requisition_id: id,
                     supplier_ledger_id: q.supplierId,
@@ -3794,7 +4517,7 @@ export function registerHandlers() {
                 fromStatus: 'PENDING_ESTIMATE',
                 toStatus: 'PENDING_AUDIT',
                 action: 'ESTIMATES_SUBMITTED',
-                remarks: `Submitted ${quotes.length} quotes.`,
+                remarks: `Submitted ${normalizedQuotes.length} quotes.`,
                 oldValue: before,
                 newValue: { ...before, status: 'PENDING_AUDIT' },
                 performedByName: userName,
@@ -3821,7 +4544,7 @@ export function registerHandlers() {
         // Fetch from purchase_bill_items joined with purchase_bills and supplier ledgers
         const { data, error } = await supabase
             .from('purchase_bill_items')
-            .select('price, purchase_bill:purchase_bills(bill_date, supplier:ledgers(name))')
+            .select('rate, amount, qty, purchase_bill:purchase_bills(bill_date, supplier:ledgers(name))')
             .eq('product_id', productId)
             .order('id', { ascending: false })
             .limit(5);
@@ -3829,9 +4552,9 @@ export function registerHandlers() {
         return data || [];
     });
 
-    ipcMain.handle('audit-review-purchase-requisition', async (_e, id: string, status: 'APPROVED' | 'REJECTED', notes: string) => {
+    ipcMain.handle('audit-review-purchase-requisition', async (_e, id: string, status: 'APPROVED' | 'REJECTED', notes: string, performedByName?: string) => {
         try {
-            const userName = 'desktop-user';
+            const userName = performedByName || 'desktop-user';
             const reviewedAt = new Date().toISOString();
             const { data: before } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
 
@@ -3874,9 +4597,9 @@ export function registerHandlers() {
         }
     });
 
-    ipcMain.handle('director-review-purchase-requisition', async (_e, id: string, status: 'APPROVED' | 'REJECTED', notes: string) => {
+    ipcMain.handle('director-review-purchase-requisition', async (_e, id: string, status: 'APPROVED' | 'REJECTED', notes: string, performedByName?: string) => {
         try {
-            const userName = 'desktop-user';
+            const userName = performedByName || 'desktop-user';
             const reviewedAt = new Date().toISOString();
             const { data: before } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
 
@@ -3920,7 +4643,7 @@ export function registerHandlers() {
 
     ipcMain.handle('purchase-purchase-requisition', async (_e, id: string, payload: any) => {
         try {
-            const userName = 'desktop-user';
+            const userName = payload?.performedByName || 'desktop-user';
             const purchaseDate = new Date().toISOString();
             const { data: before } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
 
@@ -3947,6 +4670,43 @@ export function registerHandlers() {
                 .eq('status', 'APPROVED');
             
             if (error) throw error;
+
+            const { data: reqItems } = await supabase
+                .from('purchase_requisition_items')
+                .select('product_id')
+                .eq('requisition_id', id);
+            const productIds = (reqItems && reqItems.length > 0)
+                ? reqItems.map((item: any) => Number(item.product_id)).filter(Boolean)
+                : [Number(before.product_id)].filter(Boolean);
+            const batchCode = payload.purchaseInvoiceId || before.requisition_number || String(id).slice(0, 8);
+            for (const productId of productIds) {
+                const { data: productRow } = await supabase
+                    .from('products')
+                    .select('origin_type, stock_group_id, product_code, model_number, sku')
+                    .eq('id', productId)
+                    .maybeSingle();
+                const generated = productRow?.product_code || productRow?.model_number || productRow?.sku
+                    ? null
+                    : await generateProductCode({ originType: productRow?.origin_type || 'LOCAL' }, productRow?.stock_group_id || null);
+                await supabase
+                    .from('products')
+                    .update({
+                        supplier_ledger_id: payload.supplierId || null,
+                        batch_code: batchCode,
+                        import_reference: payload.purchaseInvoiceId || null,
+                        ...(generated ? {
+                            product_code: generated.code,
+                            model_number: generated.code,
+                            sku: generated.code,
+                            import_type_code: generated.originCode,
+                            model_group_code: generated.groupCode,
+                            serial_number: generated.serial,
+                        } : {}),
+                        last_modified: purchaseDate,
+                    })
+                    .eq('id', productId);
+            }
+
             const { data: after } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
             await recordPurchaseRequisitionHistory({
                 requisitionId: id,
@@ -3966,9 +4726,9 @@ export function registerHandlers() {
         }
     });
 
-    ipcMain.handle('receive-purchase-requisition', async (_e, id: string) => {
+    ipcMain.handle('receive-purchase-requisition', async (_e, id: string, performedByName?: string) => {
         try {
-            const userName = 'desktop-user';
+            const userName = performedByName || 'desktop-user';
             const receivedDate = new Date().toISOString();
             const { data: before } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
             
@@ -4002,19 +4762,47 @@ export function registerHandlers() {
         }
     });
 
-    ipcMain.handle('complete-purchase-requisition', async (_e, id: string) => {
+    ipcMain.handle('complete-purchase-requisition', async (_e, id: string, performedByName?: string) => {
         try {
-            const userName = 'desktop-user';
+            const userName = performedByName || 'desktop-user';
             const completedDate = new Date().toISOString();
             
-            // Fetch the requisition to get product_id and quantity
+            // Fetch the requisition and all line items so multi-line requisitions stock every product.
             const { data: requisition, error: fetchError } = await supabase
                 .from('purchase_requisitions')
-                .select('product_id, quantity, requisition_number, status')
+                .select('id, product_id, quantity, requisition_number, status')
                 .eq('id', id)
                 .single();
             
             if (fetchError) throw fetchError;
+            if (requisition.status !== 'RECEIVED') {
+                throw new Error('Requisition must be RECEIVED before completion.');
+            }
+
+            const { data: itemsData, error: itemsError } = await supabase
+                .from('purchase_requisition_items')
+                .select('product_id, quantity')
+                .eq('requisition_id', id);
+
+            if (itemsError) throw itemsError;
+
+            const stockItems = (itemsData && itemsData.length > 0)
+                ? itemsData
+                : [{ product_id: requisition.product_id, quantity: requisition.quantity }];
+
+            const { data: receiptDamageRows, error: damageError } = await supabase
+                .from('damaged_goods')
+                .select('product_id, quantity, status')
+                .eq('source_requisition_id', id)
+                .eq('source_type', 'PURCHASE_RECEIPT')
+                .in('status', ['DAMAGED', 'IN_REPAIR']);
+            if (damageError) throw damageError;
+
+            const receiptDamageByProduct = new Map<number, number>();
+            (receiptDamageRows || []).forEach((row: any) => {
+                const productId = Number(row.product_id);
+                receiptDamageByProduct.set(productId, (receiptDamageByProduct.get(productId) || 0) + Number(row.quantity || 0));
+            });
             
             // Update requisition status
             const { data: before } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
@@ -4031,23 +4819,32 @@ export function registerHandlers() {
             
             if (updateError) throw updateError;
             
-            // Update product stock quantity (column is 'quantity' not 'current_stock')
-            const { data: product, error: productError } = await supabase
-                .from('products')
-                .select('quantity')
-                .eq('id', requisition.product_id)
-                .single();
+            let addedQuantity = 0;
+            for (const item of stockItems) {
+                const productId = Number(item.product_id);
+                const itemQty = Number(item.quantity) || 0;
+                if (!productId || itemQty <= 0) continue;
+                const damagedQty = receiptDamageByProduct.get(productId) || 0;
+                const usableQty = Math.max(itemQty - damagedQty, 0);
+                if (usableQty <= 0) continue;
 
-            // Stock update is best-effort — log but don't block completion if product row is missing
-            if (!productError && product !== null) {
-                const newStock = (product?.quantity || 0) + requisition.quantity;
-                const { error: stockError } = await supabase
+                const { data: product, error: productError } = await supabase
                     .from('products')
-                    .update({ quantity: newStock })
-                    .eq('id', requisition.product_id);
-                if (stockError) console.error('[complete-requisition] Stock update failed:', stockError.message);
-            } else if (productError) {
-                console.error('[complete-requisition] Could not fetch product for stock update:', productError.message);
+                    .select('quantity')
+                    .eq('id', productId)
+                    .single();
+
+                if (!productError && product !== null) {
+                    const newStock = (Number(product?.quantity) || 0) + usableQty;
+                    const { error: stockError } = await supabase
+                        .from('products')
+                        .update({ quantity: newStock })
+                        .eq('id', productId);
+                    if (stockError) console.error('[complete-requisition] Stock update failed:', stockError.message);
+                    else addedQuantity += usableQty;
+                } else if (productError) {
+                    console.error('[complete-requisition] Could not fetch product for stock update:', productError.message);
+                }
             }
 
             const { data: after } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
@@ -4056,21 +4853,21 @@ export function registerHandlers() {
                 fromStatus: before?.status || 'RECEIVED',
                 toStatus: 'COMPLETED',
                 action: 'REQUISITION_COMPLETED',
-                remarks: `Added quantity: ${requisition.quantity}`,
+                remarks: `Added stock across ${stockItems.length} line item(s): ${addedQuantity}`,
                 oldValue: before,
                 newValue: after,
                 performedByName: userName,
             });
             await notifyProcurementWorkflow('Goods stocked', `REQ ${requisition.requisition_number || id} was completed and stock updated.`);
             
-            return { success: true, addedQuantity: requisition.quantity };
+            return { success: true, addedQuantity };
         } catch (e: any) {
             console.error('[complete-purchase-requisition] Error:', e.message);
             return { success: false, error: e.message };
         }
     });
 
-    ipcMain.handle('delete-purchase-requisition', async (_e, id: string) => {
+    ipcMain.handle('delete-purchase-requisition', async (_e, id: string, performedByName?: string) => {
         try {
             const { data: before } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
             const { error } = await supabase
@@ -4086,7 +4883,7 @@ export function registerHandlers() {
                 toStatus: 'DELETED',
                 action: 'REQUISITION_DELETED',
                 oldValue: before,
-                performedByName: 'desktop-user',
+                performedByName: performedByName || 'desktop-user',
             });
             return { success: true };
         } catch (e: any) {

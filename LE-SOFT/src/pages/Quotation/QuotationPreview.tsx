@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Printer, ArrowLeft } from 'lucide-react';
 import { resolveImageSrc } from '../../utils/imageSrc';
+import { getPrintPageSize } from '../../utils/printPageSize';
 import './Quotation.css';
 
 // ── Number to words (Bangladeshi) ─────────────────────────────────────────────
@@ -68,9 +69,15 @@ export default function QuotationPreview() {
     if (!d) return '—';
     return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }).replace(/\//g, '.');
   };
+  const quotationPageSize = getPrintPageSize('quotation');
 
   return (
-    <div className="quot-preview-page" style={{ background: '#e5e7eb', minHeight: '100vh', padding: '1.5rem' }}>
+    <div className={`quot-preview-page print-size-${quotationPageSize.toLowerCase()}`} style={{ background: '#e5e7eb', minHeight: '100vh', padding: '1.5rem' }}>
+      <style>{`
+        @media print {
+          @page { size: ${quotationPageSize}; margin: ${quotationPageSize === 'A5' ? '7mm' : '10mm'}; }
+        }
+      `}</style>
       {/* ── Toolbar ─────────────────────────────────────────── */}
       <div className="quot-preview-topbar">
         <button className="quot-btn-secondary" onClick={() => navigate(-1)}>
