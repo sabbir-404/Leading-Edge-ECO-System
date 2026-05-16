@@ -3,8 +3,16 @@ name: Build & Publish Windows
 on:
   push:
     branches:
+      - main-mac
       - main-windows
+    tags:
+      - 'v*'
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version without leading v'
+        required: true
+        default: '1.4.0'
 
 permissions:
   contents: write
@@ -32,7 +40,7 @@ jobs:
       - name: Install Dependencies
         # --ignore-scripts skips the postinstall electron-rebuild.
         # electron-builder install-app-deps (run below) handles native modules correctly.
-        run: npm install --ignore-scripts
+        run: npm ci --ignore-scripts
         env:
           npm_config_arch: x64
 
@@ -40,14 +48,35 @@ jobs:
         # Rebuilds better-sqlite3 for the correct Electron ABI + win32-x64
         run: npx electron-builder install-app-deps
 
-      - name: Build & Publish Windows Release
-        # electron-builder --win -p always:
-        #   - Builds the NSIS installer (.exe)
-        #   - Uploads .exe, .exe.blockmap, and latest.yml to GitHub Release
-        #   - latest.yml is what electron-updater reads on Windows end-user machines
-        run: npm run dist:publish
+      - name: Build Windows Release
+        # Builds the NSIS installer (.exe), .exe.blockmap, and latest.yml.
+        run: npm run dist
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish Windows Release Assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ github.event.inputs.version || '1.4.0' }}
+          RELEASE_REPO: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = "v$env:RELEASE_VERSION"
+          $title = "LE-SOFT $env:RELEASE_VERSION"
+          $notes = "LE-SOFT $env:RELEASE_VERSION Windows release."
+
+          gh release view $tag --repo $env:RELEASE_REPO
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --repo $env:RELEASE_REPO --target $env:GITHUB_SHA --title $title --notes $notes
+          }
+
+          gh release upload $tag `
+            "release/LESOFT Setup $env:RELEASE_VERSION.exe" `
+            "release/LESOFT Setup $env:RELEASE_VERSION.exe.blockmap" `
+            "release/latest.yml" `
+            --repo $env:RELEASE_REPO `
+            --clobber
 
       - name: Upload Installer Artifact
         uses: actions/upload-artifact@v4

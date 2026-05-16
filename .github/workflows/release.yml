@@ -1,0 +1,152 @@
+name: Release LE-SOFT
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version without leading v'
+        required: true
+        default: '1.4.0'
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+
+    defaults:
+      run:
+        working-directory: LE-SOFT
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: LE-SOFT/package-lock.json
+
+      - name: Install Dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Install Native Modules for Electron
+        run: npx electron-builder install-app-deps
+
+      - name: Build macOS Release
+        run: npm run dist:mac
+
+      - name: Publish macOS Release Assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ github.event.inputs.version || '1.4.0' }}
+          RELEASE_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
+            tag="${GITHUB_REF_NAME}"
+          else
+            tag="v${RELEASE_VERSION}"
+          fi
+
+          title="LE-SOFT ${tag#v}"
+          notes="LE-SOFT ${tag#v} macOS release."
+
+          if ! gh release view "$tag" --repo "$RELEASE_REPO" >/dev/null 2>&1; then
+            gh release create "$tag" --repo "$RELEASE_REPO" --target "$GITHUB_SHA" --title "$title" --notes "$notes"
+          fi
+
+          gh release upload "$tag" \
+            "release/*.dmg" \
+            "release/*.zip" \
+            "release/latest-mac.yml" \
+            --repo "$RELEASE_REPO" \
+            --clobber
+
+      - name: Upload macOS Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: LESOFT-macOS
+          path: |
+            LE-SOFT/release/*.dmg
+            LE-SOFT/release/*.zip
+            LE-SOFT/release/latest-mac.yml
+          if-no-files-found: warn
+
+  build-windows:
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        working-directory: LE-SOFT
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: LE-SOFT/package-lock.json
+
+      - name: Install Dependencies
+        run: npm ci --ignore-scripts
+        env:
+          npm_config_arch: x64
+
+      - name: Install Native Modules for Electron
+        run: npx electron-builder install-app-deps
+        env:
+          npm_config_arch: x64
+
+      - name: Build Windows Release
+        run: npm run dist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish Windows Release Assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ github.event.inputs.version || '1.4.0' }}
+          RELEASE_REPO: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $tag = $env:GITHUB_REF_NAME
+          }
+          else {
+            $tag = "v$env:RELEASE_VERSION"
+          }
+
+          $title = "LE-SOFT $($tag.TrimStart('v'))"
+          $notes = "LE-SOFT $($tag.TrimStart('v')) Windows release."
+
+          gh release view $tag --repo $env:RELEASE_REPO *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --repo $env:RELEASE_REPO --target $env:GITHUB_SHA --title $title --notes $notes
+          }
+
+          $exe = (Get-ChildItem release -Filter '*.exe' | Select-Object -First 1).FullName
+          $blockmap = (Get-ChildItem release -Filter '*.exe.blockmap' | Select-Object -First 1).FullName
+          $latest = (Get-ChildItem release -Filter 'latest.yml' | Select-Object -First 1).FullName
+
+          gh release upload $tag $exe $blockmap $latest --repo $env:RELEASE_REPO --clobber
+
+      - name: Upload Windows Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LESOFT-Windows-Installer
+          path: |
+            LE-SOFT/release/*.exe
+            LE-SOFT/release/*.exe.blockmap
+            LE-SOFT/release/latest.yml
+          if-no-files-found: warn
