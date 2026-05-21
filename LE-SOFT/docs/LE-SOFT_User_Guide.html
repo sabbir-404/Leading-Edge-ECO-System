@@ -1,0 +1,1341 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LE-SOFT User Guide</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 16mm 14mm 16mm 14mm;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: #ffffff;
+      color: #172033;
+      font-family: Inter, "Segoe UI", Arial, sans-serif;
+      font-size: 10.8pt;
+      line-height: 1.5;
+    }
+
+    h1, h2, h3, p {
+      margin: 0;
+    }
+
+    .cover {
+      min-height: 260mm;
+      padding: 26mm 18mm;
+      background:
+        linear-gradient(135deg, rgba(249, 115, 22, 0.12), transparent 38%),
+        linear-gradient(160deg, #111827 0%, #1f2937 62%, #111827 100%);
+      color: #ffffff;
+      page-break-after: always;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .cover::before {
+      content: "";
+      position: absolute;
+      right: -35mm;
+      top: -35mm;
+      width: 120mm;
+      height: 120mm;
+      border-radius: 50%;
+      background: rgba(249, 115, 22, 0.20);
+    }
+
+    .brand {
+      color: #fb923c;
+      font-weight: 800;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      font-size: 10pt;
+      margin-bottom: 30mm;
+    }
+
+    .cover h1 {
+      font-size: 38pt;
+      line-height: 1;
+      max-width: 145mm;
+      margin-bottom: 10mm;
+      letter-spacing: 0;
+    }
+
+    .cover .subtitle {
+      max-width: 150mm;
+      font-size: 14pt;
+      color: #dbe4f0;
+      margin-bottom: 16mm;
+    }
+
+    .meta-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 5mm;
+      margin-top: 26mm;
+      max-width: 160mm;
+    }
+
+    .meta-card {
+      border: 1px solid rgba(255,255,255,0.18);
+      background: rgba(255,255,255,0.08);
+      padding: 6mm;
+      border-radius: 4mm;
+    }
+
+    .meta-card span {
+      display: block;
+      color: #fb923c;
+      font-size: 8pt;
+      text-transform: uppercase;
+      font-weight: 700;
+      margin-bottom: 2mm;
+    }
+
+    .meta-card strong {
+      display: block;
+      color: #ffffff;
+      font-size: 12pt;
+    }
+
+    .cover-footer {
+      position: absolute;
+      left: 18mm;
+      right: 18mm;
+      bottom: 18mm;
+      color: #aebaca;
+      display: flex;
+      justify-content: space-between;
+      border-top: 1px solid rgba(255,255,255,0.16);
+      padding-top: 5mm;
+      font-size: 8.5pt;
+    }
+
+    .toc-page {
+      page-break-after: always;
+    }
+
+    .page-title {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      padding-bottom: 6mm;
+      border-bottom: 2px solid #111827;
+      margin-bottom: 8mm;
+    }
+
+    .page-title h2 {
+      font-size: 24pt;
+      letter-spacing: 0;
+    }
+
+    .page-title p {
+      color: #64748b;
+      font-weight: 600;
+    }
+
+    .toc {
+      columns: 2;
+      column-gap: 10mm;
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+
+    .toc li {
+      break-inside: avoid;
+      display: flex;
+      gap: 4mm;
+      border-bottom: 1px solid #e2e8f0;
+      padding: 3.2mm 0;
+      color: #334155;
+    }
+
+    .toc span {
+      color: #f97316;
+      font-weight: 800;
+      min-width: 9mm;
+    }
+
+    .overview {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 6mm;
+      margin-bottom: 7mm;
+    }
+
+    .overview-card {
+      border: 1px solid #d7dde7;
+      border-left: 4px solid #f97316;
+      padding: 5mm;
+      background: #f8fafc;
+      border-radius: 3mm;
+    }
+
+    .overview-card h3 {
+      font-size: 12pt;
+      margin-bottom: 2mm;
+    }
+
+    .overview-card p {
+      color: #475569;
+    }
+
+    .chapter {
+      page-break-before: always;
+      padding-top: 2mm;
+    }
+
+    .chapter-heading {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      border-bottom: 2px solid #111827;
+      padding-bottom: 4mm;
+      margin-bottom: 5mm;
+    }
+
+    .eyebrow {
+      color: #f97316;
+      font-size: 8pt;
+      text-transform: uppercase;
+      font-weight: 800;
+      letter-spacing: 1px;
+      margin-bottom: 1mm;
+    }
+
+    .chapter h2 {
+      font-size: 20pt;
+      letter-spacing: 0;
+      color: #111827;
+    }
+
+    figure {
+      margin: 0 0 5mm 0;
+      border: 1px solid #cbd5e1;
+      border-radius: 3mm;
+      overflow: hidden;
+      background: #f8fafc;
+    }
+
+    figure img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+
+    figcaption {
+      border-top: 1px solid #e2e8f0;
+      padding: 2.5mm 4mm;
+      color: #64748b;
+      font-size: 8.5pt;
+      background: #ffffff;
+    }
+
+    .intro {
+      color: #334155;
+      font-size: 11pt;
+      margin-bottom: 5mm;
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 5mm;
+    }
+
+    .panel {
+      border: 1px solid #d7dde7;
+      border-radius: 3mm;
+      padding: 5mm;
+      background: #ffffff;
+      break-inside: avoid;
+    }
+
+    .panel.muted {
+      background: #f8fafc;
+    }
+
+    .panel h3 {
+      color: #111827;
+      font-size: 12pt;
+      margin-bottom: 3mm;
+    }
+
+    ul {
+      margin: 0;
+      padding-left: 5mm;
+    }
+
+    li {
+      margin-bottom: 2mm;
+    }
+
+    .note {
+      margin-top: 8mm;
+      padding: 5mm;
+      border-radius: 3mm;
+      background: #fff7ed;
+      border: 1px solid #fed7aa;
+      color: #7c2d12;
+    }
+
+    .small {
+      font-size: 8.5pt;
+      color: #64748b;
+    }
+
+    .appendix {
+      page-break-before: always;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 5mm;
+      font-size: 9pt;
+    }
+
+    th {
+      background: #111827;
+      color: #ffffff;
+      text-align: left;
+      padding: 3mm;
+    }
+
+    td {
+      border-bottom: 1px solid #e2e8f0;
+      padding: 3mm;
+      vertical-align: top;
+    }
+  </style>
+</head>
+<body>
+  <section class="cover">
+    <div class="brand">Leading Edge ECO-System</div>
+    <h1>LE-SOFT User Guide</h1>
+    <p class="subtitle">A practical, light-theme, screenshot-based operating manual for daily ERP work, master setup, billing, purchase requisitions, inventory, HRM, MAKE, shipping, website administration, users, settings, and email.</p>
+    <div class="meta-grid">
+      <div class="meta-card"><span>Document</span><strong>Formal User Guide</strong></div>
+      <div class="meta-card"><span>Version</span><strong>1.4.0</strong></div>
+      <div class="meta-card"><span>Generated</span><strong>22 May 2026</strong></div>
+    </div>
+    <div class="cover-footer">
+      <div>Internal operating guide</div>
+      <div>30 illustrated sections</div>
+    </div>
+  </section>
+
+  <section class="toc-page">
+    <div class="page-title">
+      <h2>How to Use This Guide</h2>
+      <p>Read by module or by workflow</p>
+    </div>
+    <div class="overview">
+      <div class="overview-card">
+        <h3>For new users</h3>
+        <p>Start with Dashboard, Masters, Products, Billing, and Purchase Requisitions. These explain the daily operating flow.</p>
+      </div>
+      <div class="overview-card">
+        <h3>For managers</h3>
+        <p>Focus on approvals, reports, user groups, purchase requisitions, damaged goods, and settings.</p>
+      </div>
+      <div class="overview-card">
+        <h3>For administrators</h3>
+        <p>Review users, permissions, model rules, product attributes, print settings, backups, and integration settings.</p>
+      </div>
+      <div class="overview-card">
+        <h3>For auditors</h3>
+        <p>Use requisition history, bill audit, voucher records, reports, and supplier/customer ledgers for verification.</p>
+      </div>
+    </div>
+    <p class="note">The screenshots in this document are fresh light-theme LE-SOFT application screens captured for this guide. Some screens may show documentation sample data, but the feature controls and workflows are the same in production.</p>
+  </section>
+
+  <section class="toc-page">
+    <div class="page-title">
+      <h2>Contents</h2>
+      <p>Visual walkthrough</p>
+    </div>
+    <ol class="toc">
+    <li>
+      <span>01</span>
+      <strong>Dashboard and Daily Overview</strong>
+    </li>
+  
+    <li>
+      <span>02</span>
+      <strong>Masters Hub</strong>
+    </li>
+  
+    <li>
+      <span>03</span>
+      <strong>Product List and Product Search</strong>
+    </li>
+  
+    <li>
+      <span>04</span>
+      <strong>Creating and Editing Products</strong>
+    </li>
+  
+    <li>
+      <span>05</span>
+      <strong>Account Groups</strong>
+    </li>
+  
+    <li>
+      <span>06</span>
+      <strong>Ledgers and Supplier Accounts</strong>
+    </li>
+  
+    <li>
+      <span>07</span>
+      <strong>Stock Groups and Category Tree</strong>
+    </li>
+  
+    <li>
+      <span>08</span>
+      <strong>Units of Measurement</strong>
+    </li>
+  
+    <li>
+      <span>09</span>
+      <strong>Supplier Management</strong>
+    </li>
+  
+    <li>
+      <span>10</span>
+      <strong>Purchase Requisitions</strong>
+    </li>
+  
+    <li>
+      <span>11</span>
+      <strong>Billing and POS</strong>
+    </li>
+  
+    <li>
+      <span>12</span>
+      <strong>Bill History</strong>
+    </li>
+  
+    <li>
+      <span>13</span>
+      <strong>Pending Billing Approvals</strong>
+    </li>
+  
+    <li>
+      <span>14</span>
+      <strong>Quotations</strong>
+    </li>
+  
+    <li>
+      <span>15</span>
+      <strong>Vouchers</strong>
+    </li>
+  
+    <li>
+      <span>16</span>
+      <strong>Reports</strong>
+    </li>
+  
+    <li>
+      <span>17</span>
+      <strong>HRM Dashboard</strong>
+    </li>
+  
+    <li>
+      <span>18</span>
+      <strong>Employee Management</strong>
+    </li>
+  
+    <li>
+      <span>19</span>
+      <strong>Attendance</strong>
+    </li>
+  
+    <li>
+      <span>20</span>
+      <strong>Leave Management</strong>
+    </li>
+  
+    <li>
+      <span>21</span>
+      <strong>Payroll</strong>
+    </li>
+  
+    <li>
+      <span>22</span>
+      <strong>MAKE Production Dashboard</strong>
+    </li>
+  
+    <li>
+      <span>23</span>
+      <strong>Place MAKE Order</strong>
+    </li>
+  
+    <li>
+      <span>24</span>
+      <strong>Track MAKE Orders</strong>
+    </li>
+  
+    <li>
+      <span>25</span>
+      <strong>Shipping Dashboard</strong>
+    </li>
+  
+    <li>
+      <span>26</span>
+      <strong>Website Admin</strong>
+    </li>
+  
+    <li>
+      <span>27</span>
+      <strong>User Management</strong>
+    </li>
+  
+    <li>
+      <span>28</span>
+      <strong>User Groups and Permissions</strong>
+    </li>
+  
+    <li>
+      <span>29</span>
+      <strong>Settings</strong>
+    </li>
+  
+    <li>
+      <span>30</span>
+      <strong>Email and Campaigns</strong>
+    </li>
+  </ol>
+  </section>
+
+  
+    <section class="chapter">
+      <div class="chapter-heading">
+        <div>
+          <p class="eyebrow">Section 01</p>
+          <h2>Dashboard and Daily Overview</h2>
+        </div>
+      </div>
+      <figure>
+        <img src="screenshots/01_dashboard___overview.jpg" alt="Dashboard and Daily Overview screenshot" />
+        <figcaption>Dashboard and Daily Overview - fresh light-theme screenshot from LE-SOFT.</figcaption>
+      </figure>
+      <p class="intro">The dashboard is the first working screen after login. It gives the operator a quick understanding of the business position before opening individual modules.</p>
+      <div class="two-col">
+        <div class="panel">
+          <h3>Feature controls shown</h3>
+          <ul><li>Use the summary cards to review sales, stock, pending work, active users, and other operational totals.</li><li>Use the product search or quick lookup area to find products without opening the full product master page.</li><li>Use quick action cards to move directly into common tasks such as billing, products, reports, users, or settings.</li><li>Use the notification bell to open system alerts. Alerts can redirect to the exact page that needs action.</li><li>Use chat or communication tools from the shell when coordination with another user is needed.</li></ul>
+        </div>
+        <div class="panel muted">
+          <h3>What to do in the software</h3>
+          <ul><li>Start the day from the dashboard.</li><li>Check summary cards and pending alerts.</li><li>Search for a product or open the relevant module from the sidebar.</li><li>Use notifications and chat for urgent follow-up work.</li></ul>
+        </div>
+      </div>
+    </section>
+  
+
+    <section class="chapter">
+      <div class="chapter-heading">
+        <div>
+          <p class="eyebrow">Section 02</p>
+          <h2>Masters Hub</h2>
+        </div>
+      </div>
+      <figure>
+        <img src="screenshots/02_masters_hub.jpg" alt="Masters Hub screenshot" />
+        <figcaption>Masters Hub - fresh light-theme screenshot from LE-SOFT.</figcaption>
+      </figure>
+      <p class="intro">Masters is the control room for accounting, inventory, procurement, suppliers, products, and warehouse setup.</p>
+      <div class="two-col">
+        <div class="panel">
+          <h3>Feature controls shown</h3>
+          <ul><li>Open Account Groups before creating ledgers, because every ledger must belong to a group.</li><li>Create Units, Stock Groups, Godowns, and Products before using billing or purchase requisitions.</li><li>Open Suppliers to manage vendor ledgers, contact details, settlements, and purchase history.</li><li>Open Purchase Requisitions to request products and move them through approval, audit, purchase, receipt, and stock completion.</li></ul>
+        </div>
+        <div class="panel muted">
+          <h3>What to do in the software</h3>
+          <ul><li>Create master data first.</li><li>Then create transactions such as bills, purchase bills, and requisitions.</li><li>Use reports to verify the effect of the transactions.</li></ul>
+        </div>
+      </div>
+    </section>
+  
+
+    <section class="chapter">
+      <div class="chapter-heading">
+        <div>
+          <p class="eyebrow">Section 03</p>
+          <h2>Product List and Product Search</h2>
+        </div>
+      </div>
+      <figure>
+        <img src="screenshots/03_masters___products.jpg" alt="Product List and Product Search screenshot" />
+        <figcaption>Product List and Product Search - fresh light-theme screenshot from LE-SOFT.</figcaption>
+      </figure>
+      <p class="intro">The product list is the main catalogue screen. It helps users find, inspect, and manage products before selling, purchasing, or checking stock.</p>
+      <div class="two-col">
+        <div class="panel">
+          <h3>Feature controls shown</h3>
+          <ul><li>Use search to find products by name, SKU, model number, stock group, or other available product identifiers.</li><li>Use the action buttons to open the product ledger, edit product information, or manage records if your user group has permission.</li><li>Check product stock, unit, stock group, and pricing before using the product in a bill or purchase requisition.</li><li>Open Product Ledger when you need the full product history, supplier links, damage records, and purchase/sales movement.</li></ul>
+        </div>
+        <div class="panel muted">
+          <h3>What to do in the software</h3>
+          <ul><li>Search for the product.</li><li>Open the ledger for full history or edit the product if master data needs correction.</li><li>Use product summary from requisition screens before adding the product to a purchase request.</li></ul>
+        </div>
+      </div>
+    </section>
+  
+
+    <section class="chapter">
+      <div class="chapter-heading">
+        <div>
+          <p class="eyebrow">Section 04</p>
+          <h2>Creating and Editing Products</h2>
+        </div>
+      </div>
+      <figure>
+        <img src="screenshots/04_masters___create_product.jpg" alt="Creating and Editing Products screenshot" />
+        <figcaption>Creating and Editing Products - fresh light-theme screenshot from LE-SOFT.</figcaption>
+      </figure>
+      <p class="intro">The product form stores product identity, categorisation, stock location, pricing, supplier/import data, images, and product attributes.</p>
+      <div class="two-col">
+        <div class="panel">
+          <h3>Feature controls shown</h3>
+          <ul><li>The model number is generated from model rules and should not be typed manually.</li><li>Choose the product origin, stock group, unit, and godown carefully because these fields affect reporting and model generation.</li><li>Imported product creation should be restricted to Super Admin or approved users.</li><li>Use product attributes for flexible specifications such as size, color, finish, material, wattage, or model family.</li><li>Use image gallery fields to keep visual reference images for the product.</li></ul>
+        </div>
+        <div class="panel muted">
+          <h3>What to do in the software</h3>
+          <ul><li>Create product origins and model rules first.</li><li>Create stock groups and units.</li><li>Create the product and allow the system to generate the model number.</li><li>Add supplier/import information and product attributes.</li></ul>
+        </div>
+      </div>
+    </section>
+  
+
+    <section class="chapter">
+      <div class="chapter-heading">
+        <div>
+          <p class="eyebrow">Section 05</p>
+          <h2>Account Groups</h2>
+        </div>
+      </div>
+      <figure>
+        <img src="screenshots/05_masters___account_groups.jpg" alt="Account Groups screenshot" />
+        <figcaption>Account Groups - fresh light-theme screenshot from LE-SOFT.</figcaption>
+      </figure>
+      <p class="intro">Account groups organise ledgers into accounting categories such as Assets, Liabilities, Income, and Expenses.</p>
+      <div class="two-col">
+        <div class="panel">
+          <h3>Feature controls shown</h3>
+          <ul><li>Create parent groups before creating child groups.</li><li>Use correct nature because financial reports depend on group classification.</li><li>Keep group names clear and consistent to avoid confusion in trial balance and ledger reports.</li></ul>
+        </div>
+        <div class="panel muted">
+          <h3>What to do in the software</h3>
+          <ul><li>Create the group hierarchy.</li><li>Create ledgers under the correct group.</li><li>Use reports to verify account placement.</li></ul>
+        </div>
+      </div>
+    </section>
+  
+
+    <section class="chapter">
+      <div class="chapter-heading">
+        <div>
+          <p class="eyebrow">Section 06</p>
+          <h2>Ledgers and Supplier Accounts</h2>
+        </div>
+      </div>
+      <figure>
+        <img src="screenshots/06_masters___ledgers.jpg" alt="Ledgers and Supplier Accounts screenshot" />
+        <figcaption>Ledgers and Supplier Accounts - fresh light-theme screenshot from LE-SOFT.</figcaption>
+      </figure>
+      <p class="intro">Ledgers are the accounting accounts used for suppliers, customers, cash, bank, income, expense, and adjustment entries.</p>
+      <div class="two-col">
+        <div class="panel">
+          <h3>Feature controls shown</h3>
+          <ul><li>Supplier ledgers should be created under the proper creditor group.</li><li>Opening balances should be entered carefully because they affect financial reports.</li><li>Ledger details can be used to inspect related transactions and outstanding balances.</li></ul>
+        </div>
+        <div class="panel muted">
+          <h3>What to do in the software</h3>
+          <ul><li>Create the ledger with the correct group.</li><li>Enter opening balance if applicable.</li><li>Use the supplier page for vendor-specific management.</li></ul>
+        </div>
+      </div>
+    </section>
+  
+
+    <section class="chapter">
+      <div class="chapter-heading">
+        <div>
+          <p class="eyebrow">Section 07</p>
+          <h2>Stock Groups and Category Tree</h2>
+        </div>
+      </div>
+      <figure>
+        <img src="screenshots/07_masters___stock_groups.jpg" alt="Stock Groups and Category Tree screenshot" />
+        <figcaption>Stock Groups and Category Tree - fresh light-theme screenshot from LE-SOFT.</figcaption>
+      </figure>
+      <p class="intro">Stock groups define the product category structure. They should represent the way inventory is actually organised.</p>
+      <div class="two-col">
+        <div class="panel">
+          <h3>Feature controls shown</h3>
+          <ul><li>Use parent and child groups to create a visual hierarchy, such as Light &gt; Chandelier.</li><li>Assign every product to the correct stock group for accurate stock reports.</li><li>Use the tree view to confirm that child groups are under the intended parent.</li></ul>
+        </div>
+        <div class="panel muted">
+          <h3>What to do in the software</h3>
+          <ul><li>Create broad parent groups.</li><li>Create child groups under each parent.</li><li>Assign products to the correct child group.</li></ul>
+        </div>
+      </div>
+    </section>
+  
+
+    <section class="chapter">
+      <div class="chapter-heading">
+        <div>
+          <p class="eyebrow">Section 08</p>
+          <h2>Units of Measurement</h2>
+        </div>
+      </div>
+      <figure>
+        <img src="screenshots/08_masters___units_of_measurement.jpg" alt="Units of Measurement screenshot" />
+        <figcaption>Units of Measurement - fresh light-theme screenshot from LE-SOFT.</figcaption>
+      </figure>
+      <p class="intro">Units standardise quantities across products, purchase requisitions, billing, and reports.</p>
+      <div class="two-col">
+        <div class="panel">
+          <h3>Feature controls shown</h3>
+          <ul><li>Create units such as piece, box, kg, meter, liter, or set.</li><li>Use short symbols for compact display in tables and print formats.</li><li>Choose the desired unit while creating products so requisition quantities use the correct unit automatically.</li></ul>
+        </div>
+        <div class="panel muted">
+          <h3>What to do in the software</h3>
+          <ul><li>Create all common units.</li><li>Assign unit to product.</li><li>Use the product in bills and requisitions.</li></ul>
+        </div>
+      </div>
+    </section>
+  
+
+    <section class="chapter">
+      <div class="chapter-heading">
+        <div>
+          <p class="eyebrow">Section 09</p>
+          <h2>Supplier Management</h2>
+        </div>
+      </div>
+      <figure>
+        <img src="screenshots/09_masters___supplier_management.jpg" alt="Supplier Management screenshot" />
+        <figcaption>Supplier Management - fresh light-theme screenshot from LE-SOFT.</figcaption>
+      </figure>
+      <p class="intro">Supplier management connects vendor details, purchase records, settlements, and requisition estimates.</p>
+      <div class="two-col">
+        <div class="panel">
+          <h3>Feature controls shown</h3>
+          <ul><li>Use supplier ledgers to track purchase bills and settlement status.</li><li>Maintain contact person, phone, email, and notes so the purchase team can follow up quickly.</li><li>Supplier details entered during purchase requisitions should connect back to the supplier ledger wherever possible.</li></ul>
+        </div>
+        <div class="panel muted">
+          <h3>What to do in the software</h3>
+          <ul><li>Create supplier ledger.</li><li>Use supplier in purchase bill or requisition estimate.</li><li>Review supplier ledger for payments and purchase history.</li></ul>
+        </div>
+      </div>
+    </section>
+  
+
+    <section class="chapter">
+      <div class="chapter-heading">
+        <div>
+          <p class="eyebrow">Section 10</p>
+          <h2>Purchase Requisitions</h2>
+        </div>
+      </div>
+      <figure>
+        <img src="screenshots/10_masters___purchase_requisitions.jpg" alt="Purchase Requisitions screenshot" />
+        <figcaption>Purchase Requisitions - fresh light-theme screenshot from LE-SOFT.</figcaption>
+      </figure>
+      <p class="intro">Purchase requisitions control the request-to-purchase process. A requisition can contain multiple products and should move through approval, audit, purchase, receipt, and completion.</p>
+      <div class="two-col">
+        <div class="panel">
+          <h3>Feature controls shown</h3>
+          <ul><li>Store users create the requisition and add product lines.</li><li>Use the product summary button before adding a product to check stock, last purchase price, last purchase date, and sales history.</li><li>Store Head reviews and approves the request.</li><li>Accounts adds supplier or vendor information and approximate purchase price.</li><li>Audit reviews estimates and adds justification.</li><li>Director approves or rejects the requisition.</li><li>Purchase department records purchase details and prints the requisition when approved.</li><li>Receiving and Inventory complete goods receipt, damage transfer if needed, and stock posting.</li></ul>
+        </div>
+        <div class="panel muted">
+          <h3>What to do in the software</h3>
+          <ul><li>Create requisition with product lines.</li><li>Review product summary for each important item.</li><li>Move the requisition step by step through the approval workflow.</li><li>Use View to see product lines, quantity, supplier, estimate, previous price, and history.</li><li>Print only after director approval.</li></ul>
+        </div>
+      </div>
+    </section>
+  
+
+    <section class="chapter">
+      <div class="chapter-heading">
+        <div>
+          <p class="eyebrow">Section 11</p>
+          <h2>Billing and POS</h2>
+        </div>
+      </div>
+      <figure>
+        <img src="screenshots/11_billing___pos.jpg" alt="Billing and POS screenshot" />
+        <figcaption>Billing and POS - fresh light-theme screenshot from LE-SOFT.</figcaption>
+      </figure>
+      <p class="intro">Billing is used for sales invoice creation. It combines customer selection, product search, item lines, payment method, stock deduction, and receipt printing.</p>
+      <div class="two-col">
+        <div class="panel">
+          <h3>Feature controls shown</h3>
+          <ul><li>Search products and add them to the bill.</li><li>Select or create the customer before completing the invoice.</li><li>Review quantity, rate, discount, tax, and total before saving.</li><li>Use payment methods such as cash, card, bank, or MFS depending on configuration.</li><li>After saving, the bill affects customer ledger and product stock.</li></ul>
+        </div>
+        <div class="panel muted">
+          <h3>What to do in the software</h3>
+          <ul><li>Search customer or create customer.</li><li>Add products to invoice.</li><li>Confirm totals and payment method.</li><li>Save and print the bill.</li></ul>
+        </div>
+      </div>
+    </section>
+  
+
+    <section class="chapter">
+      <div class="chapter-heading">
+        <div>
+          <p class="eyebrow">Section 12</p>
+          <h2>Bill History</h2>
+        </div>
+      </div>
+      <figure>
+        <img src="screenshots/12_billing___bill_history.jpg" alt="Bill History screenshot" />
+        <figcaption>Bill History - fresh light-theme screenshot from LE-SOFT.</figcaption>
+      </figure>
+      <p class="intro">Bill history helps users search previous invoices, inspect bill details, reprint bills, and verify customer activity.</p>
+      <div class="two-col">
+        <div class="panel">
+          <h3>Feature controls shown</h3>
+          <ul><li>Search by customer, invoice number, date, or amount where available.</li><li>Open bill details before making any alteration.</li><li>Use reprint when a customer needs another copy.</li><li>Use exchanges or customer ledger to track post-sale activity.</li></ul>
+        </div>
+        <div class="panel muted">
+          <h3>What to do in the software</h3>
+          <ul><li>Find the bill.</li><li>Open details.</li><li>Reprint, alter, or inspect as permitted.</li></ul>
+        </div>
+      </div>
+    </section>
+  
+
+    <section class="chapter">
+      <div class="chapter-heading">
+        <div>
+          <p class="eyebrow">Section 13</p>
+          <h2>Pending Billing Approvals</h2>
+        </div>
+      </div>
+      <figure>
+        <img src="screenshots/13_billing___pending_approvals.jpg" alt="Pending Billing Approvals screenshot" />
+        <figcaption>Pending Billing Approvals - fresh light-theme screenshot from LE-SOFT.</figcaption>
+      </figure>
+      <p class="intro">Pending approvals are used when controlled billing actions need management review.</p>
+      <div class="two-col">
+        <div class="panel">
+          <h3>Feature controls shown</h3>
+          <ul><li>Review the bill change or request before approving.</li><li>Approve only after checking customer, items, discounts, and amount changes.</li><li>Reject or request correction when data is incomplete.</li><li>Every approval decision should be auditable.</li></ul>
+        </div>
+        <div class="panel muted">
+          <h3>What to do in the software</h3>
+          <ul><li>Open pending item.</li><li>Review old and new values.</li><li>Approve or reject.</li></ul>
+        </div>
+      </div>
+    </section>
+  
+
+    <section class="chapter">
+      <div class="chapter-heading">
+        <div>
+          <p class="eyebrow">Section 14</p>
+          <h2>Quotations</h2>
+        </div>
+      </div>
+      <figure>
+        <img src="screenshots/14_quotations.jpg" alt="Quotations screenshot" />
+        <figcaption>Quotations - fresh light-theme screenshot from LE-SOFT.</figcaption>
+      </figure>
+      <p class="intro">Quotations are used before a confirmed sale. They help prepare formal offers with products, quantities, prices, and validity.</p>
+      <div class="two-col">
+        <div class="panel">
+          <h3>Feature controls shown</h3>
+          <ul><li>Create quotation before billing when the customer has not confirmed the order.</li><li>Add products or custom lines.</li><li>Preview or print the quotation before sharing.</li><li>Convert accepted quotations into billing workflow where supported.</li></ul>
+        </div>
+        <div class="panel muted">
+          <h3>What to do in the software</h3>
+          <ul><li>Create quotation.</li><li>Add customer and line items.</li><li>Preview and print.</li><li>Follow up through CRM or billing.</li></ul>
+        </div>
+      </div>
+    </section>
+  
+
+    <section class="chapter">
+      <div class="chapter-heading">
+        <div>
+          <p class="eyebrow">Section 15</p>
+          <h2>Vouchers</h2>
+        </div>
+      </div>
+      <figure>
+        <img src="screenshots/15_vouchers.jpg" alt="Vouchers screenshot" />
+        <figcaption>Vouchers - fresh light-theme screenshot from LE-SOFT.</figcaption>
+      </figure>
+      <p class="intro">Vouchers record accounting transactions such as payments, receipts, journals, contra entries, and adjustments.</p>
+      <div class="two-col">
+        <div class="panel">
+          <h3>Feature controls shown</h3>
+          <ul><li>Select voucher type and date carefully.</li><li>Choose debit and credit ledgers correctly.</li><li>Use narration to make future audit easy.</li><li>Reports such as trial balance and day book depend on voucher accuracy.</li></ul>
+        </div>
+        <div class="panel muted">
+          <h3>What to do in the software</h3>
+          <ul><li>Create voucher header.</li><li>Add debit and credit lines.</li><li>Review totals.</li><li>Save and verify in reports.</li></ul>
+        </div>
+      </div>
+    </section>
+  
+
+    <section class="chapter">
+      <div class="chapter-heading">
+        <div>
+          <p class="eyebrow">Section 16</p>
+          <h2>Reports</h2>
+        </div>
+      </div>
+      <figure>
+        <img src="screenshots/16_reports.jpg" alt="Reports screenshot" />
+        <figcaption>Reports - fresh light-theme screenshot from LE-SOFT.</figcaption>
+      </figure>
+      <p class="intro">Reports provide financial, stock, sales, and product insight for decision making.</p>
+      <div class="two-col">
+        <div class="panel">
+          <h3>Feature controls shown</h3>
+          <ul><li>Use Trial Balance to verify accounting balances.</li><li>Use Profit and Loss and Balance Sheet for financial position.</li><li>Use Stock Summary to inspect quantity and inventory value.</li><li>Use Product History and Market Analysis to review pricing and market movement.</li><li>Use date filters before exporting reports.</li></ul>
+        </div>
+        <div class="panel muted">
+          <h3>What to do in the software</h3>
+          <ul><li>Choose report.</li><li>Set date range or filter.</li><li>Review totals.</li><li>Export or print if required.</li></ul>
+        </div>
+      </div>
+    </section>
+  
+
+    <section class="chapter">
+      <div class="chapter-heading">
+        <div>
+          <p class="eyebrow">Section 17</p>
+          <h2>HRM Dashboard</h2>
+        </div>
+      </div>
+      <figure>
+        <img src="screenshots/17_hrm___dashboard.jpg" alt="HRM Dashboard screenshot" />
+        <figcaption>HRM Dashboard - fresh light-theme screenshot from LE-SOFT.</figcaption>
+      </figure>
+      <p class="intro">The HRM dashboard gives an overview of employees, attendance, leaves, and payroll activity.</p>
+      <div class="two-col">
+        <div class="panel">
+          <h3>Feature controls shown</h3>
+          <ul><li>Review employee count and attendance summary.</li><li>Check pending leave requests.</li><li>Open payroll or employee list from shortcuts.</li></ul>
+        </div>
+        <div class="panel muted">
+          <h3>What to do in the software</h3>
+          <ul><li>Open HRM dashboard.</li><li>Check alerts and summaries.</li><li>Open the specific HRM page for action.</li></ul>
+        </div>
+      </div>
+    </section>
+  
+
+    <section class="chapter">
+      <div class="chapter-heading">
+        <div>
+          <p class="eyebrow">Section 18</p>
+          <h2>Employee Management</h2>
+        </div>
+      </div>
+      <figure>
+        <img src="screenshots/18_hrm___employees.jpg" alt="Employee Management screenshot" />
+        <figcaption>Employee Management - fresh light-theme screenshot from LE-SOFT.</figcaption>
+      </figure>
+      <p class="intro">Employee management stores staff records, department, designation, contact, salary, and active status.</p>
+      <div class="two-col">
+        <div class="panel">
+          <h3>Feature controls shown</h3>
+          <ul><li>Create employees before recording attendance or payroll.</li><li>Keep employee code unique and readable.</li><li>Deactivate employees instead of deleting when history is needed.</li></ul>
+        </div>
+        <div class="panel muted">
+          <h3>What to do in the software</h3>
+          <ul><li>Create employee.</li><li>Maintain profile and employment details.</li><li>Use employee in attendance, leave, and payroll.</li></ul>
+        </div>
+      </div>
+    </section>
+  
+
+    <section class="chapter">
+      <div class="chapter-heading">
+        <div>
+          <p class="eyebrow">Section 19</p>
+          <h2>Attendance</h2>
+        </div>
+      </div>
+      <figure>
+        <img src="screenshots/19_hrm___attendance.jpg" alt="Attendance screenshot" />
+        <figcaption>Attendance - fresh light-theme screenshot from LE-SOFT.</figcaption>
+      </figure>
+      <p class="intro">Attendance records check-in, check-out, working hours, and exceptions.</p>
+      <div class="two-col">
+        <div class="panel">
+          <h3>Feature controls shown</h3>
+          <ul><li>Use daily attendance to track staff presence.</li><li>Correct attendance only with proper permission.</li><li>Use attendance data during payroll review.</li></ul>
+        </div>
+        <div class="panel muted">
+          <h3>What to do in the software</h3>
+          <ul><li>Select date.</li><li>Review employee attendance.</li><li>Adjust records if required and permitted.</li></ul>
+        </div>
+      </div>
+    </section>
+  
+
+    <section class="chapter">
+      <div class="chapter-heading">
+        <div>
+          <p class="eyebrow">Section 20</p>
+          <h2>Leave Management</h2>
+        </div>
+      </div>
+      <figure>
+        <img src="screenshots/20_hrm___leave_management.jpg" alt="Leave Management screenshot" />
+        <figcaption>Leave Management - fresh light-theme screenshot from LE-SOFT.</figcaption>
+      </figure>
+      <p class="intro">Leave management keeps employee leave requests and approval status in one place.</p>
+      <div class="two-col">
+        <div class="panel">
+          <h3>Feature controls shown</h3>
+          <ul><li>Review leave reason and dates before approval.</li><li>Approve or reject based on company policy.</li><li>Use history to check previous leave activity.</li></ul>
+        </div>
+        <div class="panel muted">
+          <h3>What to do in the software</h3>
+          <ul><li>Open leave request.</li><li>Review dates and reason.</li><li>Approve or reject.</li></ul>
+        </div>
+      </div>
+    </section>
+  
+
+    <section class="chapter">
+      <div class="chapter-heading">
+        <div>
+          <p class="eyebrow">Section 21</p>
+          <h2>Payroll</h2>
+        </div>
+      </div>
+      <figure>
+        <img src="screenshots/21_hrm___payroll.jpg" alt="Payroll screenshot" />
+        <figcaption>Payroll - fresh light-theme screenshot from LE-SOFT.</figcaption>
+      </figure>
+      <p class="intro">Payroll summarizes salary calculation, deductions, bonuses, and net pay.</p>
+      <div class="two-col">
+        <div class="panel">
+          <h3>Feature controls shown</h3>
+          <ul><li>Confirm attendance and leave records before payroll finalization.</li><li>Review salary components carefully.</li><li>Export or print payroll records for company files.</li></ul>
+        </div>
+        <div class="panel muted">
+          <h3>What to do in the software</h3>
+          <ul><li>Select payroll period.</li><li>Review employee salary details.</li><li>Finalize or export payroll.</li></ul>
+        </div>
+      </div>
+    </section>
+  
+
+    <section class="chapter">
+      <div class="chapter-heading">
+        <div>
+          <p class="eyebrow">Section 22</p>
+          <h2>MAKE Production Dashboard</h2>
+        </div>
+      </div>
+      <figure>
+        <img src="screenshots/22_make___production_dashboard.jpg" alt="MAKE Production Dashboard screenshot" />
+        <figcaption>MAKE Production Dashboard - fresh light-theme screenshot from LE-SOFT.</figcaption>
+      </figure>
+      <p class="intro">MAKE tracks custom production or manufacturing orders from request to completion.</p>
+      <div class="two-col">
+        <div class="panel">
+          <h3>Feature controls shown</h3>
+          <ul><li>Use summary cards to check production load.</li><li>Open pending orders for follow-up.</li><li>Track status across production stages.</li></ul>
+        </div>
+        <div class="panel muted">
+          <h3>What to do in the software</h3>
+          <ul><li>Review production dashboard.</li><li>Open orders needing attention.</li><li>Update status from the tracking page.</li></ul>
+        </div>
+      </div>
+    </section>
+  
+
+    <section class="chapter">
+      <div class="chapter-heading">
+        <div>
+          <p class="eyebrow">Section 23</p>
+          <h2>Place MAKE Order</h2>
+        </div>
+      </div>
+      <figure>
+        <img src="screenshots/23_make___place_order.jpg" alt="Place MAKE Order screenshot" />
+        <figcaption>Place MAKE Order - fresh light-theme screenshot from LE-SOFT.</figcaption>
+      </figure>
+      <p class="intro">The place order screen creates production orders with customer, product, material, delivery, and instruction details.</p>
+      <div class="two-col">
+        <div class="panel">
+          <h3>Feature controls shown</h3>
+          <ul><li>Add customer and order details.</li><li>Enter measurements, material, and deadline accurately.</li><li>Use notes for production-specific instructions.</li></ul>
+        </div>
+        <div class="panel muted">
+          <h3>What to do in the software</h3>
+          <ul><li>Create MAKE order.</li><li>Assign details and deadline.</li><li>Save and track from the production board.</li></ul>
+        </div>
+      </div>
+    </section>
+  
+
+    <section class="chapter">
+      <div class="chapter-heading">
+        <div>
+          <p class="eyebrow">Section 24</p>
+          <h2>Track MAKE Orders</h2>
+        </div>
+      </div>
+      <figure>
+        <img src="screenshots/24_make___track_orders.jpg" alt="Track MAKE Orders screenshot" />
+        <figcaption>Track MAKE Orders - fresh light-theme screenshot from LE-SOFT.</figcaption>
+      </figure>
+      <p class="intro">Track Orders shows current production progress and status updates.</p>
+      <div class="two-col">
+        <div class="panel">
+          <h3>Feature controls shown</h3>
+          <ul><li>Filter by status, priority, or assigned user where available.</li><li>Update production stage as work moves forward.</li><li>Use history to identify delays.</li></ul>
+        </div>
+        <div class="panel muted">
+          <h3>What to do in the software</h3>
+          <ul><li>Find the order.</li><li>Open or update status.</li><li>Record meaningful notes when status changes.</li></ul>
+        </div>
+      </div>
+    </section>
+  
+
+    <section class="chapter">
+      <div class="chapter-heading">
+        <div>
+          <p class="eyebrow">Section 25</p>
+          <h2>Shipping Dashboard</h2>
+        </div>
+      </div>
+      <figure>
+        <img src="screenshots/25_shipping_dashboard.jpg" alt="Shipping Dashboard screenshot" />
+        <figcaption>Shipping Dashboard - fresh light-theme screenshot from LE-SOFT.</figcaption>
+      </figure>
+      <p class="intro">Shipping manages delivery status after billing or order completion.</p>
+      <div class="two-col">
+        <div class="panel">
+          <h3>Feature controls shown</h3>
+          <ul><li>Review pending payment, packed, dispatched, and delivered shipments.</li><li>Update shipping status as goods move.</li><li>Keep delivery notes, vehicle, and staff details where required.</li></ul>
+        </div>
+        <div class="panel muted">
+          <h3>What to do in the software</h3>
+          <ul><li>Open shipping record.</li><li>Verify payment and package readiness.</li><li>Update dispatch and delivery status.</li></ul>
+        </div>
+      </div>
+    </section>
+  
+
+    <section class="chapter">
+      <div class="chapter-heading">
+        <div>
+          <p class="eyebrow">Section 26</p>
+          <h2>Website Admin</h2>
+        </div>
+      </div>
+      <figure>
+        <img src="screenshots/26_website_admin.jpg" alt="Website Admin screenshot" />
+        <figcaption>Website Admin - fresh light-theme screenshot from LE-SOFT.</figcaption>
+      </figure>
+      <p class="intro">Website Admin connects the desktop ERP with website commerce and content management.</p>
+      <div class="two-col">
+        <div class="panel">
+          <h3>Feature controls shown</h3>
+          <ul><li>Manage website products, categories, orders, pages, projects, media, and newsletter data.</li><li>Use sync tools carefully to avoid mismatched website and ERP data.</li><li>Review orders from the website before processing them operationally.</li></ul>
+        </div>
+        <div class="panel muted">
+          <h3>What to do in the software</h3>
+          <ul><li>Open website dashboard.</li><li>Review new orders or content updates.</li><li>Sync or update only after verification.</li></ul>
+        </div>
+      </div>
+    </section>
+  
+
+    <section class="chapter">
+      <div class="chapter-heading">
+        <div>
+          <p class="eyebrow">Section 27</p>
+          <h2>User Management</h2>
+        </div>
+      </div>
+      <figure>
+        <img src="screenshots/27_user_management.jpg" alt="User Management screenshot" />
+        <figcaption>User Management - fresh light-theme screenshot from LE-SOFT.</figcaption>
+      </figure>
+      <p class="intro">User management controls who can access the system and what they can do.</p>
+      <div class="two-col">
+        <div class="panel">
+          <h3>Feature controls shown</h3>
+          <ul><li>Create each user with a clear username, full name, role, group, and active status.</li><li>Use user groups to assign permission sets.</li><li>Disable users temporarily when access should be paused.</li><li>Delete users only when historical references are safely handled by the database.</li></ul>
+        </div>
+        <div class="panel muted">
+          <h3>What to do in the software</h3>
+          <ul><li>Create or edit user.</li><li>Assign correct group.</li><li>Confirm permissions.</li><li>Monitor sessions from Active Sessions.</li></ul>
+        </div>
+      </div>
+    </section>
+  
+
+    <section class="chapter">
+      <div class="chapter-heading">
+        <div>
+          <p class="eyebrow">Section 28</p>
+          <h2>User Groups and Permissions</h2>
+        </div>
+      </div>
+      <figure>
+        <img src="screenshots/28_user_management___groups.jpg" alt="User Groups and Permissions screenshot" />
+        <figcaption>User Groups and Permissions - fresh light-theme screenshot from LE-SOFT.</figcaption>
+      </figure>
+      <p class="intro">User groups define permission templates for departments and job levels.</p>
+      <div class="two-col">
+        <div class="panel">
+          <h3>Feature controls shown</h3>
+          <ul><li>Create groups for departments such as Store, Store Head, Accounts, Audit, Director, Purchase, Inventory, Admin, and Super Admin.</li><li>Assign purchase requisition permissions only to groups involved in the workflow.</li><li>Use active/inactive group status to temporarily disable access without deleting history.</li><li>Keep group descriptions readable so administrators understand the purpose of each group.</li></ul>
+        </div>
+        <div class="panel muted">
+          <h3>What to do in the software</h3>
+          <ul><li>Create group.</li><li>Write a meaningful description.</li><li>Assign permissions.</li><li>Save and assign users to the group.</li></ul>
+        </div>
+      </div>
+    </section>
+  
+
+    <section class="chapter">
+      <div class="chapter-heading">
+        <div>
+          <p class="eyebrow">Section 29</p>
+          <h2>Settings</h2>
+        </div>
+      </div>
+      <figure>
+        <img src="screenshots/29_settings.jpg" alt="Settings screenshot" />
+        <figcaption>Settings - fresh light-theme screenshot from LE-SOFT.</figcaption>
+      </figure>
+      <p class="intro">Settings controls application preferences, database configuration, print settings, backup tools, and operational defaults.</p>
+      <div class="two-col">
+        <div class="panel">
+          <h3>Feature controls shown</h3>
+          <ul><li>Configure barcode and print page settings per print option.</li><li>Manage Supabase admin key and database backup options carefully.</li><li>Set auto logout, theme, and other device-level preferences.</li><li>Only admin-level users should modify system settings.</li></ul>
+        </div>
+        <div class="panel muted">
+          <h3>What to do in the software</h3>
+          <ul><li>Open Settings.</li><li>Change only the required setting.</li><li>Test the related module after saving.</li></ul>
+        </div>
+      </div>
+    </section>
+  
+
+    <section class="chapter">
+      <div class="chapter-heading">
+        <div>
+          <p class="eyebrow">Section 30</p>
+          <h2>Email and Campaigns</h2>
+        </div>
+      </div>
+      <figure>
+        <img src="screenshots/30_email_campaigns.jpg" alt="Email and Campaigns screenshot" />
+        <figcaption>Email and Campaigns - fresh light-theme screenshot from LE-SOFT.</figcaption>
+      </figure>
+      <p class="intro">The email module is used for internal/outbound email and campaign-style communication.</p>
+      <div class="two-col">
+        <div class="panel">
+          <h3>Feature controls shown</h3>
+          <ul><li>Prepare campaign content and recipients before sending.</li><li>Avoid sending large volumes too quickly because email providers can block or throttle bulk mail.</li><li>Use proper unsubscribe, sender identity, and recipient list hygiene for deliverability.</li><li>Track sent status and failed deliveries where available.</li></ul>
+        </div>
+        <div class="panel muted">
+          <h3>What to do in the software</h3>
+          <ul><li>Prepare recipient list.</li><li>Create email content.</li><li>Send in controlled batches.</li><li>Review delivery status.</li></ul>
+        </div>
+      </div>
+    </section>
+  
+
+  <section class="appendix">
+    <div class="page-title">
+      <h2>Permission and Safety Notes</h2>
+      <p>Administrative guidance</p>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Area</th>
+          <th>Recommended Control</th>
+          <th>Reason</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Product creation</td>
+          <td>Imported products should be restricted to Super Admin. Local products can be allowed for approved store managers.</td>
+          <td>Product identity, supplier, and import records affect purchasing and reporting.</td>
+        </tr>
+        <tr>
+          <td>Purchase requisitions</td>
+          <td>Each workflow step should be assigned to the correct department group.</td>
+          <td>This keeps responsibility clear and makes approval history reliable.</td>
+        </tr>
+        <tr>
+          <td>Damaged goods</td>
+          <td>Only inventory managers, admins, or specifically approved groups should transfer or write off damaged stock.</td>
+          <td>Damaged goods affect usable quantity and financial stock value.</td>
+        </tr>
+        <tr>
+          <td>User groups</td>
+          <td>Use group descriptions and disable groups when access must be paused temporarily.</td>
+          <td>This is safer than deleting groups that may be linked to users or history.</td>
+        </tr>
+        <tr>
+          <td>Settings</td>
+          <td>Limit system settings, database keys, backup, and print configuration to administrators.</td>
+          <td>Incorrect settings can affect all users on the device or company dataset.</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="appendix">
+    <div class="page-title">
+      <h2>Daily Operating Checklist</h2>
+      <p>Suggested routine</p>
+    </div>
+    <div class="two-col">
+      <div class="panel">
+        <h3>Start of Day</h3>
+        <ul>
+          <li>Open Dashboard and check summary cards.</li>
+          <li>Review notifications and pending approvals.</li>
+          <li>Check low stock alerts and urgent purchase requisitions.</li>
+          <li>Confirm active users and system readiness if you are an admin.</li>
+        </ul>
+      </div>
+      <div class="panel muted">
+        <h3>End of Day</h3>
+        <ul>
+          <li>Review billing history and day book.</li>
+          <li>Check pending requisitions, shipping, and MAKE orders.</li>
+          <li>Review damaged goods and low stock reports.</li>
+          <li>Export or print reports if required by management.</li>
+        </ul>
+      </div>
+    </div>
+    <p class="note">For critical data such as stock, supplier balances, and purchase approvals, always use the system reports and ledgers instead of relying only on screen totals.</p>
+  </section>
+</body>
+</html>

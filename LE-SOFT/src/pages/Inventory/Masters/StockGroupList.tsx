@@ -10,6 +10,8 @@ interface StockGroupNode {
     name: string;
     parent_id?: number | null;
     parent_name?: string | null;
+    product_count?: number;
+    total_products?: number;
     children: StockGroupNode[];
 }
 
@@ -87,6 +89,19 @@ const StockGroupList: React.FC = () => {
             else roots.push(node);
         });
 
+        const calculateTotals = (node: StockGroupNode): number => {
+            let sum = Number(node.product_count || 0);
+            node.children.forEach((child) => {
+                sum += calculateTotals(child);
+            });
+            node.total_products = sum;
+            return sum;
+        };
+
+        roots.forEach((root) => {
+            calculateTotals(root);
+        });
+
         const sortNodes = (list: StockGroupNode[]) => {
             list.sort((a, b) => a.name.localeCompare(b.name));
             list.forEach((node) => sortNodes(node.children));
@@ -130,7 +145,6 @@ const StockGroupList: React.FC = () => {
         <motion.div
             key={group.id}
             className={`stock-group-tree-row ${depth === 0 ? 'root' : 'child'}`}
-            style={{ marginLeft: depth ? `${Math.min(depth * 28, 112)}px` : 0 }}
             initial={{ opacity: 0, y: 4 }}
             animate={{ opacity: 1, y: 0 }}
         >
@@ -139,7 +153,20 @@ const StockGroupList: React.FC = () => {
                     <span className="stock-group-branch" aria-hidden="true" />
                     <div className="stock-group-icon"><Layers size={16} /></div>
                     <div>
-                        <strong>{group.name}</strong>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <strong>{group.name}</strong>
+                            <span className="badge" style={{ 
+                                background: 'rgba(249, 115, 22, 0.08)', 
+                                border: '1px solid rgba(249, 115, 22, 0.2)', 
+                                color: 'var(--accent-color)', 
+                                padding: '0.15rem 0.45rem', 
+                                borderRadius: '6px', 
+                                fontSize: '0.72rem', 
+                                fontWeight: 700 
+                            }}>
+                                {group.total_products} {group.total_products === 1 ? 'Product' : 'Products'}
+                            </span>
+                        </div>
                         <span>{group.parent_name ? `Under ${group.parent_name}` : 'Primary group'}</span>
                     </div>
                 </div>

@@ -57,7 +57,7 @@ async function uploadOptimizedImage(buffer: Buffer, filenamePrefix: string): Pro
     const optimized = await optimizeImageBuffer(buffer);
     const formData = new FormData();
     formData.append('secret_key', HOSTINGER_UPLOAD_SECRET);
-    formData.append('image', new Blob([optimized], { type: 'image/webp' }), `${filenamePrefix}_${Date.now()}.webp`);
+    formData.append('image', new Blob([new Uint8Array(optimized)], { type: 'image/webp' }), `${filenamePrefix}_${Date.now()}.webp`);
 
     const response = await fetch(HOSTINGER_UPLOAD_URL, { method: 'POST', body: formData });
     const data = await response.json();
@@ -632,9 +632,29 @@ export function registerHandlers() {
     // ═══ INVENTORY — STOCK GROUPS ════════════════════════════════════════════════
 
     ipcMain.handle('get-stock-groups', async () => {
-        const { data, error } = await supabase.from('stock_groups').select('*, parent:stock_groups!parent_id(name)').order('name');
-        if (error) throw error;
-        return decryptRows(data || []).map((g: any) => ({ ...g, parent_name: g.parent?.name || null }));
+        const { data: groupsData, error: groupsError } = await supabase.from('stock_groups').select('*, parent:stock_groups!parent_id(name)').order('name');
+        if (groupsError) throw groupsError;
+
+        const { data: productsData, error: productsError } = await supabase.from('products').select('id, stock_group_id');
+        if (productsError) throw productsError;
+
+        const decryptedGroups = decryptRows(groupsData || []).map((g: any) => ({ 
+            ...g, 
+            parent_name: g.parent?.name || null 
+        }));
+
+        const productCounts: Record<number, number> = {};
+        (productsData || []).forEach((p: any) => {
+            if (p.stock_group_id) {
+                const sgId = Number(p.stock_group_id);
+                productCounts[sgId] = (productCounts[sgId] || 0) + 1;
+            }
+        });
+
+        return decryptedGroups.map((g: any) => ({
+            ...g,
+            product_count: productCounts[Number(g.id)] || 0
+        }));
     });
 
     ipcMain.handle('create-stock-group', async (_e, group) => {
@@ -1148,13 +1168,14 @@ export function registerHandlers() {
         const saleRows = sales || [];
         const totalSoldQty = saleRows.reduce((sum: number, row: any) => sum + Number(row.quantity || 0), 0);
         const totalSalesAmount = saleRows.reduce((sum: number, row: any) => sum + Number(row.price || 0), 0);
+        const productData = product as any;
 
         return {
             product: {
                 ...product,
-                unit_name: product.unit?.name || null,
-                unit_symbol: product.unit?.symbol || null,
-                group_name: product.group?.name || null,
+                unit_name: productData.unit?.name || null,
+                unit_symbol: productData.unit?.symbol || null,
+                group_name: productData.group?.name || null,
             },
             lastPurchase: lastPurchase || null,
             sales: saleRows,
@@ -1264,6 +1285,7 @@ export function registerHandlers() {
             name: attribute.name,
             input_type: attribute.inputType || 'text',
             options: attribute.options || [],
+            unit: attribute.unit || null,
             is_active: attribute.isActive !== false,
             company_id: 1,
             updated_at: new Date().toISOString(),
@@ -2198,10 +2220,11 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('delete-user', async (_e, id: number) => {
-        if (!supabaseAdmin) throw new Error('Database Admin Key not configured in settings.');
-        const { data: row } = await supabaseAdmin.from('users').select('auth_id, username').eq('id', id).single();
+        const adminClient = supabaseAdmin;
+        if (!adminClient) throw new Error('Database Admin Key not configured in settings.');
+        const { data: row } = await adminClient.from('users').select('auth_id, username').eq('id', id).single();
 
-        const runCleanup = async (operation: () => Promise<any>, fallback?: () => Promise<any>) => {
+        const runCleanup = async (operation: () => PromiseLike<any> | any, fallback?: () => PromiseLike<any> | any) => {
             const { error } = await operation();
             const ignorableCodes = new Set(['42P01', '42703', 'PGRST204', 'PGRST205']);
             if (error?.code === '23502' && fallback) {
@@ -2214,29 +2237,29 @@ export function registerHandlers() {
             }
         };
 
-        await runCleanup(() => supabaseAdmin.from('notifications').update({ sender_id: null }).eq('sender_id', id));
-        await runCleanup(() => supabaseAdmin.from('notifications').update({ recipient_id: null }).eq('recipient_id', id));
-        await runCleanup(() => supabaseAdmin.from('permission_levels').update({ approver_user_id: null }).eq('approver_user_id', id));
-        await runCleanup(() => supabaseAdmin.from('app_license').update({ bound_user_id: null }).eq('bound_user_id', id));
-        await runCleanup(() => supabaseAdmin.from('make_orders').update({ salesman_id: null }).eq('salesman_id', id));
-        await runCleanup(() => supabaseAdmin.from('crm_tracking').update({ user_id: null }).eq('user_id', id));
-        await runCleanup(() => supabaseAdmin.from('crm_customers').update({ user_id: null }).eq('user_id', id));
-        await runCleanup(() => supabaseAdmin.from('system_emails').update({ receiver_id: null }).eq('receiver_id', id));
+        await runCleanup(() => adminClient.from('notifications').update({ sender_id: null }).eq('sender_id', id));
+        await runCleanup(() => adminClient.from('notifications').update({ recipient_id: null }).eq('recipient_id', id));
+        await runCleanup(() => adminClient.from('permission_levels').update({ approver_user_id: null }).eq('approver_user_id', id));
+        await runCleanup(() => adminClient.from('app_license').update({ bound_user_id: null }).eq('bound_user_id', id));
+        await runCleanup(() => adminClient.from('make_orders').update({ salesman_id: null }).eq('salesman_id', id));
+        await runCleanup(() => adminClient.from('crm_tracking').update({ user_id: null }).eq('user_id', id));
+        await runCleanup(() => adminClient.from('crm_customers').update({ user_id: null }).eq('user_id', id));
+        await runCleanup(() => adminClient.from('system_emails').update({ receiver_id: null }).eq('receiver_id', id));
         await runCleanup(
-            () => supabaseAdmin.from('system_emails').update({ sender_id: null }).eq('sender_id', id),
-            () => supabaseAdmin.from('system_emails').delete().eq('sender_id', id)
+            () => adminClient.from('system_emails').update({ sender_id: null }).eq('sender_id', id),
+            () => adminClient.from('system_emails').delete().eq('sender_id', id)
         );
-        await runCleanup(() => supabaseAdmin.from('internal_messages').update({ receiver_id: null }).eq('receiver_id', id));
+        await runCleanup(() => adminClient.from('internal_messages').update({ receiver_id: null }).eq('receiver_id', id));
         await runCleanup(
-            () => supabaseAdmin.from('internal_messages').update({ sender_id: null }).eq('sender_id', id),
-            () => supabaseAdmin.from('internal_messages').delete().eq('sender_id', id)
+            () => adminClient.from('internal_messages').update({ sender_id: null }).eq('sender_id', id),
+            () => adminClient.from('internal_messages').delete().eq('sender_id', id)
         );
 
-        const { error } = await supabaseAdmin.from('users').delete().eq('id', id);
+        const { error } = await adminClient.from('users').delete().eq('id', id);
         if (error) throw error;
 
         if (row?.auth_id) {
-            const { error: authError } = await supabaseAdmin.auth.admin.deleteUser(row.auth_id);
+            const { error: authError } = await adminClient.auth.admin.deleteUser(row.auth_id);
             if (authError) console.error('[delete-user] Could not delete auth user:', authError.message);
         }
         return { success: true };
@@ -4486,6 +4509,7 @@ export function registerHandlers() {
             const normalizedQuotes = (quotes || [])
                 .map((q: any) => ({
                     supplierId: q.supplierId ? Number(q.supplierId) : null,
+                    productId: q.productId ? Number(q.productId) : null,
                     estimatedPrice: Number(q.estimatedPrice),
                     remarks: q.remarks || '',
                 }))
@@ -4500,14 +4524,38 @@ export function registerHandlers() {
                 await supabase.from('purchase_requisition_quotes').insert({
                     requisition_id: id,
                     supplier_ledger_id: q.supplierId,
+                    product_id: q.productId,
                     estimated_price: q.estimatedPrice,
                     remarks: q.remarks || ''
                 });
             }
 
+            // Generate unique PO number PO-YYYYMMDD-XXXX
+            const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+            const prefix = `PO-${todayStr}-`;
+            let poNumber = '';
+            try {
+                const { data: existingPOs } = await supabase
+                    .from('purchase_requisitions')
+                    .select('purchase_order_number')
+                    .like('purchase_order_number', `${prefix}%`);
+                const nextSeq = (existingPOs || []).length + 1;
+                poNumber = `${prefix}${String(nextSeq).padStart(4, '0')}`;
+            } catch (poErr) {
+                console.error('[submit-purchase-estimates] Error generating PO number:', poErr);
+            }
+
+            const updatePayload: any = { 
+                status: 'PENDING_AUDIT', 
+                updated_at: new Date().toISOString() 
+            };
+            if (poNumber) {
+                updatePayload.purchase_order_number = poNumber;
+            }
+
             const { error } = await supabase
                 .from('purchase_requisitions')
-                .update({ status: 'PENDING_AUDIT', updated_at: new Date().toISOString() })
+                .update(updatePayload)
                 .eq('id', id);
 
             if (error) throw error;
@@ -4517,12 +4565,12 @@ export function registerHandlers() {
                 fromStatus: 'PENDING_ESTIMATE',
                 toStatus: 'PENDING_AUDIT',
                 action: 'ESTIMATES_SUBMITTED',
-                remarks: `Submitted ${normalizedQuotes.length} quotes.`,
+                remarks: `Submitted ${normalizedQuotes.length} quotes. Generated PO Number: ${poNumber || 'N/A'}.`,
                 oldValue: before,
-                newValue: { ...before, status: 'PENDING_AUDIT' },
+                newValue: { ...before, status: 'PENDING_AUDIT', purchase_order_number: poNumber || null },
                 performedByName: userName,
             });
-            await notifyProcurementWorkflow('Estimates Submitted', `Quotes submitted for REQ ${before.requisition_number}.`);
+            await notifyProcurementWorkflow('Estimates Submitted', `Quotes submitted and PO generated for REQ ${before.requisition_number}.`);
             return { success: true };
         } catch (e: any) {
             console.error('[submit-purchase-estimates] Error:', e.message);
@@ -4537,7 +4585,16 @@ export function registerHandlers() {
             .eq('requisition_id', id)
             .order('created_at', { ascending: true });
         if (error) throw error;
-        return data || [];
+        
+        // Decrypt nested supplier ledger names
+        const decryptedData = (data || []).map((quote: any) => {
+            const decQuote = decryptObject(quote);
+            if (decQuote.supplier) {
+                decQuote.supplier = decryptObject(decQuote.supplier);
+            }
+            return decQuote;
+        });
+        return decryptedData;
     });
 
     ipcMain.handle('get-product-purchase-history', async (_e, productId: number) => {

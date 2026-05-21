@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Plus, Trash2, Check, X, Package, ShoppingCart, AlertCircle, Clock, FileText, Eye, Printer, Edit2, PackageMinus } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useAutoRefresh } from '../../../hooks/useAutoRefresh';
 import { getPrintPageSize } from '../../../utils/printPageSize';
 import './PurchaseRequisitions.css';
@@ -70,6 +70,7 @@ interface PurchaseRequisition {
     purchased_quantity?: number;
     purchase_remarks?: string;
     items?: PurchaseRequisitionItem[];
+    purchase_order_number?: string;
 }
 
 interface PurchaseRequisitionHistory {
@@ -94,6 +95,8 @@ const PurchaseRequisitions: React.FC = () => {
     const [showAuditModal, setShowAuditModal] = useState(false);
     const [showEstimatesModal, setShowEstimatesModal] = useState(false);
     const [estimates, setEstimates] = useState<any[]>([{ supplierId: '', estimatedPrice: '', remarks: '' }]);
+    const [lastPurchasedPrices, setLastPurchasedPrices] = useState<Record<string, number | null>>({});
+    const [showComparisonDrawer, setShowComparisonDrawer] = useState(false);
     const [fetchedQuotes, setFetchedQuotes] = useState<any[]>([]);
     const [directorHistory, setDirectorHistory] = useState<any[]>([]);
     const [showDirectorModal, setShowDirectorModal] = useState(false);
@@ -191,6 +194,34 @@ const PurchaseRequisitions: React.FC = () => {
     useEffect(() => {
         fetchData();
     }, [fetchData]);
+
+    useEffect(() => {
+        if (showEstimatesModal && selectedRequisition) {
+            const itemsList = getPrintableItems(selectedRequisition);
+            const fetchAllHistory = async () => {
+                const pricesMap: Record<string, number | null> = {};
+                await Promise.all(itemsList.map(async (item) => {
+                    try {
+                        const history = await (window as any).electron?.getProductPurchaseHistory?.(Number(item.product_id));
+                        if (history && history.length > 0) {
+                            const rate = history[0].rate ?? (history[0].qty ? Number(history[0].amount || 0) / Number(history[0].qty) : history[0].amount);
+                            pricesMap[String(item.product_id)] = Number(rate) || null;
+                        } else {
+                            pricesMap[String(item.product_id)] = null;
+                        }
+                    } catch (e) {
+                        console.error(e);
+                        pricesMap[String(item.product_id)] = null;
+                    }
+                }));
+                setLastPurchasedPrices(pricesMap);
+            };
+            fetchAllHistory();
+        } else {
+            setLastPurchasedPrices({});
+            setShowComparisonDrawer(false);
+        }
+    }, [showEstimatesModal, selectedRequisition]);
 
     const handleCreateSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -290,12 +321,22 @@ const PurchaseRequisitions: React.FC = () => {
                         paymentMethod: est.newSupplier.paymentMethod
                     });
                     if (newLedger?.id) {
-                        processedEstimates.push({ ...est, supplierId: newLedger.id.toString() });
+                        processedEstimates.push({
+                            productId: est.productId,
+                            supplierId: newLedger.id.toString(),
+                            estimatedPrice: est.estimatedPrice,
+                            remarks: est.remarks
+                        });
                     } else {
                         throw new Error('Failed to create new supplier');
                     }
                 } else {
-                    processedEstimates.push(est);
+                    processedEstimates.push({
+                        productId: est.productId,
+                        supplierId: est.supplierId,
+                        estimatedPrice: est.estimatedPrice,
+                        remarks: est.remarks
+                    });
                 }
             }
 
@@ -306,7 +347,7 @@ const PurchaseRequisitions: React.FC = () => {
             );
             if (result?.success) {
                 setShowEstimatesModal(false);
-                setEstimates([{ supplierId: '', estimatedPrice: '', remarks: '' }]);
+                setEstimates([]);
                 setSelectedRequisition(null);
                 fetchData();
             }
@@ -622,7 +663,7 @@ const PurchaseRequisitions: React.FC = () => {
 
     const getCurrentOwner = (req: PurchaseRequisition) => {
         if (req.status === 'DRAFT') return 'Store Head';
-        if (req.status === 'PENDING_ESTIMATE') return 'Accounts Department';
+        if (req.status === 'PENDING_ESTIMATE') return 'Purchase Department';
         if (req.status === 'PENDING_AUDIT') return 'Audit Department';
         if (req.status === 'PENDING_DIRECTOR') return 'Director';
         if (req.status === 'APPROVED') return 'Purchase Department';
@@ -636,10 +677,10 @@ const PurchaseRequisitions: React.FC = () => {
     const getWorkflowSteps = (req: PurchaseRequisition) => [
         { label: 'Store', status: 'Cleared', note: 'Created requisition' },
         { label: 'Store Head', status: req.approval_status === 'APPROVED' ? 'Cleared' : req.status === 'DRAFT' ? 'Current' : req.approval_status === 'REJECTED' ? 'Rejected' : 'Pending', note: req.store_head_notes || 'Review and approve' },
-        { label: 'Accounts', status: ['PENDING_AUDIT', 'PENDING_DIRECTOR', 'APPROVED', 'PURCHASED', 'RECEIVED', 'COMPLETED'].includes(req.status) ? 'Cleared' : req.status === 'PENDING_ESTIMATE' ? 'Current' : 'Pending', note: 'Add supplier and estimated price' },
+        { label: 'Purchase (Quotes)', status: ['PENDING_AUDIT', 'PENDING_DIRECTOR', 'APPROVED', 'PURCHASED', 'RECEIVED', 'COMPLETED'].includes(req.status) ? 'Cleared' : req.status === 'PENDING_ESTIMATE' ? 'Current' : 'Pending', note: 'Add supplier and estimated price' },
         { label: 'Audit', status: req.audit_status === 'APPROVED' ? 'Cleared' : req.audit_status === 'REJECTED' ? 'Rejected' : req.status === 'PENDING_AUDIT' ? 'Current' : 'Pending', note: req.audit_notes || 'Audit justification' },
         { label: 'Director', status: req.director_status === 'APPROVED' ? 'Cleared' : req.director_status === 'REJECTED' ? 'Rejected' : req.status === 'PENDING_DIRECTOR' ? 'Current' : 'Pending', note: req.director_notes || 'Final approval' },
-        { label: 'Purchase', status: ['PURCHASED', 'RECEIVED', 'COMPLETED'].includes(req.status) ? 'Cleared' : req.status === 'APPROVED' ? 'Current' : 'Pending', note: req.purchase_remarks || 'Purchase after approval' },
+        { label: 'Purchase (PO)', status: ['PURCHASED', 'RECEIVED', 'COMPLETED'].includes(req.status) ? 'Cleared' : req.status === 'APPROVED' ? 'Current' : 'Pending', note: req.purchase_remarks || 'Purchase and record PO' },
     ];
 
     const getBestEstimatedTotal = () => {
@@ -720,14 +761,19 @@ const PurchaseRequisitions: React.FC = () => {
             }).join('');
 
             const quoteRows = (quotes || []).length === 0
-                ? '<tr><td colspan="3" class="empty">No supplier/vendor estimate recorded.</td></tr>'
-                : (quotes || []).map((quote: any) => `
-                    <tr>
-                        <td>${escapeHtml(quote.supplier?.name || 'Unknown vendor')}</td>
-                        <td class="right">${escapeHtml(formatMoney(Number(quote.estimated_price)))}</td>
-                        <td>${escapeHtml(quote.remarks || '—')}</td>
-                    </tr>
-                `).join('');
+                ? '<tr><td colspan="4" class="empty">No supplier/vendor estimate recorded.</td></tr>'
+                : (quotes || []).map((quote: any) => {
+                    const matchedItem = items.find((item) => String(item.product_id) === String(quote.product_id));
+                    const prodName = matchedItem?.product_name || products.find((p) => p.id === quote.product_id)?.name || 'General';
+                    return `
+                        <tr>
+                            <td>${escapeHtml(quote.supplier?.name || 'Unknown vendor')}</td>
+                            <td>${escapeHtml(prodName)}</td>
+                            <td class="right">${escapeHtml(formatMoney(Number(quote.estimated_price)))}</td>
+                            <td>${escapeHtml(quote.remarks || '—')}</td>
+                        </tr>
+                    `;
+                }).join('');
 
             const printWindow = window.open('', '_blank', 'width=900,height=1100');
             if (!printWindow) {
@@ -735,10 +781,16 @@ const PurchaseRequisitions: React.FC = () => {
                 return;
             }
 
+            const docTitle = req.purchase_order_number 
+                ? `${escapeHtml(req.purchase_order_number)} - Purchase Order` 
+                : `${escapeHtml(req.requisition_number)} - Purchase Requisition`;
+                
+            const headerTitle = req.purchase_order_number ? 'Purchase Order' : 'Purchase Requisition';
+
             printWindow.document.write(`<!DOCTYPE html>
 <html>
 <head>
-    <title>${escapeHtml(req.requisition_number)} - Purchase Requisition</title>
+    <title>${docTitle}</title>
     <style>
         * { box-sizing: border-box; }
         body { margin: 0; padding: 28px; font-family: Arial, sans-serif; color: #111827; background: #fff; }
@@ -770,10 +822,11 @@ const PurchaseRequisitions: React.FC = () => {
         <section class="top">
             <div>
                 <div class="brand">LE<span>A</span>DING EDGE</div>
-                <h1>Purchase Requisition</h1>
+                <h1>${headerTitle}</h1>
             </div>
             <div>
                 <div><span class="label">Requisition No.</span><span class="value">${escapeHtml(req.requisition_number)}</span></div>
+                ${req.purchase_order_number ? `<div style="margin-top: 8px;"><span class="label">Purchase Order No.</span><span class="value" style="color: #f97316; font-weight: 800;">${escapeHtml(req.purchase_order_number)}</span></div>` : ''}
                 <div style="margin-top: 8px;"><span class="label">Printed At</span><span class="value">${escapeHtml(printedAt)}</span></div>
             </div>
         </section>
@@ -795,13 +848,13 @@ const PurchaseRequisitions: React.FC = () => {
 
         <h2>Supplier / Vendor Details</h2>
         <table>
-            <thead><tr><th>Supplier / Vendor</th><th class="right">Estimated Amount</th><th>Remarks</th></tr></thead>
+            <thead><tr><th>Supplier / Vendor</th><th>Product</th><th class="right">Estimated Amount</th><th>Remarks</th></tr></thead>
             <tbody>${quoteRows}</tbody>
         </table>
 
         <section class="signatures">
             <div class="signature">Store Head</div>
-            <div class="signature">Accounts</div>
+            <div class="signature">Purchase Department</div>
             <div class="signature">Audit</div>
             <div class="signature">Director</div>
         </section>
@@ -1052,35 +1105,47 @@ const PurchaseRequisitions: React.FC = () => {
                                                 <td className="stage-cell">{getStageLabel(req)}</td>
                                                 <td>{formatDate(req.required_delivery_date)}</td>
                                                 <td className="actions">
-                                                    <button className="action-btn view" title="View Details" onClick={() => openItemsView(req)}><Eye size={16} /></button>
+                                                    <button className="action-btn view" title="View Details" onClick={() => openItemsView(req)}><Eye size={19} /></button>
                                                     {(req.status === 'DRAFT' || (canAlterRequisition && !['PURCHASED', 'RECEIVED', 'COMPLETED'].includes(req.status))) && (
-                                                        <button className="action-btn" title="Alter Products / Quantity" onClick={() => openEditRequisition(req)}><Edit2 size={16} /></button>
+                                                        <button className="action-btn edit" title="Alter Products / Quantity" onClick={() => openEditRequisition(req)}><Edit2 size={19} /></button>
                                                     )}
                                                     {req.status === 'DRAFT' && can('approve_store_requisition') && (
                                                         <>
-                                                            <button className="action-btn delete" title="Delete" onClick={() => handleDelete(req.id)}><Trash2 size={16} /></button>
-                                                            <button className="action-btn approve" title="Approve" onClick={() => { setSelectedRequisition(req); setShowApprovalModal(true); }}><Check size={16} /></button>
+                                                            <button className="action-btn delete" title="Delete" onClick={() => handleDelete(req.id)}><Trash2 size={19} /></button>
+                                                            <button className="action-btn approve" title="Approve" onClick={() => { setSelectedRequisition(req); setShowApprovalModal(true); }}><Check size={19} /></button>
                                                         </>
                                                     )}
                                                     {req.status === 'PENDING_ESTIMATE' && can('add_purchase_estimates') && (
-                                                        <button className="action-btn" title="Add Estimates" onClick={() => { setSelectedRequisition(req); setShowEstimatesModal(true); }}><FileText size={16} /></button>
+                                                        <button className="action-btn estimate" title="Add Estimates" onClick={() => {
+                                                            setSelectedRequisition(req);
+                                                            const itemsList = getPrintableItems(req);
+                                                            const initialEstimates = itemsList.map((item) => ({
+                                                                productId: item.product_id,
+                                                                productName: item.product_name || 'Unknown Product',
+                                                                supplierId: '',
+                                                                estimatedPrice: '',
+                                                                remarks: '',
+                                                            }));
+                                                            setEstimates(initialEstimates);
+                                                            setShowEstimatesModal(true);
+                                                        }}><FileText size={19} /></button>
                                                     )}
                                                     {req.status === 'PENDING_AUDIT' && can('audit_purchase_requisition') && (
-                                                        <button className="action-btn approve" title="Audit Review" onClick={() => openAuditModal(req)}><AlertCircle size={16} /></button>
+                                                        <button className="action-btn audit" title="Audit Review" onClick={() => openAuditModal(req)}><AlertCircle size={19} /></button>
                                                     )}
                                                     {req.status === 'PENDING_DIRECTOR' && can('director_approve_purchase_requisition') && (
-                                                        <button className="action-btn approve" title="Director Review" onClick={() => openDirectorModal(req)}><Check size={16} /></button>
+                                                        <button className="action-btn approve" title="Director Review" onClick={() => openDirectorModal(req)}><Check size={19} /></button>
                                                     )}
                                                     {req.status === 'APPROVED' && (
                                                         <>
-                                                            <button className="action-btn print" title="Print Requisition" onClick={() => handlePrintRequisition(req)}><Printer size={16} /></button>
+                                                            <button className="action-btn print" title="Print Requisition" onClick={() => handlePrintRequisition(req)}><Printer size={19} /></button>
                                                             {can('purchase_requisition') && (
-                                                                <button className="action-btn purchase" title="Purchase" onClick={() => { setSelectedRequisition(req); setShowPurchaseModal(true); }}><ShoppingCart size={16} /></button>
+                                                                <button className="action-btn purchase" title="Purchase" onClick={() => { setSelectedRequisition(req); setShowPurchaseModal(true); }}><ShoppingCart size={19} /></button>
                                                             )}
                                                         </>
                                                     )}
                                                     {req.status === 'PURCHASED' && can('receive_purchase_requisition') && (
-                                                        <button className="action-btn receive" title="Receive" onClick={() => handleReceive(req.id)}><Package size={16} /></button>
+                                                        <button className="action-btn receive" title="Receive" onClick={() => handleReceive(req.id)}><Package size={19} /></button>
                                                     )}
                                                     {['PURCHASED', 'RECEIVED'].includes(req.status) && can('manage_damaged_goods') && (
                                                         <button className="action-btn delete" title="Record Damaged Goods" onClick={() => {
@@ -1090,12 +1155,12 @@ const PurchaseRequisitions: React.FC = () => {
                                                             setDamageQty('');
                                                             setDamageNotes('');
                                                             setShowDamageModal(true);
-                                                        }}><PackageMinus size={16} /></button>
+                                                        }}><PackageMinus size={19} /></button>
                                                     )}
                                                     {req.status === 'RECEIVED' && can('complete_purchase_requisition') && (
-                                                        <button className="action-btn complete" title="Complete" onClick={() => handleComplete(req.id)}><Check size={16} /></button>
+                                                        <button className="action-btn complete" title="Complete" onClick={() => handleComplete(req.id)}><Check size={19} /></button>
                                                     )}
-                                                    <button className="action-btn" title="History" onClick={() => openHistory(req)}><Clock size={16} /></button>
+                                                    <button className="action-btn edit" title="History" onClick={() => openHistory(req)}><Clock size={19} /></button>
                                                 </td>
                                             </tr>
                                         ))}
@@ -1125,7 +1190,7 @@ const PurchaseRequisitions: React.FC = () => {
                                     <p><strong>{selectedRequisition.requisition_number}</strong> · Current holder: {getCurrentOwner(selectedRequisition)}</p>
                                 </div>
                                 <button
-                                    className="action-btn"
+                                    className="action-btn delete"
                                     type="button"
                                     title="Close"
                                     onClick={() => {
@@ -1133,7 +1198,7 @@ const PurchaseRequisitions: React.FC = () => {
                                         setSelectedRequisition(null);
                                     }}
                                 >
-                                    <X size={16} />
+                                    <X size={18} />
                                 </button>
                             </div>
 
@@ -1209,13 +1274,17 @@ const PurchaseRequisitions: React.FC = () => {
                                 <div className="empty-inline">No supplier estimates added yet.</div>
                             ) : (
                                 <div className="quote-detail-list">
-                                    {asArray<any>(viewQuotes).map((quote) => (
-                                        <div key={quote.id} className="quote-detail-row">
-                                            <strong>{quote.supplier?.name || 'Unknown vendor'}</strong>
-                                            <span>{formatMoney(Number(quote.estimated_price))}</span>
-                                            <p>{quote.remarks || 'No remarks'}</p>
-                                        </div>
-                                    ))}
+                                    {asArray<any>(viewQuotes).map((quote) => {
+                                        const item = getPrintableItems(selectedRequisition).find(it => String(it.product_id) === String(quote.product_id));
+                                        return (
+                                            <div key={quote.id} className="quote-detail-row">
+                                                <strong>{quote.supplier?.name || 'Unknown vendor'}</strong>
+                                                <span>{formatMoney(Number(quote.estimated_price))}</span>
+                                                {item ? <p style={{ margin: '0 0 0.25rem 0', fontSize: '0.8rem', color: 'var(--accent-color)', fontWeight: '600' }}>Product: {item.product_name}</p> : null}
+                                                <p>{quote.remarks || 'No remarks'}</p>
+                                            </div>
+                                        );
+                                    })}
                                 </div>
                             )}
 
@@ -1237,6 +1306,67 @@ const PurchaseRequisitions: React.FC = () => {
                                     )}
                                 </>
                             )}
+
+                            {/* Workflow Actions */}
+                            <div className="workflow-actions-panel" style={{ marginTop: '2rem', paddingTop: '1.5rem', borderTop: '1px solid var(--border-color)', display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                                {(selectedRequisition.status === 'DRAFT' || (canAlterRequisition && !['PURCHASED', 'RECEIVED', 'COMPLETED'].includes(selectedRequisition.status))) && (
+                                    <button className="btn-secondary" onClick={() => { setShowItemsModal(false); openEditRequisition(selectedRequisition); }}><Edit2 size={16} /> Alter</button>
+                                )}
+                                {selectedRequisition.status === 'DRAFT' && can('approve_store_requisition') && (
+                                    <>
+                                        <button className="btn-secondary" style={{ color: '#ef4444' }} onClick={() => { setShowItemsModal(false); handleDelete(selectedRequisition.id); }}><Trash2 size={16} /> Delete</button>
+                                        <button className="btn-success" onClick={() => { setShowItemsModal(false); setSelectedRequisition(selectedRequisition); setShowApprovalModal(true); }}><Check size={16} /> Approve (Store Head)</button>
+                                    </>
+                                )}
+                                {selectedRequisition.status === 'PENDING_ESTIMATE' && can('add_purchase_estimates') && (
+                                    <button className="btn-primary" onClick={() => {
+                                        setShowItemsModal(false);
+                                        setSelectedRequisition(selectedRequisition);
+                                        const itemsList = getPrintableItems(selectedRequisition);
+                                        const initialEstimates = itemsList.map((item) => ({
+                                            productId: item.product_id,
+                                            productName: item.product_name || 'Unknown Product',
+                                            supplierId: '',
+                                            estimatedPrice: '',
+                                            remarks: '',
+                                        }));
+                                        setEstimates(initialEstimates);
+                                        setShowEstimatesModal(true);
+                                    }}><FileText size={16} /> Add Purchase Estimates</button>
+                                )}
+                                {selectedRequisition.status === 'PENDING_AUDIT' && can('audit_purchase_requisition') && (
+                                    <button className="btn-primary" onClick={() => { setShowItemsModal(false); openAuditModal(selectedRequisition); }}><AlertCircle size={16} /> Audit Review</button>
+                                )}
+                                {selectedRequisition.status === 'PENDING_DIRECTOR' && can('director_approve_purchase_requisition') && (
+                                    <button className="btn-primary" onClick={() => { setShowItemsModal(false); openDirectorModal(selectedRequisition); }}><Check size={16} /> Director Review</button>
+                                )}
+                                {selectedRequisition.status === 'APPROVED' && (
+                                    <>
+                                        <button className="btn-secondary" onClick={() => handlePrintRequisition(selectedRequisition)}><Printer size={16} /> Print</button>
+                                        {can('purchase_requisition') && (
+                                            <button className="btn-primary" onClick={() => { setShowItemsModal(false); setSelectedRequisition(selectedRequisition); setShowPurchaseModal(true); }}><ShoppingCart size={16} /> Record Purchase</button>
+                                        )}
+                                    </>
+                                )}
+                                {selectedRequisition.status === 'PURCHASED' && can('receive_purchase_requisition') && (
+                                    <button className="btn-success" onClick={() => { setShowItemsModal(false); handleReceive(selectedRequisition.id); }}><Package size={16} /> Receive Goods</button>
+                                )}
+                                {['PURCHASED', 'RECEIVED'].includes(selectedRequisition.status) && can('manage_damaged_goods') && (
+                                    <button className="btn-secondary" style={{ color: '#ef4444' }} onClick={() => {
+                                        setShowItemsModal(false);
+                                        setSelectedRequisition(selectedRequisition);
+                                        const firstItem = asArray<any>(selectedRequisition.items)[0];
+                                        setDamageProductId(String(firstItem?.product_id || selectedRequisition.product_id || ''));
+                                        setDamageQty('');
+                                        setDamageNotes('');
+                                        setShowDamageModal(true);
+                                    }}><PackageMinus size={16} /> Record Damaged Goods</button>
+                                )}
+                                {selectedRequisition.status === 'RECEIVED' && can('complete_purchase_requisition') && (
+                                    <button className="btn-success" onClick={() => { setShowItemsModal(false); handleComplete(selectedRequisition.id); }}><Check size={16} /> Complete Requisition</button>
+                                )}
+                                <button className="btn-secondary" onClick={() => { setShowItemsModal(false); openHistory(selectedRequisition); }}><Clock size={16} /> History</button>
+                            </div>
                         </motion.div>
                     </motion.div>
                 )}
@@ -1260,7 +1390,7 @@ const PurchaseRequisitions: React.FC = () => {
                                     <p>Stock, last purchase, and sales record for the selected product.</p>
                                 </div>
                                 <button
-                                    className="action-btn"
+                                    className="action-btn delete"
                                     type="button"
                                     title="Close"
                                     onClick={() => {
@@ -1269,7 +1399,7 @@ const PurchaseRequisitions: React.FC = () => {
                                         setSelectedSummaryProductId('');
                                     }}
                                 >
-                                    <X size={16} />
+                                    <X size={18} />
                                 </button>
                             </div>
 
@@ -1374,7 +1504,7 @@ const PurchaseRequisitions: React.FC = () => {
                                     <h2>Record Damaged Goods</h2>
                                     <p>Damaged quantity will be kept separate from usable stock for requisition <strong>{selectedRequisition.requisition_number}</strong>.</p>
                                 </div>
-                                <button className="action-btn" onClick={() => setShowDamageModal(false)}><X size={16} /></button>
+                                <button className="action-btn delete" onClick={() => setShowDamageModal(false)}><X size={18} /></button>
                             </div>
                             <div className="form-group">
                                 <label>Product</label>
@@ -1439,7 +1569,7 @@ const PurchaseRequisitions: React.FC = () => {
                                                 <td>{getProductSummary(req)}</td>
                                                 <td>{getStageLabel(req)}</td>
                                                 <td style={{ textAlign: 'right' }}>
-                                                    <button className="action-btn approve" onClick={() => openAuditModal(req)}><AlertCircle size={16} /></button>
+                                                    <button className="action-btn audit" onClick={() => openAuditModal(req)}><AlertCircle size={19} /></button>
                                                 </td>
                                             </tr>
                                         ))}
@@ -1463,7 +1593,7 @@ const PurchaseRequisitions: React.FC = () => {
                                                 <td>{getProductSummary(req)}</td>
                                                 <td>{getStageLabel(req)}</td>
                                                 <td style={{ textAlign: 'right' }}>
-                                                    <button className="action-btn approve" onClick={() => openDirectorModal(req)}><Check size={16} /></button>
+                                                    <button className="action-btn approve" onClick={() => openDirectorModal(req)}><Check size={19} /></button>
                                                 </td>
                                             </tr>
                                         ))}
@@ -1545,7 +1675,7 @@ const PurchaseRequisitions: React.FC = () => {
                             <div className="requisition-form-header">
                                 <div>
                                     <div className="requisition-eyebrow">Purchase Requisition</div>
-                                    <h2>{editingRequisition ? `Alter ${editingRequisition.requisition_number}` : 'Create Requisition'}</h2>
+                                    <h2>{editingRequisition ? `Alter ${editingRequisition.requisition_number}` : 'Purchase Requisition'}</h2>
                                     <p>{editingRequisition ? 'Admin/director alteration of product lines and quantities.' : 'Add one or more products and submit the request for approval.'}</p>
                                 </div>
                                 <div className="requisition-meta-grid">
@@ -1607,12 +1737,12 @@ const PurchaseRequisitions: React.FC = () => {
                                                     <td>
                                                         <button
                                                             type="button"
-                                                            className="action-btn"
+                                                            className="action-btn view"
                                                             onClick={() => openProductSummary(item.productId)}
                                                             title="View product summary"
                                                             disabled={!item.productId}
                                                         >
-                                                            <Eye size={15} />
+                                                            <Eye size={18} />
                                                         </button>
                                                     </td>
                                                     <td>
@@ -1651,7 +1781,7 @@ const PurchaseRequisitions: React.FC = () => {
                                                             onClick={() => removeLineItem(index)}
                                                             title="Remove line"
                                                         >
-                                                            <Trash2 size={15} />
+                                                            <Trash2 size={18} />
                                                         </button>
                                                     </td>
                                                 </tr>
@@ -1686,7 +1816,7 @@ const PurchaseRequisitions: React.FC = () => {
                                     {editingRequisition ? 'Cancel Edit' : 'Reset'}
                                 </button>
                                 <button type="submit" className="btn-primary">
-                                    {editingRequisition ? 'Save Alteration' : 'Create Requisition'}
+                                    {editingRequisition ? 'Save Alteration' : 'Submit Requisition'}
                                 </button>
                             </div>
                         </form>
@@ -1745,9 +1875,16 @@ const PurchaseRequisitions: React.FC = () => {
                                 <h4>Submitted Quotes</h4>
                                 {fetchedQuotes.length === 0 ? <p style={{ fontSize: '0.9rem', color: '#666' }}>No quotes available.</p> : (
                                     <ul style={{ fontSize: '0.9rem', paddingLeft: '1.2rem', marginTop: '0.5rem' }}>
-                                        {fetchedQuotes.map((q, i) => (
-                                            <li key={i}><strong>{q.supplier?.name}</strong> - ৳{q.estimated_price} {q.remarks ? `(${q.remarks})` : ''}</li>
-                                        ))}
+                                        {fetchedQuotes.map((q, i) => {
+                                            const item = getPrintableItems(selectedRequisition).find(it => String(it.product_id) === String(q.product_id));
+                                            return (
+                                                <li key={i} style={{ marginBottom: '4px' }}>
+                                                    <strong>{q.supplier?.name || 'Unknown Supplier'}</strong>: 
+                                                    {' '}৳{q.estimated_price} {q.remarks ? `(${q.remarks})` : ''}
+                                                    {item ? <span style={{ color: '#64748b', fontSize: '0.8rem', marginLeft: '0.5rem' }}>(for {item.product_name})</span> : ''}
+                                                </li>
+                                            );
+                                        })}
                                     </ul>
                                 )}
                             </div>
@@ -1762,48 +1899,287 @@ const PurchaseRequisitions: React.FC = () => {
                 )}
 
                 {showEstimatesModal && selectedRequisition && (
-                    <motion.div className="modal-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} onClick={() => setShowEstimatesModal(false)}>
-                        <motion.div className="modal-content" style={{ maxWidth: '600px' }} initial={{ scale: 0.9 }} animate={{ scale: 1 }} onClick={(e) => e.stopPropagation()}>
-                            <h2>Add Purchase Estimates (Quotes)</h2>
-                            <p>Requisition <strong>{selectedRequisition.requisition_number}</strong></p>
-                            
-                            <div style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                                {estimates.map((est, i) => (
-                                    <div key={i} style={{ border: '1px solid #e2e8f0', padding: '1rem', borderRadius: '8px', background: '#f8fafc' }}>
-                                        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 2fr auto', gap: '0.5rem', alignItems: 'center' }}>
-                                            <select 
-                                                value={est.supplierId} 
-                                                onChange={(e) => { const newEst = [...estimates]; newEst[i].supplierId = e.target.value; setEstimates(newEst); }}
-                                                style={{ padding: '0.5rem' }}
-                                            >
-                                                <option value="">-- Select Vendor --</option>
-                                                {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                                                <option value="NEW">+ Create New Supplier</option>
-                                            </select>
-                                            <input type="number" placeholder="Est. Price" value={est.estimatedPrice} onChange={(e) => { const newEst = [...estimates]; newEst[i].estimatedPrice = e.target.value; setEstimates(newEst); }} style={{ padding: '0.5rem' }} />
-                                            <input type="text" placeholder="Remarks" value={est.remarks} onChange={(e) => { const newEst = [...estimates]; newEst[i].remarks = e.target.value; setEstimates(newEst); }} style={{ padding: '0.5rem' }} />
-                                            <button className="btn-secondary" onClick={() => setEstimates(estimates.filter((_, idx) => idx !== i))} style={{ padding: '0.5rem' }}><Trash2 size={16} /></button>
-                                        </div>
-                                        {est.supplierId === 'NEW' && (
-                                            <div style={{ marginTop: '1rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                                                <input type="text" placeholder="Supplier Name *" value={est.newSupplier?.name || ''} onChange={(e) => { const newEst = [...estimates]; newEst[i].newSupplier = { ...newEst[i].newSupplier, name: e.target.value }; setEstimates(newEst); }} style={{ padding: '0.5rem' }} />
-                                                <input type="text" placeholder="Store Name" value={est.newSupplier?.storeName || ''} onChange={(e) => { const newEst = [...estimates]; newEst[i].newSupplier = { ...newEst[i].newSupplier, storeName: e.target.value }; setEstimates(newEst); }} style={{ padding: '0.5rem' }} />
-                                                <input type="text" placeholder="Contact Person" value={est.newSupplier?.contactPerson || ''} onChange={(e) => { const newEst = [...estimates]; newEst[i].newSupplier = { ...newEst[i].newSupplier, contactPerson: e.target.value }; setEstimates(newEst); }} style={{ padding: '0.5rem' }} />
-                                                <input type="text" placeholder="Contact Number" value={est.newSupplier?.contactNumber || ''} onChange={(e) => { const newEst = [...estimates]; newEst[i].newSupplier = { ...newEst[i].newSupplier, contactNumber: e.target.value }; setEstimates(newEst); }} style={{ padding: '0.5rem' }} />
-                                                <input type="text" placeholder="Payment Method" value={est.newSupplier?.paymentMethod || ''} onChange={(e) => { const newEst = [...estimates]; newEst[i].newSupplier = { ...newEst[i].newSupplier, paymentMethod: e.target.value }; setEstimates(newEst); }} style={{ padding: '0.5rem', gridColumn: '1 / -1' }} />
-                                            </div>
-                                        )}
+                    <>
+                        <motion.div className="modal-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} onClick={() => setShowEstimatesModal(false)}>
+                            <motion.div className="modal-content" style={{ maxWidth: '650px', maxHeight: '90vh', overflowY: 'auto' }} initial={{ scale: 0.9 }} animate={{ scale: 1 }} onClick={(e) => e.stopPropagation()}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem' }}>
+                                    <div>
+                                        <h2 style={{ margin: 0 }}>Add Purchase Estimates (Quotes)</h2>
+                                        <p style={{ margin: '0.25rem 0 0 0' }}>Requisition <strong>{selectedRequisition.requisition_number}</strong></p>
                                     </div>
-                                ))}
-                                <button className="btn-secondary" onClick={() => setEstimates([...estimates, { supplierId: '', estimatedPrice: '', remarks: '' }])} style={{ width: 'fit-content' }}>+ Add Vendor Quote</button>
-                            </div>
+                                    <button 
+                                        type="button" 
+                                        className="btn-primary" 
+                                        onClick={() => setShowComparisonDrawer(true)}
+                                        style={{ fontSize: '0.85rem', padding: '0.45rem 0.85rem', display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer', background: 'var(--accent-color)', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 600 }}
+                                    >
+                                        <Clock size={16} /> Compare Quotes
+                                    </button>
+                                </div>
+                                
+                                <div style={{ marginTop: '1.25rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                                    {getPrintableItems(selectedRequisition).map((item) => {
+                                        const itemQuotes = estimates.filter(est => String(est.productId) === String(item.product_id));
+                                        return (
+                                            <div key={item.product_id} style={{ border: '1px solid #cbd5e1', padding: '1rem', borderRadius: '8px', background: '#f8fafc' }}>
+                                                <h4 style={{ margin: '0 0 0.75rem 0', color: 'var(--accent-color)', fontSize: '0.95rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
+                                                    <span>
+                                                        {item.product_name || 'Unknown Product'}{' '}
+                                                        <span style={{ color: '#64748b', fontWeight: 'normal', fontSize: '0.82rem' }}>({item.quantity} {item.quantity_unit})</span>
+                                                    </span>
+                                                    {lastPurchasedPrices[String(item.product_id)] !== undefined && (
+                                                        <span style={{ 
+                                                            color: '#059669', 
+                                                            background: 'rgba(5, 150, 105, 0.08)', 
+                                                            border: '1px solid rgba(5, 150, 105, 0.2)', 
+                                                            padding: '0.2rem 0.6rem', 
+                                                            borderRadius: '6px', 
+                                                            fontSize: '0.78rem', 
+                                                            fontWeight: 700 
+                                                        }}>
+                                                            Last Purchase: {lastPurchasedPrices[String(item.product_id)] ? `৳${lastPurchasedPrices[String(item.product_id)]}` : 'None'}
+                                                        </span>
+                                                    )}
+                                                </h4>
+                                                
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                                                    {itemQuotes.map((est, idx) => {
+                                                        const globalIdx = estimates.findIndex(e => e === est);
+                                                        return (
+                                                            <div key={idx} style={{ border: '1px solid #e2e8f0', padding: '0.75rem', borderRadius: '6px', background: '#fff' }}>
+                                                                <div style={{ display: 'grid', gridTemplateColumns: '1.8fr 1.2fr 2fr auto', gap: '0.5rem', alignItems: 'center' }}>
+                                                                    <select 
+                                                                        value={est.supplierId} 
+                                                                        onChange={(e) => { 
+                                                                            const newEst = [...estimates]; 
+                                                                            newEst[globalIdx].supplierId = e.target.value; 
+                                                                            setEstimates(newEst); 
+                                                                        }}
+                                                                        style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                                                                    >
+                                                                        <option value="">-- Select Vendor --</option>
+                                                                        {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                                                                        <option value="NEW">+ Create New Supplier</option>
+                                                                    </select>
+                                                                    <input 
+                                                                        type="number" 
+                                                                        placeholder="Est. Price" 
+                                                                        value={est.estimatedPrice} 
+                                                                        onChange={(e) => { 
+                                                                            const newEst = [...estimates]; 
+                                                                            newEst[globalIdx].estimatedPrice = e.target.value; 
+                                                                            setEstimates(newEst); 
+                                                                        }} 
+                                                                        style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1' }} 
+                                                                    />
+                                                                    <input 
+                                                                        type="text" 
+                                                                        placeholder="Remarks" 
+                                                                        value={est.remarks} 
+                                                                        onChange={(e) => { 
+                                                                            const newEst = [...estimates]; 
+                                                                            newEst[globalIdx].remarks = e.target.value; 
+                                                                            setEstimates(newEst); 
+                                                                        }} 
+                                                                        style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1' }} 
+                                                                    />
+                                                                    <button 
+                                                                        className="btn-secondary" 
+                                                                        onClick={() => {
+                                                                            setEstimates(estimates.filter((_, gIdx) => gIdx !== globalIdx));
+                                                                        }} 
+                                                                        style={{ padding: '0.5rem', minWidth: 'auto', border: 'none', background: 'transparent' }}
+                                                                    >
+                                                                        <Trash2 size={16} style={{ color: '#ef4444' }} />
+                                                                    </button>
+                                                                </div>
+                                                                
+                                                                {est.supplierId === 'NEW' && (
+                                                                    <div style={{ marginTop: '0.75rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                                                                        <input type="text" placeholder="Supplier Name *" value={est.newSupplier?.name || ''} onChange={(e) => { const newEst = [...estimates]; newEst[globalIdx].newSupplier = { ...newEst[globalIdx].newSupplier, name: e.target.value }; setEstimates(newEst); }} style={{ padding: '0.4rem', fontSize: '0.85rem' }} />
+                                                                        <input type="text" placeholder="Store Name" value={est.newSupplier?.storeName || ''} onChange={(e) => { const newEst = [...estimates]; newEst[globalIdx].newSupplier = { ...newEst[globalIdx].newSupplier, storeName: e.target.value }; setEstimates(newEst); }} style={{ padding: '0.4rem', fontSize: '0.85rem' }} />
+                                                                        <input type="text" placeholder="Contact Person" value={est.newSupplier?.contactPerson || ''} onChange={(e) => { const newEst = [...estimates]; newEst[globalIdx].newSupplier = { ...newEst[globalIdx].newSupplier, contactPerson: e.target.value }; setEstimates(newEst); }} style={{ padding: '0.4rem', fontSize: '0.85rem' }} />
+                                                                        <input type="text" placeholder="Contact Number" value={est.newSupplier?.contactNumber || ''} onChange={(e) => { const newEst = [...estimates]; newEst[globalIdx].newSupplier = { ...newEst[globalIdx].newSupplier, contactNumber: e.target.value }; setEstimates(newEst); }} style={{ padding: '0.4rem', fontSize: '0.85rem' }} />
+                                                                        <input type="text" placeholder="Payment Method" value={est.newSupplier?.paymentMethod || ''} onChange={(e) => { const newEst = [...estimates]; newEst[globalIdx].newSupplier = { ...newEst[globalIdx].newSupplier, paymentMethod: e.target.value }; setEstimates(newEst); }} style={{ padding: '0.4rem', fontSize: '0.85rem', gridColumn: '1 / -1' }} />
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        );
+                                                    })}
+                                                    
+                                                    <button 
+                                                        className="btn-secondary" 
+                                                        onClick={() => setEstimates([...estimates, { productId: item.product_id, supplierId: '', estimatedPrice: '', remarks: '' }])} 
+                                                        style={{ width: 'fit-content', fontSize: '0.8rem', padding: '0.35rem 0.75rem', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                                    >
+                                                        + Add Estimate
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
 
-                            <div className="modal-actions" style={{ marginTop: '2rem' }}>
-                                <button className="btn-success" onClick={handleSubmitEstimates}><Check size={18} /> Submit Estimates</button>
-                                <button className="btn-secondary" onClick={() => setShowEstimatesModal(false)}>Cancel</button>
-                            </div>
+                                <div className="modal-actions" style={{ marginTop: '2rem' }}>
+                                    <button className="btn-success" onClick={handleSubmitEstimates}><Check size={18} /> Submit Estimates</button>
+                                    <button className="btn-secondary" onClick={() => setShowEstimatesModal(false)}>Cancel</button>
+                                </div>
+                            </motion.div>
                         </motion.div>
-                    </motion.div>
+
+                        <AnimatePresence>
+                            {showComparisonDrawer && (
+                                <>
+                                    <motion.div 
+                                        className="modal-overlay" 
+                                        initial={{ opacity: 0 }} 
+                                        animate={{ opacity: 0.3 }} 
+                                        exit={{ opacity: 0 }} 
+                                        onClick={() => setShowComparisonDrawer(false)}
+                                        style={{ zIndex: 1999, background: '#000' }}
+                                    />
+                                    
+                                    <motion.div
+                                        initial={{ x: '100%' }}
+                                        animate={{ x: 0 }}
+                                        exit={{ x: '100%' }}
+                                        transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+                                        style={{
+                                            position: 'fixed',
+                                            right: 0,
+                                            top: 0,
+                                            bottom: 0,
+                                            width: '460px',
+                                            background: 'var(--card-bg)',
+                                            borderLeft: '1px solid var(--border-color)',
+                                            boxShadow: '-4px 0 24px rgba(0,0,0,0.15)',
+                                            zIndex: 2000,
+                                            padding: '1.75rem',
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            color: 'var(--text-primary)'
+                                        }}
+                                    >
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '1rem' }}>
+                                            <div>
+                                                <h3 style={{ margin: 0, fontSize: '1.25rem' }}>Quotes Comparison</h3>
+                                                <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>Requisition: {selectedRequisition.requisition_number}</p>
+                                            </div>
+                                            <button 
+                                                className="action-btn delete" 
+                                                onClick={() => setShowComparisonDrawer(false)}
+                                                style={{ border: 'none', background: 'transparent' }}
+                                            >
+                                                <X size={20} />
+                                            </button>
+                                        </div>
+                                        
+                                        <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '1.5rem', paddingRight: '0.25rem' }}>
+                                            {getPrintableItems(selectedRequisition).map((item) => {
+                                                const itemQuotes = estimates.filter(est => String(est.productId) === String(item.product_id) && (est.supplierId || est.newSupplier?.name));
+                                                
+                                                const sortedQuotes = itemQuotes
+                                                    .map(q => {
+                                                        const supplierObj = suppliers.find(s => String(s.id) === String(q.supplierId));
+                                                        const name = supplierObj?.name || (q.supplierId === 'NEW' ? q.newSupplier?.name || 'New Supplier' : 'Unknown Vendor');
+                                                        return {
+                                                            ...q,
+                                                            supplierName: name,
+                                                            priceNum: Number(q.estimatedPrice) || 0
+                                                        };
+                                                    })
+                                                    .filter(q => q.priceNum > 0)
+                                                    .sort((a, b) => a.priceNum - b.priceNum);
+                                                    
+                                                const lastPrice = lastPurchasedPrices[String(item.product_id)];
+                                                
+                                                return (
+                                                    <div key={item.product_id} style={{ background: 'var(--hover-bg)', padding: '1rem', borderRadius: '10px', border: '1px solid var(--border-color)' }}>
+                                                        <h4 style={{ margin: '0 0 0.5rem 0', color: 'var(--text-primary)', fontSize: '0.92rem', fontWeight: 700 }}>
+                                                            {item.product_name || 'Unknown Product'}
+                                                        </h4>
+                                                        
+                                                        {lastPrice !== undefined && lastPrice !== null && (
+                                                            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                <span>Last Purchased Price:</span>
+                                                                <strong style={{ color: '#059669' }}>৳{lastPrice}</strong>
+                                                            </div>
+                                                        )}
+                                                        
+                                                        {sortedQuotes.length === 0 ? (
+                                                            <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', fontStyle: 'italic', padding: '0.5rem 0' }}>
+                                                                No estimated prices entered yet.
+                                                            </div>
+                                                        ) : (
+                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.5rem' }}>
+                                                                {sortedQuotes.map((q, idx) => {
+                                                                    const isBest = idx === 0;
+                                                                    const pctDiff = lastPrice && q.priceNum ? (((q.priceNum - lastPrice) / lastPrice) * 100).toFixed(1) : null;
+                                                                    
+                                                                    return (
+                                                                        <div 
+                                                                            key={idx} 
+                                                                            style={{ 
+                                                                                display: 'flex', 
+                                                                                justifyContent: 'space-between', 
+                                                                                alignItems: 'center', 
+                                                                                padding: '0.6rem 0.75rem', 
+                                                                                borderRadius: '8px', 
+                                                                                background: isBest ? 'rgba(34, 197, 94, 0.06)' : 'var(--card-bg)',
+                                                                                border: isBest ? '1px solid rgba(34, 197, 94, 0.25)' : '1px solid var(--border-color)',
+                                                                                boxShadow: '0 1px 2px rgba(0, 0, 0, 0.02)'
+                                                                            }}
+                                                                        >
+                                                                            <div>
+                                                                                <div style={{ fontSize: '0.85rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--text-primary)' }}>
+                                                                                    <span>{q.supplierName}</span>
+                                                                                    {isBest && (
+                                                                                        <span style={{ 
+                                                                                            fontSize: '0.68rem', 
+                                                                                            background: '#22c55e', 
+                                                                                            color: '#fff', 
+                                                                                            padding: '1px 6px', 
+                                                                                            borderRadius: '4px',
+                                                                                            fontWeight: 700
+                                                                                        }}>
+                                                                                            Best Price
+                                                                                        </span>
+                                                                                    )}
+                                                                                </div>
+                                                                                {q.remarks && (
+                                                                                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '2px', fontStyle: 'italic' }}>
+                                                                                        "{q.remarks}"
+                                                                                    </div>
+                                                                                )}
+                                                                            </div>
+                                                                            <div style={{ textAlign: 'right' }}>
+                                                                                <div style={{ fontSize: '0.9rem', fontWeight: 700, color: isBest ? '#16a34a' : 'var(--text-primary)' }}>
+                                                                                    ৳{q.estimatedPrice}
+                                                                                </div>
+                                                                                {pctDiff && (
+                                                                                    <div style={{ fontSize: '0.72rem', fontWeight: 600, color: Number(pctDiff) <= 0 ? '#16a34a' : '#ef4444', marginTop: '1px' }}>
+                                                                                        {Number(pctDiff) <= 0 ? `${pctDiff}% cheaper` : `+${pctDiff}% vs last`}
+                                                                                    </div>
+                                                                                )}
+                                                                            </div>
+                                                                        </div>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                        
+                                        <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '1.25rem', marginTop: '1.5rem', display: 'flex', justifyContent: 'flex-end' }}>
+                                            <button className="btn-secondary" onClick={() => setShowComparisonDrawer(false)}>Close Comparison</button>
+                                        </div>
+                                    </motion.div>
+                                </>
+                            )}
+                        </AnimatePresence>
+                    </>
                 )}
 
                 {showDirectorModal && selectedRequisition && (
@@ -1816,9 +2192,16 @@ const PurchaseRequisitions: React.FC = () => {
                                 <h4>Submitted Quotes</h4>
                                 {fetchedQuotes.length === 0 ? <p style={{ fontSize: '0.9rem', color: '#666' }}>No quotes available.</p> : (
                                     <ul style={{ fontSize: '0.9rem', paddingLeft: '1.2rem', marginTop: '0.5rem' }}>
-                                        {fetchedQuotes.map((q, i) => (
-                                            <li key={i}><strong>{q.supplier?.name}</strong> - ৳{q.estimated_price} {q.remarks ? `(${q.remarks})` : ''}</li>
-                                        ))}
+                                        {fetchedQuotes.map((q, i) => {
+                                            const item = getPrintableItems(selectedRequisition).find(it => String(it.product_id) === String(q.product_id));
+                                            return (
+                                                <li key={i} style={{ marginBottom: '4px' }}>
+                                                    <strong>{q.supplier?.name || 'Unknown Supplier'}</strong>: 
+                                                    {' '}৳{q.estimated_price} {q.remarks ? `(${q.remarks})` : ''}
+                                                    {item ? <span style={{ color: '#64748b', fontSize: '0.8rem', marginLeft: '0.5rem' }}>(for {item.product_name})</span> : ''}
+                                                </li>
+                                            );
+                                        })}
                                     </ul>
                                 )}
                             </div>

@@ -415,16 +415,20 @@
     position: relative;
 }
 
+.stock-group-tree-row.child {
+    padding-top: 0.1rem;
+    padding-bottom: 0.1rem;
+}
+
 .stock-group-tree-row.child::before {
     content: '';
     position: absolute;
-    left: -17px;
-    top: -0.7rem;
-    width: 17px;
-    height: calc(50% + 0.7rem);
-    border-left: 2px solid var(--border-color);
-    border-bottom: 2px solid var(--border-color);
-    border-bottom-left-radius: 8px;
+    left: -20px;
+    top: 28px; /* Perfectly aligned to the vertical center of the stock-group-node */
+    width: 20px;
+    height: 2px;
+    background: var(--border-color);
+    opacity: 0.75;
 }
 
 .stock-group-node {
@@ -481,8 +485,22 @@
 
 .stock-group-children {
     display: grid;
-    gap: 0.7rem;
-    margin-top: 0.7rem;
+    gap: 0.8rem;
+    margin-top: 0.8rem;
+    margin-left: 36px; /* Indentation for subgroups */
+    position: relative;
+}
+
+/* Elegant, continuous vertical tree connector line */
+.stock-group-children::before {
+    content: '';
+    position: absolute;
+    left: -20px;
+    top: -16px;
+    bottom: 28px; /* Stops exactly at the last child's branch level to prevent bleeding */
+    width: 2px;
+    background: var(--border-color);
+    opacity: 0.75;
 }
 
 .stock-group-edit-modal {
@@ -1048,8 +1066,16 @@
         min-height: auto;
     }
 
-    .stock-group-tree-row.child {
-        margin-left: 18px !important;
+    .stock-group-children {
+        margin-left: 20px;
+    }
+    .stock-group-children::before {
+        left: -12px;
+    }
+    .stock-group-tree-row.child::before {
+        left: -12px;
+        width: 12px;
+        top: 28px;
     }
 
     .product-ledger-hero,
