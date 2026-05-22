@@ -48,8 +48,9 @@ const ProductList: React.FC = () => {
             // @ts-ignore
             await window.electron.deleteProduct(id);
             fetchProducts();
-        } catch (error) {
-            alert('Failed to delete product.');
+        } catch (error: any) {
+            console.error('Failed to delete product:', error);
+            alert(error?.message || 'Failed to delete product.');
         }
     };
 
@@ -81,21 +82,30 @@ const ProductList: React.FC = () => {
 
     const handleBulkDelete = async () => {
         if (selectedIds.size === 0) return;
-        if (!confirm(`Delete ${selectedIds.size} selected products?`)) return;
+        const totalSelected = selectedIds.size;
+        if (!confirm(`Delete ${totalSelected} selected products?`)) return;
         
         let successCount = 0;
+        let failReason = '';
         for (const id of Array.from(selectedIds)) {
             try {
                 // @ts-ignore
                 await window.electron.deleteProduct(id);
                 successCount++;
-            } catch (err) {
+            } catch (err: any) {
                 console.error('Failed to delete', id, err);
+                failReason = err?.message || 'Referenced in transaction records';
             }
         }
         setSelectedIds(new Set());
         fetchProducts();
-        alert(`Successfully deleted ${successCount} products.`);
+        if (successCount === 0 && failReason) {
+            alert(`Failed to delete products: ${failReason}`);
+        } else if (successCount < totalSelected) {
+            alert(`Successfully deleted ${successCount} products. Some products could not be deleted because they are referenced in transaction records.`);
+        } else {
+            alert(`Successfully deleted all ${successCount} products.`);
+        }
     };
 
     const handleBulkPrint = () => {

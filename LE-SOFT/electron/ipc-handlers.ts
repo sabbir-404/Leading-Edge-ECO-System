@@ -1417,7 +1417,12 @@ export function registerHandlers() {
 
     ipcMain.handle('delete-product', async (_e, id: number) => {
         const { error } = await supabase.from('products').delete().eq('id', id);
-        if (error) throw error;
+        if (error) {
+            if (error.code === '23503') {
+                throw new Error('This product cannot be deleted because it is already referenced in transaction records (such as Purchase Requisitions). To maintain database integrity, products linked to historical transactions cannot be removed.');
+            }
+            throw error;
+        }
         return { success: true };
     });
 
