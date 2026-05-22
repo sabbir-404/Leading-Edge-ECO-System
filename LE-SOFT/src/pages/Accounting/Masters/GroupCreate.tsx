@@ -1,16 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { ArrowLeft, Save } from 'lucide-react';
 import { motion } from 'framer-motion';
 import './Masters.css';
 
 const GroupCreate: React.FC = () => {
     const navigate = useNavigate();
+    const location = useLocation();
+    const editGroup = location.state?.editGroup;
+
     const [groups, setGroups] = useState<any[]>([]);
     const [formData, setFormData] = useState({
-        name: '',
-        parent: 'Primary',
-        nature: 'Assets',
+        name: editGroup ? editGroup.name : '',
+        parent: editGroup ? (editGroup.parent_name || 'Primary') : 'Primary',
+        nature: editGroup ? (editGroup.nature || 'Assets') : 'Assets',
     });
 
     useEffect(() => {
@@ -18,13 +21,17 @@ const GroupCreate: React.FC = () => {
             try {
                 // @ts-ignore
                 const result = await window.electron.getGroups();
-                setGroups(result || []);
+                // Exclude current editing group to avoid setting it as its own parent
+                const filtered = editGroup
+                    ? (result || []).filter((g: any) => g.id !== editGroup.id)
+                    : (result || []);
+                setGroups(filtered);
             } catch (error) {
                 console.error('Failed to fetch groups:', error);
             }
         };
         fetchGroups();
-    }, []);
+    }, [editGroup]);
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
         const { name, value } = e.target;
@@ -34,13 +41,19 @@ const GroupCreate: React.FC = () => {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         try {
-            // @ts-ignore
-            await window.electron.createGroup(formData);
-            alert('Group Created Successfully!');
+            if (editGroup) {
+                // @ts-ignore
+                await window.electron.updateGroup(editGroup.id, formData);
+                alert('Group Updated Successfully!');
+            } else {
+                // @ts-ignore
+                await window.electron.createGroup(formData);
+                alert('Group Created Successfully!');
+            }
             navigate('/masters/groups');
-        } catch (error) {
-            console.error('Error creating group:', error);
-            alert('Failed to create group');
+        } catch (error: any) {
+            console.error('Error saving group:', error);
+            alert(error?.message || 'Failed to save group');
         }
     };
 
@@ -54,7 +67,7 @@ const GroupCreate: React.FC = () => {
                 <button className="back-btn" onClick={() => navigate('/masters/groups')}>
                     <ArrowLeft size={20} /> Back
                 </button>
-                <h2>Create Group</h2>
+                <h2>{editGroup ? 'Edit Group' : 'Create Group'}</h2>
             </div>
 
             <form onSubmit={handleSubmit} className="create-form">
@@ -93,7 +106,7 @@ const GroupCreate: React.FC = () => {
 
                 <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}>
                     <button type="submit" className="save-btn">
-                        <Save size={18} /> Save Group
+                        <Save size={18} /> {editGroup ? 'Update Group' : 'Save Group'}
                     </button>
                 </div>
             </form>

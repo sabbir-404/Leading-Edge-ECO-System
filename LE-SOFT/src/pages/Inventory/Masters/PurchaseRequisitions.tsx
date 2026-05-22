@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Plus, Trash2, Check, X, Package, ShoppingCart, AlertCircle, Clock, FileText, Eye, Printer, Edit2, PackageMinus } from 'lucide-react';
+import { Plus, Trash2, Check, X, Package, ShoppingCart, AlertCircle, Clock, FileText, Eye, Printer, Edit2, PackageMinus, ArrowLeft, Save } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAutoRefresh } from '../../../hooks/useAutoRefresh';
 import { getPrintPageSize } from '../../../utils/printPageSize';
@@ -32,6 +32,7 @@ interface PurchaseRequisitionItem {
     quantity: number;
     quantity_unit: string;
     remarks?: string;
+    purchased_quantity?: number;
 }
 
 interface PurchaseRequisition {
@@ -120,7 +121,7 @@ const PurchaseRequisitions: React.FC = () => {
     const [directorNotes, setDirectorNotes] = useState('');
     const [warehouseLocation, setWarehouseLocation] = useState('');
     const [purchaseInvoiceId, setPurchaseInvoiceId] = useState('');
-    const [purchasedQuantity, setPurchasedQuantity] = useState('');
+    const [purchasedQuantities, setPurchasedQuantities] = useState<Record<string, number>>({});
     const [purchaseRemarks, setPurchaseRemarks] = useState('');
     const [selectedSupplierId, setSelectedSupplierId] = useState<string>('');
     const [newSupplier, setNewSupplier] = useState({ name: '', storeName: '', contactNumber: '', contactPerson: '', paymentMethod: '' });
@@ -222,6 +223,19 @@ const PurchaseRequisitions: React.FC = () => {
             setShowComparisonDrawer(false);
         }
     }, [showEstimatesModal, selectedRequisition]);
+
+    useEffect(() => {
+        if (showPurchaseModal && selectedRequisition) {
+            const items = getPrintableItems(selectedRequisition);
+            const initialQtys: Record<string, number> = {};
+            items.forEach((item) => {
+                initialQtys[item.id] = item.purchased_quantity ?? item.quantity;
+            });
+            setPurchasedQuantities(initialQtys);
+        } else {
+            setPurchasedQuantities({});
+        }
+    }, [showPurchaseModal, selectedRequisition]);
 
     const handleCreateSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -510,10 +524,21 @@ const PurchaseRequisitions: React.FC = () => {
                 alert('Invoice ID / Bill Number is required.');
                 return;
             }
-            if (purchasedQuantity && Number(purchasedQuantity) <= 0) {
-                alert('Purchased quantity must be greater than zero.');
-                return;
+            
+            const items = getPrintableItems(selectedRequisition);
+            const finalQuantities: Record<string, number> = {};
+            let totalPurchasedQuantity = 0;
+            
+            for (const item of items) {
+                const qtyVal = purchasedQuantities[item.id];
+                if (qtyVal === undefined || qtyVal === null || Number.isNaN(qtyVal) || qtyVal <= 0) {
+                    alert(`Purchased quantity for ${item.product_name || 'product'} must be greater than zero.`);
+                    return;
+                }
+                finalQuantities[item.id] = Number(qtyVal);
+                totalPurchasedQuantity += Number(qtyVal);
             }
+
             if (selectedSupplierId === 'NEW' && !newSupplier.name.trim()) {
                 alert('Supplier name is required.');
                 return;
@@ -544,7 +569,8 @@ const PurchaseRequisitions: React.FC = () => {
                 {
                     warehouseLocation,
                     purchaseInvoiceId,
-                    purchasedQuantity: Number(purchasedQuantity) || selectedRequisition.quantity,
+                    purchasedQuantity: totalPurchasedQuantity || selectedRequisition.quantity,
+                    purchasedQuantities: finalQuantities,
                     purchaseRemarks,
                     supplierId: finalSupplierId ? Number(finalSupplierId) : null,
                     performedByName: userName,
@@ -554,7 +580,7 @@ const PurchaseRequisitions: React.FC = () => {
                 setShowPurchaseModal(false);
                 setWarehouseLocation('');
                 setPurchaseInvoiceId('');
-                setPurchasedQuantity('');
+                setPurchasedQuantities({});
                 setPurchaseRemarks('');
                 setSelectedSupplierId('');
                 setNewSupplier({ name: '', storeName: '', contactNumber: '', contactPerson: '', paymentMethod: '' });
@@ -651,6 +677,64 @@ const PurchaseRequisitions: React.FC = () => {
         item_count: safeReq.items?.length || 1,
     };
     });
+
+    const renderWorkflowStepper = (req: PurchaseRequisition) => {
+        const stages = [
+            { key: 'DRAFT', label: 'Store Draft' },
+            { key: 'PENDING_AUDIT', label: 'Audit Review' },
+            { key: 'PENDING_ESTIMATE', label: 'Estimates' },
+            { key: 'PENDING_APPROVAL', label: 'Director Review' },
+            { key: 'READY', label: 'Purchase' },
+            { key: 'COMPLETED', label: 'Completed' },
+        ];
+
+        let currentIdx = 0;
+        if (req.status === 'PENDING_AUDIT') currentIdx = 1;
+        else if (req.status === 'PENDING_ESTIMATE') currentIdx = 2;
+        else if (['PENDING_APPROVAL', 'PENDING_DIRECTOR'].includes(req.status)) currentIdx = 3;
+        else if (['READY', 'APPROVED'].includes(req.status)) currentIdx = 4;
+        else if (['COMPLETED', 'RECEIVED', 'PURCHASED'].includes(req.status)) currentIdx = 5;
+        
+        const isRejected = req.status.includes('REJECTED') || req.approval_status === 'REJECTED';
+
+        return (
+            <div className="stepper-container">
+                {stages.map((stage, idx) => {
+                    const isCompleted = idx < currentIdx;
+                    const isActive = idx === currentIdx;
+                    
+                    let stepClass = 'step-upcoming';
+                    if (isCompleted) stepClass = 'step-completed';
+                    else if (isActive) stepClass = isRejected ? 'step-rejected' : 'step-active';
+
+                    return (
+                        <React.Fragment key={stage.key}>
+                            <div className={`step-item ${stepClass}`}>
+                                <div className="step-number">
+                                    {isCompleted ? '✓' : isRejected && isActive ? '✗' : idx + 1}
+                                </div>
+                                <div className="step-label">{stage.label}</div>
+                            </div>
+                            {idx < stages.length - 1 && (
+                                <div className={`step-connector ${idx < currentIdx ? 'completed' : ''}`} />
+                            )}
+                        </React.Fragment>
+                    );
+                })}
+            </div>
+        );
+    };
+
+    useEffect(() => {
+        if (filteredRequisitions.length > 0) {
+            const stillExists = filteredRequisitions.some(r => r.id === selectedRequisition?.id);
+            if (!selectedRequisition || !stillExists) {
+                setSelectedRequisition(filteredRequisitions[0]);
+            }
+        } else {
+            setSelectedRequisition(null);
+        }
+    }, [filteredRequisitions, selectedRequisition]);
 
     const getProductSummary = (req: PurchaseRequisition) => {
         const items = asArray<PurchaseRequisitionItem>(req.items);
@@ -1045,127 +1129,234 @@ const PurchaseRequisitions: React.FC = () => {
                                 <p>Create your first purchase requisition to get started</p>
                             </div>
                         ) : (
-                            <div className="table-wrapper">
-                                <table className="requisitions-table">
-                                    <thead>
-                                        <tr>
-                                            <th>Requisition #</th>
-                                            <th>Priority</th>
-                                            <th>Status</th>
-                                            <th>Approval</th>
-                                            <th>Current Holder</th>
-                                            <th>Stage</th>
-                                            <th>Delivery Date</th>
-                                            <th>Actions</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {filteredRequisitions.map((req) => (
-                                            <tr key={req.id}>
-                                                <td className="font-mono">{req.requisition_number}</td>
-                                                <td>
-                                                    <span
-                                                        className="badge"
-                                                        style={{
-                                                            background: getPriorityColor(req.priority_level),
-                                                            color: 'white',
-                                                        }}
+                            <div className="requisitions-split-pane">
+                                {/* Left Side: Sidebar list of Requisitions */}
+                                <div className="requisitions-sidebar">
+                                    {filteredRequisitions.map((req) => {
+                                        const isSelected = selectedRequisition?.id === req.id;
+                                        return (
+                                            <div 
+                                                key={req.id} 
+                                                className={`requisition-sidebar-card ${isSelected ? 'active' : ''}`}
+                                                onClick={() => setSelectedRequisition(req)}
+                                            >
+                                                <div className="card-top">
+                                                    <span className="req-no">{req.requisition_number}</span>
+                                                    <span 
+                                                        className="badge-pill priority" 
+                                                        style={{ background: getPriorityColor(req.priority_level) }}
                                                     >
                                                         {req.priority_level}
                                                     </span>
-                                                </td>
-                                                <td>
-                                                    <span
-                                                        className="badge"
-                                                        style={{
-                                                            background: getStatusColor(req.status),
-                                                            color: 'white',
-                                                        }}
+                                                </div>
+                                                <div className="card-middle">
+                                                    <span 
+                                                        className="badge-pill status" 
+                                                        style={{ background: getStatusColor(req.status) }}
                                                     >
                                                         {formatStatusLabel(req.status)}
                                                     </span>
-                                                </td>
-                                                <td>
-                                                    <span
-                                                        className="badge"
+                                                    <span 
+                                                        className="badge-pill approval"
                                                         style={{
                                                             background:
                                                                 req.approval_status === 'APPROVED'
                                                                     ? '#22c55e'
                                                                     : req.approval_status === 'REJECTED'
                                                                     ? '#ef4444'
-                                                                    : '#eab308',
-                                                            color: 'white',
+                                                                    : '#eab308'
                                                         }}
                                                     >
                                                         {formatStatusLabel(req.approval_status)}
                                                     </span>
-                                                </td>
-                                                <td className="stage-cell">{getCurrentOwner(req)}</td>
-                                                <td className="stage-cell">{getStageLabel(req)}</td>
-                                                <td>{formatDate(req.required_delivery_date)}</td>
-                                                <td className="actions">
-                                                    <button className="action-btn view" title="View Details" onClick={() => openItemsView(req)}><Eye size={19} /></button>
-                                                    {(req.status === 'DRAFT' || (canAlterRequisition && !['PURCHASED', 'RECEIVED', 'COMPLETED'].includes(req.status))) && (
-                                                        <button className="action-btn edit" title="Alter Products / Quantity" onClick={() => openEditRequisition(req)}><Edit2 size={19} /></button>
-                                                    )}
-                                                    {req.status === 'DRAFT' && can('approve_store_requisition') && (
-                                                        <>
-                                                            <button className="action-btn delete" title="Delete" onClick={() => handleDelete(req.id)}><Trash2 size={19} /></button>
-                                                            <button className="action-btn approve" title="Approve" onClick={() => { setSelectedRequisition(req); setShowApprovalModal(true); }}><Check size={19} /></button>
-                                                        </>
-                                                    )}
-                                                    {req.status === 'PENDING_ESTIMATE' && can('add_purchase_estimates') && (
-                                                        <button className="action-btn estimate" title="Add Estimates" onClick={() => {
-                                                            setSelectedRequisition(req);
-                                                            const itemsList = getPrintableItems(req);
-                                                            const initialEstimates = itemsList.map((item) => ({
-                                                                productId: item.product_id,
-                                                                productName: item.product_name || 'Unknown Product',
-                                                                supplierId: '',
-                                                                estimatedPrice: '',
-                                                                remarks: '',
-                                                            }));
-                                                            setEstimates(initialEstimates);
-                                                            setShowEstimatesModal(true);
-                                                        }}><FileText size={19} /></button>
-                                                    )}
-                                                    {req.status === 'PENDING_AUDIT' && can('audit_purchase_requisition') && (
-                                                        <button className="action-btn audit" title="Audit Review" onClick={() => openAuditModal(req)}><AlertCircle size={19} /></button>
-                                                    )}
-                                                    {req.status === 'PENDING_DIRECTOR' && can('director_approve_purchase_requisition') && (
-                                                        <button className="action-btn approve" title="Director Review" onClick={() => openDirectorModal(req)}><Check size={19} /></button>
-                                                    )}
-                                                    {req.status === 'APPROVED' && (
-                                                        <>
-                                                            <button className="action-btn print" title="Print Requisition" onClick={() => handlePrintRequisition(req)}><Printer size={19} /></button>
-                                                            {can('purchase_requisition') && (
-                                                                <button className="action-btn purchase" title="Purchase" onClick={() => { setSelectedRequisition(req); setShowPurchaseModal(true); }}><ShoppingCart size={19} /></button>
-                                                            )}
-                                                        </>
-                                                    )}
-                                                    {req.status === 'PURCHASED' && can('receive_purchase_requisition') && (
-                                                        <button className="action-btn receive" title="Receive" onClick={() => handleReceive(req.id)}><Package size={19} /></button>
-                                                    )}
-                                                    {['PURCHASED', 'RECEIVED'].includes(req.status) && can('manage_damaged_goods') && (
-                                                        <button className="action-btn delete" title="Record Damaged Goods" onClick={() => {
-                                                            setSelectedRequisition(req);
-                                                            const firstItem = asArray<any>(req.items)[0];
-                                                            setDamageProductId(String(firstItem?.product_id || req.product_id || ''));
-                                                            setDamageQty('');
-                                                            setDamageNotes('');
-                                                            setShowDamageModal(true);
-                                                        }}><PackageMinus size={19} /></button>
-                                                    )}
-                                                    {req.status === 'RECEIVED' && can('complete_purchase_requisition') && (
-                                                        <button className="action-btn complete" title="Complete" onClick={() => handleComplete(req.id)}><Check size={19} /></button>
-                                                    )}
-                                                    <button className="action-btn edit" title="History" onClick={() => openHistory(req)}><Clock size={19} /></button>
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
+                                                </div>
+                                                <div className="card-bottom">
+                                                    <span className="owner">Holder: {getCurrentOwner(req)}</span>
+                                                    <span className="date">{formatDate(req.required_delivery_date)}</span>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+
+                                {/* Right Side: Dynamic Formal Requisition Detail Panel */}
+                                <div className="requisition-details-pane">
+                                    {selectedRequisition ? (
+                                        <div className="details-card">
+                                            {/* Details Header */}
+                                            <div className="details-header">
+                                                <div className="title-section">
+                                                    <h3>Purchase Requisition Details</h3>
+                                                    <span className="req-id">{selectedRequisition.requisition_number}</span>
+                                                </div>
+                                            </div>
+
+                                            {/* Stepper Timeline */}
+                                            <div className="workflow-stepper">
+                                                {renderWorkflowStepper(selectedRequisition)}
+                                            </div>
+
+                                            {/* Meta Details Grid */}
+                                            <div className="meta-details-grid">
+                                                <div className="meta-box">
+                                                    <span className="meta-label">Priority Level</span>
+                                                    <span className="meta-val priority" style={{ color: getPriorityColor(selectedRequisition.priority_level) }}>
+                                                        {selectedRequisition.priority_level}
+                                                    </span>
+                                                </div>
+                                                <div className="meta-box">
+                                                    <span className="meta-label">Current Holder</span>
+                                                    <span className="meta-val">{getCurrentOwner(selectedRequisition)}</span>
+                                                </div>
+                                                <div className="meta-box">
+                                                    <span className="meta-label">Workflow Stage</span>
+                                                    <span className="meta-val">{getStageLabel(selectedRequisition)}</span>
+                                                </div>
+                                                <div className="meta-box">
+                                                    <span className="meta-label">Required Delivery</span>
+                                                    <span className="meta-val">{formatDate(selectedRequisition.required_delivery_date)}</span>
+                                                </div>
+                                            </div>
+
+                                            {/* Line Items Table */}
+                                            <div className="details-items-section">
+                                                <h4>Line Items ({selectedRequisition.items?.length || 0})</h4>
+                                                <table className="details-items-table">
+                                                    <thead>
+                                                        <tr>
+                                                            <th>Product Specification</th>
+                                                            <th style={{ textAlign: 'right' }}>Qty</th>
+                                                            <th style={{ width: '40%' }}>Remarks / Specifications</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {(selectedRequisition.items || []).map((item, idx) => {
+                                                            const productDetail = products.find(p => String(p.id) === String(item.product_id));
+                                                            return (
+                                                                <tr key={idx}>
+                                                                    <td>
+                                                                        <div className="prod-name">{item.product_name || productDetail?.name || 'Unknown Product'}</div>
+                                                                        <div className="prod-sku font-mono">{productDetail?.sku || 'No SKU'}</div>
+                                                                    </td>
+                                                                    <td style={{ textAlign: 'right', fontWeight: 600 }}>
+                                                                        {item.quantity} <span className="unit-label">{productDetail?.unit_symbol || item.quantity_unit || 'pcs'}</span>
+                                                                    </td>
+                                                                    <td className="item-remarks">{item.remarks || '—'}</td>
+                                                                </tr>
+                                                            );
+                                                        })}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+
+                                            {/* Requisition Narration */}
+                                            {selectedRequisition.remarks && (
+                                                <div className="details-narration-section">
+                                                    <h4>Narration / Remarks</h4>
+                                                    <p>{selectedRequisition.remarks}</p>
+                                                </div>
+                                            )}
+
+                                            {/* Split-pane Action Buttons Panel */}
+                                            <div className="details-actions-bar">
+                                                {/* Print / History / Details (available for all) */}
+                                                <button className="btn-action primary" title="View Print Format" onClick={() => openItemsView(selectedRequisition)}>
+                                                    <Eye size={16} /> Details
+                                                </button>
+                                                <button className="btn-action secondary" title="Print Requisition" onClick={() => handlePrintRequisition(selectedRequisition)}>
+                                                    <Printer size={16} /> Print
+                                                </button>
+                                                <button className="btn-action secondary" title="View Progress History" onClick={() => openHistory(selectedRequisition)}>
+                                                    <Clock size={16} /> History
+                                                </button>
+
+                                                {/* Status specific actions */}
+                                                {(selectedRequisition.status === 'DRAFT' || (canAlterRequisition && !['PURCHASED', 'RECEIVED', 'COMPLETED'].includes(selectedRequisition.status))) && (
+                                                    <button className="btn-action warning" title="Alter Products / Quantity" onClick={() => openEditRequisition(selectedRequisition)}>
+                                                        <Edit2 size={16} /> Alter
+                                                    </button>
+                                                )}
+
+                                                {selectedRequisition.status === 'DRAFT' && can('approve_store_requisition') && (
+                                                    <>
+                                                        <button className="btn-action danger" title="Delete" onClick={() => handleDelete(selectedRequisition.id)}>
+                                                            <Trash2 size={16} /> Delete
+                                                        </button>
+                                                        <button className="btn-action success" title="Approve" onClick={() => { setSelectedRequisition(selectedRequisition); setShowApprovalModal(true); }}>
+                                                            <Check size={16} /> Approve
+                                                        </button>
+                                                    </>
+                                                )}
+
+                                                {selectedRequisition.status === 'PENDING_ESTIMATE' && can('add_purchase_estimates') && (
+                                                    <button className="btn-action estimate" title="Add Estimates" onClick={() => {
+                                                        setSelectedRequisition(selectedRequisition);
+                                                        const itemsList = getPrintableItems(selectedRequisition);
+                                                        const initialEstimates = itemsList.map((item) => ({
+                                                            productId: item.product_id,
+                                                            productName: item.product_name || 'Unknown Product',
+                                                            supplierId: '',
+                                                            estimatedPrice: '',
+                                                            remarks: '',
+                                                        }));
+                                                        setEstimates(initialEstimates);
+                                                        setShowEstimatesModal(true);
+                                                    }}>
+                                                        <FileText size={16} /> Add Estimates
+                                                    </button>
+                                                )}
+
+                                                {selectedRequisition.status === 'PENDING_AUDIT' && can('audit_purchase_requisition') && (
+                                                    <button className="btn-action audit" title="Audit Review" onClick={() => openAuditModal(selectedRequisition)}>
+                                                        <AlertCircle size={16} /> Audit Review
+                                                    </button>
+                                                )}
+
+                                                {selectedRequisition.status === 'PENDING_DIRECTOR' && can('director_approve_purchase_requisition') && (
+                                                    <button className="btn-action approve" title="Director Review" onClick={() => openDirectorModal(selectedRequisition)}>
+                                                        <Check size={16} /> Director Review
+                                                    </button>
+                                                )}
+
+                                                {selectedRequisition.status === 'APPROVED' && can('purchase_requisition') && (
+                                                    <button className="btn-action purchase" title="Purchase" onClick={() => { setSelectedRequisition(selectedRequisition); setShowPurchaseModal(true); }}>
+                                                        <ShoppingCart size={16} /> Purchase
+                                                    </button>
+                                                )}
+
+                                                {selectedRequisition.status === 'PURCHASED' && can('receive_purchase_requisition') && (
+                                                    <button className="btn-action receive" title="Receive" onClick={() => handleReceive(selectedRequisition.id)}>
+                                                        <Package size={16} /> Receive Goods
+                                                    </button>
+                                                )}
+
+                                                {['PURCHASED', 'RECEIVED'].includes(selectedRequisition.status) && can('manage_damaged_goods') && (
+                                                    <button className="btn-action danger" title="Record Damaged Goods" onClick={() => {
+                                                        setSelectedRequisition(selectedRequisition);
+                                                        const firstItem = asArray<any>(selectedRequisition.items)[0];
+                                                        setDamageProductId(String(firstItem?.product_id || selectedRequisition.product_id || ''));
+                                                        setDamageQty('');
+                                                        setDamageNotes('');
+                                                        setShowDamageModal(true);
+                                                    }}>
+                                                        <PackageMinus size={16} /> Damage Report
+                                                    </button>
+                                                )}
+
+                                                {selectedRequisition.status === 'RECEIVED' && can('complete_purchase_requisition') && (
+                                                    <button className="btn-action complete" title="Complete" onClick={() => handleComplete(selectedRequisition.id)}>
+                                                        <Check size={16} /> Complete
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="empty-details-pane">
+                                            <Package size={36} style={{ opacity: 0.3 }} />
+                                            <p>Select a purchase requisition from the sidebar to view full workflow details and actions.</p>
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                         )}
                     </motion.div>
@@ -1671,125 +1862,155 @@ const PurchaseRequisitions: React.FC = () => {
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
                     >
-                        <form onSubmit={handleCreateSubmit} className="requisition-form">
-                            <div className="requisition-form-header">
-                                <div>
-                                    <div className="requisition-eyebrow">Purchase Requisition</div>
-                                    <h2>{editingRequisition ? `Alter ${editingRequisition.requisition_number}` : 'Purchase Requisition'}</h2>
-                                    <p>{editingRequisition ? 'Admin/director alteration of product lines and quantities.' : 'Add one or more products and submit the request for approval.'}</p>
+                        <form onSubmit={handleCreateSubmit} className="requisition-form" style={{ padding: '2rem', borderRadius: '16px', border: '1px solid var(--border-color)', background: 'var(--card-bg)', boxShadow: '0 4px 20px rgba(0,0,0,0.05)' }}>
+                            {/* Premium Header */}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2.5rem' }}>
+                                <button type="button" className="requisition-back-btn" onClick={resetCreateForm}>
+                                    <ArrowLeft size={18} /> Back
+                                </button>
+                                <h2 style={{ fontSize: '1.45rem', fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>
+                                    {editingRequisition ? `Alter Requisition #${editingRequisition.requisition_number}` : 'New Purchase Requisition'}
+                                </h2>
+                            </div>
+
+                            {/* Horizontal Form Row */}
+                            <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '2rem', width: '100%', boxSizing: 'border-box' }}>
+                                <div className="form-group compact" style={{ flex: 1, minWidth: 0 }}>
+                                    <label style={{ display: 'block', fontWeight: 600, fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
+                                        Required Delivery Date *
+                                    </label>
+                                    <input
+                                        type="date"
+                                        value={formData.requiredDeliveryDate}
+                                        onChange={(e) => setFormData({ ...formData, requiredDeliveryDate: e.target.value })}
+                                        required
+                                        style={{ width: '100%', minWidth: '0', padding: '10px 14px', border: '1px solid var(--border-color)', borderRadius: '8px', background: 'var(--input-field-bg)', color: 'var(--text-primary)', outline: 'none', fontSize: '0.92rem', boxSizing: 'border-box' }}
+                                    />
                                 </div>
-                                <div className="requisition-meta-grid">
-                                    <div className="form-group compact">
-                                        <label>Required Delivery Date *</label>
-                                        <input
-                                            type="date"
-                                            value={formData.requiredDeliveryDate}
-                                            onChange={(e) => setFormData({ ...formData, requiredDeliveryDate: e.target.value })}
-                                            required
-                                        />
-                                    </div>
-                                    <div className="form-group compact">
-                                        <label>Priority</label>
-                                        <select
-                                            value={formData.priorityLevel}
-                                            onChange={(e) => setFormData({ ...formData, priorityLevel: e.target.value })}
-                                        >
-                                            <option value="LOW">Low</option>
-                                            <option value="MEDIUM">Medium</option>
-                                            <option value="HIGH">High</option>
-                                            <option value="URGENT">Urgent</option>
-                                        </select>
-                                    </div>
+                                <div className="form-group compact" style={{ flex: 1, minWidth: 0 }}>
+                                    <label style={{ display: 'block', fontWeight: 600, fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
+                                        Priority Level
+                                    </label>
+                                    <select
+                                        value={formData.priorityLevel}
+                                        onChange={(e) => setFormData({ ...formData, priorityLevel: e.target.value })}
+                                        style={{ width: '100%', minWidth: '0', padding: '10px 14px', border: '1px solid var(--border-color)', borderRadius: '8px', background: 'var(--input-field-bg)', color: 'var(--text-primary)', outline: 'none', fontSize: '0.92rem', boxSizing: 'border-box' }}
+                                    >
+                                        <option value="LOW">Low</option>
+                                        <option value="MEDIUM">Medium</option>
+                                        <option value="HIGH">High</option>
+                                        <option value="URGENT">Urgent</option>
+                                    </select>
                                 </div>
                             </div>
 
-                            <div className="section-divider">Line Items</div>
-
-                            <div className="line-items-shell">
-                                <table className="line-items-table">
-                                    <thead>
-                                        <tr>
-                                            <th style={{ width: '32%' }}>Product</th>
-                                            <th style={{ width: '72px' }}>Info</th>
-                                            <th style={{ width: '12%', textAlign: 'right' }}>Qty</th>
-                                            <th style={{ width: '16%' }}>Unit</th>
-                                            <th>Remarks</th>
-                                            <th style={{ width: '52px' }}></th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {lineItems.map((item, index) => {
-                                            const matchedProduct = productLabelLookup.get(item.productSearch);
-                                            return (
-                                                <tr key={item.id}>
-                                                    <td>
-                                                        <input
-                                                            list="purchase-requisition-products"
-                                                            value={item.productSearch}
-                                                            onChange={(e) => handleLineItemChange(index, 'productSearch', e.target.value)}
-                                                            placeholder="Search product"
-                                                            required
-                                                        />
-                                                        {matchedProduct ? (
-                                                            <div className="line-item-hint">Selected product</div>
-                                                        ) : null}
-                                                    </td>
-                                                    <td>
-                                                        <button
-                                                            type="button"
-                                                            className="action-btn view"
-                                                            onClick={() => openProductSummary(item.productId)}
-                                                            title="View product summary"
-                                                            disabled={!item.productId}
-                                                        >
-                                                            <Eye size={18} />
-                                                        </button>
-                                                    </td>
-                                                    <td>
-                                                        <input
-                                                            type="number"
-                                                            min="1"
-                                                            value={item.quantity}
-                                                            onChange={(e) => handleLineItemChange(index, 'quantity', e.target.value)}
-                                                            placeholder="0"
-                                                            required
-                                                        />
-                                                    </td>
-                                                    <td>
-                                                        <input
-                                                            type="text"
-                                                            value={item.quantityUnit}
-                                                            onChange={(e) => handleLineItemChange(index, 'quantityUnit', e.target.value)}
-                                                            placeholder="piece"
-                                                            readOnly={!!matchedProduct}
-                                                            title={matchedProduct ? 'Uses the selected product unit' : 'Select a product to load its unit'}
-                                                            required
-                                                        />
-                                                    </td>
-                                                    <td>
-                                                        <input
-                                                            type="text"
-                                                            value={item.remarks}
-                                                            onChange={(e) => handleLineItemChange(index, 'remarks', e.target.value)}
-                                                            placeholder="Optional line notes"
-                                                        />
-                                                    </td>
-                                                    <td>
-                                                        <button
-                                                            type="button"
-                                                            className="action-btn delete"
-                                                            onClick={() => removeLineItem(index)}
-                                                            title="Remove line"
-                                                        >
-                                                            <Trash2 size={18} />
-                                                        </button>
-                                                    </td>
-                                                </tr>
-                                            );
-                                        })}
-                                    </tbody>
-                                </table>
+                            {/* Line Items Section Separator */}
+                            <div className="line-items-divider">
+                                <span>LINE ITEMS</span>
+                                <div className="divider-line" />
                             </div>
+
+                             {/* Line Items List */}
+                             <div className="line-items-shell" style={{ border: 'none', background: 'transparent', marginBottom: '1.25rem' }}>
+                                 {/* Header Row - Perfectly aligned with input grid */}
+                                 <div className="line-items-header-row" style={{ padding: '0 20px 8px', borderBottom: '1px solid var(--border-color)', marginBottom: '1rem' }}>
+                                     <div style={{ textTransform: 'uppercase', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)' }}>Product Specification *</div>
+                                     <div style={{ textTransform: 'uppercase', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', textAlign: 'center' }}>Info</div>
+                                     <div style={{ textTransform: 'uppercase', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', textAlign: 'right' }}>Qty *</div>
+                                     <div style={{ textTransform: 'uppercase', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)' }}>Unit</div>
+                                     <div style={{ textTransform: 'uppercase', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)' }}>Remarks / Specifications</div>
+                                     <div></div>
+                                 </div>
+
+                                 <div className="line-items-rows" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                                     {lineItems.map((item, index) => {
+                                         const matchedProduct = productLabelLookup.get(item.productSearch);
+                                         return (
+                                             <div key={item.id} className="line-item-card">
+                                                 {/* Product Search */}
+                                                 <div>
+                                                     <input
+                                                         list="purchase-requisition-products"
+                                                         value={item.productSearch}
+                                                         onChange={(e) => handleLineItemChange(index, 'productSearch', e.target.value)}
+                                                         placeholder="Search product"
+                                                         required
+                                                         style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--border-color)', borderRadius: '8px', background: 'var(--input-field-bg)', color: 'var(--text-primary)', outline: 'none' }}
+                                                     />
+                                                     {matchedProduct ? (
+                                                         <div className="line-item-hint" style={{ fontSize: '0.72rem', color: 'var(--accent-color)', marginTop: '4px', fontWeight: 600 }}>Selected product</div>
+                                                     ) : null}
+                                                 </div>
+
+                                                 {/* Info Button */}
+                                                 <div style={{ display: 'flex', justifyContent: 'center' }}>
+                                                     <button
+                                                         type="button"
+                                                         className="action-btn view"
+                                                         onClick={() => openProductSummary(item.productId)}
+                                                         title="View product summary"
+                                                         disabled={!item.productId}
+                                                         style={{ border: '1px solid var(--border-color)', borderRadius: '8px', width: '36px', height: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--card-bg)', cursor: item.productId ? 'pointer' : 'default', opacity: item.productId ? 1 : 0.4 }}
+                                                     >
+                                                         <Eye size={16} />
+                                                     </button>
+                                                 </div>
+
+                                                 {/* Qty */}
+                                                 <div>
+                                                     <input
+                                                         type="number"
+                                                         min="1"
+                                                         value={item.quantity}
+                                                         onChange={(e) => handleLineItemChange(index, 'quantity', e.target.value)}
+                                                         placeholder="0"
+                                                         required
+                                                         style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--border-color)', borderRadius: '8px', background: 'var(--input-field-bg)', color: 'var(--text-primary)', textAlign: 'right', outline: 'none' }}
+                                                     />
+                                                 </div>
+
+                                                 {/* Unit */}
+                                                 <div>
+                                                     <input
+                                                         type="text"
+                                                         value={item.quantityUnit}
+                                                         onChange={(e) => handleLineItemChange(index, 'quantityUnit', e.target.value)}
+                                                         placeholder="piece"
+                                                         readOnly={!!matchedProduct}
+                                                         title={matchedProduct ? 'Uses the selected product unit' : 'Select a product to load its unit'}
+                                                         required
+                                                         style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--border-color)', borderRadius: '8px', background: matchedProduct ? 'var(--hover-bg)' : 'var(--input-field-bg)', color: matchedProduct ? 'var(--text-secondary)' : 'var(--text-primary)', outline: 'none' }}
+                                                     />
+                                                 </div>
+
+                                                 {/* Remarks */}
+                                                 <div>
+                                                     <input
+                                                         type="text"
+                                                         value={item.remarks}
+                                                         onChange={(e) => handleLineItemChange(index, 'remarks', e.target.value)}
+                                                         placeholder="Optional line notes"
+                                                         style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--border-color)', borderRadius: '8px', background: 'var(--input-field-bg)', color: 'var(--text-primary)', outline: 'none' }}
+                                                     />
+                                                 </div>
+
+                                                 {/* Delete Button */}
+                                                 <div style={{ display: 'flex', justifyContent: 'center' }}>
+                                                     <button
+                                                         type="button"
+                                                         className="action-btn delete"
+                                                         onClick={() => removeLineItem(index)}
+                                                         title="Remove line"
+                                                         style={{ border: '1px solid var(--border-color)', borderRadius: '8px', width: '36px', height: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--card-bg)', cursor: 'pointer', color: 'var(--text-secondary)' }}
+                                                     >
+                                                         <Trash2 size={16} />
+                                                     </button>
+                                                 </div>
+                                             </div>
+                                         );
+                                     })}
+                                 </div>
+                             </div>
 
                             <datalist id="purchase-requisition-products">
                                 {productLabels.map((product) => (
@@ -1797,26 +2018,46 @@ const PurchaseRequisitions: React.FC = () => {
                                 ))}
                             </datalist>
 
-                            <button type="button" className="add-line-btn" onClick={addLineItem}>
+                            {/* Add Line Dashed Button */}
+                            <button
+                                type="button"
+                                className="add-line-btn"
+                                onClick={addLineItem}
+                                style={{ width: '100%', padding: '12px', border: '1px dashed var(--accent-color)', borderRadius: '8px', background: 'transparent', color: 'var(--accent-color)', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', cursor: 'pointer', transition: 'all 0.2s', marginBottom: '2.5rem' }}
+                            >
                                 <Plus size={16} /> Add Line Item
                             </button>
 
-                            <div className="form-group">
-                                <label>Remarks</label>
+                            {/* Narration textarea */}
+                            <div className="form-group" style={{ marginBottom: '2.5rem' }}>
+                                <label style={{ display: 'block', fontWeight: 600, fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
+                                    Narration / Notes
+                                </label>
                                 <textarea
                                     value={formData.remarks}
                                     onChange={(e) => setFormData({ ...formData, remarks: e.target.value })}
-                                    rows={4}
-                                    placeholder="Optional overall notes"
+                                    rows={3}
+                                    placeholder="Optional overall requisition remarks..."
+                                    style={{ width: '100%', padding: '12px', border: '1px solid var(--border-color)', borderRadius: '8px', background: 'var(--input-field-bg)', color: 'var(--text-primary)', outline: 'none', resize: 'vertical', fontSize: '0.92rem' }}
                                 />
                             </div>
 
-                            <div className="form-actions requisition-actions">
-                                <button type="button" className="btn-secondary" onClick={resetCreateForm}>
-                                    {editingRequisition ? 'Cancel Edit' : 'Reset'}
+                            {/* Actions footer */}
+                            <div className="form-actions requisition-actions" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '1.5rem', borderTop: '1px solid var(--border-color)' }}>
+                                <button
+                                    type="button"
+                                    className="btn-secondary"
+                                    onClick={resetCreateForm}
+                                    style={{ padding: '10px 20px', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'transparent', color: 'var(--text-primary)', fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}
+                                >
+                                    {editingRequisition ? 'Cancel Edit' : 'Reset Form'}
                                 </button>
-                                <button type="submit" className="btn-primary">
-                                    {editingRequisition ? 'Save Alteration' : 'Submit Requisition'}
+                                <button
+                                    type="submit"
+                                    className="btn-primary"
+                                    style={{ padding: '10px 24px', borderRadius: '8px', border: 'none', background: 'var(--accent-color)', color: '#fff', fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                                >
+                                    <Save size={16} /> {editingRequisition ? 'Save Alteration' : 'Submit Requisition'}
                                 </button>
                             </div>
                         </form>
@@ -1873,19 +2114,32 @@ const PurchaseRequisitions: React.FC = () => {
                             
                             <div style={{ marginTop: '1rem', background: '#f8fafc', padding: '1rem', borderRadius: '8px' }}>
                                 <h4>Submitted Quotes</h4>
-                                {fetchedQuotes.length === 0 ? <p style={{ fontSize: '0.9rem', color: '#666' }}>No quotes available.</p> : (
-                                    <ul style={{ fontSize: '0.9rem', paddingLeft: '1.2rem', marginTop: '0.5rem' }}>
+                                {fetchedQuotes.length === 0 ? <p style={{ fontSize: '0.9rem', color: '#64748b' }}>No quotes submitted yet.</p> : (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.5rem' }}>
                                         {fetchedQuotes.map((q, i) => {
                                             const item = getPrintableItems(selectedRequisition).find(it => String(it.product_id) === String(q.product_id));
+                                            const unitPrice = Number(q.unit_price || q.estimated_price) || 0;
+                                            const qty = item ? Number(item.quantity) || 1 : 1;
+                                            const totalPrice = unitPrice * qty;
                                             return (
-                                                <li key={i} style={{ marginBottom: '4px' }}>
-                                                    <strong>{q.supplier?.name || 'Unknown Supplier'}</strong>: 
-                                                    {' '}৳{q.estimated_price} {q.remarks ? `(${q.remarks})` : ''}
-                                                    {item ? <span style={{ color: '#64748b', fontSize: '0.8rem', marginLeft: '0.5rem' }}>(for {item.product_name})</span> : ''}
-                                                </li>
+                                                <div key={i} style={{ padding: '0.6rem 0.8rem', background: 'var(--page-bg)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem' }}>
+                                                        <div>
+                                                            <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>{q.supplier?.name || 'Unknown Supplier'}</div>
+                                                            {q.supplier?.store_name && <div style={{ fontSize: '0.78rem', color: '#64748b' }}>Store: {q.supplier.store_name}</div>}
+                                                            {q.supplier?.contact_person && <div style={{ fontSize: '0.78rem', color: '#64748b' }}>Contact: {q.supplier.contact_person} {q.supplier.contact_number ? `(${q.supplier.contact_number})` : ''}</div>}
+                                                            {(item || q.product) && <div style={{ fontSize: '0.78rem', color: 'var(--accent-color)', marginTop: '2px' }}>For: {item?.product_name || q.product?.name || 'Unknown product'}</div>}
+                                                            {q.remarks && <div style={{ fontSize: '0.78rem', color: '#94a3b8', fontStyle: 'italic' }}>{q.remarks}</div>}
+                                                        </div>
+                                                        <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                                                            <div style={{ fontWeight: 700, fontSize: '0.95rem', color: '#059669' }}>৳{totalPrice.toLocaleString()}</div>
+                                                            <div style={{ fontSize: '0.75rem', color: '#64748b' }}>৳{unitPrice} × {qty} {item?.quantity_unit || 'pcs'}</div>
+                                                        </div>
+                                                    </div>
+                                                </div>
                                             );
                                         })}
-                                    </ul>
+                                    </div>
                                 )}
                             </div>
 
@@ -1920,12 +2174,13 @@ const PurchaseRequisitions: React.FC = () => {
                                 <div style={{ marginTop: '1.25rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                                     {getPrintableItems(selectedRequisition).map((item) => {
                                         const itemQuotes = estimates.filter(est => String(est.productId) === String(item.product_id));
+                                        const qty = Number(item.quantity) || 1;
                                         return (
-                                            <div key={item.product_id} style={{ border: '1px solid #cbd5e1', padding: '1rem', borderRadius: '8px', background: '#f8fafc' }}>
+                                            <div key={item.product_id} style={{ border: '1px solid var(--border-color)', padding: '1rem', borderRadius: '10px', background: 'var(--card-bg)' }}>
                                                 <h4 style={{ margin: '0 0 0.75rem 0', color: 'var(--accent-color)', fontSize: '0.95rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
                                                     <span>
                                                         {item.product_name || 'Unknown Product'}{' '}
-                                                        <span style={{ color: '#64748b', fontWeight: 'normal', fontSize: '0.82rem' }}>({item.quantity} {item.quantity_unit})</span>
+                                                        <span style={{ color: '#64748b', fontWeight: 'normal', fontSize: '0.82rem' }}>— Qty: {qty} {item.quantity_unit}</span>
                                                     </span>
                                                     {lastPurchasedPrices[String(item.product_id)] !== undefined && (
                                                         <span style={{ 
@@ -1942,12 +2197,22 @@ const PurchaseRequisitions: React.FC = () => {
                                                     )}
                                                 </h4>
                                                 
+                                                {/* Column headers */}
+                                                <div style={{ display: 'grid', gridTemplateColumns: '1.8fr 1.4fr 1.5fr auto', gap: '0.5rem', padding: '0 0 0.4rem', borderBottom: '1px solid var(--border-color)', marginBottom: '0.5rem' }}>
+                                                    <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Supplier</span>
+                                                    <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Unit Price (per piece) *</span>
+                                                    <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Remarks</span>
+                                                    <span></span>
+                                                </div>
+
                                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                                                     {itemQuotes.map((est, idx) => {
                                                         const globalIdx = estimates.findIndex(e => e === est);
+                                                        const unitPrice = Number(est.estimatedPrice) || 0;
+                                                        const totalPrice = unitPrice * qty;
                                                         return (
-                                                            <div key={idx} style={{ border: '1px solid #e2e8f0', padding: '0.75rem', borderRadius: '6px', background: '#fff' }}>
-                                                                <div style={{ display: 'grid', gridTemplateColumns: '1.8fr 1.2fr 2fr auto', gap: '0.5rem', alignItems: 'center' }}>
+                                                            <div key={idx} style={{ border: '1px solid var(--border-color)', padding: '0.75rem', borderRadius: '8px', background: 'var(--page-bg)' }}>
+                                                                <div style={{ display: 'grid', gridTemplateColumns: '1.8fr 1.4fr 1.5fr auto', gap: '0.5rem', alignItems: 'center' }}>
                                                                     <select 
                                                                         value={est.supplierId} 
                                                                         onChange={(e) => { 
@@ -1955,23 +2220,32 @@ const PurchaseRequisitions: React.FC = () => {
                                                                             newEst[globalIdx].supplierId = e.target.value; 
                                                                             setEstimates(newEst); 
                                                                         }}
-                                                                        style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                                                                        style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid var(--border-color)', background: 'var(--card-bg)', color: 'var(--text-primary)' }}
                                                                     >
                                                                         <option value="">-- Select Vendor --</option>
                                                                         {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                                                                         <option value="NEW">+ Create New Supplier</option>
                                                                     </select>
-                                                                    <input 
-                                                                        type="number" 
-                                                                        placeholder="Est. Price" 
-                                                                        value={est.estimatedPrice} 
-                                                                        onChange={(e) => { 
-                                                                            const newEst = [...estimates]; 
-                                                                            newEst[globalIdx].estimatedPrice = e.target.value; 
-                                                                            setEstimates(newEst); 
-                                                                        }} 
-                                                                        style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1' }} 
-                                                                    />
+                                                                    <div>
+                                                                        <input 
+                                                                            type="number" 
+                                                                            placeholder="Unit price e.g. 10" 
+                                                                            value={est.estimatedPrice} 
+                                                                            min="0"
+                                                                            step="0.01"
+                                                                            onChange={(e) => { 
+                                                                                const newEst = [...estimates]; 
+                                                                                newEst[globalIdx].estimatedPrice = e.target.value; 
+                                                                                setEstimates(newEst); 
+                                                                            }} 
+                                                                            style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid var(--border-color)', background: 'var(--card-bg)', color: 'var(--text-primary)', width: '100%' }} 
+                                                                        />
+                                                                        {unitPrice > 0 && (
+                                                                            <div style={{ fontSize: '0.75rem', color: '#059669', fontWeight: 600, marginTop: '3px' }}>
+                                                                                Total: ৳{totalPrice.toLocaleString('en-BD', { minimumFractionDigits: 2 })} ({qty} × ৳{unitPrice})
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
                                                                     <input 
                                                                         type="text" 
                                                                         placeholder="Remarks" 
@@ -1981,7 +2255,7 @@ const PurchaseRequisitions: React.FC = () => {
                                                                             newEst[globalIdx].remarks = e.target.value; 
                                                                             setEstimates(newEst); 
                                                                         }} 
-                                                                        style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1' }} 
+                                                                        style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid var(--border-color)', background: 'var(--card-bg)', color: 'var(--text-primary)' }} 
                                                                     />
                                                                     <button 
                                                                         className="btn-secondary" 
@@ -1996,11 +2270,11 @@ const PurchaseRequisitions: React.FC = () => {
                                                                 
                                                                 {est.supplierId === 'NEW' && (
                                                                     <div style={{ marginTop: '0.75rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                                                                        <input type="text" placeholder="Supplier Name *" value={est.newSupplier?.name || ''} onChange={(e) => { const newEst = [...estimates]; newEst[globalIdx].newSupplier = { ...newEst[globalIdx].newSupplier, name: e.target.value }; setEstimates(newEst); }} style={{ padding: '0.4rem', fontSize: '0.85rem' }} />
-                                                                        <input type="text" placeholder="Store Name" value={est.newSupplier?.storeName || ''} onChange={(e) => { const newEst = [...estimates]; newEst[globalIdx].newSupplier = { ...newEst[globalIdx].newSupplier, storeName: e.target.value }; setEstimates(newEst); }} style={{ padding: '0.4rem', fontSize: '0.85rem' }} />
-                                                                        <input type="text" placeholder="Contact Person" value={est.newSupplier?.contactPerson || ''} onChange={(e) => { const newEst = [...estimates]; newEst[globalIdx].newSupplier = { ...newEst[globalIdx].newSupplier, contactPerson: e.target.value }; setEstimates(newEst); }} style={{ padding: '0.4rem', fontSize: '0.85rem' }} />
-                                                                        <input type="text" placeholder="Contact Number" value={est.newSupplier?.contactNumber || ''} onChange={(e) => { const newEst = [...estimates]; newEst[globalIdx].newSupplier = { ...newEst[globalIdx].newSupplier, contactNumber: e.target.value }; setEstimates(newEst); }} style={{ padding: '0.4rem', fontSize: '0.85rem' }} />
-                                                                        <input type="text" placeholder="Payment Method" value={est.newSupplier?.paymentMethod || ''} onChange={(e) => { const newEst = [...estimates]; newEst[globalIdx].newSupplier = { ...newEst[globalIdx].newSupplier, paymentMethod: e.target.value }; setEstimates(newEst); }} style={{ padding: '0.4rem', fontSize: '0.85rem', gridColumn: '1 / -1' }} />
+                                                                        <input type="text" placeholder="Supplier Name *" value={est.newSupplier?.name || ''} onChange={(e) => { const newEst = [...estimates]; newEst[globalIdx].newSupplier = { ...newEst[globalIdx].newSupplier, name: e.target.value }; setEstimates(newEst); }} style={{ padding: '0.4rem', fontSize: '0.85rem', border: '1px solid var(--border-color)', borderRadius: '6px', background: 'var(--card-bg)', color: 'var(--text-primary)' }} />
+                                                                        <input type="text" placeholder="Store Name" value={est.newSupplier?.storeName || ''} onChange={(e) => { const newEst = [...estimates]; newEst[globalIdx].newSupplier = { ...newEst[globalIdx].newSupplier, storeName: e.target.value }; setEstimates(newEst); }} style={{ padding: '0.4rem', fontSize: '0.85rem', border: '1px solid var(--border-color)', borderRadius: '6px', background: 'var(--card-bg)', color: 'var(--text-primary)' }} />
+                                                                        <input type="text" placeholder="Contact Person" value={est.newSupplier?.contactPerson || ''} onChange={(e) => { const newEst = [...estimates]; newEst[globalIdx].newSupplier = { ...newEst[globalIdx].newSupplier, contactPerson: e.target.value }; setEstimates(newEst); }} style={{ padding: '0.4rem', fontSize: '0.85rem', border: '1px solid var(--border-color)', borderRadius: '6px', background: 'var(--card-bg)', color: 'var(--text-primary)' }} />
+                                                                        <input type="text" placeholder="Contact Number" value={est.newSupplier?.contactNumber || ''} onChange={(e) => { const newEst = [...estimates]; newEst[globalIdx].newSupplier = { ...newEst[globalIdx].newSupplier, contactNumber: e.target.value }; setEstimates(newEst); }} style={{ padding: '0.4rem', fontSize: '0.85rem', border: '1px solid var(--border-color)', borderRadius: '6px', background: 'var(--card-bg)', color: 'var(--text-primary)' }} />
+                                                                        <input type="text" placeholder="Payment Method" value={est.newSupplier?.paymentMethod || ''} onChange={(e) => { const newEst = [...estimates]; newEst[globalIdx].newSupplier = { ...newEst[globalIdx].newSupplier, paymentMethod: e.target.value }; setEstimates(newEst); }} style={{ padding: '0.4rem', fontSize: '0.85rem', gridColumn: '1 / -1', border: '1px solid var(--border-color)', borderRadius: '6px', background: 'var(--card-bg)', color: 'var(--text-primary)' }} />
                                                                     </div>
                                                                 )}
                                                             </div>
@@ -2190,19 +2464,32 @@ const PurchaseRequisitions: React.FC = () => {
                             
                             <div style={{ marginTop: '1rem', background: '#f8fafc', padding: '1rem', borderRadius: '8px' }}>
                                 <h4>Submitted Quotes</h4>
-                                {fetchedQuotes.length === 0 ? <p style={{ fontSize: '0.9rem', color: '#666' }}>No quotes available.</p> : (
-                                    <ul style={{ fontSize: '0.9rem', paddingLeft: '1.2rem', marginTop: '0.5rem' }}>
+                                {fetchedQuotes.length === 0 ? <p style={{ fontSize: '0.9rem', color: '#64748b' }}>No quotes submitted yet.</p> : (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.5rem' }}>
                                         {fetchedQuotes.map((q, i) => {
                                             const item = getPrintableItems(selectedRequisition).find(it => String(it.product_id) === String(q.product_id));
+                                            const unitPrice = Number(q.unit_price || q.estimated_price) || 0;
+                                            const qty = item ? Number(item.quantity) || 1 : 1;
+                                            const totalPrice = unitPrice * qty;
                                             return (
-                                                <li key={i} style={{ marginBottom: '4px' }}>
-                                                    <strong>{q.supplier?.name || 'Unknown Supplier'}</strong>: 
-                                                    {' '}৳{q.estimated_price} {q.remarks ? `(${q.remarks})` : ''}
-                                                    {item ? <span style={{ color: '#64748b', fontSize: '0.8rem', marginLeft: '0.5rem' }}>(for {item.product_name})</span> : ''}
-                                                </li>
+                                                <div key={i} style={{ padding: '0.6rem 0.8rem', background: 'var(--page-bg)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem' }}>
+                                                        <div>
+                                                            <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>{q.supplier?.name || 'Unknown Supplier'}</div>
+                                                            {q.supplier?.store_name && <div style={{ fontSize: '0.78rem', color: '#64748b' }}>Store: {q.supplier.store_name}</div>}
+                                                            {q.supplier?.contact_person && <div style={{ fontSize: '0.78rem', color: '#64748b' }}>Contact: {q.supplier.contact_person} {q.supplier.contact_number ? `(${q.supplier.contact_number})` : ''}</div>}
+                                                            {(item || q.product) && <div style={{ fontSize: '0.78rem', color: 'var(--accent-color)', marginTop: '2px' }}>For: {item?.product_name || q.product?.name || 'Unknown product'}</div>}
+                                                            {q.remarks && <div style={{ fontSize: '0.78rem', color: '#94a3b8', fontStyle: 'italic' }}>{q.remarks}</div>}
+                                                        </div>
+                                                        <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                                                            <div style={{ fontWeight: 700, fontSize: '0.95rem', color: '#059669' }}>৳{totalPrice.toLocaleString()}</div>
+                                                            <div style={{ fontSize: '0.75rem', color: '#64748b' }}>৳{unitPrice} × {qty} {item?.quantity_unit || 'pcs'}</div>
+                                                        </div>
+                                                    </div>
+                                                </div>
                                             );
                                         })}
-                                    </ul>
+                                    </div>
                                 )}
                             </div>
 
@@ -2240,49 +2527,145 @@ const PurchaseRequisitions: React.FC = () => {
                             initial={{ scale: 0.9 }}
                             animate={{ scale: 1 }}
                             onClick={(e) => e.stopPropagation()}
+                            style={{
+                                width: '100%',
+                                maxWidth: '560px',
+                                padding: '2rem',
+                                borderRadius: '12px',
+                                backgroundColor: '#ffffff',
+                                boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)'
+                            }}
                         >
-                            <h2>Purchase Requisition</h2>
-                            <p>
-                                Requisition <strong>{selectedRequisition.requisition_number}</strong>
+                            <h2 style={{ fontSize: '1.5rem', fontWeight: 700, color: '#0f172a', marginBottom: '0.25rem' }}>Record Purchase</h2>
+                            <p style={{ color: '#64748b', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
+                                Requisition <strong>#{selectedRequisition.requisition_number}</strong>
                             </p>
-                            <div className="form-group" style={{ marginBottom: '1rem' }}>
-                                <label>Warehouse Location (e.g., A-1-5)</label>
+                            
+                            <div className="form-group" style={{ marginBottom: '1.25rem' }}>
+                                <label style={{ display: 'block', fontWeight: 600, marginBottom: '0.4rem', color: '#1e293b' }}>Warehouse Location (e.g., A-1-5)</label>
                                 <input
                                     type="text"
                                     placeholder="Row-Rack-Bin format"
                                     value={warehouseLocation}
                                     onChange={(e) => setWarehouseLocation(e.target.value)}
+                                    style={{
+                                        width: '100%',
+                                        padding: '0.6rem 0.8rem',
+                                        borderRadius: '6px',
+                                        border: '1px solid #cbd5e1',
+                                        backgroundColor: '#ffffff',
+                                        color: '#0f172a',
+                                        fontSize: '0.95rem'
+                                    }}
                                 />
                             </div>
-                            <div className="form-group" style={{ marginBottom: '1rem', display: 'flex', gap: '1rem' }}>
-                                <div style={{ flex: 1 }}>
-                                    <label>Invoice ID / Bill Number *</label>
-                                    <input
-                                        type="text"
-                                        placeholder="INV-XXXX"
-                                        value={purchaseInvoiceId}
-                                        onChange={(e) => setPurchaseInvoiceId(e.target.value)}
-                                        required
-                                    />
-                                </div>
-                                <div style={{ flex: 1 }}>
-                                    <label>Quantity Purchased *</label>
-                                    <input
-                                        type="number"
-                                        placeholder="Quantity"
-                                        value={purchasedQuantity}
-                                        onChange={(e) => setPurchasedQuantity(e.target.value)}
-                                        required
-                                    />
+
+                            <div className="form-group" style={{ marginBottom: '1.25rem' }}>
+                                <label style={{ display: 'block', fontWeight: 600, marginBottom: '0.4rem', color: '#1e293b' }}>Invoice ID / Bill Number *</label>
+                                <input
+                                    type="text"
+                                    placeholder="INV-XXXX"
+                                    value={purchaseInvoiceId}
+                                    onChange={(e) => setPurchaseInvoiceId(e.target.value)}
+                                    required
+                                    style={{
+                                        width: '100%',
+                                        padding: '0.6rem 0.8rem',
+                                        borderRadius: '6px',
+                                        border: '1px solid #cbd5e1',
+                                        backgroundColor: '#ffffff',
+                                        color: '#0f172a',
+                                        fontSize: '0.95rem'
+                                    }}
+                                />
+                            </div>
+
+                            {/* Product-specific purchased quantities list */}
+                            <div style={{ marginBottom: '1.25rem' }}>
+                                <label style={{ display: 'block', fontWeight: 600, marginBottom: '0.6rem', color: '#1e293b' }}>
+                                    Products to Purchase *
+                                </label>
+                                <div style={{
+                                    border: '1px solid #e2e8f0',
+                                    borderRadius: '8px',
+                                    backgroundColor: '#f8fafc',
+                                    maxHeight: '220px',
+                                    overflowY: 'auto',
+                                    padding: '0.75rem',
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: '0.75rem'
+                                }}>
+                                    {getPrintableItems(selectedRequisition).map((item) => (
+                                        <div key={item.id} style={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'space-between',
+                                            backgroundColor: '#ffffff',
+                                            padding: '0.75rem',
+                                            borderRadius: '6px',
+                                            border: '1px solid #edf2f7',
+                                            boxShadow: '0 1px 2px rgba(0, 0, 0, 0.05)',
+                                            gap: '1rem'
+                                        }}>
+                                            <div style={{ flex: 1, minWidth: '0' }}>
+                                                <div style={{ fontWeight: 600, fontSize: '0.9rem', color: '#1e293b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                    {item.product_name || 'Unknown Product'}
+                                                </div>
+                                                <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '0.1rem' }}>
+                                                    Requested: {item.quantity} {item.quantity_unit || 'piece'}
+                                                </div>
+                                            </div>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
+                                                <input
+                                                    type="number"
+                                                    value={purchasedQuantities[item.id] !== undefined ? purchasedQuantities[item.id] : ''}
+                                                    onChange={(e) => {
+                                                        const val = e.target.value === '' ? 0 : Number(e.target.value);
+                                                        setPurchasedQuantities(prev => ({
+                                                            ...prev,
+                                                            [item.id]: val
+                                                        }));
+                                                    }}
+                                                    placeholder="Qty"
+                                                    required
+                                                    style={{
+                                                        width: '100px',
+                                                        padding: '0.4rem 0.6rem',
+                                                        borderRadius: '6px',
+                                                        border: '1px solid #cbd5e1',
+                                                        backgroundColor: '#ffffff',
+                                                        color: '#0f172a',
+                                                        fontSize: '0.9rem',
+                                                        fontWeight: 600,
+                                                        textAlign: 'right'
+                                                    }}
+                                                />
+                                                <span style={{ fontSize: '0.8rem', color: '#64748b', width: '45px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                    {item.quantity_unit || 'piece'}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    ))}
                                 </div>
                             </div>
-                            <div className="form-group" style={{ marginBottom: '1rem' }}>
-                                <label>Remarks</label>
+
+                            <div className="form-group" style={{ marginBottom: '1.25rem' }}>
+                                <label style={{ display: 'block', fontWeight: 600, marginBottom: '0.4rem', color: '#1e293b' }}>Remarks</label>
                                 <input
                                     type="text"
                                     placeholder="Any purchase remarks..."
                                     value={purchaseRemarks}
                                     onChange={(e) => setPurchaseRemarks(e.target.value)}
+                                    style={{
+                                        width: '100%',
+                                        padding: '0.6rem 0.8rem',
+                                        borderRadius: '6px',
+                                        border: '1px solid #cbd5e1',
+                                        backgroundColor: '#ffffff',
+                                        color: '#0f172a',
+                                        fontSize: '0.95rem'
+                                    }}
                                 />
                             </div>
                             <div className="form-group" style={{ marginBottom: '1rem' }}>

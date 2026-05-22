@@ -6,6 +6,7 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   // Groups
   getGroups: () => import_electron.ipcRenderer.invoke("get-groups"),
   createGroup: (group) => import_electron.ipcRenderer.invoke("create-group", group),
+  updateGroup: (id, group) => import_electron.ipcRenderer.invoke("update-group", id, group),
   deleteGroup: (id) => import_electron.ipcRenderer.invoke("delete-group", id),
   // Ledgers
   getLedgers: () => import_electron.ipcRenderer.invoke("get-ledgers"),
@@ -15,6 +16,11 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   getVouchers: () => import_electron.ipcRenderer.invoke("get-vouchers"),
   createVoucher: (voucher) => import_electron.ipcRenderer.invoke("create-voucher", voucher),
   deleteVoucher: (id) => import_electron.ipcRenderer.invoke("delete-voucher", id),
+  // Voucher Types
+  getVoucherTypes: () => import_electron.ipcRenderer.invoke("get-voucher-types"),
+  createVoucherType: (payload) => import_electron.ipcRenderer.invoke("create-voucher-type", payload),
+  updateVoucherType: (id, payload) => import_electron.ipcRenderer.invoke("update-voucher-type", id, payload),
+  deleteVoucherType: (id) => import_electron.ipcRenderer.invoke("delete-voucher-type", id),
   // Units
   getUnits: () => import_electron.ipcRenderer.invoke("get-units"),
   createUnit: (unit) => import_electron.ipcRenderer.invoke("create-unit", unit),
@@ -37,6 +43,7 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   createProduct: (product) => import_electron.ipcRenderer.invoke("create-product", product),
   updateProduct: (product) => import_electron.ipcRenderer.invoke("update-product", product),
   deleteProduct: (id) => import_electron.ipcRenderer.invoke("delete-product", id),
+  restoreProduct: (id) => import_electron.ipcRenderer.invoke("restore-product", id),
   getProductModelRules: () => import_electron.ipcRenderer.invoke("get-product-model-rules"),
   saveProductModelRule: (rule) => import_electron.ipcRenderer.invoke("save-product-model-rule", rule),
   deleteProductModelRule: (id) => import_electron.ipcRenderer.invoke("delete-product-model-rule", id),

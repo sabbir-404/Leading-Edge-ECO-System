@@ -6,26 +6,32 @@
 /* ── Tabs ─────────────────────────────────────────────────────── */
 .tabs {
     display: flex;
-    gap: 0;
+    gap: 0.5rem;
     margin-bottom: 2rem;
-    border-bottom: 2px solid var(--border-color);
+    border-bottom: 1px solid var(--border-color);
     overflow-x: auto;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+}
+
+.tabs::-webkit-scrollbar {
+    display: none;
 }
 
 .tab {
-    padding: 0.75rem 1.4rem;
+    padding: 0.6rem 1.2rem;
     border: none;
     background: none;
     cursor: pointer;
-    font-size: 0.9rem;
+    font-size: 0.88rem;
     font-weight: 500;
     color: var(--text-secondary);
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.4rem;
     transition: all 0.2s ease;
-    border-bottom: 3px solid transparent;
-    margin-bottom: -2px;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
     white-space: nowrap;
 }
 
@@ -818,4 +824,572 @@
     .product-summary-stock {
         text-align: left;
     }
+}
+
+/* Requisition Form Premium Layout Overrides */
+.requisition-back-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    color: var(--text-secondary);
+    font-size: 0.92rem;
+    font-weight: 600;
+    padding: 6px 12px;
+    border-radius: 6px;
+    transition: all 0.2s;
+}
+.requisition-back-btn:hover {
+    background: rgba(0,0,0,0.05);
+    color: var(--text-primary);
+}
+
+.line-items-divider {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin: 2.25rem 0 1.25rem 0;
+}
+.line-items-divider span {
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+}
+.line-items-divider .divider-line {
+    flex: 1;
+    height: 1px;
+    background: var(--border-color);
+}
+
+/* --- Purchase Requisition Modern Split-Pane & Stepper --- */
+
+.requisitions-split-pane {
+    display: flex;
+    gap: 1.5rem;
+    height: calc(100vh - 220px);
+    min-height: 500px;
+    margin-top: 1rem;
+    align-items: stretch;
+}
+
+.requisitions-sidebar {
+    width: 320px;
+    flex-shrink: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding-right: 0.25rem;
+}
+
+/* Custom scrollbars for sidebar and pane */
+.requisitions-sidebar::-webkit-scrollbar,
+.requisition-details-pane::-webkit-scrollbar {
+    width: 6px;
+}
+.requisitions-sidebar::-webkit-scrollbar-track,
+.requisition-details-pane::-webkit-scrollbar-track {
+    background: transparent;
+}
+.requisitions-sidebar::-webkit-scrollbar-thumb,
+.requisition-details-pane::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 3px;
+}
+
+.requisition-sidebar-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 1rem;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    position: relative;
+    border-left: 3px solid transparent;
+}
+
+.requisition-sidebar-card:hover {
+    transform: translateY(-1px);
+    border-color: var(--text-secondary);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
+}
+
+.requisition-sidebar-card.active {
+    background: rgba(249, 115, 22, 0.03);
+    border-color: rgba(249, 115, 22, 0.25);
+    border-left: 4px solid var(--accent-color);
+    box-shadow: 0 4px 16px rgba(249, 115, 22, 0.05);
+}
+
+.card-top, .card-middle, .card-bottom {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.card-top .req-no {
+    font-weight: 700;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.92rem;
+    color: var(--text-primary);
+}
+
+.badge-pill {
+    padding: 3px 8px;
+    border-radius: 12px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    color: white;
+}
+
+.badge-pill.priority {
+    font-size: 0.7rem;
+}
+
+.card-middle {
+    gap: 0.5rem;
+    justify-content: flex-start;
+}
+
+.card-bottom {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    margin-top: 0.25rem;
+    border-top: 1px solid rgba(0,0,0,0.02);
+    padding-top: 0.4rem;
+}
+
+.card-bottom .owner {
+    font-weight: 500;
+    max-width: 170px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.card-bottom .date {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
+}
+
+/* Requisition details pane styling */
+.requisition-details-pane {
+    flex: 1;
+    overflow-y: auto;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 1.75rem;
+    position: relative;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+}
+
+.details-card {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.details-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 1.25rem;
+    margin-bottom: 0.5rem;
+}
+
+.details-header h3 {
+    margin: 0;
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.details-header .req-id {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.98rem;
+    color: var(--accent-color);
+    font-weight: 600;
+    margin-top: 0.25rem;
+    display: inline-block;
+}
+
+/* Stepper Stepper Styles */
+.stepper-container {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--bg-primary);
+    padding: 1.25rem 1.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+}
+
+.step-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.4rem;
+    text-align: center;
+    position: relative;
+    z-index: 2;
+    flex-shrink: 0;
+}
+
+.step-number {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.85rem;
+    font-weight: 700;
+    transition: all 0.2s ease;
+}
+
+.step-label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+}
+
+.step-connector {
+    flex: 1;
+    height: 3px;
+    background: var(--border-color);
+    margin: 0 -0.5rem;
+    margin-top: -16px;
+    z-index: 1;
+}
+
+.step-connector.completed {
+    background: #22c55e;
+}
+
+/* Stepper Status Coloring */
+.step-upcoming .step-number {
+    background: var(--card-bg);
+    border: 2px solid var(--border-color);
+    color: var(--text-secondary);
+}
+
+.step-completed .step-number {
+    background: #22c55e;
+    color: white;
+}
+.step-completed .step-label {
+    color: #22c55e;
+}
+
+.step-active .step-number {
+    background: var(--accent-color);
+    color: white;
+    box-shadow: 0 0 0 4px rgba(249, 115, 22, 0.15);
+}
+.step-active .step-label {
+    color: var(--accent-color);
+    font-weight: 700;
+}
+
+.step-rejected .step-number {
+    background: #ef4444;
+    color: white;
+    box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.15);
+}
+.step-rejected .step-label {
+    color: #ef4444;
+    font-weight: 700;
+}
+
+/* Meta Details Grid */
+.meta-details-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+}
+
+.meta-box {
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 0.75rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.meta-label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.meta-val {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.meta-val.priority {
+    font-weight: 700;
+}
+
+/* Detail Line Items nested list */
+.details-items-section h4,
+.details-narration-section h4 {
+    margin: 0 0 0.75rem 0;
+    font-size: 0.9rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-secondary);
+    border-left: 3px solid var(--accent-color);
+    padding-left: 0.5rem;
+}
+
+.details-items-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--bg-primary);
+    border-radius: 6px;
+    overflow: hidden;
+    border: 1px solid var(--border-color);
+}
+
+.details-items-table th {
+    background: var(--border-color);
+    padding: 0.75rem 1rem;
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    color: var(--text-secondary);
+    text-align: left;
+}
+
+.details-items-table td {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 0.88rem;
+    color: var(--text-primary);
+    vertical-align: middle;
+}
+
+.details-items-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.details-items-table .prod-name {
+    font-weight: 600;
+}
+
+.details-items-table .prod-sku {
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    margin-top: 0.15rem;
+}
+
+.details-items-table .unit-label {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    font-weight: 400;
+}
+
+.details-items-table .item-remarks {
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    font-style: italic;
+    word-break: break-word;
+}
+
+/* Narration text block */
+.details-narration-section p {
+    background: var(--bg-primary);
+    border: 1px dashed var(--border-color);
+    padding: 1rem;
+    border-radius: 6px;
+    font-size: 0.88rem;
+    line-height: 1.5;
+    color: var(--text-primary);
+    margin: 0;
+}
+
+/* Details Action Panel */
+.details-actions-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    border-top: 1px solid var(--border-color);
+    padding-top: 1.25rem;
+    margin-top: 0.5rem;
+}
+
+.btn-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.55rem 1rem;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: 1px solid transparent;
+}
+
+.btn-action.primary {
+    background: var(--accent-color);
+    color: white;
+}
+.btn-action.primary:hover {
+    opacity: 0.9;
+    transform: translateY(-0.5px);
+}
+
+.btn-action.secondary {
+    background: var(--bg-primary);
+    border-color: var(--border-color);
+    color: var(--text-primary);
+}
+.btn-action.secondary:hover {
+    background: var(--border-color);
+}
+
+.btn-action.success {
+    background: #22c55e;
+    color: white;
+}
+.btn-action.success:hover {
+    opacity: 0.9;
+}
+
+.btn-action.danger {
+    background: #ef4444;
+    color: white;
+}
+.btn-action.danger:hover {
+    opacity: 0.9;
+}
+
+.btn-action.warning {
+    background: #f59e0b;
+    color: white;
+}
+.btn-action.warning:hover {
+    opacity: 0.9;
+}
+
+.btn-action.estimate {
+    background: rgba(99, 102, 241, 0.1);
+    color: #6366f1;
+    border-color: rgba(99, 102, 241, 0.2);
+}
+.btn-action.estimate:hover {
+    background: #6366f1;
+    color: white;
+}
+
+.btn-action.audit {
+    background: rgba(14, 165, 233, 0.1);
+    color: #0ea5e9;
+    border-color: rgba(14, 165, 233, 0.2);
+}
+.btn-action.audit:hover {
+    background: #0ea5e9;
+    color: white;
+}
+
+.empty-details-pane {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-secondary);
+    gap: 0.75rem;
+    text-align: center;
+}
+
+.empty-details-pane p {
+    font-size: 0.9rem;
+    max-width: 250px;
+    margin: 0;
+}
+
+/* ── Modern Premium Line Item Cards ───────────────────────────── */
+.line-item-card {
+    display: grid !important;
+    grid-template-columns: 2.2fr 44px 1fr 1fr 2fr 44px !important;
+    gap: 1rem !important;
+    align-items: center !important;
+    padding: 1rem 1.25rem !important;
+    background: var(--bg-secondary) !important;
+    border: 1px solid var(--border-color) !important;
+    border-radius: 12px !important;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04) !important;
+    transition: all 0.2s ease;
+    box-sizing: border-box !important;
+    width: 100% !important;
+}
+
+.line-item-card:hover {
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08) !important;
+    border-color: var(--accent-color) !important;
+}
+
+.line-item-card > div {
+    width: 100% !important;
+    min-width: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    box-sizing: border-box !important;
+}
+
+.line-item-card input {
+    width: 100% !important;
+    min-width: 0 !important;
+    background: var(--input-field-bg) !important;
+    border: 1px solid var(--border-color) !important;
+    border-radius: 8px !important;
+    padding: 10px 12px !important;
+    color: var(--text-primary) !important;
+    font-size: 0.9rem !important;
+    outline: none !important;
+    transition: all 0.2s ease !important;
+    box-sizing: border-box !important;
+}
+
+.line-item-card input:focus {
+    border-color: var(--accent-color) !important;
+    box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.15) !important;
+}
+
+.line-item-card input[readonly] {
+    background: var(--hover-bg) !important;
+    color: var(--text-secondary) !important;
+    cursor: not-allowed !important;
+}
+
+/* Ensure the header columns match the card columns perfectly */
+.line-items-header-row {
+    display: grid !important;
+    grid-template-columns: 2.2fr 44px 1fr 1fr 2fr 44px !important;
+    gap: 1rem !important;
+    box-sizing: border-box !important;
+    width: 100% !important;
 }

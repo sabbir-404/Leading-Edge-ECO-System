@@ -2,7 +2,7 @@ import React from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import DashboardLayout from '../components/DashboardLayout';
 import { motion } from 'framer-motion';
-import { FileText, ShoppingCart, ChevronRight } from 'lucide-react';
+import { FileText, ChevronRight } from 'lucide-react';
 import './Accounting/Masters/Masters.css';
 
 const VoucherTypeCard = ({ title, path, icon: Icon, color, index }: any) => {
@@ -35,7 +35,6 @@ const Vouchers: React.FC = () => {
     const voucherTypes = [
         { title: 'All Vouchers', path: '/vouchers', icon: FileText, color: '#3b82f6' },
         { title: 'Create Voucher', path: '/vouchers/create', icon: FileText, color: '#22c55e' },
-        { title: 'Purchase Bills', path: '/vouchers/purchase-bill', icon: ShoppingCart, color: '#f97316' },
     ];
 
     return (

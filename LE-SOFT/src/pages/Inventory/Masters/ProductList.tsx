@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Search, Trash2, Edit2, Barcode, Eye } from 'lucide-react';
+import { Plus, Search, Trash2, Edit2, Barcode, Eye, RotateCcw } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useAutoRefresh } from '../../../hooks/useAutoRefresh';
 import BarcodeStickerModal, { StickerSize } from '../../../components/BarcodeStickerModal';
@@ -12,6 +12,7 @@ const ProductList: React.FC = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [categoryFilter, setCategoryFilter] = useState('All');
     const [groupFilter, setGroupFilter] = useState('All');
+    const [statusFilter, setStatusFilter] = useState('ACTIVE');
     const [products, setProducts] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -43,14 +44,26 @@ const ProductList: React.FC = () => {
     useAutoRefresh(['products', 'stock_items', 'stock_groups', 'units'], fetchProducts);
 
     const handleDelete = async (id: number) => {
-        if (!confirm('Delete this product?')) return;
+        if (!confirm('Stash this product? Stashed products are archived and can be restored later.')) return;
         try {
             // @ts-ignore
             await window.electron.deleteProduct(id);
             fetchProducts();
         } catch (error: any) {
-            console.error('Failed to delete product:', error);
-            alert(error?.message || 'Failed to delete product.');
+            console.error('Failed to stash product:', error);
+            alert(error?.message || 'Failed to stash product.');
+        }
+    };
+
+    const handleRestore = async (id: number) => {
+        if (!confirm('Restore this product to Active?')) return;
+        try {
+            // @ts-ignore
+            await window.electron.restoreProduct(id);
+            fetchProducts();
+        } catch (error: any) {
+            console.error('Failed to restore product:', error);
+            alert(error?.message || 'Failed to restore product.');
         }
     };
 
@@ -62,7 +75,10 @@ const ProductList: React.FC = () => {
         const matchesCategory = categoryFilter === 'All' || (p.category || 'Uncategorized') === categoryFilter;
         const matchesGroup = groupFilter === 'All' || (p.group_name || 'No Group') === groupFilter;
 
-        return matchesSearch && matchesCategory && matchesGroup;
+        const matchesStatus = statusFilter === 'All' ||
+            (statusFilter === 'ACTIVE' ? (p.status !== 'STASHED' && p.is_active !== false) : p.status === 'STASHED');
+
+        return matchesSearch && matchesCategory && matchesGroup && matchesStatus;
     });
 
     const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -152,11 +168,17 @@ const ProductList: React.FC = () => {
                         {groups.filter(g => g !== 'All').map(g => <option key={g} value={g}>{g}</option>)}
                     </select>
 
-                    { (searchTerm || categoryFilter !== 'All' || groupFilter !== 'All') && (
+                    <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+                        <option value="ACTIVE">Active Products</option>
+                        <option value="STASHED">Stashed / Archived</option>
+                    </select>
+
+                    { (searchTerm || categoryFilter !== 'All' || groupFilter !== 'All' || statusFilter !== 'ACTIVE') && (
                         <button className="clear-filters" onClick={() => {
                             setSearchTerm('');
                             setCategoryFilter('All');
                             setGroupFilter('All');
+                            setStatusFilter('ACTIVE');
                         }}>Clear</button>
                     )}
                 </div>
@@ -252,7 +274,17 @@ const ProductList: React.FC = () => {
                                                 <Barcode size={16} />
                                             </button>
                                             {canEditProducts && <button className="edit-btn" onClick={() => navigate('/masters/products/create', { state: { editProduct: product } })}><Edit2 size={16} /></button>}
-                                            {canDeleteProducts && <button className="delete-btn" onClick={() => handleDelete(product.id)}><Trash2 size={16} /></button>}
+                                            {canDeleteProducts && (
+                                                product.status === 'STASHED' ? (
+                                                    <button className="edit-btn" title="Restore Product" onClick={() => handleRestore(product.id)} style={{ color: 'var(--accent-color)' }}>
+                                                        <RotateCcw size={16} />
+                                                    </button>
+                                                ) : (
+                                                    <button className="delete-btn" title="Stash Product" onClick={() => handleDelete(product.id)}>
+                                                        <Trash2 size={16} />
+                                                    </button>
+                                                )
+                                            )}
                                         </div>
                                     </td>
                                 </motion.tr>

@@ -4,8 +4,6 @@ import { ArrowLeft, Plus, Trash2, Save } from 'lucide-react';
 import { motion } from 'framer-motion';
 import '../Masters/Masters.css';
 
-type VoucherType = 'Payment' | 'Receipt' | 'Journal' | 'Contra' | 'Sales' | 'Purchase';
-
 interface VoucherRow {
     id: number;
     type: 'Dr' | 'Cr';
@@ -16,7 +14,7 @@ interface VoucherRow {
 
 const VoucherEntry: React.FC = () => {
     const navigate = useNavigate();
-    const [voucherType, setVoucherType] = useState<VoucherType>('Payment');
+    const [voucherType, setVoucherType] = useState<string>('Payment');
     const [voucherDate, setVoucherDate] = useState(new Date().toISOString().split('T')[0]);
 
     const [rows, setRows] = useState<VoucherRow[]>([
@@ -26,18 +24,27 @@ const VoucherEntry: React.FC = () => {
 
     const [narration, setNarration] = useState('');
     const [ledgers, setLedgers] = useState<any[]>([]);
+    const [voucherTypes, setVoucherTypes] = useState<any[]>([]);
 
     useEffect(() => {
-        const fetchLedgers = async () => {
+        const fetchLedgersAndTypes = async () => {
             try {
                 // @ts-ignore
                 const result = await window.electron.getLedgers();
                 setLedgers(result || []);
+
+                // @ts-ignore
+                const types = await window.electron.getVoucherTypes();
+                const activeTypes = (types || []).filter((t: any) => t.is_active !== false);
+                setVoucherTypes(activeTypes);
+                if (activeTypes.length > 0) {
+                    setVoucherType(activeTypes[0].name);
+                }
             } catch (error) {
-                console.error('Failed to fetch ledgers:', error);
+                console.error('Failed to fetch ledgers and voucher types:', error);
             }
         };
-        fetchLedgers();
+        fetchLedgersAndTypes();
     }, []);
 
     const handleRowChange = (id: number, field: keyof VoucherRow, value: any) => {
@@ -79,7 +86,18 @@ const VoucherEntry: React.FC = () => {
         Payment: '#f97316', Receipt: '#22c55e', Sales: '#3b82f6',
         Purchase: '#dc2626', Journal: '#a855f7', Contra: '#6b7280',
     };
-    const typeColor = typeColors[voucherType] || '#f97316';
+
+    const getColorForType = (name: string) => {
+        if (typeColors[name]) return typeColors[name];
+        let hash = 0;
+        for (let i = 0; i < name.length; i++) {
+            hash = name.charCodeAt(i) + ((hash << 5) - hash);
+        }
+        const hue = Math.abs(hash) % 360;
+        return `hsl(${hue}, 65%, 45%)`;
+    };
+
+    const typeColor = getColorForType(voucherType);
 
     return (
         <motion.div
@@ -97,20 +115,26 @@ const VoucherEntry: React.FC = () => {
                     <h2 style={{ margin: 0 }}>{voucherType} Voucher</h2>
                 </div>
                 <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
-                    {(['Contra', 'Payment', 'Receipt', 'Journal', 'Sales', 'Purchase'] as VoucherType[]).map(type => (
-                        <button
-                            key={type}
-                            onClick={() => setVoucherType(type)}
-                            style={{
-                                padding: '6px 14px', borderRadius: '20px', fontSize: '0.82rem', fontWeight: 500, cursor: 'pointer',
-                                border: `1px solid ${voucherType === type ? typeColors[type] : 'var(--border-color)'}`,
-                                background: voucherType === type ? typeColors[type] : 'transparent',
-                                color: voucherType === type ? '#fff' : 'var(--text-primary)',
-                            }}
-                        >
-                            {type}
-                        </button>
-                    ))}
+                    {voucherTypes.map(vt => {
+                        const type = vt.name;
+                        const isSelected = voucherType === type;
+                        const color = getColorForType(type);
+                        return (
+                            <button
+                                key={type}
+                                type="button"
+                                onClick={() => setVoucherType(type)}
+                                style={{
+                                    padding: '6px 14px', borderRadius: '20px', fontSize: '0.82rem', fontWeight: 500, cursor: 'pointer',
+                                    border: `1px solid ${isSelected ? color : 'var(--border-color)'}`,
+                                    background: isSelected ? color : 'transparent',
+                                    color: isSelected ? '#fff' : 'var(--text-primary)',
+                                }}
+                            >
+                                {type}
+                            </button>
+                        );
+                    })}
                 </div>
             </div>
 

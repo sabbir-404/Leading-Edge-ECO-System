@@ -14,6 +14,12 @@ export interface ElectronAPI {
     createVoucher: (voucher: any) => Promise<any>;
     deleteVoucher: (id: number) => Promise<any>;
 
+    // Voucher Types
+    getVoucherTypes: () => Promise<any[]>;
+    createVoucherType: (payload: any) => Promise<any>;
+    updateVoucherType: (id: number, payload: any) => Promise<any>;
+    deleteVoucherType: (id: number) => Promise<any>;
+
     // Units
     getUnits: () => Promise<any[]>;
     createUnit: (unit: any) => Promise<any>;
@@ -37,6 +43,7 @@ export interface ElectronAPI {
     createProduct: (product: any) => Promise<any>;
     updateProduct: (product: any) => Promise<any>;
     deleteProduct: (id: number) => Promise<any>;
+    restoreProduct: (id: number) => Promise<any>;
     getProductModelRules: () => Promise<any[]>;
     saveProductModelRule: (rule: any) => Promise<any>;
     deleteProductModelRule: (id: number) => Promise<any>;

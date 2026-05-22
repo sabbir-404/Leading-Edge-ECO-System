@@ -204,7 +204,6 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
         { icon: <BookOpen size={18} />,   label: 'Ledgers',           path: '/masters/ledgers' },
         { icon: <FileText size={18} />,   label: 'Voucher Types',     path: '/masters/voucher-types' },
         { icon: <Package size={18} />,    label: 'Products',          path: '/masters/products' },
-        ...(hasPermission('read_product_ledger') ? [{ icon: <History size={18} />, label: 'Product Ledger', path: '/masters/products' }] : []),
         ...(hasPermission('manage_product_model_rules') ? [{ icon: <Target size={18} />, label: 'Product Model Rules', path: '/masters/product-model-rules' }] : []),
         ...(hasPermission('manage_product_attributes') ? [{ icon: <ClipboardCheck size={18} />, label: 'Product Attributes', path: '/masters/product-attributes' }] : []),
         ...(hasPermission('read_damaged_goods') ? [{ icon: <PackageMinus size={18} />, label: 'Damaged Goods', path: '/masters/damaged-goods' }] : []),

@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('electron', {
     // Groups
     getGroups: () => ipcRenderer.invoke('get-groups'),
     createGroup: (group: any) => ipcRenderer.invoke('create-group', group),
+    updateGroup: (id: number, group: any) => ipcRenderer.invoke('update-group', id, group),
     deleteGroup: (id: number) => ipcRenderer.invoke('delete-group', id),
 
     // Ledgers
@@ -15,6 +16,12 @@ contextBridge.exposeInMainWorld('electron', {
     getVouchers: () => ipcRenderer.invoke('get-vouchers'),
     createVoucher: (voucher: any) => ipcRenderer.invoke('create-voucher', voucher),
     deleteVoucher: (id: number) => ipcRenderer.invoke('delete-voucher', id),
+
+    // Voucher Types
+    getVoucherTypes: () => ipcRenderer.invoke('get-voucher-types'),
+    createVoucherType: (payload: any) => ipcRenderer.invoke('create-voucher-type', payload),
+    updateVoucherType: (id: number, payload: any) => ipcRenderer.invoke('update-voucher-type', id, payload),
+    deleteVoucherType: (id: number) => ipcRenderer.invoke('delete-voucher-type', id),
 
     // Units
     getUnits: () => ipcRenderer.invoke('get-units'),
@@ -41,6 +48,7 @@ contextBridge.exposeInMainWorld('electron', {
     createProduct: (product: any) => ipcRenderer.invoke('create-product', product),
     updateProduct: (product: any) => ipcRenderer.invoke('update-product', product),
     deleteProduct: (id: number) => ipcRenderer.invoke('delete-product', id),
+    restoreProduct: (id: number) => ipcRenderer.invoke('restore-product', id),
     getProductModelRules: () => ipcRenderer.invoke('get-product-model-rules'),
     saveProductModelRule: (rule: any) => ipcRenderer.invoke('save-product-model-rule', rule),
     deleteProductModelRule: (id: number) => ipcRenderer.invoke('delete-product-model-rule', id),

@@ -3,7 +3,7 @@ import { useNavigate, Outlet, useLocation } from 'react-router-dom';
 import {
     Package, ChevronRight, FolderTree, BookOpen, FileText,
     Layers, Scale, Warehouse, ShoppingBag,
-    Truck, DollarSign, ClipboardList, History, Target, ClipboardCheck, PackageMinus
+    Truck, DollarSign, ClipboardList, Target, ClipboardCheck, PackageMinus
 } from 'lucide-react';
 import DashboardLayout from '../components/DashboardLayout';
 import { motion } from 'framer-motion';
@@ -17,7 +17,7 @@ const MasterCard = ({ title, desc, path, icon: Icon, color, index }: any) => {
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: index * 0.045, type: 'spring', stiffness: 260, damping: 22 }}
-            onClick={() => navigate('/masters' + path)}
+            onClick={() => navigate(path.startsWith('/vouchers') ? path : '/masters' + path)}
             whileHover={{ scale: 1.025, translateY: -2 }}
             whileTap={{ scale: 0.97 }}
         >
@@ -54,6 +54,7 @@ const Masters: React.FC = () => {
             items: [
                 { title: 'Account Groups',    desc: 'Manage ledger group hierarchy',        path: '/groups',       icon: FolderTree,    color: '#3b82f6' },
                 { title: 'Ledgers',           desc: 'Chart of accounts & ledger entries',   path: '/ledgers',      icon: BookOpen,      color: '#22c55e' },
+                { title: 'Vouchers',          desc: 'Create and manage payment vouchers',   path: '/vouchers',     icon: FileText,      color: '#ec4899' },
                 { title: 'Voucher Types',     desc: 'Define payment & journal types',       path: '/voucher-types',icon: FileText,      color: '#a855f7' },
                 { title: 'Currencies',        desc: 'Multi-currency & exchange rates',      path: '/currencies',   icon: DollarSign,    color: '#eab308' },
             ],
@@ -64,7 +65,6 @@ const Masters: React.FC = () => {
             accent: '#f97316',
             items: [
                 { title: 'Products',          desc: 'Product catalogue & item registry',    path: '/products',         icon: ShoppingBag,   color: '#ec4899' },
-                { title: 'Product Ledger',    desc: 'Supplier, purchase & stock history',   path: '/products',         icon: History,       color: '#0ea5e9' },
                 { title: 'Model Rules',       desc: 'Configure generated product IDs',      path: '/product-model-rules', icon: Target,     color: '#8b5cf6' },
                 { title: 'Product Attributes',desc: 'Create specs like size and color',     path: '/product-attributes', icon: ClipboardCheck, color: '#10b981' },
                 { title: 'Damaged Goods',     desc: 'Track damaged, repair & write-off stock', path: '/damaged-goods', icon: PackageMinus, color: '#ef4444' },

@@ -535,6 +535,25 @@ export function registerHandlers() {
         return { success: true, id: data.id };
     });
 
+    ipcMain.handle('update-group', async (_e, id: number, group: any) => {
+        const { name, parent, nature } = group;
+        let parentId: number | null = null;
+        if (parent && parent !== 'Primary') {
+            const { data } = await supabase.from('groups').select('id').eq('name', parent).maybeSingle();
+            parentId = data?.id || null;
+        }
+        if (parentId && Number(parentId) === Number(id)) {
+            throw new Error('A group cannot be under itself.');
+        }
+        const { error } = await supabase.from('groups').update({
+            name,
+            parent_group_id: parentId,
+            nature: parent === 'Primary' ? nature : null
+        }).eq('id', id);
+        if (error) throw error;
+        return { success: true };
+    });
+
     ipcMain.handle('delete-group', async (_e, id: number) => {
         const { error } = await supabase.from('groups').delete().eq('id', id);
         if (error) throw error;
@@ -605,6 +624,87 @@ export function registerHandlers() {
     ipcMain.handle('delete-voucher', async (_e, id: number) => {
         await supabase.from('voucher_entries').delete().eq('voucher_id', id);
         const { error } = await supabase.from('vouchers').delete().eq('id', id);
+        if (error) throw error;
+        return { success: true };
+    });
+
+    // ═══ VOUCHER TYPES ═══════════════════════════════════════════════════════════
+
+    ipcMain.handle('get-voucher-types', async () => {
+        try {
+            const { data, error } = await supabase.from('voucher_types').select('*').order('name');
+            if (error) {
+                if (error.code === '42P01') {
+                    return [
+                        { id: 1, name: 'Payment', description: 'Payment transactions', is_active: true },
+                        { id: 2, name: 'Receipt', description: 'Receipt transactions', is_active: true },
+                        { id: 3, name: 'Contra', description: 'Bank/cash transactions', is_active: true },
+                        { id: 4, name: 'Journal', description: 'Adjustment entries', is_active: true },
+                        { id: 5, name: 'Sales', description: 'Sales vouchers', is_active: true },
+                        { id: 6, name: 'Purchase', description: 'Purchase vouchers', is_active: true },
+                        { id: 7, name: 'Credit Note', description: 'Sales returns', is_active: true },
+                        { id: 8, name: 'Debit Note', description: 'Purchase returns', is_active: true }
+                    ];
+                }
+                throw error;
+            }
+            if (!data || data.length === 0) {
+                const defaultTypes = [
+                    { name: 'Payment', description: 'Payment transactions', is_active: true, company_id: 1 },
+                    { name: 'Receipt', description: 'Receipt transactions', is_active: true, company_id: 1 },
+                    { name: 'Contra', description: 'Bank/cash transactions', is_active: true, company_id: 1 },
+                    { name: 'Journal', description: 'Adjustment entries', is_active: true, company_id: 1 },
+                    { name: 'Sales', description: 'Sales vouchers', is_active: true, company_id: 1 },
+                    { name: 'Purchase', description: 'Purchase vouchers', is_active: true, company_id: 1 },
+                    { name: 'Credit Note', description: 'Sales returns', is_active: true, company_id: 1 },
+                    { name: 'Debit Note', description: 'Purchase returns', is_active: true, company_id: 1 }
+                ];
+                const { data: seeded, error: seedError } = await supabase.from('voucher_types').insert(defaultTypes).select('*');
+                if (seedError) {
+                    console.error('Error seeding default voucher types:', seedError);
+                    return defaultTypes.map((t, idx) => ({ id: idx + 1, ...t }));
+                }
+                return seeded;
+            }
+            return data;
+        } catch (err) {
+            console.error('get-voucher-types error:', err);
+            return [
+                { id: 1, name: 'Payment', description: 'Payment transactions', is_active: true },
+                { id: 2, name: 'Receipt', description: 'Receipt transactions', is_active: true },
+                { id: 3, name: 'Contra', description: 'Bank/cash transactions', is_active: true },
+                { id: 4, name: 'Journal', description: 'Adjustment entries', is_active: true },
+                { id: 5, name: 'Sales', description: 'Sales vouchers', is_active: true },
+                { id: 6, name: 'Purchase', description: 'Purchase vouchers', is_active: true },
+                { id: 7, name: 'Credit Note', description: 'Sales returns', is_active: true },
+                { id: 8, name: 'Debit Note', description: 'Purchase returns', is_active: true }
+            ];
+        }
+    });
+
+    ipcMain.handle('create-voucher-type', async (_e, payload) => {
+        const { data, error } = await supabase.from('voucher_types').insert({
+            name: payload.name,
+            description: payload.description || '',
+            is_active: payload.is_active !== false,
+            company_id: 1
+        }).select('*').single();
+        if (error) throw error;
+        return { success: true, data };
+    });
+
+    ipcMain.handle('update-voucher-type', async (_e, id, payload) => {
+        const { data, error } = await supabase.from('voucher_types').update({
+            name: payload.name,
+            description: payload.description || '',
+            is_active: payload.is_active !== false
+        }).eq('id', id).select('*').single();
+        if (error) throw error;
+        return { success: true, data };
+    });
+
+    ipcMain.handle('delete-voucher-type', async (_e, id: number) => {
+        const { error } = await supabase.from('voucher_types').delete().eq('id', id);
         if (error) throw error;
         return { success: true };
     });
@@ -1416,11 +1516,22 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('delete-product', async (_e, id: number) => {
-        const { error } = await supabase.from('products').delete().eq('id', id);
+        const { error } = await supabase
+            .from('products')
+            .update({ status: 'STASHED', is_active: false })
+            .eq('id', id);
         if (error) {
-            if (error.code === '23503') {
-                throw new Error('This product cannot be deleted because it is already referenced in transaction records (such as Purchase Requisitions). To maintain database integrity, products linked to historical transactions cannot be removed.');
-            }
+            throw error;
+        }
+        return { success: true };
+    });
+
+    ipcMain.handle('restore-product', async (_e, id: number) => {
+        const { error } = await supabase
+            .from('products')
+            .update({ status: 'ACTIVE', is_active: true })
+            .eq('id', id);
+        if (error) {
             throw error;
         }
         return { success: true };
@@ -1438,6 +1549,7 @@ export function registerHandlers() {
         const { data, error } = await supabase
             .from('products')
             .select('*, unit:units(symbol), group:stock_groups(name)')
+            .neq('status', 'STASHED')
             .or(`name.ilike.${q},sku.ilike.${q},category.ilike.${q}`)
             .order('name') // Added consistent ordering
             .limit(50);    // Increased limit for better selection
@@ -4125,7 +4237,7 @@ export function registerHandlers() {
 
             const { data: itemsData } = await supabase
                 .from('purchase_requisition_items')
-                .select('id, requisition_id, product_id, quantity, quantity_unit, remarks, line_no')
+                .select('id, requisition_id, product_id, quantity, quantity_unit, remarks, line_no, purchased_quantity')
                 .in('requisition_id', requisitionIds)
                 .order('line_no', { ascending: true });
 
@@ -4180,7 +4292,7 @@ export function registerHandlers() {
 
             const { data: itemsData } = await supabase
                 .from('purchase_requisition_items')
-                .select('id, requisition_id, product_id, quantity, quantity_unit, remarks, line_no')
+                .select('id, requisition_id, product_id, quantity, quantity_unit, remarks, line_no, purchased_quantity')
                 .eq('requisition_id', id)
                 .order('line_no', { ascending: true });
 
@@ -4505,20 +4617,35 @@ export function registerHandlers() {
     ipcMain.handle('submit-purchase-estimates', async (_e, id: string, quotes: any[], performedByName?: string) => {
         try {
             const userName = performedByName || 'desktop-user';
-            const { data: before } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
+            const db = supabaseAdmin || supabase;
+            const { data: before } = await db.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
 
             if (!before || before.status !== 'PENDING_ESTIMATE') {
                 throw new Error('Requisition is not in PENDING_ESTIMATE state.');
+            }
+
+            // Fetch line items for quantity lookup
+            const { data: reqItems } = await db
+                .from('purchase_requisition_items')
+                .select('product_id, quantity')
+                .eq('requisition_id', id);
+            const itemQtyMap = new Map<string, number>();
+            (reqItems || []).forEach((it: any) => {
+                if (it.product_id) itemQtyMap.set(String(it.product_id), Number(it.quantity) || 1);
+            });
+            // Fallback for single-product requisitions
+            if (itemQtyMap.size === 0 && before.product_id && before.quantity) {
+                itemQtyMap.set(String(before.product_id), Number(before.quantity) || 1);
             }
 
             const normalizedQuotes = (quotes || [])
                 .map((q: any) => ({
                     supplierId: q.supplierId ? Number(q.supplierId) : null,
                     productId: q.productId ? Number(q.productId) : null,
-                    estimatedPrice: Number(q.estimatedPrice),
+                    unitPrice: Number(q.estimatedPrice),    // estimatedPrice field = per-unit price entered by user
                     remarks: q.remarks || '',
                 }))
-                .filter((q: any) => q.supplierId && Number.isFinite(q.estimatedPrice) && q.estimatedPrice > 0);
+                .filter((q: any) => q.supplierId && Number.isFinite(q.unitPrice) && q.unitPrice > 0);
 
             if (normalizedQuotes.length === 0) {
                 throw new Error('At least one valid supplier quote is required.');
@@ -4526,11 +4653,14 @@ export function registerHandlers() {
 
             // Insert quotes
             for (const q of normalizedQuotes) {
-                await supabase.from('purchase_requisition_quotes').insert({
+                const qty = q.productId ? (itemQtyMap.get(String(q.productId)) || 1) : 1;
+                const totalPrice = q.unitPrice * qty;
+                await db.from('purchase_requisition_quotes').insert({
                     requisition_id: id,
                     supplier_ledger_id: q.supplierId,
-                    product_id: q.productId,
-                    estimated_price: q.estimatedPrice,
+                    product_id: q.productId || null,
+                    unit_price: q.unitPrice,
+                    estimated_price: totalPrice,   // total = unit × qty
                     remarks: q.remarks || ''
                 });
             }
@@ -4540,7 +4670,7 @@ export function registerHandlers() {
             const prefix = `PO-${todayStr}-`;
             let poNumber = '';
             try {
-                const { data: existingPOs } = await supabase
+                const { data: existingPOs } = await db
                     .from('purchase_requisitions')
                     .select('purchase_order_number')
                     .like('purchase_order_number', `${prefix}%`);
@@ -4558,7 +4688,7 @@ export function registerHandlers() {
                 updatePayload.purchase_order_number = poNumber;
             }
 
-            const { error } = await supabase
+            const { error } = await db
                 .from('purchase_requisitions')
                 .update(updatePayload)
                 .eq('id', id);
@@ -4584,9 +4714,10 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('get-purchase-requisition-quotes', async (_e, id: string) => {
-        const { data, error } = await supabase
+        const db = supabaseAdmin || supabase;
+        const { data, error } = await db
             .from('purchase_requisition_quotes')
-            .select('*, supplier:ledgers(*)')
+            .select('*, supplier:ledgers(id,name,store_name,contact_person,contact_number), product:products(id,name)')
             .eq('requisition_id', id)
             .order('created_at', { ascending: true });
         if (error) throw error;
@@ -4596,6 +4727,9 @@ export function registerHandlers() {
             const decQuote = decryptObject(quote);
             if (decQuote.supplier) {
                 decQuote.supplier = decryptObject(decQuote.supplier);
+            }
+            if (decQuote.product) {
+                decQuote.product = decryptObject(decQuote.product);
             }
             return decQuote;
         });
@@ -4733,6 +4867,20 @@ export function registerHandlers() {
             
             if (error) throw error;
 
+            if (payload.purchasedQuantities) {
+                for (const [itemId, qty] of Object.entries(payload.purchasedQuantities)) {
+                    if (itemId === id) continue; // Skip legacy matching ID
+                    const { error: itemUpdateErr } = await supabase
+                        .from('purchase_requisition_items')
+                        .update({ purchased_quantity: Number(qty) })
+                        .eq('id', itemId)
+                        .eq('requisition_id', id);
+                    if (itemUpdateErr) {
+                        console.error(`[purchase-purchase-requisition] Error updating item ${itemId}:`, itemUpdateErr.message);
+                    }
+                }
+            }
+
             const { data: reqItems } = await supabase
                 .from('purchase_requisition_items')
                 .select('product_id')
@@ -4832,7 +4980,7 @@ export function registerHandlers() {
             // Fetch the requisition and all line items so multi-line requisitions stock every product.
             const { data: requisition, error: fetchError } = await supabase
                 .from('purchase_requisitions')
-                .select('id, product_id, quantity, requisition_number, status')
+                .select('id, product_id, quantity, requisition_number, status, purchased_quantity')
                 .eq('id', id)
                 .single();
             
@@ -4843,14 +4991,24 @@ export function registerHandlers() {
 
             const { data: itemsData, error: itemsError } = await supabase
                 .from('purchase_requisition_items')
-                .select('product_id, quantity')
+                .select('product_id, quantity, purchased_quantity')
                 .eq('requisition_id', id);
 
             if (itemsError) throw itemsError;
 
             const stockItems = (itemsData && itemsData.length > 0)
-                ? itemsData
-                : [{ product_id: requisition.product_id, quantity: requisition.quantity }];
+                ? itemsData.map((item: any) => ({
+                    product_id: item.product_id,
+                    quantity: item.purchased_quantity !== null && item.purchased_quantity !== undefined
+                        ? item.purchased_quantity
+                        : item.quantity
+                }))
+                : [{
+                    product_id: requisition.product_id,
+                    quantity: requisition.purchased_quantity !== null && requisition.purchased_quantity !== undefined
+                        ? requisition.purchased_quantity
+                        : requisition.quantity
+                }];
 
             const { data: receiptDamageRows, error: damageError } = await supabase
                 .from('damaged_goods')
@@ -4860,10 +5018,12 @@ export function registerHandlers() {
                 .in('status', ['DAMAGED', 'IN_REPAIR']);
             if (damageError) throw damageError;
 
-            const receiptDamageByProduct = new Map<number, number>();
+            const receiptDamageByProduct = new Map<string, number>();
             (receiptDamageRows || []).forEach((row: any) => {
-                const productId = Number(row.product_id);
-                receiptDamageByProduct.set(productId, (receiptDamageByProduct.get(productId) || 0) + Number(row.quantity || 0));
+                const productId = String(row.product_id || '');
+                if (productId) {
+                    receiptDamageByProduct.set(productId, (receiptDamageByProduct.get(productId) || 0) + Number(row.quantity || 0));
+                }
             });
             
             // Update requisition status
@@ -4883,7 +5043,7 @@ export function registerHandlers() {
             
             let addedQuantity = 0;
             for (const item of stockItems) {
-                const productId = Number(item.product_id);
+                const productId = item.product_id ? String(item.product_id) : '';
                 const itemQty = Number(item.quantity) || 0;
                 if (!productId || itemQty <= 0) continue;
                 const damagedQty = receiptDamageByProduct.get(productId) || 0;

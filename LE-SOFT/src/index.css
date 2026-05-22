@@ -24,6 +24,8 @@
     /* Card background - slightly darker silver */
     --input-bg: #e8e8e8;
     /* Input fields */
+    --input-field-bg: #ffffff;
+    /* Form input boxes - always white in light mode */
     --hover-bg: #bfbfbf;
     /* Hover state */
     --sidebar-bg: #b8b8b8;
@@ -64,6 +66,8 @@
     /* Card background */
     --input-bg: #1e1e1e;
     /* Input fields */
+    --input-field-bg: #1e1e1e;
+    /* Form input boxes - dark in dark mode */
     --hover-bg: #1e1e1e;
     /* Hover state */
     --sidebar-bg: #111111;
