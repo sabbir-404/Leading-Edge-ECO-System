@@ -5018,7 +5018,7 @@ export function registerHandlers() {
             // Fetch the requisition and all line items so multi-line requisitions stock every product.
             const { data: requisition, error: fetchError } = await supabase
                 .from('purchase_requisitions')
-                .select('id, product_id, quantity, requisition_number, status, purchased_quantity')
+                .select('id, product_id, quantity, requisition_number, status, purchased_quantity, supplier_ledger_id')
                 .eq('id', id)
                 .single();
             
@@ -5096,9 +5096,44 @@ export function registerHandlers() {
 
                 if (!productError && product !== null) {
                     const newStock = (Number(product?.quantity) || 0) + usableQty;
+
+                    // Look up the quote unit price for this product and selected supplier
+                    let finalUnitPrice: number | null = null;
+                    if (requisition.supplier_ledger_id) {
+                        const { data: quoteRow } = await supabase
+                            .from('purchase_requisition_quotes')
+                            .select('unit_price')
+                            .eq('requisition_id', id)
+                            .eq('supplier_ledger_id', requisition.supplier_ledger_id)
+                            .eq('product_id', productId)
+                            .maybeSingle();
+                        if (quoteRow?.unit_price) {
+                            finalUnitPrice = Number(quoteRow.unit_price);
+                        }
+                    }
+
+                    // Fallback to any quote for this product if no supplier-specific quote matches
+                    if (!finalUnitPrice) {
+                        const { data: fallbackQuote } = await supabase
+                            .from('purchase_requisition_quotes')
+                            .select('unit_price')
+                            .eq('requisition_id', id)
+                            .eq('product_id', productId)
+                            .limit(1)
+                            .maybeSingle();
+                        if (fallbackQuote?.unit_price) {
+                            finalUnitPrice = Number(fallbackQuote.unit_price);
+                        }
+                    }
+
+                    const updateFields: any = { quantity: newStock };
+                    if (finalUnitPrice && finalUnitPrice > 0) {
+                        updateFields.purchase_price = finalUnitPrice;
+                    }
+
                     const { error: stockError } = await supabase
                         .from('products')
-                        .update({ quantity: newStock })
+                        .update(updateFields)
                         .eq('id', productId);
                     if (stockError) console.error('[complete-requisition] Stock update failed:', stockError.message);
                     else addedQuantity += usableQty;
