@@ -893,20 +893,27 @@ export function registerHandlers() {
         return { success: true };
     });
 
-    ipcMain.handle('get-products', async () => {
+    ipcMain.handle('get-products', async (_e, filterOpts?: { includeStashed?: boolean }) => {
         // Fetch all products in chunks if they exceed 1000 (Supabase limit)
         let allData: any[] = [];
         let from = 0;
         const PAGE_SIZE = 1000;
         let hasMore = true;
+        const includeStashed = filterOpts?.includeStashed ?? false;
 
         try {
             while (hasMore) {
-                const { data, error } = await supabase
+                let queryBuilder = supabase
                     .from('products')
                     .select('*, unit:units(name,symbol), group:stock_groups(name)')
                     .order('name')
                     .range(from, from + PAGE_SIZE - 1);
+
+                if (!includeStashed) {
+                    queryBuilder = queryBuilder.neq('status', 'STASHED');
+                }
+
+                const { data, error } = await queryBuilder;
 
                 if (error) throw error;
                 if (!data || data.length === 0) {

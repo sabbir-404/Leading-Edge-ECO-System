@@ -40,7 +40,7 @@ contextBridge.exposeInMainWorld('electron', {
     deleteStockItem: (id: number) => ipcRenderer.invoke('delete-stock-item', id),
 
     // Products
-    getProducts: () => ipcRenderer.invoke('get-products'),
+    getProducts: (opts?: any) => ipcRenderer.invoke('get-products', opts),
     getProduct: (id: number) => ipcRenderer.invoke('get-product', id),
     getProductLedgerDetail: (id: number) => ipcRenderer.invoke('get-product-ledger-detail', id),
     getProductRequisitionSummary: (productId: number, filters?: any) => ipcRenderer.invoke('get-product-requisition-summary', productId, filters),

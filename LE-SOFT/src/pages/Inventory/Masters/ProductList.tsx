@@ -30,7 +30,7 @@ const ProductList: React.FC = () => {
     const fetchProducts = async () => {
         try {
             // @ts-ignore
-            const result = await window.electron.getProducts();
+            const result = await window.electron.getProducts({ includeStashed: true });
             setProducts(result || []);
         } catch (error) {
             console.error('Failed to fetch products:', error);

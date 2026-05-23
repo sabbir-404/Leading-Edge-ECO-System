@@ -37,7 +37,7 @@ export interface ElectronAPI {
     deleteStockItem: (id: number) => Promise<any>;
 
     // Products
-    getProducts: () => Promise<any[]>;
+    getProducts: (opts?: { includeStashed?: boolean }) => Promise<any[]>;
     getProductLedgerDetail: (id: number) => Promise<any>;
     getProductRequisitionSummary: (productId: number, filters?: any) => Promise<any>;
     createProduct: (product: any) => Promise<any>;
