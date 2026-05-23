@@ -979,8 +979,26 @@ export function registerHandlers() {
             .maybeSingle();
 
         if (ruleError) throw ruleError;
-        if (!rule) {
-            throw new Error(`No active product model rule found for ${originType} products in the selected stock group.`);
+        
+        let ruleToUse = rule;
+        if (!ruleToUse) {
+            // Fetch the stock group name to generate a default group code
+            const { data: groupData } = await supabase
+                .from('stock_groups')
+                .select('name')
+                .eq('id', stockGroupId)
+                .maybeSingle();
+            
+            const groupName = groupData?.name || 'GEN';
+            const cleanedGroup = groupName.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().substring(0, 3) || 'GEN';
+            const originCode = originType === 'IMPORTED' ? 'IMP' : 'LOC';
+            
+            ruleToUse = {
+                origin_code: originCode,
+                group_code: cleanedGroup.padEnd(3, 'X'),
+                batch_sequence: 1,
+                serial_padding: 4
+            };
         }
 
         const { data: lastProduct, error: serialError } = await supabase
@@ -995,12 +1013,12 @@ export function registerHandlers() {
         if (serialError) throw serialError;
 
         const serial = Number(lastProduct?.serial_number || 0) + 1;
-        const serialText = String(serial).padStart(Number(rule.serial_padding) || 4, '0');
-        const batchText = String(rule.batch_sequence || 1).padStart(2, '0');
+        const serialText = String(serial).padStart(Number(ruleToUse.serial_padding) || 4, '0');
+        const batchText = String(ruleToUse.batch_sequence || 1).padStart(2, '0');
         return {
-            code: `${rule.origin_code}.${rule.group_code}.${batchText}.${serialText}`,
-            originCode: rule.origin_code,
-            groupCode: rule.group_code,
+            code: `${ruleToUse.origin_code}.${ruleToUse.group_code}.${batchText}.${serialText}`,
+            originCode: ruleToUse.origin_code,
+            groupCode: ruleToUse.group_code,
             batchCode: batchText,
             serial,
         };
@@ -2624,6 +2642,19 @@ export function registerHandlers() {
             } else if (section === 'customer') {
                 await supabaseAdmin.from('bills').update({ customer_id: null }).neq('id', 0);
                 await supabaseAdmin.from('billing_customers').delete().neq('id', 0);
+            } else if (section === 'requisitions') {
+                await supabaseAdmin.from('purchase_requisition_quotes').delete().neq('id', 0);
+                await supabaseAdmin.from('purchase_requisition_status_history').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+                await supabaseAdmin.from('purchase_requisition_approvals').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+                await supabaseAdmin.from('purchase_requisition_items').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+                await supabaseAdmin.from('purchase_requisitions').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+            } else if (section === 'masters') {
+                await supabaseAdmin.from('voucher_entries').delete().neq('id', 0);
+                await supabaseAdmin.from('vouchers').delete().neq('id', 0);
+                await supabaseAdmin.from('supplier_settlements').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+                await supabaseAdmin.from('purchase_bill_items').delete().neq('id', 0);
+                await supabaseAdmin.from('purchase_bills').delete().neq('id', 0);
+                await supabaseAdmin.from('ledgers').delete().neq('id', 0);
             } else {
                 return { success: false, error: 'Unknown database section' };
             }

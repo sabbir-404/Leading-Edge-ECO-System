@@ -885,6 +885,12 @@ const Settings: React.FC = () => {
                                             <button onClick={() => openClearDbModal('customer')} style={{ padding: '0.75rem', borderRadius: '8px', border: '1px solid #ef4444', background: 'rgba(239,68,68,0.05)', color: '#ef4444', fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}>
                                                 🗑️ Clear Customer Database
                                             </button>
+                                            <button onClick={() => openClearDbModal('requisitions')} style={{ padding: '0.75rem', borderRadius: '8px', border: '1px solid #ef4444', background: 'rgba(239,68,68,0.05)', color: '#ef4444', fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}>
+                                                🗑️ Clear Requisitions
+                                            </button>
+                                            <button onClick={() => openClearDbModal('masters')} style={{ padding: '0.75rem', borderRadius: '8px', border: '1px solid #ef4444', background: 'rgba(239,68,68,0.05)', color: '#ef4444', fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}>
+                                                🗑️ Clear Masters & Vouchers
+                                            </button>
                                         </div>
                                     </div>
                                 )}
