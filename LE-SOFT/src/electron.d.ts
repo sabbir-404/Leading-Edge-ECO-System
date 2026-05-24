@@ -42,7 +42,10 @@ export interface ElectronAPI {
     getProductRequisitionSummary: (productId: number, filters?: any) => Promise<any>;
     createProduct: (product: any) => Promise<any>;
     updateProduct: (product: any) => Promise<any>;
-    deleteProduct: (id: number) => Promise<any>;
+    deleteProduct: (id: number, performedByName?: string, userRole?: string) => Promise<any>;
+    requestProductDeletion: (id: number, performedByName: string, notes: string) => Promise<any>;
+    approveProductDeletion: (id: number, performedByName: string) => Promise<any>;
+    rejectProductDeletion: (id: number) => Promise<any>;
     restoreProduct: (id: number) => Promise<any>;
     getProductModelRules: () => Promise<any[]>;
     saveProductModelRule: (rule: any) => Promise<any>;

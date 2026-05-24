@@ -113923,14 +113923,19 @@ function registerHandlers() {
     if (error) throw error;
     return { success: true };
   });
-  import_electron10.ipcMain.handle("get-products", async () => {
+  import_electron10.ipcMain.handle("get-products", async (_e, filterOpts) => {
     let allData = [];
     let from = 0;
     const PAGE_SIZE = 1e3;
     let hasMore = true;
+    const includeStashed = filterOpts?.includeStashed ?? false;
     try {
       while (hasMore) {
-        const { data: data2, error } = await supabase_default.from("products").select("*, unit:units(name,symbol), group:stock_groups(name)").order("name").range(from, from + PAGE_SIZE - 1);
+        let queryBuilder = supabase_default.from("products").select("*, unit:units(name,symbol), group:stock_groups(name)").order("name").range(from, from + PAGE_SIZE - 1);
+        if (!includeStashed) {
+          queryBuilder = queryBuilder.neq("status", "STASHED");
+        }
+        const { data: data2, error } = await queryBuilder;
         if (error) throw error;
         if (!data2 || data2.length === 0) {
           hasMore = false;
@@ -113982,18 +113987,28 @@ function registerHandlers() {
     const originType = product.originType || "LOCAL";
     const { data: rule, error: ruleError } = await supabase_default.from("product_model_rules").select("*").eq("origin_type", originType).eq("stock_group_id", stockGroupId).eq("is_active", true).maybeSingle();
     if (ruleError) throw ruleError;
-    if (!rule) {
-      throw new Error(`No active product model rule found for ${originType} products in the selected stock group.`);
+    let ruleToUse = rule;
+    if (!ruleToUse) {
+      const { data: groupData } = await supabase_default.from("stock_groups").select("name").eq("id", stockGroupId).maybeSingle();
+      const groupName = groupData?.name || "GEN";
+      const cleanedGroup = groupName.replace(/[^a-zA-Z0-9]/g, "").toUpperCase().substring(0, 3) || "GEN";
+      const originCode = originType === "IMPORTED" ? "IMP" : "LOC";
+      ruleToUse = {
+        origin_code: originCode,
+        group_code: cleanedGroup.padEnd(3, "X"),
+        batch_sequence: 1,
+        serial_padding: 4
+      };
     }
     const { data: lastProduct, error: serialError } = await supabase_default.from("products").select("serial_number").eq("origin_type", originType).eq("stock_group_id", stockGroupId).not("serial_number", "is", null).order("serial_number", { ascending: false }).limit(1).maybeSingle();
     if (serialError) throw serialError;
     const serial = Number(lastProduct?.serial_number || 0) + 1;
-    const serialText = String(serial).padStart(Number(rule.serial_padding) || 4, "0");
-    const batchText = String(rule.batch_sequence || 1).padStart(2, "0");
+    const serialText = String(serial).padStart(Number(ruleToUse.serial_padding) || 4, "0");
+    const batchText = String(ruleToUse.batch_sequence || 1).padStart(2, "0");
     return {
-      code: `${rule.origin_code}.${rule.group_code}.${batchText}.${serialText}`,
-      originCode: rule.origin_code,
-      groupCode: rule.group_code,
+      code: `${ruleToUse.origin_code}.${ruleToUse.group_code}.${batchText}.${serialText}`,
+      originCode: ruleToUse.origin_code,
+      groupCode: ruleToUse.group_code,
       batchCode: batchText,
       serial
     };
@@ -114381,18 +114396,63 @@ function registerHandlers() {
     if (error) throw error;
     return { success: true };
   });
-  import_electron10.ipcMain.handle("delete-product", async (_e, id) => {
-    const { error } = await supabase_default.from("products").update({ status: "STASHED", is_active: false }).eq("id", id);
-    if (error) {
-      throw error;
+  import_electron10.ipcMain.handle("delete-product", async (_e, id, performedByName, userRole) => {
+    const role = userRole || "staff";
+    if (role === "admin" || role === "superadmin") {
+      const { error } = await supabase_default.from("products").update({
+        status: "STASHED",
+        is_active: false,
+        deletion_status: "APPROVED",
+        deletion_approved_by: performedByName || "admin",
+        deletion_approved_at: (/* @__PURE__ */ new Date()).toISOString(),
+        deletion_notes: "Archived directly by administrative authority."
+      }).eq("id", id);
+      if (error) throw error;
+      return { success: true };
+    } else {
+      throw new Error("Immediate stashing is restricted. Please request product deletion approval.");
     }
+  });
+  import_electron10.ipcMain.handle("request-product-deletion", async (_e, id, performedByName, notes) => {
+    const { error } = await supabase_default.from("products").update({
+      deletion_status: "PENDING_APPROVAL",
+      deletion_requested_by: performedByName || "unknown-user",
+      deletion_requested_at: (/* @__PURE__ */ new Date()).toISOString(),
+      deletion_notes: notes || ""
+    }).eq("id", id);
+    if (error) throw error;
+    return { success: true };
+  });
+  import_electron10.ipcMain.handle("approve-product-deletion", async (_e, id, performedByName) => {
+    const { error } = await supabase_default.from("products").update({
+      status: "STASHED",
+      is_active: false,
+      deletion_status: "APPROVED",
+      deletion_approved_by: performedByName || "admin",
+      deletion_approved_at: (/* @__PURE__ */ new Date()).toISOString()
+    }).eq("id", id);
+    if (error) throw error;
+    return { success: true };
+  });
+  import_electron10.ipcMain.handle("reject-product-deletion", async (_e, id) => {
+    const { error } = await supabase_default.from("products").update({
+      deletion_status: "REJECTED"
+    }).eq("id", id);
+    if (error) throw error;
     return { success: true };
   });
   import_electron10.ipcMain.handle("restore-product", async (_e, id) => {
-    const { error } = await supabase_default.from("products").update({ status: "ACTIVE", is_active: true }).eq("id", id);
-    if (error) {
-      throw error;
-    }
+    const { error } = await supabase_default.from("products").update({
+      status: "ACTIVE",
+      is_active: true,
+      deletion_status: "NONE",
+      deletion_requested_by: null,
+      deletion_requested_at: null,
+      deletion_approved_by: null,
+      deletion_approved_at: null,
+      deletion_notes: null
+    }).eq("id", id);
+    if (error) throw error;
     return { success: true };
   });
   import_electron10.ipcMain.handle("get-product-price-history", async () => {
@@ -115233,6 +115293,19 @@ function registerHandlers() {
       } else if (section === "customer") {
         await supabaseAdmin.from("bills").update({ customer_id: null }).neq("id", 0);
         await supabaseAdmin.from("billing_customers").delete().neq("id", 0);
+      } else if (section === "requisitions") {
+        await supabaseAdmin.from("purchase_requisition_quotes").delete().neq("id", 0);
+        await supabaseAdmin.from("purchase_requisition_status_history").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+        await supabaseAdmin.from("purchase_requisition_approvals").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+        await supabaseAdmin.from("purchase_requisition_items").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+        await supabaseAdmin.from("purchase_requisitions").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+      } else if (section === "masters") {
+        await supabaseAdmin.from("voucher_entries").delete().neq("id", 0);
+        await supabaseAdmin.from("vouchers").delete().neq("id", 0);
+        await supabaseAdmin.from("supplier_settlements").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+        await supabaseAdmin.from("purchase_bill_items").delete().neq("id", 0);
+        await supabaseAdmin.from("purchase_bills").delete().neq("id", 0);
+        await supabaseAdmin.from("ledgers").delete().neq("id", 0);
       } else {
         return { success: false, error: "Unknown database section" };
       }
@@ -117203,7 +117276,7 @@ function registerHandlers() {
     try {
       const userName = performedByName || "desktop-user";
       const completedDate = (/* @__PURE__ */ new Date()).toISOString();
-      const { data: requisition, error: fetchError } = await supabase_default.from("purchase_requisitions").select("id, product_id, quantity, requisition_number, status, purchased_quantity").eq("id", id).single();
+      const { data: requisition, error: fetchError } = await supabase_default.from("purchase_requisitions").select("id, product_id, quantity, requisition_number, status, purchased_quantity, supplier_ledger_id").eq("id", id).single();
       if (fetchError) throw fetchError;
       if (requisition.status !== "RECEIVED") {
         throw new Error("Requisition must be RECEIVED before completion.");
@@ -117245,7 +117318,24 @@ function registerHandlers() {
         const { data: product, error: productError } = await supabase_default.from("products").select("quantity").eq("id", productId).single();
         if (!productError && product !== null) {
           const newStock = (Number(product?.quantity) || 0) + usableQty;
-          const { error: stockError } = await supabase_default.from("products").update({ quantity: newStock }).eq("id", productId);
+          let finalUnitPrice = null;
+          if (requisition.supplier_ledger_id) {
+            const { data: quoteRow } = await supabase_default.from("purchase_requisition_quotes").select("unit_price").eq("requisition_id", id).eq("supplier_ledger_id", requisition.supplier_ledger_id).eq("product_id", productId).maybeSingle();
+            if (quoteRow?.unit_price) {
+              finalUnitPrice = Number(quoteRow.unit_price);
+            }
+          }
+          if (!finalUnitPrice) {
+            const { data: fallbackQuote } = await supabase_default.from("purchase_requisition_quotes").select("unit_price").eq("requisition_id", id).eq("product_id", productId).limit(1).maybeSingle();
+            if (fallbackQuote?.unit_price) {
+              finalUnitPrice = Number(fallbackQuote.unit_price);
+            }
+          }
+          const updateFields = { quantity: newStock };
+          if (finalUnitPrice && finalUnitPrice > 0) {
+            updateFields.purchase_price = finalUnitPrice;
+          }
+          const { error: stockError } = await supabase_default.from("products").update(updateFields).eq("id", productId);
           if (stockError) console.error("[complete-requisition] Stock update failed:", stockError.message);
           else addedQuantity += usableQty;
         } else if (productError) {

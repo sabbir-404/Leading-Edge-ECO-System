@@ -1540,25 +1540,82 @@ export function registerHandlers() {
         return { success: true };
     });
 
-    ipcMain.handle('delete-product', async (_e, id: number) => {
+    ipcMain.handle('delete-product', async (_e, id: number, performedByName?: string, userRole?: string) => {
+        const role = userRole || 'staff';
+        if (role === 'admin' || role === 'superadmin') {
+            const { error } = await supabase
+                .from('products')
+                .update({
+                    status: 'STASHED',
+                    is_active: false,
+                    deletion_status: 'APPROVED',
+                    deletion_approved_by: performedByName || 'admin',
+                    deletion_approved_at: new Date().toISOString(),
+                    deletion_notes: 'Archived directly by administrative authority.'
+                })
+                .eq('id', id);
+            if (error) throw error;
+            return { success: true };
+        } else {
+            throw new Error('Immediate stashing is restricted. Please request product deletion approval.');
+        }
+    });
+
+    ipcMain.handle('request-product-deletion', async (_e, id: number, performedByName: string, notes: string) => {
         const { error } = await supabase
             .from('products')
-            .update({ status: 'STASHED', is_active: false })
+            .update({
+                deletion_status: 'PENDING_APPROVAL',
+                deletion_requested_by: performedByName || 'unknown-user',
+                deletion_requested_at: new Date().toISOString(),
+                deletion_notes: notes || ''
+            })
             .eq('id', id);
-        if (error) {
-            throw error;
-        }
+        if (error) throw error;
+        return { success: true };
+    });
+
+    ipcMain.handle('approve-product-deletion', async (_e, id: number, performedByName: string) => {
+        const { error } = await supabase
+            .from('products')
+            .update({
+                status: 'STASHED',
+                is_active: false,
+                deletion_status: 'APPROVED',
+                deletion_approved_by: performedByName || 'admin',
+                deletion_approved_at: new Date().toISOString()
+            })
+            .eq('id', id);
+        if (error) throw error;
+        return { success: true };
+    });
+
+    ipcMain.handle('reject-product-deletion', async (_e, id: number) => {
+        const { error } = await supabase
+            .from('products')
+            .update({
+                deletion_status: 'REJECTED'
+            })
+            .eq('id', id);
+        if (error) throw error;
         return { success: true };
     });
 
     ipcMain.handle('restore-product', async (_e, id: number) => {
         const { error } = await supabase
             .from('products')
-            .update({ status: 'ACTIVE', is_active: true })
+            .update({
+                status: 'ACTIVE',
+                is_active: true,
+                deletion_status: 'NONE',
+                deletion_requested_by: null,
+                deletion_requested_at: null,
+                deletion_approved_by: null,
+                deletion_approved_at: null,
+                deletion_notes: null
+            })
             .eq('id', id);
-        if (error) {
-            throw error;
-        }
+        if (error) throw error;
         return { success: true };
     });
 

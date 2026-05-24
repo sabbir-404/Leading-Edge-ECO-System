@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Search, Trash2, Edit2, Barcode, Eye, RotateCcw } from 'lucide-react';
+import { Plus, Search, Trash2, Edit2, Barcode, Eye, RotateCcw, Check, X } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useAutoRefresh } from '../../../hooks/useAutoRefresh';
 import BarcodeStickerModal, { StickerSize } from '../../../components/BarcodeStickerModal';
@@ -16,6 +16,12 @@ const ProductList: React.FC = () => {
     const [products, setProducts] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+
+    // Deletion approval states
+    const [requestModalOpen, setRequestModalOpen] = useState(false);
+    const [requestProductId, setRequestProductId] = useState<number | null>(null);
+    const [stashingReason, setStashingReason] = useState('');
+    const userName = localStorage.getItem('user_name') || 'desktop-user';
 
     // Barcode modal
     const [barcodeProduct, setBarcodeProduct] = useState<any | null>(null);
@@ -43,15 +49,51 @@ const ProductList: React.FC = () => {
 
     useAutoRefresh(['products', 'stock_items', 'stock_groups', 'units'], fetchProducts);
 
-    const handleDelete = async (id: number) => {
-        if (!confirm('Stash this product? Stashed products are archived and can be restored later.')) return;
+    const handleDeleteClick = (id: number) => {
+        setRequestProductId(id);
+        setStashingReason('');
+        setRequestModalOpen(true);
+    };
+
+    const submitStashRequest = async () => {
+        if (!stashingReason.trim()) {
+            alert('Please provide a reason for stashing this product.');
+            return;
+        }
         try {
             // @ts-ignore
-            await window.electron.deleteProduct(id);
+            await window.electron.requestProductDeletion(requestProductId!, userName, stashingReason);
+            setRequestModalOpen(false);
+            setStashingReason('');
+            fetchProducts();
+            alert('Stashing request submitted successfully for approval.');
+        } catch (error: any) {
+            console.error('Failed to submit stash request:', error);
+            alert(error?.message || 'Failed to submit stash request.');
+        }
+    };
+
+    const handleApproveStash = async (id: number) => {
+        if (!confirm('Approve stashing for this product? It will be archived.')) return;
+        try {
+            // @ts-ignore
+            await window.electron.approveProductDeletion(id, userName);
             fetchProducts();
         } catch (error: any) {
-            console.error('Failed to stash product:', error);
-            alert(error?.message || 'Failed to stash product.');
+            console.error('Failed to approve stashing:', error);
+            alert(error?.message || 'Failed to approve stashing.');
+        }
+    };
+
+    const handleRejectStash = async (id: number) => {
+        if (!confirm('Reject stashing for this product? It will remain active.')) return;
+        try {
+            // @ts-ignore
+            await window.electron.rejectProductDeletion(id);
+            fetchProducts();
+        } catch (error: any) {
+            console.error('Failed to reject stashing:', error);
+            alert(error?.message || 'Failed to reject stashing.');
         }
     };
 
@@ -75,8 +117,14 @@ const ProductList: React.FC = () => {
         const matchesCategory = categoryFilter === 'All' || (p.category || 'Uncategorized') === categoryFilter;
         const matchesGroup = groupFilter === 'All' || (p.group_name || 'No Group') === groupFilter;
 
-        const matchesStatus = statusFilter === 'All' ||
-            (statusFilter === 'ACTIVE' ? (p.status !== 'STASHED' && p.is_active !== false) : p.status === 'STASHED');
+        let matchesStatus = true;
+        if (statusFilter === 'ACTIVE') {
+            matchesStatus = p.status !== 'STASHED' && p.is_active !== false && p.deletion_status !== 'PENDING_APPROVAL';
+        } else if (statusFilter === 'PENDING') {
+            matchesStatus = p.deletion_status === 'PENDING_APPROVAL';
+        } else if (statusFilter === 'STASHED') {
+            matchesStatus = p.status === 'STASHED';
+        }
 
         return matchesSearch && matchesCategory && matchesGroup && matchesStatus;
     });
@@ -99,38 +147,30 @@ const ProductList: React.FC = () => {
     const handleBulkDelete = async () => {
         if (selectedIds.size === 0) return;
         const totalSelected = selectedIds.size;
-        if (!confirm(`Delete ${totalSelected} selected products?`)) return;
+        const reason = prompt(`Enter reason to request stashing for ${totalSelected} selected product(s):`);
+        if (reason === null) return;
+        if (!reason.trim()) {
+            alert('A reason is required to request stashing.');
+            return;
+        }
         
         let successCount = 0;
-        let failReason = '';
         for (const id of Array.from(selectedIds)) {
             try {
                 // @ts-ignore
-                await window.electron.deleteProduct(id);
+                await window.electron.requestProductDeletion(id, userName, reason);
                 successCount++;
             } catch (err: any) {
-                console.error('Failed to delete', id, err);
-                failReason = err?.message || 'Referenced in transaction records';
+                console.error('Failed to submit stash request for ID', id, err);
             }
         }
         setSelectedIds(new Set());
         fetchProducts();
-        if (successCount === 0 && failReason) {
-            alert(`Failed to delete products: ${failReason}`);
-        } else if (successCount < totalSelected) {
-            alert(`Successfully deleted ${successCount} products. Some products could not be deleted because they are referenced in transaction records.`);
-        } else {
-            alert(`Successfully deleted all ${successCount} products.`);
-        }
+        alert(`Successfully submitted stashing requests for ${successCount} product(s).`);
     };
 
     const handleBulkPrint = () => {
         if (selectedIds.size === 0) return;
-        // The modal supports single product currently. We will pick the first or modify it.
-        // Wait, for bulk print, a real implementation would loop or pass an array. 
-        // For now, we launch on the first selected item, or we can update BarcodeStickerModal later.
-        // Or simply cycle them? Actually BarcodeStickerModal might be set up to print one.
-        // Let's just set the first one for now, or alert.
         const firstSelected = products.find(p => p.id === Array.from(selectedIds)[0]);
         if (firstSelected) setBarcodeProduct(firstSelected);
     };
@@ -170,6 +210,7 @@ const ProductList: React.FC = () => {
 
                     <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
                         <option value="ACTIVE">Active Products</option>
+                        <option value="PENDING">Pending Deletions</option>
                         <option value="STASHED">Stashed / Archived</option>
                     </select>
 
@@ -247,7 +288,27 @@ const ProductList: React.FC = () => {
                                             <div style={{ width: '36px', height: '36px', borderRadius: '6px', background: 'var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.6rem', opacity: 0.4 }}>N/A</div>
                                         )}
                                     </td>
-                                    <td style={{ fontWeight: 500 }}>{product.name}</td>
+                                    <td style={{ fontWeight: 500 }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.4rem' }}>
+                                            {product.name}
+                                            {product.deletion_status === 'REJECTED' && (
+                                                <span style={{ fontSize: '0.7rem', background: '#fee2e2', color: '#ef4444', padding: '1px 6px', borderRadius: '4px', fontWeight: 600 }}>
+                                                    Stash Rejected
+                                                </span>
+                                            )}
+                                            {product.deletion_status === 'PENDING_APPROVAL' && (
+                                                <span style={{ fontSize: '0.7rem', background: '#fef3c7', color: '#d97706', padding: '1px 6px', borderRadius: '4px', fontWeight: 600 }}>
+                                                    Pending Deletion
+                                                </span>
+                                            )}
+                                        </div>
+                                        {product.deletion_status === 'PENDING_APPROVAL' && (
+                                            <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '0.3rem', background: 'var(--hover-bg)', padding: '0.4rem 0.6rem', borderRadius: '6px', borderLeft: '3px solid #f59e0b', maxWidth: '300px', lineHeight: '1.2' }}>
+                                                <strong>By:</strong> {product.deletion_requested_by}<br/>
+                                                <strong>Reason:</strong> {product.deletion_notes || 'No reason provided.'}
+                                            </div>
+                                        )}
+                                    </td>
                                     <td><span style={{ padding: '2px 8px', borderRadius: '4px', background: 'rgba(99,102,241,0.1)', color: '#6366f1', fontWeight: 500, fontSize: '0.85rem' }}>{product.product_code || product.model_number || product.sku || '—'}</span></td>
                                     <td>{product.category || '—'}</td>
                                     <td>{product.unit_symbol || product.unit_name || '—'}</td>
@@ -275,12 +336,21 @@ const ProductList: React.FC = () => {
                                             </button>
                                             {canEditProducts && <button className="edit-btn" onClick={() => navigate('/masters/products/create', { state: { editProduct: product } })}><Edit2 size={16} /></button>}
                                             {canDeleteProducts && (
-                                                product.status === 'STASHED' ? (
+                                                statusFilter === 'STASHED' ? (
                                                     <button className="edit-btn" title="Restore Product" onClick={() => handleRestore(product.id)} style={{ color: 'var(--accent-color)' }}>
                                                         <RotateCcw size={16} />
                                                     </button>
+                                                ) : statusFilter === 'PENDING' ? (
+                                                    <>
+                                                        <button className="edit-btn" title="Approve Stash" onClick={() => handleApproveStash(product.id)} style={{ color: '#10b981', marginRight: '0.3rem' }}>
+                                                            <Check size={16} />
+                                                        </button>
+                                                        <button className="delete-btn" title="Reject Stash" onClick={() => handleRejectStash(product.id)} style={{ color: '#ef4444' }}>
+                                                            <X size={16} />
+                                                        </button>
+                                                    </>
                                                 ) : (
-                                                    <button className="delete-btn" title="Stash Product" onClick={() => handleDelete(product.id)}>
+                                                    <button className="delete-btn" title="Stash Product" onClick={() => handleDeleteClick(product.id)}>
                                                         <Trash2 size={16} />
                                                     </button>
                                                 )
@@ -305,6 +375,36 @@ const ProductList: React.FC = () => {
                     config={stickerConfig}
                     onClose={() => setBarcodeProduct(null)}
                 />
+            )}
+
+            {/* Request Product Stashing Modal */}
+            {requestModalOpen && (
+                <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+                    <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '2rem', width: '400px', maxWidth: '90%', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)' }}>
+                        <h3 style={{ margin: '0 0 1rem', fontSize: '1.25rem', fontWeight: 600, color: 'var(--text-color)' }}>Request Product Stashing</h3>
+                        <p style={{ fontSize: '0.875rem', color: '#6b7280', margin: '0 0 1.5rem' }}>Please enter the reason for archiving this product. This request will be submitted for higher authority review and approval.</p>
+                        <textarea
+                            value={stashingReason}
+                            onChange={(e) => setStashingReason(e.target.value)}
+                            placeholder="Reason for stashing (e.g., Obsolete model, Discontinued by supplier)..."
+                            style={{ width: '100%', minHeight: '100px', padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'transparent', color: 'var(--text-color)', resize: 'vertical', fontSize: '0.9rem', marginBottom: '1.5rem', outline: 'none' }}
+                        />
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+                            <button
+                                onClick={() => setRequestModalOpen(false)}
+                                style={{ padding: '0.5rem 1rem', background: 'var(--hover-bg)', border: '1px solid var(--border-color)', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, color: 'var(--text-color)' }}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={submitStashRequest}
+                                style={{ padding: '0.5rem 1rem', background: '#6366f1', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}
+                            >
+                                Submit Request
+                            </button>
+                        </div>
+                    </motion.div>
+                </div>
             )}
         </div>
     );
