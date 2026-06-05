@@ -1,0 +1,74 @@
+{
+  "swarms": {
+    "swarm-1780652606670-ab3msy": {
+      "swarmId": "swarm-1780652606670-ab3msy",
+      "topology": "hierarchical-mesh",
+      "maxAgents": 8,
+      "status": "terminated",
+      "agents": [],
+      "tasks": [],
+      "config": {
+        "topology": "hierarchical-mesh",
+        "maxAgents": 8,
+        "strategy": "specialized",
+        "communicationProtocol": "message-bus",
+        "autoScaling": true,
+        "consensusMechanism": "majority"
+      },
+      "createdAt": "2026-06-05T09:43:26.670Z",
+      "updatedAt": "2026-06-05T09:43:30.369Z",
+      "pid": 50807,
+      "terminationReason": "host process 50807 exited"
+    },
+    "swarm-1780652610368-uenme7": {
+      "swarmId": "swarm-1780652610368-uenme7",
+      "topology": "hierarchical",
+      "maxAgents": 8,
+      "status": "terminated",
+      "agents": [],
+      "tasks": [],
+      "config": {
+        "topology": "hierarchical",
+        "maxAgents": 8,
+        "strategy": "specialized",
+        "communicationProtocol": "message-bus",
+        "autoScaling": true,
+        "consensusMechanism": "majority"
+      },
+      "createdAt": "2026-06-05T09:43:30.369Z",
+      "updatedAt": "2026-06-05T09:47:39.885Z",
+      "pid": 50888,
+      "terminationReason": "host process 50888 exited"
+    },
+    "swarm-1780652859884-djjx4c": {
+      "swarmId": "swarm-1780652859884-djjx4c",
+      "topology": "hierarchical",
+      "maxAgents": 8,
+      "status": "terminated",
+      "agents": [
+        "agent-1780652919192-ctu3t8",
+        "agent-1780652920456-1esdns",
+        "agent-1780652921583-zu89j6",
+        "agent-1780652922744-m3iv4i",
+        "agent-1780652924066-k1wo6l",
+        "agent-1780652925279-q7wxz7",
+        "agent-1780652926457-74ueyw",
+        "agent-1780652927529-n6z1rv"
+      ],
+      "tasks": [],
+      "config": {
+        "topology": "hierarchical",
+        "maxAgents": 8,
+        "strategy": "specialized",
+        "communicationProtocol": "message-bus",
+        "autoScaling": true,
+        "consensusMechanism": "majority"
+      },
+      "createdAt": "2026-06-05T09:47:39.884Z",
+      "updatedAt": "2026-06-05T09:48:39.193Z",
+      "pid": 53779,
+      "terminationReason": "host process 53779 exited"
+    }
+  },
+  "version": "3.0.0"
+}

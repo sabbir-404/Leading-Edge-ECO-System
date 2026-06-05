@@ -11,7 +11,7 @@ import os from 'os';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import sharp from 'sharp';
-import supabase, { supabaseAdmin, decryptEmbeddedCredentials } from './supabase';
+import supabase, { supabaseAdmin, decryptEmbeddedCredentials, reinitSupabaseClients } from './supabase';
 import mysql from 'mysql2/promise';
 import * as licenseManager from './license-manager';
 import { getConnectedDevices, setBackupNode, DEVICE_ID } from './device-monitor';
@@ -2788,6 +2788,10 @@ export function registerHandlers() {
             if (newConfig.anonKey)        merged.anonKey        = newConfig.anonKey;
             if (newConfig.serviceRoleKey) merged.serviceRoleKey = newConfig.serviceRoleKey;
             fs.writeFileSync(currentConfigPath, JSON.stringify(merged, null, 2), 'utf8');
+
+            // Automatically refresh in-memory clients
+            reinitSupabaseClients();
+
             return { success: true };
         } catch (e: any) {
             return { success: false, error: e.message };

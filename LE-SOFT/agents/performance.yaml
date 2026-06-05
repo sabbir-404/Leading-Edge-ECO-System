@@ -1,0 +1,14 @@
+# Performance Agent Configuration for LE-SOFT
+type: performance
+version: "3.0.0"
+description: "Handles Vite bundling size optimization, memory leak profiling in Electron, SQLite index optimization, and mobile customer/staff app performance benchmarks."
+capabilities:
+  - bundle-size-optimization
+  - memory-leak-profiling
+  - sqlite-index-optimization
+  - benchmark-analysis
+  - light-profile-tuning
+optimizations:
+  - context-caching
+  - memory-persistence
+createdAt: "2026-06-05T09:40:00.000Z"

@@ -1,0 +1,14 @@
+# QA Agent Configuration for LE-SOFT
+type: qa
+version: "3.0.0"
+description: "Handles Playwright component/e2e testing, Puppeteer renderer checks, Electron window lifecycle assertions, and coverage analysis."
+capabilities:
+  - playwright-testing
+  - puppeteer-renderer-checks
+  - electron-lifecycle-tests
+  - end-to-end-testing
+  - coverage-analysis
+optimizations:
+  - context-caching
+  - memory-persistence
+createdAt: "2026-06-05T09:40:00.000Z"

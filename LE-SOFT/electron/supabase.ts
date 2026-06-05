@@ -63,6 +63,9 @@ export function saveSupabaseConfig(config: Partial<SupabaseConfig>): void {
     const merged = { ...existing, ...config };
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2), 'utf-8');
     console.log('[SUPABASE] Config saved to', CONFIG_PATH);
+    
+    // Automatically refresh in-memory clients
+    reinitSupabaseClients();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -135,38 +138,52 @@ export function decryptEmbeddedCredentials(): boolean {
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Client singletons — created once at module load time
+// Client singletons — dynamic and refreshable on-the-fly
 // ─────────────────────────────────────────────────────────────────────────────
-const config = loadConfig();
+let activeClient: SupabaseClient = createClient('https://placeholder.supabase.co', 'placeholder');
+export let supabaseAdmin: SupabaseClient | null = null;
 
-// Standard client — uses anon key, subject to Supabase RLS policies
-export const supabase: SupabaseClient = createClient(config.url || 'https://placeholder.supabase.co', config.anonKey || 'placeholder', {
-    auth: {
-        persistSession: false,    // Electron manages sessions via session-vault.ts
-        autoRefreshToken: true,
-    },
-    global: {
-        headers: {
-            'x-app-name': 'LE-SOFT',
-        },
-    },
+// Proxy wrapper for the default export/standard client so external modules
+// always reference the active instances after reconfiguration.
+export const supabase = new Proxy({} as SupabaseClient, {
+    get(target, prop, receiver) {
+        return Reflect.get(activeClient, prop, activeClient);
+    }
 });
 
-// Admin client — uses service role key, bypasses RLS completely.
-// Only available after the superadmin has entered the service key in Settings.
-// All destructive / privileged operations (clear-database, get-device-sessions, etc.)
-// use this client, never the standard anon client.
-export const supabaseAdmin = config.serviceRoleKey ? createClient(config.url, config.serviceRoleKey, {
-    auth: {
-        autoRefreshToken: false,
-        persistSession: false
-    }
-}) : null;
+export function reinitSupabaseClients(): void {
+    try {
+        const config = loadConfig();
+        activeClient = createClient(config.url || 'https://placeholder.supabase.co', config.anonKey || 'placeholder', {
+            auth: {
+                persistSession: false,    // Electron manages sessions via session-vault.ts
+                autoRefreshToken: true,
+            },
+            global: {
+                headers: {
+                    'x-app-name': 'LE-SOFT',
+                },
+            },
+        });
 
-if (config.url && config.anonKey) {
-    console.log('[SUPABASE] Client initialized →', config.url);
-} else {
-    console.warn('[SUPABASE] No config found — app will redirect to /setup on first launch.');
+        supabaseAdmin = config.serviceRoleKey ? createClient(config.url, config.serviceRoleKey, {
+            auth: {
+                autoRefreshToken: false,
+                persistSession: false
+            }
+        }) : null;
+
+        if (config.url && config.anonKey) {
+            console.log('[SUPABASE] Clients successfully re-initialized →', config.url);
+        } else {
+            console.warn('[SUPABASE] Clients re-initialized with placeholders (redirecting to setup).');
+        }
+    } catch (e: any) {
+        console.error('[SUPABASE] Failed to initialize clients:', e.message);
+    }
 }
+
+// Initial initialization
+reinitSupabaseClients();
 
 export default supabase;

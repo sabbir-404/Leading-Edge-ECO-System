@@ -130,7 +130,6 @@ const Billing: React.FC = () => {
     useEffect(() => {
         const load = async () => {
             try {
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 const el = window.electron as any;
                 const [prods, methods, policy] = await Promise.all([
                     el.getProducts(),

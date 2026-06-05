@@ -1,0 +1,14 @@
+# Database Agent Configuration for LE-SOFT
+type: database
+version: "3.0.0"
+description: "Handles Better-SQLite3 local databases, MySQL replication, Supabase PostgreSQL, schema migrations, and query profiling."
+capabilities:
+  - sqlite-better-sqlite3
+  - mysql2-integration
+  - supabase-db-postgresql
+  - schema-migrations
+  - query-optimization
+optimizations:
+  - context-caching
+  - memory-persistence
+createdAt: "2026-06-05T09:40:00.000Z"

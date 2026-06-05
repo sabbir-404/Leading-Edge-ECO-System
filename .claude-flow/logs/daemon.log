@@ -1,0 +1,21 @@
+[2026-06-05T09:47:29.606Z] [INFO] Scheduled map (interval: 900s, first run in 0s)
+[2026-06-05T09:47:29.606Z] [INFO] Scheduled audit (interval: 600s, first run in 120s)
+[2026-06-05T09:47:29.606Z] [INFO] Scheduled optimize (interval: 900s, first run in 240s)
+[2026-06-05T09:47:29.606Z] [INFO] Scheduled consolidate (interval: 1800s, first run in 360s)
+[2026-06-05T09:47:29.607Z] [INFO] Scheduled testgaps (interval: 1200s, first run in 480s)
+[2026-06-05T09:47:29.608Z] [INFO] Daemon started (PID: 53699, CPUs: 8, workers: 5, maxCpuLoad: 6.4, minFreeMemoryPercent: 5%)
+[2026-06-05T09:47:29.608Z] [INFO] Claude Code headless mode available - AI workers enabled
+[2026-06-05T09:47:29.611Z] [INFO] Worker map deferred: Memory too low: 1.3% free
+[2026-06-05T09:49:29.611Z] [INFO] Worker audit deferred: Memory too low: 0.8% free
+[2026-06-05T09:51:29.610Z] [INFO] Worker optimize deferred: Memory too low: 1.3% free
+[2026-06-05T09:53:29.610Z] [INFO] Worker consolidate deferred: Memory too low: 0.9% free
+[2026-06-05T09:55:29.617Z] [INFO] Worker testgaps deferred: Memory too low: 1.3% free
+[2026-06-05T09:59:29.624Z] [INFO] Worker audit deferred: Memory too low: 0.8% free
+[2026-06-05T10:02:29.616Z] [INFO] Worker map deferred: Memory too low: 0.8% free
+[2026-06-05T10:06:29.618Z] [INFO] Worker optimize deferred: Memory too low: 0.9% free
+[2026-06-05T10:09:29.641Z] [INFO] Worker audit deferred: Memory too low: 1.4% free
+[2026-06-05T10:17:22.808Z] [INFO] Worker testgaps deferred: CPU load too high: 13.66
+[2026-06-05T10:17:29.630Z] [INFO] Worker map deferred: CPU load too high: 12.73
+[2026-06-05T10:21:43.811Z] [INFO] Worker audit deferred: CPU load too high: 8.27
+[2026-06-05T10:21:43.816Z] [INFO] Worker optimize deferred: CPU load too high: 8.27
+[2026-06-05T10:23:47.024Z] [INFO] Worker consolidate deferred: Memory too low: 2.0% free

@@ -1,0 +1,14 @@
+# Frontend Agent Configuration for LE-SOFT
+type: frontend
+version: "3.0.0"
+description: "Handles React components, Vite configuration, Framer Motion UI animations, Electron Renderer integrations, and styling."
+capabilities:
+  - react-development
+  - vite-configuration
+  - framer-motion-ui
+  - electron-renderer
+  - tailwind-styling
+optimizations:
+  - context-caching
+  - memory-persistence
+createdAt: "2026-06-05T09:40:00.000Z"

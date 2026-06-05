@@ -1,0 +1,14 @@
+# Backend Agent Configuration for LE-SOFT
+type: backend
+version: "3.0.0"
+description: "Handles Electron Main process, IPC communication, Node.js system APIs, Supabase operations, and SQLite/MySQL integration."
+capabilities:
+  - electron-main
+  - ipc-communication
+  - node-apis
+  - supabase-integration
+  - sql-databases
+optimizations:
+  - context-caching
+  - memory-persistence
+createdAt: "2026-06-05T09:40:00.000Z"

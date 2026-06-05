@@ -1,0 +1,14 @@
+# Security Agent Configuration for LE-SOFT
+type: security
+version: "3.0.0"
+description: "Handles secure Electron IPC channels, source code obfuscation (javascript-obfuscator), data encryption, bcryptjs password hashing, and vulnerability scans."
+capabilities:
+  - secure-ipc-channels
+  - javascript-obfuscation
+  - data-encryption
+  - bcryptjs-hashing
+  - vulnerability-scanning
+optimizations:
+  - context-caching
+  - memory-persistence
+createdAt: "2026-06-05T09:40:00.000Z"

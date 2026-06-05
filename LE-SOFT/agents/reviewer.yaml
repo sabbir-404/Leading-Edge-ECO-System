@@ -1,0 +1,14 @@
+# Reviewer Agent Configuration for LE-SOFT
+type: reviewer
+version: "3.0.0"
+description: "Handles ESLint enforcement, type safety reviews (TypeScript compiler checks), security audit reviews, and standard code quality controls."
+capabilities:
+  - eslint-enforcement
+  - typescript-checks
+  - code-quality-control
+  - security-audit-reviews
+  - clean-code-linting
+optimizations:
+  - context-caching
+  - memory-persistence
+createdAt: "2026-06-05T09:37:04.551Z"

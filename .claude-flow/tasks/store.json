@@ -1,0 +1,22 @@
+{
+  "tasks": {
+    "task-1780653023224-k5ddv8": {
+      "taskId": "task-1780653023224-k5ddv8",
+      "type": "hive-mind",
+      "description": "Perform security audit on Electron IPC channels",
+      "priority": "normal",
+      "status": "pending",
+      "progress": 0,
+      "assignedTo": [],
+      "tags": [
+        "hive-mind",
+        "consensus:none",
+        "timeout:undefineds"
+      ],
+      "createdAt": "2026-06-05T09:50:23.224Z",
+      "startedAt": null,
+      "completedAt": null
+    }
+  },
+  "version": "3.0.0"
+}

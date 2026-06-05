@@ -1,0 +1,14 @@
+# Architect Agent Configuration for LE-SOFT
+type: architect
+version: "3.0.0"
+description: "Handles system design, Electron-Vite architecture, API contracts, and Supabase database modeling."
+capabilities:
+  - system-design
+  - api-design
+  - electron-vite-architecture
+  - supabase-modeling
+  - documentation
+optimizations:
+  - context-caching
+  - memory-persistence
+createdAt: "2026-06-05T09:37:04.551Z"

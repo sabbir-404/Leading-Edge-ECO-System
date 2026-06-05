@@ -276,7 +276,6 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
       ]
     }] : []),
     ...(hasPermission('manage_settings') ? [{ icon: <Settings size={20} />, label: 'Settings', path: '/settings' }] : []),
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [userRole, JSON.stringify(userPermissions)]);
 
   const handleNavClick = (item: any) => {

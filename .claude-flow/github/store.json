@@ -1,0 +1,20 @@
+{
+  "repos": {
+    "sabbir-404/Leading-Edge-ECO-System": {
+      "owner": "sabbir-404",
+      "name": "Leading-Edge-ECO-System",
+      "branch": "main-windows",
+      "lastAnalyzed": "2026-06-05T09:15:41.974Z",
+      "metrics": {
+        "commits": 99,
+        "branches": 7,
+        "contributors": 2,
+        "openIssues": 0,
+        "openPRs": 0
+      }
+    }
+  },
+  "prs": {},
+  "issues": {},
+  "version": "3.0.0"
+}
