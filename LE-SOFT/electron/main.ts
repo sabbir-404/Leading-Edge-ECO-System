@@ -9,6 +9,7 @@ import { registerHandlers } from './ipc-handlers';
 import { initEncryptionKey, clearEncryptionKey } from './field-encryption';
 import { startQueue, flush as flushQueue } from './write-queue';
 import { clearAll as clearCache } from './cache-manager';
+import { triggerSystemLockout, getLockFilePath } from './lockout';
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Auto-Updater
@@ -16,12 +17,14 @@ import { clearAll as clearCache } from './cache-manager';
 //  Only runs in production (app.isPackaged). Push status to renderer via IPC.
 // ─────────────────────────────────────────────────────────────────────────────
 function setupAutoUpdater() {
-    if (!app.isPackaged) return; // skip in dev mode
-
     // Silence console noise — log to app.log instead
-    autoUpdater.logger = null;
-    autoUpdater.autoDownload = false;       // Let the user decide to download
-    autoUpdater.autoInstallOnAppQuit = true; // Install silently on next quit
+    try {
+        autoUpdater.logger = null;
+        autoUpdater.autoDownload = false;       // Let the user decide to download
+        autoUpdater.autoInstallOnAppQuit = true; // Install silently on next quit
+    } catch (e) {
+        console.warn('Failed to configure autoUpdater:', e);
+    }
 
     const broadcast = (data: object) => {
         BrowserWindow.getAllWindows().forEach(win => {
@@ -29,15 +32,17 @@ function setupAutoUpdater() {
         });
     };
 
-    autoUpdater.on('checking-for-update',  () => broadcast({ status: 'checking' }));
-    autoUpdater.on('update-not-available', () => broadcast({ status: 'up-to-date' }));
-    autoUpdater.on('update-available',  info => broadcast({ status: 'available', info }));
-    autoUpdater.on('error', err => {
-        console.error('[Updater] Error:', err.message);
-        broadcast({ status: 'error', message: err.message });
-    });
-    autoUpdater.on('download-progress', prog => broadcast({ status: 'downloading', progress: prog }));
-    autoUpdater.on('update-downloaded',  info => broadcast({ status: 'ready', info }));
+    if (app.isPackaged) {
+        autoUpdater.on('checking-for-update',  () => broadcast({ status: 'checking' }));
+        autoUpdater.on('update-not-available', () => broadcast({ status: 'up-to-date' }));
+        autoUpdater.on('update-available',  info => broadcast({ status: 'available', info }));
+        autoUpdater.on('error', err => {
+            console.error('[Updater] Error:', err.message);
+            broadcast({ status: 'error', message: err.message });
+        });
+        autoUpdater.on('download-progress', prog => broadcast({ status: 'downloading', progress: prog }));
+        autoUpdater.on('update-downloaded',  info => broadcast({ status: 'ready', info }));
+    }
 
     // Helper: fallback update check for unsigned macOS builds
     const performManualMacCheck = async () => {
@@ -73,37 +78,53 @@ function setupAutoUpdater() {
 
     // IPC: renderer calls these
     ipcMain.handle('check-for-update', async () => {
+        if (!app.isPackaged) {
+            return { status: 'up-to-date' };
+        }
         try { 
             await autoUpdater.checkForUpdates(); 
-            return { success: true }; 
+            return { status: 'checking' }; 
         } catch (e: any) { 
             if (process.platform === 'darwin') {
                 await performManualMacCheck();
-                return { success: true };
+                return { status: 'checking' };
             }
-            return { success: false, error: e.message }; 
+            return { status: 'error', message: e.message }; 
         }
     });
 
     ipcMain.handle('download-update', async () => {
-        try { await autoUpdater.downloadUpdate(); return { success: true }; }
-        catch (e: any) { return { success: false, error: e.message }; }
+        if (!app.isPackaged) return { status: 'idle' };
+        try { 
+            await autoUpdater.downloadUpdate(); 
+            return { status: 'downloading' }; 
+        } catch (e: any) { 
+            return { status: 'error', message: e.message }; 
+        }
     });
     
-    ipcMain.handle('install-update', () => {
-        autoUpdater.quitAndInstall(false, true); // isSilent=false, isForceRunAfter=true
+    ipcMain.handle('install-update', async () => {
+        if (!app.isPackaged) return { status: 'idle' };
+        try {
+            autoUpdater.quitAndInstall(false, true); // isSilent=false, isForceRunAfter=true
+            return { status: 'installing' };
+        } catch (e: any) {
+            return { status: 'error', message: e.message };
+        }
     });
     
     ipcMain.handle('get-app-version', () => app.getVersion());
 
     // Check for updates 5 s after launch
-    setTimeout(() => {
-        autoUpdater.checkForUpdates().catch((e: any) => {
-            if (process.platform === 'darwin') {
-                performManualMacCheck();
-            }
-        });
-    }, 5000);
+    if (app.isPackaged) {
+        setTimeout(() => {
+            autoUpdater.checkForUpdates().catch((e: any) => {
+                if (process.platform === 'darwin') {
+                    performManualMacCheck();
+                }
+            });
+        }, 5000);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -112,6 +133,106 @@ function setupAutoUpdater() {
 function createWindow() {
     Menu.setApplicationMenu(null);
     
+    // Check if the system is locked out
+    const lockFilePath = getLockFilePath();
+    if (fs.existsSync(lockFilePath)) {
+        let lockReason = 'tampering detected';
+        try {
+            const content = fs.readFileSync(lockFilePath, 'utf-8');
+            const data = JSON.parse(content);
+            if (data.reason) lockReason = data.reason;
+        } catch {}
+        
+        const win = new BrowserWindow({
+            width: 600,
+            height: 400,
+            resizable: false,
+            frame: true,
+            webPreferences: {
+                nodeIntegration: false,
+                contextIsolation: true
+            }
+        });
+        
+        win.loadURL(`data:text/html,
+            <html>
+            <head>
+                <title>System Locked</title>
+                <style>
+                    body {
+                        background: #0f172a;
+                        color: #f8fafc;
+                        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+                        display: flex;
+                        flex-direction: column;
+                        align-items: center;
+                        justify-content: center;
+                        height: 100vh;
+                        margin: 0;
+                        text-align: center;
+                        padding: 2rem;
+                        box-sizing: border-box;
+                    }
+                    .container {
+                        max-width: 450px;
+                        background: #1e293b;
+                        border: 1px solid #334155;
+                        border-radius: 16px;
+                        padding: 2rem;
+                        box-shadow: 0 20px 40px rgba(0,0,0,0.45);
+                    }
+                    .icon {
+                        font-size: 3.5rem;
+                        margin-bottom: 0.75rem;
+                    }
+                    h1 {
+                        font-size: 1.6rem;
+                        margin: 0 0 0.75rem;
+                        font-weight: 800;
+                        color: #ef4444;
+                        letter-spacing: -0.025em;
+                    }
+                    p {
+                        color: #94a3b8;
+                        font-size: 0.9rem;
+                        line-height: 1.5;
+                        margin: 0 0 1.5rem;
+                    }
+                    .reason {
+                        background: #0f172a;
+                        color: #f1f5f9;
+                        font-family: monospace;
+                        font-size: 0.8rem;
+                        padding: 0.5rem;
+                        border-radius: 6px;
+                        margin-bottom: 1.5rem;
+                        border: 1px solid #334155;
+                    }
+                    .footer {
+                        font-size: 0.75rem;
+                        color: #64748b;
+                        border-top: 1px solid #334155;
+                        padding-top: 1rem;
+                    }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <div class="icon">🛑</div>
+                    <h1>SYSTEM DISABLED</h1>
+                    <p>LESOFT has been disabled due to detected software tampering or unauthorized modification. Please contact the administrator/developer to restore access.</p>
+                    <div class="reason">Reason: ${lockReason}</div>
+                    <div class="footer">
+                        Secure Lock State Active
+                    </div>
+                </div>
+            </body>
+            </html>
+        `);
+        win.show();
+        return;
+    }
+
     // Custom logging for debugging production
     const logPath = path.join(app.getPath('userData'), 'app.log');
     const log = (msg: string) => {
@@ -158,10 +279,10 @@ function createWindow() {
         }),
     });
 
-    // Block DevTools in production
+    // DevTools opened in production = tampering detected
     if (app.isPackaged) {
         win.webContents.on('devtools-opened', () => {
-            win.webContents.closeDevTools();
+            triggerSystemLockout('DevTools opened in production');
         });
     }
 
@@ -255,6 +376,32 @@ app.whenReady().then(() => {
     const logPath = path.join(app.getPath('userData'), 'app.log');
     const log = (msg: string) => fs.appendFileSync(logPath, `[${new Date().toISOString()}] ${msg}\n`);
 
+    // Anti-Tamper: Check for debugger launch arguments in production
+    if (app.isPackaged) {
+        const args = process.argv || [];
+        const hasDebugArgs = args.some(arg => 
+            arg.startsWith('--inspect') || 
+            arg.startsWith('--remote-debugging-port') || 
+            arg.startsWith('--remote-debugging-pipe')
+        );
+        if (hasDebugArgs) {
+            const lockFilePath = getLockFilePath();
+            try {
+                fs.writeFileSync(lockFilePath, JSON.stringify({
+                    timestamp: new Date().toISOString(),
+                    reason: 'unauthorized debugging command-line flags'
+                }, null, 2), 'utf-8');
+            } catch {}
+        }
+    }
+
+    const lockFilePath = getLockFilePath();
+    if (fs.existsSync(lockFilePath)) {
+        log('App starting in LOCKED mode. Aborting initialization.');
+        createWindow();
+        return;
+    }
+
     log('App starting...');
     
     // Register IPC handlers early to ensure renderer calls before background init succeed
@@ -321,9 +468,21 @@ app.whenReady().then(() => {
 // ─────────────────────────────────────────────────────────────────────────────
 //  Clean shutdown — flush queue, clear security-sensitive memory
 // ─────────────────────────────────────────────────────────────────────────────
+let isQuitting = false;
+let cleanupDone = false;
+
 app.on('before-quit', async (event) => {
-    // Prevent immediate quit so we can flush
+    if (cleanupDone) {
+        return; // Let the app quit normally
+    }
+
+    // Prevent immediate quit so we can perform async cleanup
     event.preventDefault();
+
+    if (isQuitting) {
+        return;
+    }
+    isQuitting = true;
 
     console.log('[App] Shutting down — flushing write queue...');
     try {
@@ -339,8 +498,9 @@ app.on('before-quit', async (event) => {
     clearCache();
     clearEncryptionKey();
 
-    console.log('[App] Cleanup done. Quitting.');
-    app.exit(0);
+    console.log('[App] Cleanup done. Re-triggering quit.');
+    cleanupDone = true;
+    app.quit();
 });
 
 app.on('window-all-closed', () => {

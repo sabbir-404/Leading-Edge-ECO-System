@@ -23,7 +23,7 @@
  */
 
 import { BrowserWindow } from 'electron';
-import supabase from './supabase';
+import supabase, { getDbClients } from './supabase';
 import { encryptObject, encryptRowsAsync } from './field-encryption';
 import { enqueueOfflineWrite, removePendingWrite, getPendingWrites, incrementRetryCount } from './offline-db';
 
@@ -94,82 +94,118 @@ export function enqueue(entry: Omit<QueueEntry, 'id' | 'retries' | 'enqueuedAt'>
     return id;
 }
 
+async function executeWriteOnClient(client: any, entry: QueueEntry, encData: any): Promise<any> {
+    const { table, operation, filter, upsertConflict, data } = entry;
+    if (operation === 'insert') {
+        const res = await client.from(table).insert(encData as any);
+        return res.error;
+    } else if (operation === 'upsert') {
+        const res = await client.from(table).upsert(encData as any,
+            upsertConflict ? { onConflict: upsertConflict } : undefined
+        );
+        return res.error;
+    } else if (operation === 'update' && filter) {
+        let q: any = client.from(table).update(encData as any);
+        for (const f of filter) q = q.eq(f.column, f.value);
+        const res = await q;
+        return res.error;
+    } else if (operation === 'delete' && filter) {
+        let q: any = client.from(table).delete();
+        for (const f of filter) q = q.eq(f.column, f.value);
+        const res = await q;
+        return res.error;
+    } else if (operation === 'custom' && table === 'bill_shipping') {
+        const d = data as Record<string, any>;
+        // Resolve actual bill_id using client
+        const { data: b } = await client.from('bills').select('id').eq('invoice_number', d.invoice_number).maybeSingle();
+        const realBillId = b?.id || d.bill_id;
+
+        const { data: sh, error: shErr } = await client.from('bill_shipping').upsert({ 
+            bill_id: realBillId, 
+            ship_to_name: d.ship_to_name, 
+            ship_to_address: d.ship_to_address, 
+            ship_to_phone: d.ship_to_phone || '', 
+            ship_from_name: d.ship_from_name || '', 
+            ship_from_address: d.ship_from_address || '', 
+            shipping_charge: d.shipping_charge || 0, 
+            updated_by: d.updated_by, 
+            status: 'pending_payment' 
+        }, { onConflict: 'bill_id' }).select('id').single();
+        
+        if (shErr) return shErr;
+
+        if (sh) {
+            await client.from('shipping_status_log').insert({ 
+                shipment_id: sh.id, 
+                bill_id: realBillId, 
+                status: 'pending_payment', 
+                note: 'Shipping order created', 
+                updated_by: d.updated_by, 
+                updated_by_role: d.user_role || 'cashier' 
+            });
+            
+            await client.from('system_audit_log').insert({
+                module: 'Shipping',
+                action: 'SHIPPING_CREATED',
+                entity_type: 'bill',
+                entity_id: String(realBillId),
+                description: `Shipping added. Destination: ${d.ship_to_address}`,
+                new_value: JSON.stringify(d),
+                performed_by: d.updated_by
+            });
+        }
+        return null;
+    }
+    return null;
+}
+
 // ── Process a single entry ────────────────────────────────────────────────────
 async function processEntry(entry: QueueEntry): Promise<void> {
     try {
-        const { table, operation, data, filter, upsertConflict } = entry;
+        const { table, data } = entry;
 
         // Encrypt data before writing (non-blocking chunked for huge arrays)
         const encData = Array.isArray(data)
             ? await encryptRowsAsync(data, 100)
             : data ? encryptObject(data) : undefined;
 
-        let error: any = null;
+        // Get both DB clients
+        const { nas, supabase: sb, active } = getDbClients();
 
-        if (operation === 'insert') {
-            const res = await supabase.from(table).insert(encData as any);
-            error = res.error;
-        } else if (operation === 'upsert') {
-            const res = await supabase.from(table).upsert(encData as any,
-                upsertConflict ? { onConflict: upsertConflict } : undefined
-            );
-            error = res.error;
-        } else if (operation === 'update' && filter) {
-            let q: any = supabase.from(table).update(encData as any);
-            for (const f of filter) q = q.eq(f.column, f.value);
-            const res = await q;
-            error = res.error;
-        } else if (operation === 'delete' && filter) {
-            let q: any = supabase.from(table).delete();
-            for (const f of filter) q = q.eq(f.column, f.value);
-            const res = await q;
-            error = res.error;
-        } else if (operation === 'custom' && table === 'bill_shipping') {
-            const d = data as Record<string, any>;
-            // Handle bill_shipping custom operation here so it survives app restarts
-            // Since create-bill uses the write-queue, the bill_id might not exist yet
-            // when we queued this. We resolve it now using the deterministic invoice_number.
-            const { data: b } = await supabase.from('bills').select('id').eq('invoice_number', d.invoice_number).maybeSingle();
-            const realBillId = b?.id || d.bill_id;
+        const targets = [];
+        if (nas) targets.push({ name: 'NAS', client: nas });
+        if (sb) targets.push({ name: 'Supabase', client: sb });
 
-            const { data: sh, error: shErr } = await supabase.from('bill_shipping').upsert({ 
-                bill_id: realBillId, 
-                ship_to_name: d.ship_to_name, 
-                ship_to_address: d.ship_to_address, 
-                ship_to_phone: d.ship_to_phone || '', 
-                ship_from_name: d.ship_from_name || '', 
-                ship_from_address: d.ship_from_address || '', 
-                shipping_charge: d.shipping_charge || 0, 
-                updated_by: d.updated_by, 
-                status: 'pending_payment' 
-            }, { onConflict: 'bill_id' }).select('id').single();
-            
-            error = shErr;
-
-            if (!error && sh) {
-                await supabase.from('shipping_status_log').insert({ 
-                    shipment_id: sh.id, 
-                    bill_id: realBillId, 
-                    status: 'pending_payment', 
-                    note: 'Shipping order created', 
-                    updated_by: d.updated_by, 
-                    updated_by_role: d.user_role || 'cashier' 
-                });
-                
-                // Write audit log (same as writeAuditLog in ipc-handlers)
-                await supabase.from('system_audit_log').insert({
-                    module: 'Shipping',
-                    action: 'SHIPPING_CREATED',
-                    entity_type: 'bill',
-                    entity_id: String(realBillId),
-                    description: `Shipping added. Destination: ${d.ship_to_address}`,
-                    new_value: JSON.stringify(d),
-                    performed_by: d.updated_by
-                });
-            }
+        if (targets.length === 0) {
+            throw new Error('No database clients initialized');
         }
 
-        if (error) throw new Error(error.message);
+        let primaryFailed = false;
+        let primaryError: any = null;
+
+        // Write to all initialized clients in parallel
+        await Promise.all(targets.map(async ({ name, client }) => {
+            try {
+                const error = await executeWriteOnClient(client, entry, encData);
+                if (error) {
+                    console.error(`[WriteQueue] Write to ${name} failed:`, error.message);
+                    if (client === active) {
+                        primaryFailed = true;
+                        primaryError = error;
+                    }
+                }
+            } catch (ex: any) {
+                console.error(`[WriteQueue] Exception during write to ${name}:`, ex.message);
+                if (client === active) {
+                    primaryFailed = true;
+                    primaryError = ex;
+                }
+            }
+        }));
+
+        if (primaryFailed) {
+            throw primaryError || new Error('Primary database write failed');
+        }
         
         // Remove from SQLite offline queue on success
         await removePendingWrite(entry.id).catch(() => {});

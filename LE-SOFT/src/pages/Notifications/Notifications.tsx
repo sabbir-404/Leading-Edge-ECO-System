@@ -74,6 +74,14 @@ const Notifications: React.FC = () => {
         fetchNotifications();
     };
 
+    const handleClearAll = async () => {
+        if (confirm('Are you sure you want to delete all notifications? This cannot be undone.')) {
+            // @ts-ignore
+            await window.electron.clearAllNotifications(userId);
+            fetchNotifications();
+        }
+    };
+
     const handleOpenNotification = async (notification: Notification) => {
         if (!notification.is_read) {
             // @ts-ignore
@@ -162,6 +170,11 @@ const Notifications: React.FC = () => {
                             {unreadCount > 0 && (
                                 <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={handleMarkAllRead} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.5rem 1rem', background: 'rgba(34,197,94,0.1)', color: '#22c55e', border: '1px solid rgba(34,197,94,0.3)', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem', whiteSpace: 'nowrap' }}>
                                     <CheckCheck size={16} /> Mark All Read
+                                </motion.button>
+                            )}
+                            {notifications.length > 0 && (
+                                <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={handleClearAll} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.5rem 1rem', background: 'rgba(239,68,68,0.1)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem', whiteSpace: 'nowrap' }}>
+                                    <Trash2 size={16} /> Clear All
                                 </motion.button>
                             )}
                         </div>

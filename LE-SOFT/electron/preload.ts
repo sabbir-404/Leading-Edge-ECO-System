@@ -105,6 +105,7 @@ contextBridge.exposeInMainWorld('electron', {
     markNotificationRead: (id: number) => ipcRenderer.invoke('mark-notification-read', id),
     markAllNotificationsRead: (userId: number) => ipcRenderer.invoke('mark-all-notifications-read', userId),
     deleteNotification: (id: number) => ipcRenderer.invoke('delete-notification', id),
+    clearAllNotifications: (userId: number) => ipcRenderer.invoke('clear-all-notifications', userId),
 
     // Image Picker
     pickImage: () => ipcRenderer.invoke('pick-image'),
@@ -200,6 +201,7 @@ contextBridge.exposeInMainWorld('electron', {
     getDeviceId: () => ipcRenderer.invoke('get-device-id'),
     activateLicense: (key: string) => ipcRenderer.invoke('activate-license', key),
     getSupabaseConfig: () => ipcRenderer.invoke('get-supabase-config'),
+    getDbConnectionState: () => ipcRenderer.invoke('get-db-connection-state'),
     getDeviceSessions: (opts?: any) => ipcRenderer.invoke('get-device-sessions', opts),
     forceUpdateAll: (opts?: any) => ipcRenderer.invoke('force-update-all', opts),
     clearDatabase: (opts?: any) => ipcRenderer.invoke('clear-database', opts),
@@ -276,6 +278,8 @@ contextBridge.exposeInMainWorld('electron', {
     makeGetAlterationLog: (orderId: number) => ipcRenderer.invoke('make-get-alteration-log', orderId),
     getSalesmen: () => ipcRenderer.invoke('get-salesmen'),
     approveMakeOrder: (data: { orderId: number, approvedBy: string }) => ipcRenderer.invoke('approve-make-order', data),
+    setMakeOrderPrice: (data: { orderId: number, customPrice: number, updatedBy: string }) => ipcRenderer.invoke('set-make-order-price', data),
+    markCustomizationPaid: (data: { orderId: number, updatedBy: string }) => ipcRenderer.invoke('mark-customization-paid', data),
     // Make — Dashboard
     makeGetDashboardStats: () => ipcRenderer.invoke('make-get-dashboard-stats'),
     // License — Cloud

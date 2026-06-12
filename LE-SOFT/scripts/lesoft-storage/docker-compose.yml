@@ -1,0 +1,11 @@
+version: '3.8'
+services:
+  lesoft-storage:
+    image: node:18-alpine
+    working_dir: /usr/src/app
+    volumes:
+      - "/mnt/data_pool/lesoft/lesoft-storage:/usr/src/app"
+    command: ["node", "nas-storage-server.js"]
+    ports:
+      - "8081:8080"
+    restart: always

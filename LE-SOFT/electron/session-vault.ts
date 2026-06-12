@@ -22,6 +22,7 @@ import path from 'path';
 import os from 'os';
 import { app } from 'electron';
 import bcrypt from 'bcryptjs';
+import { triggerSystemLockout } from './lockout';
 
 const ALG        = 'aes-256-gcm';
 const ITER       = 200_000;
@@ -152,7 +153,17 @@ export async function loadSession(credentials: {
         };
     } catch (err) {
         // Decryption failure = tampered file or wrong machine
-        console.error('[VAULT] Vault decryption failed (tampered or wrong machine):', (err as Error).message);
+        const errMsg = (err as Error).message;
+        console.error('[VAULT] Vault decryption failed (tampered or wrong machine):', errMsg);
+        
+        // If it's a GCM authentication/crypto failure, trigger the lock-out
+        if (errMsg.includes('bad decrypt') || errMsg.includes('Unsupported state') || errMsg.includes('tag check failed')) {
+            try {
+                triggerSystemLockout(`Vault decryption failed (tampered session vault data: ${errMsg})`);
+            } catch (e) {
+                console.error('Failed to trigger system lockout from vault:', e);
+            }
+        }
         return null;
     }
 }

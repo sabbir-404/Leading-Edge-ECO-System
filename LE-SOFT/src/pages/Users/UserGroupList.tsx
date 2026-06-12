@@ -12,7 +12,7 @@ const PERMISSION_KEYS = [
     'read_currencies', 'write_currencies', 'read_stock_group', 'write_stock_group', 'read_stock_items', 'write_stock_items',
     'read_units', 'write_units', 'read_products', 'write_products', 'delete_products', 'read_godowns', 'write_godowns',
     'read_product_ledger', 'edit_product_information', 'manage_product_origins', 'manage_product_model_rules', 'manage_product_attributes',
-    'read_damaged_goods', 'manage_damaged_goods',
+    'manage_low_stock_alerts', 'read_damaged_goods', 'manage_damaged_goods',
     // Billing
     'read_bill', 'write_bill', 'alter_bill', 'add_bill_items', 'see_all_bills', 'adjust_bill_price', 'delete_bill', 'initiate_exchange', 'approve_bill',
     // Accounts
@@ -45,6 +45,7 @@ const UserGroupList: React.FC = () => {
     const [editingId, setEditingId] = useState<number | null>(null);
     const [editPerms, setEditPerms] = useState<any>({});
     const [editDescription, setEditDescription] = useState('');
+    const [permSearch, setPermSearch] = useState('');
 
     const fetchGroups = async () => {
         const requestingUserId = parseInt(localStorage.getItem('user_id') || '0');
@@ -80,6 +81,7 @@ const UserGroupList: React.FC = () => {
         const p = group.permissions;
         setEditPerms(typeof p === 'object' && p !== null ? p : (typeof p === 'string' ? JSON.parse(p || '{}') : {}));
         setEditDescription(group.description || '');
+        setPermSearch('');
     };
 
     const saveEdit = async (group: any) => {
@@ -87,6 +89,7 @@ const UserGroupList: React.FC = () => {
         await window.electron.updateUserGroup({ ...group, description: editDescription.trim(), permissions: editPerms });
         setEditingId(null);
         setEditDescription('');
+        setPermSearch('');
         fetchGroups();
     };
 
@@ -153,7 +156,7 @@ const UserGroupList: React.FC = () => {
                                         {isEditing ? (
                                             <>
                                                 <button className="icon-btn" onClick={() => saveEdit(group)} title="Save"><Check size={16} /></button>
-                                                <button className="icon-btn danger" onClick={() => { setEditingId(null); setEditDescription(''); }} title="Cancel"><X size={16} /></button>
+                                                <button className="icon-btn danger" onClick={() => { setEditingId(null); setEditDescription(''); setPermSearch(''); }} title="Cancel"><X size={16} /></button>
                                             </>
                                         ) : (
                                             <>
@@ -172,17 +175,33 @@ const UserGroupList: React.FC = () => {
                                         {activePerms.length === 0 && <span className="permission-pill muted">No permissions</span>}
                                     </div>
                                 ) : (
-                                    <div className="permission-edit-grid">
-                                        {PERMISSION_KEYS.map(key => {
-                                            const enabled = !!editPerms[key];
-                                            return (
-                                                <div key={key} className={`permission-toggle ${enabled ? 'enabled' : ''}`} onClick={() => togglePerm(key)}>
-                                                    {enabled ? <Check size={14} /> : <X size={14} />}
-                                                    <span>{key}</span>
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
+                                    <>
+                                        <div style={{ marginBottom: '1rem', padding: '0 0.2rem' }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--input-bg)', border: '1px solid var(--border-color)', borderRadius: '6px', padding: '0.4rem 0.8rem' }}>
+                                                <Search size={14} style={{ color: 'var(--text-secondary)' }} />
+                                                <input
+                                                    placeholder="Search permissions..."
+                                                    value={permSearch}
+                                                    onChange={e => setPermSearch(e.target.value)}
+                                                    style={{ border: 'none', background: 'transparent', color: 'var(--text-primary)', fontSize: '0.85rem', outline: 'none', width: '100%' }}
+                                                />
+                                                {permSearch && (
+                                                    <button type="button" onClick={() => setPermSearch('')} style={{ border: 'none', background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}>Clear</button>
+                                                )}
+                                            </div>
+                                        </div>
+                                        <div className="permission-edit-grid">
+                                            {PERMISSION_KEYS.filter(key => key.toLowerCase().includes(permSearch.toLowerCase().trim())).map(key => {
+                                                const enabled = !!editPerms[key];
+                                                return (
+                                                    <div key={key} className={`permission-toggle ${enabled ? 'enabled' : ''}`} onClick={() => togglePerm(key)}>
+                                                        {enabled ? <Check size={14} /> : <X size={14} />}
+                                                        <span>{key}</span>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </>
                                 )}
                             </motion.div>
                         );

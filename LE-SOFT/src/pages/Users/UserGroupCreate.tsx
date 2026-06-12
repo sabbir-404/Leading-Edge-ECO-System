@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronDown, ChevronRight, Shield, CheckSquare, Square } from 'lucide-react';
+import { ChevronDown, ChevronRight, Shield, CheckSquare, Square, Search } from 'lucide-react';
 import DashboardLayout from '../../components/DashboardLayout';
 import '../Accounting/Masters/Masters.css';
 
@@ -128,6 +128,13 @@ const PERMISSION_GROUPS = [
         ]
     },
     {
+        category: 'Website',
+        desc: 'E-commerce Website Integration & Settings',
+        perms: [
+            { key: 'manage_website', label: 'Manage Website Products, Orders, Categories, Pages, Newsletter & Settings' }
+        ]
+    },
+    {
         category: 'Communications',
         desc: 'Internal Email and Messaging',
         perms: [
@@ -151,6 +158,7 @@ const UserGroupCreate: React.FC = () => {
     const [permissions, setPermissions] = useState<Record<string, boolean>>({});
     const [error, setError] = useState('');
     const [expandedCategories, setExpandedCategories] = useState<string[]>(['Billing', 'Settings & Security']);
+    const [permSearch, setPermSearch] = useState('');
 
     const togglePerm = (key: string) => {
         setPermissions(p => ({ ...p, [key]: !p[key] }));
@@ -209,6 +217,23 @@ const UserGroupCreate: React.FC = () => {
         }
     };
 
+    // Filter permissions based on search query
+    const filteredGroups = PERMISSION_GROUPS.map(group => {
+        const query = permSearch.toLowerCase().trim();
+        if (!query) return group;
+        const matchesCategory = group.category.toLowerCase().includes(query) || group.desc.toLowerCase().includes(query);
+        const filteredPerms = group.perms.filter(p =>
+            p.label.toLowerCase().includes(query) || p.key.toLowerCase().includes(query)
+        );
+        if (matchesCategory) {
+            return group;
+        }
+        if (filteredPerms.length > 0) {
+            return { ...group, perms: filteredPerms };
+        }
+        return null;
+    }).filter(Boolean) as typeof PERMISSION_GROUPS;
+
     return (
         <DashboardLayout title="Create User Group">
             <div className="masters-container" style={{ maxWidth: '900px', margin: '0 auto' }}>
@@ -244,9 +269,24 @@ const UserGroupCreate: React.FC = () => {
                         </div>
                     </div>
 
+                    {/* Live Search Input Box */}
+                    <div style={{ marginBottom: '1.5rem', background: 'var(--card-bg)', padding: '0.75rem 1rem', borderRadius: '12px', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                        <Search size={18} style={{ color: 'var(--text-secondary)' }} />
+                        <input
+                            type="text"
+                            placeholder="Search permissions by name, key, or category..."
+                            value={permSearch}
+                            onChange={(e) => setPermSearch(e.target.value)}
+                            style={{ flex: 1, border: 'none', background: 'transparent', color: 'var(--text-primary)', fontSize: '0.95rem', outline: 'none' }}
+                        />
+                        {permSearch && (
+                            <button type="button" onClick={() => setPermSearch('')} style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 }}>Clear</button>
+                        )}
+                    </div>
+
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '3rem' }}>
-                        {PERMISSION_GROUPS.map(group => {
-                            const isExpanded = expandedCategories.includes(group.category);
+                        {filteredGroups.map(group => {
+                            const isExpanded = permSearch.trim() !== '' || expandedCategories.includes(group.category);
                             const allSelected = isCategoryAllSelected(group.category);
                             const partialSelected = isCategoryPartiallySelected(group.category);
 

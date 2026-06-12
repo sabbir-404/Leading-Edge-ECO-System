@@ -108,6 +108,11 @@ const Settings: React.FC = () => {
     // ── Admin unlock ──────────────────────────────────────────────────────────
     const [adminKey, setAdminKey] = useState(localStorage.getItem('supabase_admin_key') || '');
     const [dbConnected, setDbConnected] = useState<boolean | null>(null);
+    const [nasConnectionState, setNasConnectionState] = useState<any>({
+        connectionState: 'supabase',
+        activeNasUrl: null,
+        isNasOnline: false
+    });
     const [clickCount, setClickCount] = useState(0);
     const [clickTimer, setClickTimer] = useState<NodeJS.Timeout | null>(null);
     const [showAdminUnlock, setShowAdminUnlock] = useState(false);
@@ -255,6 +260,7 @@ const Settings: React.FC = () => {
             });
         }).catch(() => {}).finally(() => setSettingsLoading(false));
         checkDbConnection();
+        checkNasConnectionState();
         return () => cleanup?.();
     }, []);
 
@@ -262,6 +268,21 @@ const Settings: React.FC = () => {
         setDbConnected(null);
         try { const res = await window.electron.pingSupabase?.(); setDbConnected(res?.connected === true); }
         catch { setDbConnected(false); }
+    };
+
+    const checkNasConnectionState = async () => {
+        try {
+            if (window.electron.getDbConnectionState) {
+                const res = await window.electron.getDbConnectionState();
+                setNasConnectionState(res || {
+                    connectionState: 'supabase',
+                    activeNasUrl: null,
+                    isNasOnline: false
+                });
+            }
+        } catch (e) {
+            console.error('Failed to get connection state:', e);
+        }
     };
 
     const handleHeaderClick = () => {
@@ -308,6 +329,8 @@ const Settings: React.FC = () => {
     useEffect(() => {
         if (activeTab === 'database_api') {
             window.electron.getAiKey?.().then((key: string) => setGeminiKey(key || ''));
+            checkNasConnectionState();
+            checkDbConnection();
         }
     }, [activeTab]);
 
@@ -830,23 +853,74 @@ const Settings: React.FC = () => {
                                             <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-secondary)' }}>Supabase connection health</p>
                                         </div>
                                     </div>
-                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1rem', borderRadius: '10px', background: 'var(--input-bg)', border: '1px solid var(--border-color)' }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                                            <div style={{ width: '14px', height: '14px', borderRadius: '50%', flexShrink: 0,
-                                                background: dbConnected === null ? '#f59e0b' : dbConnected ? '#10b981' : '#ef4444',
-                                                boxShadow: `0 0 8px ${dbConnected === null ? '#f59e0b' : dbConnected ? '#10b981' : '#ef4444'}`,
-                                            }} />
-                                            <div>
-                                                <p style={{ margin: 0, fontWeight: 600 }}>
-                                                    {dbConnected === null ? 'Checking…' : dbConnected ? 'Connected' : 'Disconnected'}
-                                                </p>
-                                                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                                                    {dbConnected ? 'Cloud sync is active' : 'App running in offline mode'}
-                                                </p>
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem', marginBottom: '1.5rem' }}>
+                                        {/* Supabase Status Card */}
+                                        <div style={{ padding: '1.25rem', borderRadius: '12px', background: 'var(--input-bg)', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                <Database size={16} color="#3b82f6" />
+                                                <span style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-primary)' }}>Supabase Cloud</span>
+                                            </div>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                                <div style={{ width: '12px', height: '12px', borderRadius: '50%',
+                                                    background: dbConnected === null ? '#f59e0b' : dbConnected ? '#10b981' : '#ef4444',
+                                                    boxShadow: `0 0 6px ${dbConnected === null ? '#f59e0b' : dbConnected ? '#10b981' : '#ef4444'}`,
+                                                }} />
+                                                <div>
+                                                    <p style={{ margin: 0, fontWeight: 600, fontSize: '0.85rem' }}>
+                                                        {dbConnected === null ? 'Checking…' : dbConnected ? 'Connected' : 'Disconnected'}
+                                                    </p>
+                                                    <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                                                        {dbConnected ? 'Cloud replication target active' : 'Unavailable'}
+                                                    </p>
+                                                </div>
                                             </div>
                                         </div>
-                                        <button onClick={checkDbConnection} style={{ padding: '0.5rem 1rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--hover-bg)', color: 'var(--text-primary)', cursor: 'pointer', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem' }}>
-                                            <RefreshCw size={14} /> Refresh
+
+                                        {/* NAS Status Card */}
+                                        <div style={{ padding: '1.25rem', borderRadius: '12px', background: 'var(--input-bg)', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                <Server size={16} color="#8b5cf6" />
+                                                <span style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-primary)' }}>TrueNAS Server</span>
+                                            </div>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                                <div style={{ width: '12px', height: '12px', borderRadius: '50%',
+                                                    background: !nasConnectionState.isNasOnline ? '#ef4444' : nasConnectionState.connectionState === 'nas_local' ? '#10b981' : '#3b82f6',
+                                                    boxShadow: `0 0 6px ${!nasConnectionState.isNasOnline ? '#ef4444' : nasConnectionState.connectionState === 'nas_local' ? '#10b981' : '#3b82f6'}`,
+                                                }} />
+                                                <div>
+                                                    <p style={{ margin: 0, fontWeight: 600, fontSize: '0.85rem' }}>
+                                                        {!nasConnectionState.isNasOnline ? 'Offline' : nasConnectionState.connectionState === 'nas_local' ? 'Connected (Local IP)' : 'Connected (Public IP)'}
+                                                    </p>
+                                                    <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                                                        {nasConnectionState.isNasOnline ? `Running at: ${nasConnectionState.activeNasUrl}` : 'Local network storage offline'}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Active Primary Connection Info */}
+                                    <div style={{ padding: '1rem', borderRadius: '10px', background: 'rgba(249,115,22,0.08)', border: '1px dashed var(--accent-color)', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                        <Info size={18} color="var(--accent-color)" />
+                                        <div style={{ fontSize: '0.85rem' }}>
+                                            <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>Active Database: </span>
+                                            <span style={{ color: 'var(--text-secondary)' }}>
+                                                {nasConnectionState.isNasOnline ? (
+                                                    <>
+                                                        <strong>TrueNAS PostgreSQL</strong> (using {nasConnectionState.connectionState === 'nas_local' ? 'Local LAN IP' : 'Public Tailscale IP'} for maximum performance). A live backup copy is dual-written to Supabase Cloud.
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <strong>Supabase Cloud</strong> (Running in WAN mode. Local NAS is unreachable).
+                                                    </>
+                                                )}
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                                        <button onClick={() => { checkDbConnection(); checkNasConnectionState(); }} style={{ padding: '0.5rem 1rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--hover-bg)', color: 'var(--text-primary)', cursor: 'pointer', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem' }}>
+                                            <RefreshCw size={14} /> Refresh Health Checks
                                         </button>
                                     </div>
 

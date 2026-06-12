@@ -84,6 +84,7 @@ export interface ElectronAPI {
     markNotificationRead: (id: number) => Promise<any>;
     markAllNotificationsRead: (userId: number) => Promise<any>;
     deleteNotification: (id: number) => Promise<any>;
+    clearAllNotifications: (userId: number) => Promise<any>;
 
     // Image Picker
     pickImage: () => Promise<string | null>;
@@ -260,6 +261,8 @@ export interface ElectronAPI {
     makeAlterOrder: (data: any) => Promise<any>;
     makeGetAlterationLog: (orderId: number) => Promise<any[]>;
     approveMakeOrder: (data: any) => Promise<any>;
+    setMakeOrderPrice: (data: { orderId: number, customPrice: number, updatedBy: string }) => Promise<any>;
+    markCustomizationPaid: (data: { orderId: number, updatedBy: string }) => Promise<any>;
     makeGetDashboardStats: () => Promise<any>;
 
     // Internal Chat

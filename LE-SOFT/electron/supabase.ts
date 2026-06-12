@@ -17,6 +17,9 @@ interface SupabaseConfig {
     url: string;
     anonKey: string;
     serviceRoleKey?: string;
+    nasUrl?: string;
+    nasAnonKey?: string;
+    nasStorageUrl?: string;
 }
 
 // SECURITY: No credentials are hardcoded here.
@@ -25,7 +28,10 @@ interface SupabaseConfig {
 const EMPTY_DEFAULTS: SupabaseConfig = {
     url: '',
     anonKey: '',
-    serviceRoleKey: ''
+    serviceRoleKey: '',
+    nasUrl: '',
+    nasAnonKey: '',
+    nasStorageUrl: ''
 };
 
 function loadConfig(): SupabaseConfig {
@@ -140,21 +146,163 @@ export function decryptEmbeddedCredentials(): boolean {
 // ─────────────────────────────────────────────────────────────────────────────
 // Client singletons — dynamic and refreshable on-the-fly
 // ─────────────────────────────────────────────────────────────────────────────
+// ─── Clients & Failover Logic ──────────────────────────────────────────────
 let activeClient: SupabaseClient = createClient('https://placeholder.supabase.co', 'placeholder');
 export let supabaseAdmin: SupabaseClient | null = null;
+export let nasClient: SupabaseClient | null = null;
+export let supabaseClient: SupabaseClient | null = null;
+export let isNasOnline = false;
+export let connectionState: 'supabase' | 'nas_local' | 'nas_public' = 'supabase';
+export let activeNasUrl: string | null = null;
 
 // Proxy wrapper for the default export/standard client so external modules
 // always reference the active instances after reconfiguration.
 export const supabase = new Proxy({} as SupabaseClient, {
     get(target, prop, receiver) {
+        if (prop === 'auth' && supabaseClient) {
+            return supabaseClient.auth;
+        }
         return Reflect.get(activeClient, prop, activeClient);
     }
 });
 
+export function getDbClients() {
+    return {
+        nas: nasClient,
+        supabase: supabaseClient,
+        active: activeClient
+    };
+}
+
+export function getNasStorageUrl(): string | null {
+    try {
+        const config = loadConfig();
+        if (!config.nasStorageUrl) return null;
+        
+        // Dynamically route storage locally if database is using local LAN IP
+        if (connectionState === 'nas_local') {
+            return "http://192.168.1.60:8081";
+        }
+        return config.nasStorageUrl;
+    } catch {
+        return null;
+    }
+}
+
+let pingInterval: ReturnType<typeof setInterval> | null = null;
+
+function recreateNasClient(url: string) {
+    try {
+        const config = loadConfig();
+        const nasFetch = (input: RequestInfo | URL, init?: RequestInit) => {
+            let reqUrl = typeof input === 'string' ? input : input.toString();
+            if (reqUrl.includes('/rest/v1/')) {
+                reqUrl = reqUrl.replace('/rest/v1/', '/');
+            }
+            return fetch(reqUrl, init);
+        };
+
+        nasClient = createClient(url, config.nasAnonKey || config.anonKey || 'placeholder', {
+            auth: {
+                persistSession: false,
+                autoRefreshToken: true
+            },
+            global: {
+                fetch: nasFetch,
+                headers: {
+                    'x-app-name': 'LE-SOFT-NAS'
+                }
+            }
+        });
+
+        // Sync current session to the new nasClient if user is logged in
+        if (supabaseClient) {
+            supabaseClient.auth.getSession().then(({ data: { session } }) => {
+                if (session && nasClient) {
+                    nasClient.auth.setSession({
+                        access_token: session.access_token,
+                        refresh_token: session.refresh_token || '',
+                    });
+                }
+            }).catch(() => {});
+        }
+    } catch (e: any) {
+        console.error('[SUPABASE] Failed to recreate nasClient:', e.message);
+    }
+}
+
+async function checkNasConnectivity() {
+    const config = loadConfig();
+    const localUrl = "http://192.168.1.60:3001";
+    const publicUrl = config.nasUrl || "http://100.101.9.92:3001";
+    
+    // Helper to check if a PostgREST URL is responding
+    const pingUrl = async (url: string): Promise<boolean> => {
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 2000); // 2-second timeout
+            const res = await fetch(url, { signal: controller.signal });
+            clearTimeout(timeoutId);
+            return res.ok;
+        } catch {
+            return false;
+        }
+    };
+
+    // 1. Try local NAS URL
+    const isLocalOnline = await pingUrl(localUrl);
+    if (isLocalOnline) {
+        if (connectionState !== 'nas_local' || activeNasUrl !== localUrl) {
+            console.log(`[SUPABASE] Local NAS database (${localUrl}) is ONLINE. Switched active database to Local NAS.`);
+            connectionState = 'nas_local';
+            activeNasUrl = localUrl;
+            recreateNasClient(localUrl);
+        }
+        activeClient = nasClient!;
+        isNasOnline = true;
+        return;
+    }
+
+    // 2. Try public/Tailscale NAS URL
+    if (publicUrl) {
+        const isPublicOnline = await pingUrl(publicUrl);
+        if (isPublicOnline) {
+            if (connectionState !== 'nas_public' || activeNasUrl !== publicUrl) {
+                console.log(`[SUPABASE] Public NAS database (${publicUrl}) is ONLINE. Switched active database to Public NAS.`);
+                connectionState = 'nas_public';
+                activeNasUrl = publicUrl;
+                recreateNasClient(publicUrl);
+            }
+            activeClient = nasClient!;
+            isNasOnline = true;
+            return;
+        }
+    }
+
+    // 3. Fallback to Supabase Cloud
+    if (connectionState !== 'supabase') {
+        console.warn(`[SUPABASE] Both NAS connections are OFFLINE. Falling back to remote Supabase.`);
+        connectionState = 'supabase';
+        activeNasUrl = null;
+    }
+    isNasOnline = false;
+    if (supabaseClient) {
+        activeClient = supabaseClient;
+    }
+}
+
 export function reinitSupabaseClients(): void {
     try {
         const config = loadConfig();
-        activeClient = createClient(config.url || 'https://placeholder.supabase.co', config.anonKey || 'placeholder', {
+        
+        // Stop any existing ping interval
+        if (pingInterval) {
+            clearInterval(pingInterval);
+            pingInterval = null;
+        }
+        
+        // Initialize Supabase Client
+        supabaseClient = createClient(config.url || 'https://placeholder.supabase.co', config.anonKey || 'placeholder', {
             auth: {
                 persistSession: false,    // Electron manages sessions via session-vault.ts
                 autoRefreshToken: true,
@@ -166,12 +314,38 @@ export function reinitSupabaseClients(): void {
             },
         });
 
+        // Sync auth state changes to nasClient
+        supabaseClient.auth.onAuthStateChange((event, session) => {
+            if (nasClient) {
+                if (session) {
+                    nasClient.auth.setSession({
+                        access_token: session.access_token,
+                        refresh_token: session.refresh_token || '',
+                    });
+                }
+            }
+        });
+        
+        activeClient = supabaseClient; // Default to Supabase initially
+        
         supabaseAdmin = config.serviceRoleKey ? createClient(config.url, config.serviceRoleKey, {
             auth: {
                 autoRefreshToken: false,
                 persistSession: false
             }
         }) : null;
+
+        // Initialize NAS Client if configured
+        if (config.nasUrl) {
+            // Check immediately and start connectivity interval
+            checkNasConnectivity();
+            pingInterval = setInterval(checkNasConnectivity, 30000);
+        } else {
+            nasClient = null;
+            isNasOnline = false;
+            activeNasUrl = null;
+            connectionState = 'supabase';
+        }
 
         if (config.url && config.anonKey) {
             console.log('[SUPABASE] Clients successfully re-initialized →', config.url);

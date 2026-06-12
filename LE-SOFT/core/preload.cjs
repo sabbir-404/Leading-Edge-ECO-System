@@ -94,6 +94,7 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   markNotificationRead: (id) => import_electron.ipcRenderer.invoke("mark-notification-read", id),
   markAllNotificationsRead: (userId) => import_electron.ipcRenderer.invoke("mark-all-notifications-read", userId),
   deleteNotification: (id) => import_electron.ipcRenderer.invoke("delete-notification", id),
+  clearAllNotifications: (userId) => import_electron.ipcRenderer.invoke("clear-all-notifications", userId),
   // Image Picker
   pickImage: () => import_electron.ipcRenderer.invoke("pick-image"),
   // Companies
@@ -172,6 +173,7 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   getDeviceId: () => import_electron.ipcRenderer.invoke("get-device-id"),
   activateLicense: (key) => import_electron.ipcRenderer.invoke("activate-license", key),
   getSupabaseConfig: () => import_electron.ipcRenderer.invoke("get-supabase-config"),
+  getDbConnectionState: () => import_electron.ipcRenderer.invoke("get-db-connection-state"),
   getDeviceSessions: (opts) => import_electron.ipcRenderer.invoke("get-device-sessions", opts),
   forceUpdateAll: (opts) => import_electron.ipcRenderer.invoke("force-update-all", opts),
   clearDatabase: (opts) => import_electron.ipcRenderer.invoke("clear-database", opts),
@@ -242,6 +244,8 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   makeGetAlterationLog: (orderId) => import_electron.ipcRenderer.invoke("make-get-alteration-log", orderId),
   getSalesmen: () => import_electron.ipcRenderer.invoke("get-salesmen"),
   approveMakeOrder: (data) => import_electron.ipcRenderer.invoke("approve-make-order", data),
+  setMakeOrderPrice: (data) => import_electron.ipcRenderer.invoke("set-make-order-price", data),
+  markCustomizationPaid: (data) => import_electron.ipcRenderer.invoke("mark-customization-paid", data),
   // Make — Dashboard
   makeGetDashboardStats: () => import_electron.ipcRenderer.invoke("make-get-dashboard-stats"),
   // License — Cloud

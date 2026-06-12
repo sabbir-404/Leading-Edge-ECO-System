@@ -5,9 +5,11 @@ import DashboardLayout from '../../components/DashboardLayout';
 import { useAutoRefresh } from '../../hooks/useAutoRefresh';
 import AlterOrder from './AlterOrder';
 
-const STATUSES = ['Pending Approval', 'Placed', 'In Production', 'Welding', 'Painting', 'Ready for Dispatch', 'Delivered'];
+const STATUSES = ['Awaiting Pricing', 'Pricing Done', 'Pending Approval', 'Placed', 'In Production', 'Welding', 'Painting', 'Ready for Dispatch', 'Delivered'];
 
 const statusColors: Record<string, string> = {
+  'Awaiting Pricing': '#ca8a04',
+  'Pricing Done': '#22c55e',
   'Pending Approval': '#fb923c', 'Placed': '#6b7280', 'In Production': '#3b82f6', 'Welding': '#f59e0b',
   'Painting': '#8b5cf6', 'Ready for Dispatch': '#10b981', 'Delivered': '#059669',
 };
@@ -29,6 +31,8 @@ interface Order {
   is_approved: boolean;
   created_at: string;
   updated_at: string;
+  custom_price?: number;
+  bill_invoice_number?: string | null;
 }
 interface StatusUpdate { id: number; order_id: number; status: string; note: string; updated_by: string; created_at: string; }
 interface PdfEntry { path: string; name: string; url: string; }
@@ -43,6 +47,8 @@ const TrackOrders: React.FC = () => {
   const [newStatus, setNewStatus] = useState('');
   const [updateNote, setUpdateNote] = useState('');
   const [updating, setUpdating] = useState(false);
+  const [customPrices, setCustomPrices] = useState<Record<number, string>>({});
+  const [submittingPriceId, setSubmittingPriceId] = useState<number | null>(null);
 
   // PDFs
   const [pdfs, setPdfs] = useState<PdfEntry[]>([]);
@@ -123,6 +129,28 @@ const TrackOrders: React.FC = () => {
       if (expandedId === orderId) await loadExpanded(orderId);
     } catch (e) { console.error(e); }
     finally { setUpdating(false); }
+  };
+
+  const handleSubmitPrice = async (orderId: number) => {
+    const priceStr = customPrices[orderId];
+    const priceNum = parseFloat(priceStr);
+    if (isNaN(priceNum) || priceNum <= 0) {
+      alert('Please enter a valid price greater than 0.');
+      return;
+    }
+    setSubmittingPriceId(orderId);
+    try {
+      // @ts-ignore
+      await window.electron.setMakeOrderPrice({ orderId, customPrice: priceNum, updatedBy: userName });
+      alert('Price submitted successfully!');
+      await fetchOrders();
+      if (expandedId === orderId) await loadExpanded(orderId);
+    } catch (e) {
+      console.error(e);
+      alert('Failed to submit price.');
+    } finally {
+      setSubmittingPriceId(null);
+    }
   };
 
   const handleDelete = async (id: number) => {
@@ -229,6 +257,9 @@ const TrackOrders: React.FC = () => {
                       </span>
                       <span>Salesman: {order.salesman_name || 'Unassigned'}</span>
                       <span>{new Date(order.created_at).toLocaleDateString()}</span>
+                      {order.bill_invoice_number && (
+                        <span style={{ fontWeight: 700, color: 'var(--accent-color)' }}>Invoice: {order.bill_invoice_number}</span>
+                      )}
                     </div>
                   </div>
 
@@ -291,6 +322,62 @@ const TrackOrders: React.FC = () => {
                             {order.status === 'Delivered' ? (
                               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#059669', fontSize: '0.9rem', padding: '12px', background: 'rgba(5,150,105,0.08)', borderRadius: '10px' }}>
                                 <CheckCircle size={18} /> Order completed
+                              </div>
+                            ) : order.status === 'Awaiting Pricing' ? (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                <div style={{ background: 'rgba(234,179,8,0.1)', border: '1px solid rgba(234,179,8,0.3)', borderRadius: '10px', padding: '12px', color: '#ca8a04', fontSize: '0.85rem' }}>
+                                  This order is awaiting price estimation. Please enter the manual pricing below.
+                                </div>
+                                <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                                  <span style={{ position: 'absolute', left: '10px', fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-secondary)' }}>৳</span>
+                                  <input
+                                    type="number"
+                                    placeholder="Enter custom price..."
+                                    value={customPrices[order.id] || ''}
+                                    onChange={e => setCustomPrices({ ...customPrices, [order.id]: e.target.value })}
+                                    style={{
+                                      width: '100%',
+                                      padding: '10px 14px 10px 24px',
+                                      background: 'var(--input-bg)',
+                                      border: '1px solid var(--border-color)',
+                                      borderRadius: '8px',
+                                      color: 'var(--text-primary)',
+                                      fontSize: '0.9rem',
+                                      outline: 'none',
+                                      boxSizing: 'border-box'
+                                    }}
+                                    min={1}
+                                  />
+                                </div>
+                                <motion.button
+                                  onClick={() => handleSubmitPrice(order.id)}
+                                  disabled={submittingPriceId === order.id}
+                                  whileHover={{ scale: 1.01 }}
+                                  whileTap={{ scale: 0.98 }}
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    gap: '6px',
+                                    padding: '10px',
+                                    background: 'var(--accent-color)',
+                                    color: 'white',
+                                    border: 'none',
+                                    borderRadius: '8px',
+                                    fontWeight: 600,
+                                    fontSize: '0.85rem',
+                                    cursor: submittingPriceId === order.id ? 'not-allowed' : 'pointer',
+                                    opacity: submittingPriceId === order.id ? 0.7 : 1
+                                  }}
+                                >
+                                  <Send size={14} /> {submittingPriceId === order.id ? 'Submitting...' : 'Submit Price'}
+                                </motion.button>
+                              </div>
+                            ) : order.status === 'Pricing Done' ? (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                <div style={{ background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.3)', borderRadius: '10px', padding: '12px', color: '#16a34a', fontSize: '0.85rem' }}>
+                                  Custom price of <strong>৳{Number(order.custom_price || 0).toLocaleString()}</strong> has been submitted. Awaiting cashier/salesman payment confirmation.
+                                </div>
                               </div>
                             ) : order.status === 'Pending Approval' ? (
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>

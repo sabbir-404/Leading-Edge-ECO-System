@@ -11,7 +11,7 @@ import os from 'os';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import sharp from 'sharp';
-import supabase, { supabaseAdmin, decryptEmbeddedCredentials, reinitSupabaseClients } from './supabase';
+import supabase, { supabaseAdmin, decryptEmbeddedCredentials, reinitSupabaseClients, getNasStorageUrl } from './supabase';
 import mysql from 'mysql2/promise';
 import * as licenseManager from './license-manager';
 import { getConnectedDevices, setBackupNode, DEVICE_ID } from './device-monitor';
@@ -55,18 +55,41 @@ async function optimizeImageBuffer(buffer: Buffer): Promise<Buffer> {
 
 async function uploadOptimizedImage(buffer: Buffer, filenamePrefix: string): Promise<string> {
     const optimized = await optimizeImageBuffer(buffer);
-    const formData = new FormData();
-    formData.append('secret_key', HOSTINGER_UPLOAD_SECRET);
-    formData.append('image', new Blob([new Uint8Array(optimized)], { type: 'image/webp' }), `${filenamePrefix}_${Date.now()}.webp`);
+    const nasStorageUrl = getNasStorageUrl();
+    const finalFilename = `${filenamePrefix}_${Date.now()}.webp`;
 
-    const response = await fetch(HOSTINGER_UPLOAD_URL, { method: 'POST', body: formData });
-    const data = await response.json();
+    if (nasStorageUrl) {
+        // Upload to NAS Storage Server
+        const formData = new FormData();
+        formData.append('file', new Blob([new Uint8Array(optimized)], { type: 'image/webp' }), finalFilename);
 
-    if (!data.success || !data.url) {
-        throw new Error(data.error || 'Failed to upload image to Hostinger');
+        const response = await fetch(`${nasStorageUrl.replace(/\/$/, '')}/upload`, { 
+            method: 'POST', 
+            body: formData,
+            headers: {
+                'x-subfolder': 'product-images'
+            }
+        });
+        const data = await response.json();
+        if (!data.success) {
+            throw new Error(data.error || 'Failed to upload image to NAS');
+        }
+        return `${nasStorageUrl.replace(/\/$/, '')}/files/product-images/${finalFilename}`;
+    } else {
+        // Upload to Hostinger (fallback)
+        const formData = new FormData();
+        formData.append('secret_key', HOSTINGER_UPLOAD_SECRET);
+        formData.append('image', new Blob([new Uint8Array(optimized)], { type: 'image/webp' }), finalFilename);
+
+        const response = await fetch(HOSTINGER_UPLOAD_URL, { method: 'POST', body: formData });
+        const data = await response.json();
+
+        if (!data.success || !data.url) {
+            throw new Error(data.error || 'Failed to upload image to Hostinger');
+        }
+
+        return data.url;
     }
-
-    return data.url;
 }
 
 async function createSystemNotification(input: {
@@ -1382,6 +1405,7 @@ export function registerHandlers() {
             batch_sequence: Number(rule.batchSequence) || 1,
             serial_padding: Number(rule.serialPadding) || 4,
             is_active: rule.isActive !== false,
+            is_customizable: !!rule.isCustomizable,
             company_id: 1,
             updated_at: new Date().toISOString(),
         };
@@ -1762,8 +1786,51 @@ export function registerHandlers() {
                             discount_pct: item.discount_pct || 0,
                             discount_amt: item.discount_amt || 0,
                             price: item.price,
+                            customization: item.customization || {},
                         }));
-                        enqueue({ table: 'bill_items', operation: 'insert', data: billItems });
+                        enqueue({
+                            table: 'bill_items',
+                            operation: 'insert',
+                            data: billItems,
+                            onSuccess: async () => {
+                                try {
+                                    const { data: insertedItems, error: itemsErr } = await supabase
+                                        .from('bill_items')
+                                        .select('id, product_id, product_name, customization, quantity')
+                                        .eq('bill_id', savedBillId);
+                                    
+                                    if (!itemsErr && insertedItems) {
+                                        for (const bItem of insertedItems) {
+                                            const cust = bItem.customization;
+                                            if (cust && typeof cust === 'object' && Object.keys(cust).length > 0) {
+                                                const descDetails = Object.entries(cust)
+                                                    .map(([k, v]) => `${k}: ${v}`)
+                                                    .join(', ');
+                                                
+                                                enqueue({
+                                                    table: 'make_orders',
+                                                    operation: 'insert',
+                                                    data: {
+                                                        furniture_name: bItem.product_name || 'Custom Furniture',
+                                                        description: `Customized order linked to Invoice ${invoiceNumber}. Attributes: ${descDetails}`,
+                                                        quantity: Number(bItem.quantity) || 1,
+                                                        designer_name: billed_by || 'Admin',
+                                                        status: 'Awaiting Pricing',
+                                                        priority: 'Normal',
+                                                        bill_id: savedBillId,
+                                                        bill_item_id: bItem.id,
+                                                        custom_price: 0,
+                                                        custom_details: cust
+                                                    }
+                                                });
+                                            }
+                                        }
+                                    }
+                                } catch (e) {
+                                    console.error('[create-bill make-orders sync] Failed:', e);
+                                }
+                            }
+                        });
                         // Decrement stock per item
                         for (const item of items) {
                             if (item.product_id && item.quantity) {
@@ -2483,7 +2550,15 @@ export function registerHandlers() {
 
         if (!authError && authData.user) {
             // Auth succeeded — fetch user profile
-                const { data: row } = await supabase.from('users').select(`*, user_groups (permissions,is_active)`).eq('auth_id', authData.user.id).single();
+            const { data: row, error: dbErr } = await supabase.from('users').select(`*, user_groups (permissions,is_active)`).eq('auth_id', authData.user.id).single();
+
+            if (dbErr) {
+                console.error('[SUPABASE] DB error fetching user profile keys:', Object.keys(dbErr));
+                console.error('[SUPABASE] DB error fetching user profile raw:', dbErr);
+                console.error('[SUPABASE] DB error fetching user profile string:', String(dbErr));
+                await supabase.auth.signOut();
+                return { success: false, error: `Database error: ${dbErr.message || String(dbErr)}` };
+            }
 
             if (!row) {
                 await supabase.auth.signOut();
@@ -2760,6 +2835,15 @@ export function registerHandlers() {
         return { success: true };
     });
 
+    ipcMain.handle('get-db-connection-state', async () => {
+        const { connectionState, activeNasUrl, isNasOnline } = await import('./supabase');
+        return {
+            connectionState,
+            activeNasUrl,
+            isNasOnline
+        };
+    });
+
     ipcMain.handle('get-supabase-config', async () => {
         try {
             const cfgPath = path.join(app.getPath('userData'), 'supabase-config.json');
@@ -2840,9 +2924,25 @@ export function registerHandlers() {
 
     // ═══ NOTIFICATIONS ════════════════════════════════════════════════════════
     ipcMain.handle('get-notifications', async (_e, userId: number) => {
+        try {
+            const sevenDaysAgo = new Date();
+            sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+            await supabase.from('notifications').delete().lt('created_at', sevenDaysAgo.toISOString());
+        } catch (err) {
+            console.error('[NOTIFICATIONS] Failed to clean up old notifications:', err);
+        }
+
         const { data, error } = await supabase.from('notifications').select('*, sender:users!sender_id(full_name)').or(`recipient_id.eq.${userId},recipient_id.is.null`).order('created_at', { ascending: false }).limit(100);
         if (error) throw error;
         return decryptRows(data || []).map((n: any) => ({ ...n, sender_name: n.sender?.full_name || null }));
+    });
+
+    ipcMain.handle('clear-all-notifications', async (_e, userId: number) => {
+        const { error } = await supabase.from('notifications')
+            .delete()
+            .or(`recipient_id.eq.${userId},recipient_id.is.null`);
+        if (error) throw error;
+        return { success: true };
     });
 
     ipcMain.handle('send-notification', async (_e, notification: any) => {
@@ -2955,9 +3055,13 @@ export function registerHandlers() {
     // ═══ MAKE MODULE ══════════════════════════════════════════════════════
 
     ipcMain.handle('get-make-orders', async () => {
-        const { data, error } = await supabase.from('make_orders').select('*, salesman:users(full_name)').order('created_at', { ascending: false });
+        const { data, error } = await supabase.from('make_orders').select('*, salesman:users(full_name), bill:bills(invoice_number)').order('created_at', { ascending: false });
         if (error) throw error;
-        return decryptRows(data || []).map((o: any) => ({ ...o, salesman_name: o.salesman?.full_name || 'Unassigned' }));
+        return decryptRows(data || []).map((o: any) => ({ 
+            ...o, 
+            salesman_name: o.salesman?.full_name || 'Unassigned',
+            bill_invoice_number: o.bill?.invoice_number || null
+        }));
     });
 
     ipcMain.handle('get-salesmen', async () => {
@@ -3000,6 +3104,105 @@ export function registerHandlers() {
                });
            }
         }
+
+        return { success: true };
+    });
+
+    ipcMain.handle('set-make-order-price', async (_e, { orderId, customPrice, updatedBy }) => {
+        const { error: updateErr } = await supabase.from('make_orders').update({ 
+            custom_price: customPrice, 
+            status: 'Pricing Done', 
+            updated_at: new Date().toISOString() 
+        }).eq('id', orderId);
+        if (updateErr) throw updateErr;
+
+        await supabase.from('make_order_updates').insert({ 
+            order_id: orderId, 
+            status: 'Pricing Done', 
+            note: `Price set to ৳${customPrice}`, 
+            updated_by: updatedBy 
+        });
+
+        // Notify the creator (designer)
+        const { data: order, error: fetchErr } = await supabase.from('make_orders').select('designer_name, furniture_name, bill_id, bill:bills(invoice_number)').eq('id', orderId).maybeSingle();
+        if (!fetchErr && order) {
+            const invoiceNumber = (order.bill as any)?.invoice_number || 'N/A';
+            const { data: designer } = await supabase.from('users')
+                .select('id')
+                .or(`username.eq."${order.designer_name}",full_name.eq."${order.designer_name}"`)
+                .maybeSingle();
+            
+            if (designer) {
+                await supabase.from('notifications').insert({
+                    title: 'Custom Price Updated',
+                    message: `Custom price for "${order.furniture_name}" (Invoice: ${invoiceNumber}) has been set to ৳${customPrice}.`,
+                    sender_id: null,
+                    recipient_id: designer.id,
+                    action_path: '/billing',
+                    action_label: 'Open Customizations',
+                    metadata: { type: 'make_order', order_id: orderId },
+                });
+            }
+        }
+
+        try {
+            BrowserWindow.getAllWindows().forEach(win => {
+                if (!win.isDestroyed()) {
+                    win.webContents.send('data-updated', 'make_orders');
+                    win.webContents.send('data-updated', 'notifications');
+                }
+            });
+        } catch { }
+
+        return { success: true };
+    });
+
+    ipcMain.handle('mark-customization-paid', async (_e, { orderId, updatedBy }) => {
+        const { data: order, error: fetchErr } = await supabase.from('make_orders').select('*').eq('id', orderId).maybeSingle();
+        if (fetchErr || !order) throw new Error('Order not found');
+
+        const { error: updateErr } = await supabase.from('make_orders').update({
+            status: 'Placed',
+            updated_at: new Date().toISOString()
+        }).eq('id', orderId);
+        if (updateErr) throw updateErr;
+
+        await supabase.from('make_order_updates').insert({
+            order_id: orderId,
+            status: 'Placed',
+            note: 'Payment confirmed. Proceeding with order.',
+            updated_by: updatedBy
+        });
+
+        if (order.bill_id && order.bill_item_id) {
+            const { data: item } = await supabase.from('bill_items').select('*').eq('id', order.bill_item_id).maybeSingle();
+            const { data: bill } = await supabase.from('bills').select('*').eq('id', order.bill_id).maybeSingle();
+
+            if (item && bill) {
+                const qty = Number(item.quantity) || 1;
+                const newPrice = Number(order.custom_price || 0) * qty;
+                const oldPrice = Number(item.price || 0);
+                const diff = newPrice - oldPrice;
+
+                await supabase.from('bill_items').update({
+                    mrp: order.custom_price,
+                    price: newPrice
+                }).eq('id', order.bill_item_id);
+
+                await supabase.from('bills').update({
+                    grand_total: Number(bill.grand_total || 0) + diff
+                }).eq('id', order.bill_id);
+            }
+        }
+
+        try {
+            BrowserWindow.getAllWindows().forEach(win => {
+                if (!win.isDestroyed()) {
+                    win.webContents.send('data-updated', 'make_orders');
+                    win.webContents.send('data-updated', 'bills');
+                }
+            });
+        } catch { }
 
         return { success: true };
     });
@@ -3355,25 +3558,7 @@ export function registerHandlers() {
 
     // ═══ APP / AUTO-UPDATE ════════════════════════════════════════════════
 
-    ipcMain.handle('get-app-version', async () => app.getVersion());
     ipcMain.handle('restart-app', () => { app.relaunch(); app.exit(); });
-
-    // Auto-update wiring (electron-updater optional)
-    try {
-        autoUpdater.autoDownload = false; 
-        autoUpdater.autoInstallOnAppQuit = true;
-        const broadcast = (payload: any) => BrowserWindow.getAllWindows().forEach(w => w.webContents.send('update-status', payload));
-        autoUpdater.on('update-available', (info: any) => broadcast({ status: 'available', info }));
-        autoUpdater.on('update-not-available', () => broadcast({ status: 'up-to-date' }));
-        autoUpdater.on('download-progress', (progress: any) => broadcast({ status: 'downloading', progress }));
-        autoUpdater.on('update-downloaded', () => broadcast({ status: 'ready' }));
-        autoUpdater.on('error', (err: any) => broadcast({ status: 'error', error: err?.message || 'Update failed' }));
-        setTimeout(() => { try { autoUpdater.checkForUpdates(); } catch { } }, 10_000);
-    } catch { console.warn('electron-updater not available'); }
-
-    ipcMain.handle('check-for-update', async () => { if (!autoUpdater) return { status: 'unavailable' }; try { await autoUpdater.checkForUpdates(); return { status: 'checking' }; } catch (e: any) { return { status: 'error', message: e.message }; } });
-    ipcMain.handle('download-update', async () => { if (!autoUpdater) return { status: 'unavailable' }; try { await autoUpdater.downloadUpdate(); return { status: 'downloading' }; } catch (e: any) { return { status: 'error', message: e.message }; } });
-    ipcMain.handle('install-update', async () => { if (!autoUpdater) return { status: 'unavailable' }; autoUpdater.quitAndInstall(); return { status: 'installing' }; });
 
     // ═══ NETWORK CONFIG (no-op stubs for Supabase-first mode) ═════════════
     ipcMain.handle('get-network-config', async () => ({}));
@@ -3408,15 +3593,34 @@ export function registerHandlers() {
         }
 
         const uploaded: string[] = [];
+        const nasStorageUrl = getNasStorageUrl();
+
         for (const p of filesToUpload) {
             const fileName = path.basename(p);
             const fileBuffer = fs.readFileSync(p);
             const storagePath = `${orderId}/${Date.now()}_${fileName}`;
-            const { error: uploadError } = await supabase.storage
-                .from('make-order-files')
-                .upload(storagePath, fileBuffer, { contentType: 'application/pdf', upsert: false });
-            if (uploadError) return { error: uploadError.message };
-            uploaded.push(storagePath);
+            
+            if (nasStorageUrl) {
+                const formData = new FormData();
+                formData.append('file', new Blob([new Uint8Array(fileBuffer)], { type: 'application/pdf' }), path.basename(storagePath));
+                
+                const response = await fetch(`${nasStorageUrl.replace(/\/$/, '')}/upload`, {
+                    method: 'POST',
+                    body: formData,
+                    headers: {
+                        'x-subfolder': `make-order-files/${orderId}`
+                    }
+                });
+                const data = await response.json();
+                if (!data.success) return { error: data.error || 'Failed to upload PDF to NAS' };
+                uploaded.push(`make-order-files/${storagePath}`);
+            } else {
+                const { error: uploadError } = await supabase.storage
+                    .from('make-order-files')
+                    .upload(storagePath, fileBuffer, { contentType: 'application/pdf', upsert: false });
+                if (uploadError) return { error: uploadError.message };
+                uploaded.push(storagePath);
+            }
         }
 
         // Append paths to make_orders.pdf_urls
@@ -3429,15 +3633,39 @@ export function registerHandlers() {
     ipcMain.handle('make-get-pdf-urls', async (_e, orderId: number) => {
         const { data: order } = await supabase.from('make_orders').select('pdf_urls').eq('id', orderId).maybeSingle();
         const paths: string[] = order?.pdf_urls || [];
+        const nasStorageUrl = getNasStorageUrl();
+
         const signedUrls = await Promise.all(paths.map(async (p) => {
-            const { data } = await supabase.storage.from('make-order-files').createSignedUrl(p, 3600);
-            return { path: p, name: path.basename(p).replace(/^\d+_/, ''), url: data?.signedUrl || '' };
+            if (p.startsWith('make-order-files/')) {
+                const url = nasStorageUrl 
+                    ? `${nasStorageUrl.replace(/\/$/, '')}/files/${p}` 
+                    : '';
+                return { path: p, name: path.basename(p).replace(/^\d+_/, ''), url };
+            } else {
+                const { data } = await supabase.storage.from('make-order-files').createSignedUrl(p, 3600);
+                return { path: p, name: path.basename(p).replace(/^\d+_/, ''), url: data?.signedUrl || '' };
+            }
         }));
         return signedUrls.filter(u => u.url);
     });
 
     ipcMain.handle('make-delete-pdf', async (_e, { orderId, storagePath }: { orderId: number; storagePath: string }) => {
-        await supabase.storage.from('make-order-files').remove([storagePath]);
+        const nasStorageUrl = getNasStorageUrl();
+        if (storagePath.startsWith('make-order-files/')) {
+            if (nasStorageUrl) {
+                try {
+                    await fetch(`${nasStorageUrl.replace(/\/$/, '')}/delete`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ filePath: storagePath })
+                    });
+                } catch (err) {
+                    console.error('Failed to delete file from NAS:', err);
+                }
+            }
+        } else {
+            await supabase.storage.from('make-order-files').remove([storagePath]);
+        }
         const { data: order } = await supabase.from('make_orders').select('pdf_urls').eq('id', orderId).maybeSingle();
         const remaining = (order?.pdf_urls || []).filter((p: string) => p !== storagePath);
         await supabase.from('make_orders').update({ pdf_urls: remaining }).eq('id', orderId);
@@ -3496,7 +3724,7 @@ export function registerHandlers() {
 
     // ═══ MAKE ORDER — ROLE-BASED ALTERATION + LOG ═══════════════════════════
 
-    const ALTERABLE_BY_DESIGNER = ['Placed']; // only Placed: designer can alter
+    const ALTERABLE_BY_DESIGNER = ['Placed', 'Awaiting Pricing', 'Pricing Done']; // only these stages: designer can alter
     const ALTERABLE_FIELDS = ['furniture_name', 'description', 'quantity', 'priority', 'delivery_date'];
 
     ipcMain.handle('make-alter-order', async (_e, {

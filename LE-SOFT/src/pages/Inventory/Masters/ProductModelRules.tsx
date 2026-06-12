@@ -13,6 +13,7 @@ const blankRule = {
     batchSequence: 1,
     serialPadding: 4,
     isActive: true,
+    isCustomizable: false,
 };
 
 const blankOrigin = {
@@ -175,6 +176,15 @@ const ProductModelRules: React.FC = () => {
                     <div className="form-group"><label>Group Code</label><input value={form.groupCode} onChange={e => setForm({ ...form, groupCode: e.target.value })} required placeholder="10" /></div>
                     <div className="form-group"><label>Batch Sequence</label><input type="number" value={form.batchSequence} onChange={e => setForm({ ...form, batchSequence: e.target.value })} min={1} /></div>
                 </div>
+                <div className="form-row" style={{ marginTop: '-0.5rem' }}>
+                    <div className="form-group">
+                        <label>Customizable</label>
+                        <label className="checkbox-label" style={{ minHeight: 42, display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                            <input type="checkbox" checked={!!form.isCustomizable} onChange={e => setForm({ ...form, isCustomizable: e.target.checked })} />
+                            Allows customization in Billing / POS
+                        </label>
+                    </div>
+                </div>
                 <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                     <button className="save-btn" disabled={saving}><Save size={18} /> {saving ? 'Saving...' : 'Save Rule'}</button>
                 </div>
@@ -182,15 +192,16 @@ const ProductModelRules: React.FC = () => {
 
             <div className="table-container" style={{ marginTop: '1.5rem' }}>
                 <table className="master-table">
-                    <thead><tr><th>Rule</th><th>Origin</th><th>Stock Group</th><th>Pattern</th><th style={{ textAlign: 'right' }}>Actions</th></tr></thead>
+                    <thead><tr><th>Rule</th><th>Origin</th><th>Stock Group</th><th>Pattern</th><th>Customizable</th><th style={{ textAlign: 'right' }}>Actions</th></tr></thead>
                     <tbody>
-                        {rules.length === 0 ? <tr><td colSpan={5} className="empty-state">No product model rules created.</td></tr> : rules.map(rule => (
+                        {rules.length === 0 ? <tr><td colSpan={6} className="empty-state">No product model rules created.</td></tr> : rules.map(rule => (
                             <tr key={rule.id}>
                                 <td>{rule.name}</td>
                                 <td>{origins.find(origin => origin.origin_key === rule.origin_type)?.name || rule.origin_type}</td>
                                 <td>{rule.stock_group?.name || '—'}</td>
                                 <td><code>{rule.origin_code}.{rule.group_code}.{String(rule.batch_sequence).padStart(2, '0')}.{''.padStart(rule.serial_padding || 4, '#')}</code></td>
-                                <td><div className="action-buttons" style={{ justifyContent: 'flex-end' }}><button className="edit-btn" onClick={() => setForm({ id: rule.id, name: rule.name, originType: rule.origin_type, originCode: rule.origin_code, stockGroupId: rule.stock_group_id || '', groupCode: rule.group_code, batchSequence: rule.batch_sequence, serialPadding: rule.serial_padding, isActive: rule.is_active })}><Save size={16} /></button><button className="delete-btn" onClick={() => deleteRule(rule.id)}><Trash2 size={16} /></button></div></td>
+                                <td style={{ fontWeight: 600, color: rule.is_customizable ? '#22c55e' : 'var(--text-secondary)' }}>{rule.is_customizable ? 'Yes' : 'No'}</td>
+                                <td><div className="action-buttons" style={{ justifyContent: 'flex-end' }}><button className="edit-btn" onClick={() => setForm({ id: rule.id, name: rule.name, originType: rule.origin_type, originCode: rule.origin_code, stockGroupId: rule.stock_group_id || '', groupCode: rule.group_code, batchSequence: rule.batch_sequence, serialPadding: rule.serial_padding, isActive: rule.is_active, isCustomizable: !!rule.is_customizable })}><Save size={16} /></button><button className="delete-btn" onClick={() => deleteRule(rule.id)}><Trash2 size={16} /></button></div></td>
                             </tr>
                         ))}
                     </tbody>
