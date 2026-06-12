@@ -61,22 +61,27 @@ jobs:
           RELEASE_VERSION: ${{ github.event.inputs.version || '1.4.0' }}
           RELEASE_REPO: ${{ github.repository }}
         run: |
-          $ErrorActionPreference = "Stop"
-          $tag = "v$env:RELEASE_VERSION"
-          $title = "LE-SOFT $env:RELEASE_VERSION"
-          $notes = "LE-SOFT $env:RELEASE_VERSION Windows release."
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $tag = $env:GITHUB_REF_NAME
+          }
+          else {
+            $tag = "v$env:RELEASE_VERSION"
+          }
 
-          gh release view $tag --repo $env:RELEASE_REPO
+          $title = "LE-SOFT $($tag.TrimStart('v'))"
+          $notes = "LE-SOFT $($tag.TrimStart('v')) Windows release."
+
+          gh release view $tag --repo $env:RELEASE_REPO *> $null
           if ($LASTEXITCODE -ne 0) {
             gh release create $tag --repo $env:RELEASE_REPO --target $env:GITHUB_SHA --title $title --notes $notes
           }
 
-          gh release upload $tag `
-            "release/LESOFT Setup $env:RELEASE_VERSION.exe" `
-            "release/LESOFT Setup $env:RELEASE_VERSION.exe.blockmap" `
-            "release/latest.yml" `
-            --repo $env:RELEASE_REPO `
-            --clobber
+          $exe = (Get-ChildItem release -Filter '*.exe' | Select-Object -First 1).FullName
+          $blockmap = (Get-ChildItem release -Filter '*.exe.blockmap' | Select-Object -First 1).FullName
+          $latest = (Get-ChildItem release -Filter 'latest.yml' | Select-Object -First 1).FullName
+
+          gh release upload $tag $exe $blockmap $latest --repo $env:RELEASE_REPO --clobber
 
       - name: Upload Installer Artifact
         uses: actions/upload-artifact@v4
