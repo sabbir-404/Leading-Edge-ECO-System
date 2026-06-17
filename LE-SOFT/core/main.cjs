@@ -22325,7 +22325,7 @@ function getNasStorageUrl() {
     const config = loadConfig();
     if (!config.nasStorageUrl) return null;
     if (connectionState === "nas_local") {
-      return "http://192.168.1.60:8081";
+      return "http://192.168.1.14:8081";
     }
     return config.nasStorageUrl;
   } catch {
@@ -22371,8 +22371,8 @@ function recreateNasClient(url) {
 }
 async function checkNasConnectivity() {
   const config = loadConfig();
-  const localUrl = "http://192.168.1.60:3001";
-  const publicUrl = config.nasUrl || "http://100.101.9.92:3001";
+  const localUrl = "http://192.168.1.14:3001";
+  const publicUrl = config.nasUrl || "http://100.88.85.6:3001";
   const pingUrl = async (url) => {
     try {
       const controller = new AbortController();

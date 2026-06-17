@@ -181,7 +181,7 @@ export function getNasStorageUrl(): string | null {
         
         // Dynamically route storage locally if database is using local LAN IP
         if (connectionState === 'nas_local') {
-            return "http://192.168.1.60:8081";
+            return "http://192.168.1.14:8081";
         }
         return config.nasStorageUrl;
     } catch {
@@ -233,8 +233,8 @@ function recreateNasClient(url: string) {
 
 async function checkNasConnectivity() {
     const config = loadConfig();
-    const localUrl = "http://192.168.1.60:3001";
-    const publicUrl = config.nasUrl || "http://100.101.9.92:3001";
+    const localUrl = "http://192.168.1.14:3001";
+    const publicUrl = config.nasUrl || "http://100.88.85.6:3001";
     
     // Helper to check if a PostgREST URL is responding
     const pingUrl = async (url: string): Promise<boolean> => {
