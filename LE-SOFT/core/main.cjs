@@ -22323,11 +22323,10 @@ function getDbClients() {
 function getNasStorageUrl() {
   try {
     const config = loadConfig();
-    if (!config.nasStorageUrl) return null;
     if (connectionState === "nas_local") {
-      return "http://192.168.1.14:8081";
+      return config.nasLocalStorageUrl || "http://192.168.1.14:8081";
     }
-    return config.nasStorageUrl;
+    return config.nasStorageUrl || "http://100.88.85.6:8081";
   } catch {
     return null;
   }
@@ -22371,7 +22370,7 @@ function recreateNasClient(url) {
 }
 async function checkNasConnectivity() {
   const config = loadConfig();
-  const localUrl = "http://192.168.1.14:3001";
+  const localUrl = config.nasLocalUrl || "http://192.168.1.14:3001";
   const publicUrl = config.nasUrl || "http://100.88.85.6:3001";
   const pingUrl = async (url) => {
     try {
@@ -22491,7 +22490,9 @@ var init_supabase = __esm({
       serviceRoleKey: "",
       nasUrl: "",
       nasAnonKey: "",
-      nasStorageUrl: ""
+      nasStorageUrl: "",
+      nasLocalUrl: "",
+      nasLocalStorageUrl: ""
     };
     GENERATION_SECRET = "LE-SOFT-MASTER-KEY-2026-Pr0duct10n-S3cret!@#";
     CREDENTIAL_SALT = "LE-SOFT-CREDENTIAL-ENCRYPT-SALT-v1-2026";
@@ -117642,6 +117643,11 @@ function registerHandlers() {
       if (newConfig.url) merged.url = newConfig.url;
       if (newConfig.anonKey) merged.anonKey = newConfig.anonKey;
       if (newConfig.serviceRoleKey) merged.serviceRoleKey = newConfig.serviceRoleKey;
+      if (newConfig.nasUrl !== void 0) merged.nasUrl = newConfig.nasUrl;
+      if (newConfig.nasLocalUrl !== void 0) merged.nasLocalUrl = newConfig.nasLocalUrl;
+      if (newConfig.nasStorageUrl !== void 0) merged.nasStorageUrl = newConfig.nasStorageUrl;
+      if (newConfig.nasLocalStorageUrl !== void 0) merged.nasLocalStorageUrl = newConfig.nasLocalStorageUrl;
+      if (newConfig.nasAnonKey !== void 0) merged.nasAnonKey = newConfig.nasAnonKey;
       import_fs9.default.writeFileSync(currentConfigPath, JSON.stringify(merged, null, 2), "utf8");
       reinitSupabaseClients();
       return { success: true };

@@ -326,13 +326,86 @@ const Settings: React.FC = () => {
     const [geminiKey, setGeminiKey] = useState('');
     const [aiKeySaving, setAiKeySaving] = useState(false);
 
+    // ── NAS Configuration ──────────────────────────────────────────────────────
+    const [nasLocalHost, setNasLocalHost] = useState('192.168.1.14');
+    const [nasPublicHost, setNasPublicHost] = useState('100.88.85.6');
+    const [nasConfigSaving, setNasConfigSaving] = useState(false);
+    const [nasConfigMsg, setNasConfigMsg] = useState('');
+
     useEffect(() => {
         if (activeTab === 'database_api') {
             window.electron.getAiKey?.().then((key: string) => setGeminiKey(key || ''));
             checkNasConnectionState();
             checkDbConnection();
+            
+            // Load current NAS settings
+            window.electron.getSupabaseConfig?.().then((cfg: any) => {
+                const parseHost = (urlStr: string, fallback: string) => {
+                    if (!urlStr) return fallback;
+                    try {
+                        const parsed = new URL(urlStr);
+                        return parsed.hostname;
+                    } catch {
+                        return urlStr.replace(/^https?:\/\//, '').split(':')[0] || fallback;
+                    }
+                };
+                if (cfg) {
+                    setNasLocalHost(parseHost(cfg.nasLocalUrl, '192.168.1.14'));
+                    setNasPublicHost(parseHost(cfg.nasUrl, '100.88.85.6'));
+                }
+            }).catch(console.error);
         }
     }, [activeTab]);
+
+    const handleSaveNasConfig = async () => {
+        setNasConfigSaving(true);
+        setNasConfigMsg('');
+        try {
+            const normalizeHost = (input: string) => {
+                let val = input.trim();
+                if (!val) return '';
+                if (val.startsWith('http://') || val.startsWith('https://')) {
+                    try {
+                        const parsed = new URL(val);
+                        return parsed.hostname;
+                    } catch {
+                        // ignore and fall through
+                    }
+                }
+                return val.replace(/^https?:\/\//, '').split('/')[0].split(':')[0];
+            };
+
+            const localHost = normalizeHost(nasLocalHost) || '192.168.1.14';
+            const publicHost = normalizeHost(nasPublicHost) || '100.88.85.6';
+
+            const nasLocalUrl = `http://${localHost}:3001`;
+            const nasLocalStorageUrl = `http://${localHost}:8081`;
+            const nasUrl = `http://${publicHost}:3001`;
+            const nasStorageUrl = `http://${publicHost}:8081`;
+
+            const res = await window.electron.saveSupabaseConfig({
+                nasLocalUrl,
+                nasLocalStorageUrl,
+                nasUrl,
+                nasStorageUrl
+            });
+
+            if (res?.success) {
+                showToast('NAS Server settings saved!', 'success');
+                setNasConfigMsg('Saved! Refresh health checks to verify connectivity.');
+                setTimeout(() => {
+                    checkNasConnectionState();
+                }, 1000);
+            } else {
+                showToast(res?.error || 'Failed to save NAS settings', 'error');
+                setNasConfigMsg(`Error: ${res?.error || 'Failed to save'}`);
+            }
+        } catch (e: any) {
+            showToast(e.message || 'Error saving settings', 'error');
+            setNasConfigMsg(`Error: ${e.message}`);
+        }
+        setNasConfigSaving(false);
+    };
 
     const handleSaveAiKey = async () => {
         setAiKeySaving(true);
@@ -937,6 +1010,68 @@ const Settings: React.FC = () => {
                                             {adminKeyMsg && <p style={{ margin: '0.5rem 0 0', fontSize: '0.85rem', color: adminKeyMsg.includes('Failed') ? '#ef4444' : '#22c55e', fontWeight: 600 }}>{adminKeyMsg}</p>}
                                         </motion.div>
                                     )}
+                                </div>
+
+                                {/* TrueNAS Server Connection Settings */}
+                                <div style={card}>
+                                    <div style={cardHeader}>
+                                        <div style={iconBox('#8b5cf6', 'rgba(139,92,246,0.12)')}><Server size={20} /></div>
+                                        <div>
+                                            <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>TrueNAS Server Configuration</h2>
+                                            <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-secondary)' }}>Configure local and public/Tailscale connection endpoints</p>
+                                        </div>
+                                    </div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
+                                            <div>
+                                                <span style={label}>Local NAS IP / Hostname</span>
+                                                <input 
+                                                    style={input} 
+                                                    type="text" 
+                                                    value={nasLocalHost} 
+                                                    onChange={e => setNasLocalHost(e.target.value)} 
+                                                    placeholder="e.g. 192.168.1.14" 
+                                                />
+                                                <p style={{ margin: '0.35rem 0 0', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+                                                    Used for direct LAN connectivity. Resolves to:<br />
+                                                    Database: <code style={{ fontFamily: 'monospace' }}>http://{nasLocalHost || '192.168.1.14'}:3001</code><br />
+                                                    Storage: <code style={{ fontFamily: 'monospace' }}>http://{nasLocalHost || '192.168.1.14'}:8081</code>
+                                                </p>
+                                            </div>
+                                            <div>
+                                                <span style={label}>Public / Tailscale NAS IP</span>
+                                                <input 
+                                                    style={input} 
+                                                    type="text" 
+                                                    value={nasPublicHost} 
+                                                    onChange={e => setNasPublicHost(e.target.value)} 
+                                                    placeholder="e.g. 100.88.85.6" 
+                                                />
+                                                <p style={{ margin: '0.35rem 0 0', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+                                                    Used when outside the local network. Resolves to:<br />
+                                                    Database: <code style={{ fontFamily: 'monospace' }}>http://{nasPublicHost || '100.88.85.6'}:3001</code><br />
+                                                    Storage: <code style={{ fontFamily: 'monospace' }}>http://{nasPublicHost || '100.88.85.6'}:8081</code>
+                                                </p>
+                                            </div>
+                                        </div>
+                                        
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.5rem' }}>
+                                            <div style={{ flex: 1 }}>
+                                                {nasConfigMsg && (
+                                                    <p style={{ margin: 0, fontSize: '0.85rem', color: nasConfigMsg.includes('Error') ? '#ef4444' : '#22c55e', fontWeight: 600 }}>
+                                                        {nasConfigMsg}
+                                                    </p>
+                                                )}
+                                            </div>
+                                            <button 
+                                                onClick={handleSaveNasConfig} 
+                                                disabled={nasConfigSaving}
+                                                style={{ ...btn('var(--accent-color)'), whiteSpace: 'nowrap', opacity: nasConfigSaving ? 0.7 : 1 }}
+                                            >
+                                                {nasConfigSaving ? 'Saving...' : 'Save NAS Settings'}
+                                            </button>
+                                        </div>
+                                    </div>
                                 </div>
 
                                 {/* Superadmin Only: Database Cleanup */}

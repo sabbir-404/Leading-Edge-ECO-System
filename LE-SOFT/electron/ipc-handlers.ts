@@ -2871,6 +2871,13 @@ export function registerHandlers() {
             if (newConfig.url)            merged.url            = newConfig.url;
             if (newConfig.anonKey)        merged.anonKey        = newConfig.anonKey;
             if (newConfig.serviceRoleKey) merged.serviceRoleKey = newConfig.serviceRoleKey;
+            
+            if (newConfig.nasUrl !== undefined)             merged.nasUrl             = newConfig.nasUrl;
+            if (newConfig.nasLocalUrl !== undefined)        merged.nasLocalUrl        = newConfig.nasLocalUrl;
+            if (newConfig.nasStorageUrl !== undefined)      merged.nasStorageUrl      = newConfig.nasStorageUrl;
+            if (newConfig.nasLocalStorageUrl !== undefined) merged.nasLocalStorageUrl = newConfig.nasLocalStorageUrl;
+            if (newConfig.nasAnonKey !== undefined)         merged.nasAnonKey         = newConfig.nasAnonKey;
+
             fs.writeFileSync(currentConfigPath, JSON.stringify(merged, null, 2), 'utf8');
 
             // Automatically refresh in-memory clients

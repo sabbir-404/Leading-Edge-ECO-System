@@ -20,6 +20,8 @@ interface SupabaseConfig {
     nasUrl?: string;
     nasAnonKey?: string;
     nasStorageUrl?: string;
+    nasLocalUrl?: string;
+    nasLocalStorageUrl?: string;
 }
 
 // SECURITY: No credentials are hardcoded here.
@@ -31,7 +33,9 @@ const EMPTY_DEFAULTS: SupabaseConfig = {
     serviceRoleKey: '',
     nasUrl: '',
     nasAnonKey: '',
-    nasStorageUrl: ''
+    nasStorageUrl: '',
+    nasLocalUrl: '',
+    nasLocalStorageUrl: ''
 };
 
 function loadConfig(): SupabaseConfig {
@@ -177,13 +181,12 @@ export function getDbClients() {
 export function getNasStorageUrl(): string | null {
     try {
         const config = loadConfig();
-        if (!config.nasStorageUrl) return null;
         
         // Dynamically route storage locally if database is using local LAN IP
         if (connectionState === 'nas_local') {
-            return "http://192.168.1.14:8081";
+            return config.nasLocalStorageUrl || "http://192.168.1.14:8081";
         }
-        return config.nasStorageUrl;
+        return config.nasStorageUrl || "http://100.88.85.6:8081";
     } catch {
         return null;
     }
@@ -233,7 +236,7 @@ function recreateNasClient(url: string) {
 
 async function checkNasConnectivity() {
     const config = loadConfig();
-    const localUrl = "http://192.168.1.14:3001";
+    const localUrl = config.nasLocalUrl || "http://192.168.1.14:3001";
     const publicUrl = config.nasUrl || "http://100.88.85.6:3001";
     
     // Helper to check if a PostgREST URL is responding
