@@ -117485,7 +117485,8 @@ function registerHandlers() {
       }
     }
     try {
-      const { data: localRow } = await supabase_default.from("users").select(`*, user_groups (permissions,is_active)`).or(`username.eq.${username},email.eq.${emailToUse}`).eq("is_active", 1).maybeSingle();
+      const dbForLocalLogin = isNasOnline && nasClient ? nasClient : supabase_default;
+      const { data: localRow } = await dbForLocalLogin.from("users").select(`*, user_groups (permissions,is_active)`).or(`username.eq.${username},email.eq.${emailToUse}`).eq("is_active", 1).maybeSingle();
       if (localRow && localRow.password_hash && localRow.password_hash !== "managed_by_supabase_auth") {
         const stored = localRow.password_hash;
         const bcryptMatch = stored.startsWith("$2b$") || stored.startsWith("$2a$") ? await import_bcryptjs2.default.compare(password, stored) : stored === password;
@@ -117505,16 +117506,16 @@ function registerHandlers() {
               console.warn("[AUTH] Could not promote user to Supabase Auth:", promoteErr);
             }
           }
-          const { data: lic } = await supabase_default.from("app_license").select("*").single();
+          const { data: lic } = await dbForLocalLogin.from("app_license").select("*").single();
           let licenseWarning = null;
           if (lic) {
             if (!lic.bound_user_id) {
-              await supabase_default.from("app_license").update({ bound_user_id: localRow.id }).eq("id", lic.id);
+              await dbForLocalLogin.from("app_license").update({ bound_user_id: localRow.id }).eq("id", lic.id);
             } else if (lic.bound_user_id !== localRow.id) {
               licenseWarning = "WARNING: This software is licensed to another user. Contact your Administrator.";
             }
           }
-          await supabase_default.from("users").update({ is_online: true, device_type: "PC" }).eq("id", localRow.id);
+          await dbForLocalLogin.from("users").update({ is_online: true, device_type: "PC" }).eq("id", localRow.id);
           const { password_hash: _omit2, user_groups, ...safeUser } = localRow;
           safeUser.permissions = user_groups?.is_active === false ? {} : user_groups?.permissions || {};
           resetLoginAttempts(username);

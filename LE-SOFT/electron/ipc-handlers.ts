@@ -11,7 +11,7 @@ import os from 'os';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import sharp from 'sharp';
-import supabase, { supabaseAdmin, decryptEmbeddedCredentials, reinitSupabaseClients, getNasStorageUrl } from './supabase';
+import supabase, { supabaseAdmin, nasClient, isNasOnline, decryptEmbeddedCredentials, reinitSupabaseClients, getNasStorageUrl } from './supabase';
 import mysql from 'mysql2/promise';
 import * as licenseManager from './license-manager';
 import { getConnectedDevices, setBackupNode, DEVICE_ID } from './device-monitor';
@@ -2607,8 +2607,11 @@ export function registerHandlers() {
 
         // --- FALLBACK 2: Local bcrypt login for users NOT in Supabase Auth ---
         // (e.g. employees imported in bulk who only have a local DB row with password_hash)
+        // IMPORTANT: Use nasClient directly when NAS is online. The proxy routes to cloud Supabase
+        // when NAS is offline, which may be paused/broken. NAS must be tried first.
         try {
-            const { data: localRow } = await supabase
+            const dbForLocalLogin = (isNasOnline && nasClient) ? nasClient : supabase;
+            const { data: localRow } = await dbForLocalLogin
                 .from('users')
                 .select(`*, user_groups (permissions,is_active)`)
                 .or(`username.eq.${username},email.eq.${emailToUse}`)
@@ -2640,17 +2643,17 @@ export function registerHandlers() {
                         }
                     }
 
-                    const { data: lic } = await supabase.from('app_license').select('*').single();
+                    const { data: lic } = await dbForLocalLogin.from('app_license').select('*').single();
                     let licenseWarning = null;
                     if (lic) {
                         if (!lic.bound_user_id) {
-                            await supabase.from('app_license').update({ bound_user_id: localRow.id }).eq('id', lic.id);
+                            await dbForLocalLogin.from('app_license').update({ bound_user_id: localRow.id }).eq('id', lic.id);
                         } else if (lic.bound_user_id !== localRow.id) {
                             licenseWarning = 'WARNING: This software is licensed to another user. Contact your Administrator.';
                         }
                     }
 
-                    await supabase.from('users').update({ is_online: true, device_type: 'PC' }).eq('id', localRow.id);
+                    await dbForLocalLogin.from('users').update({ is_online: true, device_type: 'PC' }).eq('id', localRow.id);
 
                     const { password_hash: _omit2, user_groups, ...safeUser } = localRow;
                     safeUser.permissions = user_groups?.is_active === false ? {} : (user_groups?.permissions || {});
