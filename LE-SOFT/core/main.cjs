@@ -22326,7 +22326,13 @@ function getNasStorageUrl() {
     if (connectionState === "nas_local") {
       return config.nasLocalStorageUrl || "http://192.168.1.14:8081";
     }
-    return config.nasStorageUrl || "http://100.88.85.6:8081";
+    if (connectionState === "nas_tunnel") {
+      return config.nasTunnelStorageUrl || "https://storage.lenas.me";
+    }
+    if (connectionState === "nas_public") {
+      return config.nasStorageUrl || config.nasUrl?.replace(":3001", ":8081") || null;
+    }
+    return null;
   } catch {
     return null;
   }
@@ -22371,11 +22377,12 @@ function recreateNasClient(url) {
 async function checkNasConnectivity() {
   const config = loadConfig();
   const localUrl = config.nasLocalUrl || "http://192.168.1.14:3001";
-  const publicUrl = config.nasUrl || "http://100.88.85.6:3001";
-  const pingUrl = async (url) => {
+  const tunnelUrl = config.nasTunnelUrl || "https://db.lenas.me";
+  const publicUrl = config.nasUrl;
+  const pingUrl = async (url, timeoutMs = 3e3) => {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2e3);
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
       const res = await fetch(url, { signal: controller.signal });
       clearTimeout(timeoutId);
       return res.ok;
@@ -22383,7 +22390,7 @@ async function checkNasConnectivity() {
       return false;
     }
   };
-  const isLocalOnline = await pingUrl(localUrl);
+  const isLocalOnline = await pingUrl(localUrl, 2e3);
   if (isLocalOnline) {
     if (connectionState !== "nas_local" || activeNasUrl !== localUrl) {
       console.log(`[SUPABASE] Local NAS database (${localUrl}) is ONLINE. Switched active database to Local NAS.`);
@@ -22395,11 +22402,25 @@ async function checkNasConnectivity() {
     isNasOnline = true;
     return;
   }
+  if (tunnelUrl) {
+    const isTunnelOnline = await pingUrl(tunnelUrl, 4e3);
+    if (isTunnelOnline) {
+      if (connectionState !== "nas_tunnel" || activeNasUrl !== tunnelUrl) {
+        console.log(`[SUPABASE] Cloudflare Tunnel (${tunnelUrl}) is ONLINE. Switched active database to Tunnel.`);
+        connectionState = "nas_tunnel";
+        activeNasUrl = tunnelUrl;
+        recreateNasClient(tunnelUrl);
+      }
+      activeClient = nasClient;
+      isNasOnline = true;
+      return;
+    }
+  }
   if (publicUrl) {
-    const isPublicOnline = await pingUrl(publicUrl);
+    const isPublicOnline = await pingUrl(publicUrl, 3e3);
     if (isPublicOnline) {
       if (connectionState !== "nas_public" || activeNasUrl !== publicUrl) {
-        console.log(`[SUPABASE] Public NAS database (${publicUrl}) is ONLINE. Switched active database to Public NAS.`);
+        console.log(`[SUPABASE] Legacy public NAS (${publicUrl}) is ONLINE. Using legacy connection.`);
         connectionState = "nas_public";
         activeNasUrl = publicUrl;
         recreateNasClient(publicUrl);
@@ -22410,7 +22431,7 @@ async function checkNasConnectivity() {
     }
   }
   if (connectionState !== "supabase") {
-    console.warn(`[SUPABASE] Both NAS connections are OFFLINE. Falling back to remote Supabase.`);
+    console.warn("[SUPABASE] All NAS connections OFFLINE. Falling back to remote Supabase.");
     connectionState = "supabase";
     activeNasUrl = null;
   }
@@ -22455,7 +22476,7 @@ function reinitSupabaseClients() {
         persistSession: false
       }
     }) : null;
-    if (config.nasUrl) {
+    if (config.nasLocalUrl || config.nasTunnelUrl || config.nasUrl) {
       checkNasConnectivity();
       pingInterval = setInterval(checkNasConnectivity, 3e4);
     } else {
@@ -22492,7 +22513,9 @@ var init_supabase = __esm({
       nasAnonKey: "",
       nasStorageUrl: "",
       nasLocalUrl: "",
-      nasLocalStorageUrl: ""
+      nasLocalStorageUrl: "",
+      nasTunnelUrl: "",
+      nasTunnelStorageUrl: ""
     };
     GENERATION_SECRET = "LE-SOFT-MASTER-KEY-2026-Pr0duct10n-S3cret!@#";
     CREDENTIAL_SALT = "LE-SOFT-CREDENTIAL-ENCRYPT-SALT-v1-2026";
@@ -117648,6 +117671,8 @@ function registerHandlers() {
       if (newConfig.nasStorageUrl !== void 0) merged.nasStorageUrl = newConfig.nasStorageUrl;
       if (newConfig.nasLocalStorageUrl !== void 0) merged.nasLocalStorageUrl = newConfig.nasLocalStorageUrl;
       if (newConfig.nasAnonKey !== void 0) merged.nasAnonKey = newConfig.nasAnonKey;
+      if (newConfig.nasTunnelUrl !== void 0) merged.nasTunnelUrl = newConfig.nasTunnelUrl;
+      if (newConfig.nasTunnelStorageUrl !== void 0) merged.nasTunnelStorageUrl = newConfig.nasTunnelStorageUrl;
       import_fs9.default.writeFileSync(currentConfigPath, JSON.stringify(merged, null, 2), "utf8");
       reinitSupabaseClients();
       return { success: true };

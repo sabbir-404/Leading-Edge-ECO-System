@@ -328,7 +328,8 @@ const Settings: React.FC = () => {
 
     // ── NAS Configuration ──────────────────────────────────────────────────────
     const [nasLocalHost, setNasLocalHost] = useState('192.168.1.14');
-    const [nasPublicHost, setNasPublicHost] = useState('100.88.85.6');
+    const [nasTunnelDbUrl, setNasTunnelDbUrl] = useState('https://db.lenas.me');
+    const [nasTunnelStorageUrl, setNasTunnelStorageUrl] = useState('https://storage.lenas.me');
     const [nasConfigSaving, setNasConfigSaving] = useState(false);
     const [nasConfigMsg, setNasConfigMsg] = useState('');
 
@@ -340,18 +341,15 @@ const Settings: React.FC = () => {
             
             // Load current NAS settings
             window.electron.getSupabaseConfig?.().then((cfg: any) => {
-                const parseHost = (urlStr: string, fallback: string) => {
-                    if (!urlStr) return fallback;
-                    try {
-                        const parsed = new URL(urlStr);
-                        return parsed.hostname;
-                    } catch {
-                        return urlStr.replace(/^https?:\/\//, '').split(':')[0] || fallback;
-                    }
-                };
                 if (cfg) {
+                    const parseHost = (urlStr: string, fallback: string) => {
+                        if (!urlStr) return fallback;
+                        try { return new URL(urlStr).hostname; }
+                        catch { return urlStr.replace(/^https?:\/\//, '').split(':')[0] || fallback; }
+                    };
                     setNasLocalHost(parseHost(cfg.nasLocalUrl, '192.168.1.14'));
-                    setNasPublicHost(parseHost(cfg.nasUrl, '100.88.85.6'));
+                    setNasTunnelDbUrl(cfg.nasTunnelUrl || 'https://db.lenas.me');
+                    setNasTunnelStorageUrl(cfg.nasTunnelStorageUrl || 'https://storage.lenas.me');
                 }
             }).catch(console.error);
         }
@@ -362,40 +360,27 @@ const Settings: React.FC = () => {
         setNasConfigMsg('');
         try {
             const normalizeHost = (input: string) => {
-                let val = input.trim();
+                const val = input.trim();
                 if (!val) return '';
-                if (val.startsWith('http://') || val.startsWith('https://')) {
-                    try {
-                        const parsed = new URL(val);
-                        return parsed.hostname;
-                    } catch {
-                        // ignore and fall through
-                    }
-                }
-                return val.replace(/^https?:\/\//, '').split('/')[0].split(':')[0];
+                try { return new URL(val.startsWith('http') ? val : `http://${val}`).hostname; }
+                catch { return val.replace(/^https?:\/\//, '').split('/')[0].split(':')[0]; }
             };
 
             const localHost = normalizeHost(nasLocalHost) || '192.168.1.14';
-            const publicHost = normalizeHost(nasPublicHost) || '100.88.85.6';
-
-            const nasLocalUrl = `http://${localHost}:3001`;
-            const nasLocalStorageUrl = `http://${localHost}:8081`;
-            const nasUrl = `http://${publicHost}:3001`;
-            const nasStorageUrl = `http://${publicHost}:8081`;
+            const tunnelDb  = nasTunnelDbUrl.trim() || 'https://db.lenas.me';
+            const tunnelSt  = nasTunnelStorageUrl.trim() || 'https://storage.lenas.me';
 
             const res = await window.electron.saveSupabaseConfig({
-                nasLocalUrl,
-                nasLocalStorageUrl,
-                nasUrl,
-                nasStorageUrl
+                nasLocalUrl:        `http://${localHost}:3001`,
+                nasLocalStorageUrl: `http://${localHost}:8081`,
+                nasTunnelUrl:        tunnelDb,
+                nasTunnelStorageUrl: tunnelSt,
             });
 
             if (res?.success) {
                 showToast('NAS Server settings saved!', 'success');
-                setNasConfigMsg('Saved! Refresh health checks to verify connectivity.');
-                setTimeout(() => {
-                    checkNasConnectionState();
-                }, 1000);
+                setNasConfigMsg('Saved! Connectivity check will run automatically.');
+                setTimeout(() => { checkNasConnectionState(); }, 1000);
             } else {
                 showToast(res?.error || 'Failed to save NAS settings', 'error');
                 setNasConfigMsg(`Error: ${res?.error || 'Failed to save'}`);
@@ -1018,44 +1003,58 @@ const Settings: React.FC = () => {
                                         <div style={iconBox('#8b5cf6', 'rgba(139,92,246,0.12)')}><Server size={20} /></div>
                                         <div>
                                             <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>TrueNAS Server Configuration</h2>
-                                            <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-secondary)' }}>Configure local and public/Tailscale connection endpoints</p>
+                                            <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-secondary)' }}>Configure how LE-SOFT connects to the NAS database</p>
                                         </div>
                                     </div>
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
-                                            <div>
-                                                <span style={label}>Local NAS IP / Hostname</span>
-                                                <input 
-                                                    style={input} 
-                                                    type="text" 
-                                                    value={nasLocalHost} 
-                                                    onChange={e => setNasLocalHost(e.target.value)} 
-                                                    placeholder="e.g. 192.168.1.14" 
-                                                />
-                                                <p style={{ margin: '0.35rem 0 0', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
-                                                    Used for direct LAN connectivity. Resolves to:<br />
-                                                    Database: <code style={{ fontFamily: 'monospace' }}>http://{nasLocalHost || '192.168.1.14'}:3001</code><br />
-                                                    Storage: <code style={{ fontFamily: 'monospace' }}>http://{nasLocalHost || '192.168.1.14'}:8081</code>
-                                                </p>
-                                            </div>
-                                            <div>
-                                                <span style={label}>Public / Tailscale NAS IP</span>
-                                                <input 
-                                                    style={input} 
-                                                    type="text" 
-                                                    value={nasPublicHost} 
-                                                    onChange={e => setNasPublicHost(e.target.value)} 
-                                                    placeholder="e.g. 100.88.85.6" 
-                                                />
-                                                <p style={{ margin: '0.35rem 0 0', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
-                                                    Used when outside the local network. Resolves to:<br />
-                                                    Database: <code style={{ fontFamily: 'monospace' }}>http://{nasPublicHost || '100.88.85.6'}:3001</code><br />
-                                                    Storage: <code style={{ fontFamily: 'monospace' }}>http://{nasPublicHost || '100.88.85.6'}:8081</code>
-                                                </p>
+
+                                        {/* Tier 1: Local LAN */}
+                                        <div style={{ padding: '0.85rem 1rem', borderRadius: '8px', background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.2)' }}>
+                                            <p style={{ margin: '0 0 0.6rem', fontSize: '0.78rem', fontWeight: 700, color: '#22c55e', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tier 1 — Local LAN (in-office, fastest)</p>
+                                            <span style={label}>Local NAS IP / Hostname</span>
+                                            <input
+                                                style={input}
+                                                type="text"
+                                                value={nasLocalHost}
+                                                onChange={e => setNasLocalHost(e.target.value)}
+                                                placeholder="e.g. 192.168.1.14"
+                                            />
+                                            <p style={{ margin: '0.3rem 0 0', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+                                                DB: <code style={{ fontFamily: 'monospace' }}>http://{nasLocalHost || '192.168.1.14'}:3001</code>
+                                                {' · '}Storage: <code style={{ fontFamily: 'monospace' }}>http://{nasLocalHost || '192.168.1.14'}:8081</code>
+                                            </p>
+                                        </div>
+
+                                        {/* Tier 2: Cloudflare Tunnel */}
+                                        <div style={{ padding: '0.85rem 1rem', borderRadius: '8px', background: 'rgba(251,146,60,0.06)', border: '1px solid rgba(251,146,60,0.25)' }}>
+                                            <p style={{ margin: '0 0 0.6rem', fontSize: '0.78rem', fontWeight: 700, color: '#f97316', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tier 2 — Cloudflare Tunnel (remote, no VPN needed)</p>
+                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                                                <div>
+                                                    <span style={label}>Tunnel Database URL</span>
+                                                    <input
+                                                        style={input}
+                                                        type="text"
+                                                        value={nasTunnelDbUrl}
+                                                        onChange={e => setNasTunnelDbUrl(e.target.value)}
+                                                        placeholder="https://db.lenas.me"
+                                                    />
+                                                    <p style={{ margin: '0.3rem 0 0', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>PostgREST via Cloudflare Tunnel</p>
+                                                </div>
+                                                <div>
+                                                    <span style={label}>Tunnel Storage URL</span>
+                                                    <input
+                                                        style={input}
+                                                        type="text"
+                                                        value={nasTunnelStorageUrl}
+                                                        onChange={e => setNasTunnelStorageUrl(e.target.value)}
+                                                        placeholder="https://storage.lenas.me"
+                                                    />
+                                                    <p style={{ margin: '0.3rem 0 0', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>File storage server via Cloudflare Tunnel</p>
+                                                </div>
                                             </div>
                                         </div>
-                                        
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.5rem' }}>
+
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.25rem' }}>
                                             <div style={{ flex: 1 }}>
                                                 {nasConfigMsg && (
                                                     <p style={{ margin: 0, fontSize: '0.85rem', color: nasConfigMsg.includes('Error') ? '#ef4444' : '#22c55e', fontWeight: 600 }}>
@@ -1063,8 +1062,8 @@ const Settings: React.FC = () => {
                                                     </p>
                                                 )}
                                             </div>
-                                            <button 
-                                                onClick={handleSaveNasConfig} 
+                                            <button
+                                                onClick={handleSaveNasConfig}
                                                 disabled={nasConfigSaving}
                                                 style={{ ...btn('var(--accent-color)'), whiteSpace: 'nowrap', opacity: nasConfigSaving ? 0.7 : 1 }}
                                             >

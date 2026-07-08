@@ -2877,6 +2877,8 @@ export function registerHandlers() {
             if (newConfig.nasStorageUrl !== undefined)      merged.nasStorageUrl      = newConfig.nasStorageUrl;
             if (newConfig.nasLocalStorageUrl !== undefined) merged.nasLocalStorageUrl = newConfig.nasLocalStorageUrl;
             if (newConfig.nasAnonKey !== undefined)         merged.nasAnonKey         = newConfig.nasAnonKey;
+            if (newConfig.nasTunnelUrl !== undefined)        merged.nasTunnelUrl        = newConfig.nasTunnelUrl;
+            if (newConfig.nasTunnelStorageUrl !== undefined) merged.nasTunnelStorageUrl = newConfig.nasTunnelStorageUrl;
 
             fs.writeFileSync(currentConfigPath, JSON.stringify(merged, null, 2), 'utf8');
 

@@ -1,7 +1,7 @@
 {
   "name": "le-soft",
   "private": true,
-  "version": "1.4.5",
+  "version": "1.4.6",
   "description": "Leading Edge ECO-System Software",
   "author": "Leading Edge <leadingedge.com.bd>",
   "type": "module",

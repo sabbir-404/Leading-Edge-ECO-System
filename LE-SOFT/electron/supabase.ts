@@ -17,11 +17,13 @@ interface SupabaseConfig {
     url: string;
     anonKey: string;
     serviceRoleKey?: string;
-    nasUrl?: string;
+    nasUrl?: string;             // legacy Tailscale IP — kept for back-compat
     nasAnonKey?: string;
-    nasStorageUrl?: string;
-    nasLocalUrl?: string;
-    nasLocalStorageUrl?: string;
+    nasStorageUrl?: string;      // legacy
+    nasLocalUrl?: string;        // LAN: http://192.168.1.14:3001
+    nasLocalStorageUrl?: string; // LAN: http://192.168.1.14:8081
+    nasTunnelUrl?: string;       // Cloudflare Tunnel: https://db.lenas.me
+    nasTunnelStorageUrl?: string;// Cloudflare Tunnel: https://storage.lenas.me
 }
 
 // SECURITY: No credentials are hardcoded here.
@@ -35,7 +37,9 @@ const EMPTY_DEFAULTS: SupabaseConfig = {
     nasAnonKey: '',
     nasStorageUrl: '',
     nasLocalUrl: '',
-    nasLocalStorageUrl: ''
+    nasLocalStorageUrl: '',
+    nasTunnelUrl: '',
+    nasTunnelStorageUrl: ''
 };
 
 function loadConfig(): SupabaseConfig {
@@ -156,7 +160,7 @@ export let supabaseAdmin: SupabaseClient | null = null;
 export let nasClient: SupabaseClient | null = null;
 export let supabaseClient: SupabaseClient | null = null;
 export let isNasOnline = false;
-export let connectionState: 'supabase' | 'nas_local' | 'nas_public' = 'supabase';
+export let connectionState: 'supabase' | 'nas_local' | 'nas_tunnel' | 'nas_public' = 'supabase';
 export let activeNasUrl: string | null = null;
 
 // Proxy wrapper for the default export/standard client so external modules
@@ -182,11 +186,19 @@ export function getNasStorageUrl(): string | null {
     try {
         const config = loadConfig();
         
-        // Dynamically route storage locally if database is using local LAN IP
+        // Tier 1: Local LAN storage
         if (connectionState === 'nas_local') {
-            return config.nasLocalStorageUrl || "http://192.168.1.14:8081";
+            return config.nasLocalStorageUrl || 'http://192.168.1.14:8081';
         }
-        return config.nasStorageUrl || "http://100.88.85.6:8081";
+        // Tier 2: Cloudflare Tunnel storage
+        if (connectionState === 'nas_tunnel') {
+            return config.nasTunnelStorageUrl || 'https://storage.lenas.me';
+        }
+        // Legacy Tailscale fallback (nas_public)
+        if (connectionState === 'nas_public') {
+            return config.nasStorageUrl || config.nasUrl?.replace(':3001', ':8081') || null;
+        }
+        return null;
     } catch {
         return null;
     }
@@ -236,14 +248,16 @@ function recreateNasClient(url: string) {
 
 async function checkNasConnectivity() {
     const config = loadConfig();
-    const localUrl = config.nasLocalUrl || "http://192.168.1.14:3001";
-    const publicUrl = config.nasUrl || "http://100.88.85.6:3001";
+    const localUrl   = config.nasLocalUrl   || 'http://192.168.1.14:3001';
+    const tunnelUrl  = config.nasTunnelUrl  || 'https://db.lenas.me';
+    // Legacy Tailscale fallback (still supported if configured)
+    const publicUrl  = config.nasUrl;
     
     // Helper to check if a PostgREST URL is responding
-    const pingUrl = async (url: string): Promise<boolean> => {
+    const pingUrl = async (url: string, timeoutMs = 3000): Promise<boolean> => {
         try {
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 2000); // 2-second timeout
+            const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
             const res = await fetch(url, { signal: controller.signal });
             clearTimeout(timeoutId);
             return res.ok;
@@ -252,8 +266,8 @@ async function checkNasConnectivity() {
         }
     };
 
-    // 1. Try local NAS URL
-    const isLocalOnline = await pingUrl(localUrl);
+    // ── Tier 1: Local LAN (fastest, ~2 s timeout) ─────────────────────────────
+    const isLocalOnline = await pingUrl(localUrl, 2000);
     if (isLocalOnline) {
         if (connectionState !== 'nas_local' || activeNasUrl !== localUrl) {
             console.log(`[SUPABASE] Local NAS database (${localUrl}) is ONLINE. Switched active database to Local NAS.`);
@@ -266,12 +280,28 @@ async function checkNasConnectivity() {
         return;
     }
 
-    // 2. Try public/Tailscale NAS URL
+    // ── Tier 2: Cloudflare Tunnel (no VPN required, ~4 s timeout) ────────────
+    if (tunnelUrl) {
+        const isTunnelOnline = await pingUrl(tunnelUrl, 4000);
+        if (isTunnelOnline) {
+            if (connectionState !== 'nas_tunnel' || activeNasUrl !== tunnelUrl) {
+                console.log(`[SUPABASE] Cloudflare Tunnel (${tunnelUrl}) is ONLINE. Switched active database to Tunnel.`);
+                connectionState = 'nas_tunnel';
+                activeNasUrl = tunnelUrl;
+                recreateNasClient(tunnelUrl);
+            }
+            activeClient = nasClient!;
+            isNasOnline = true;
+            return;
+        }
+    }
+
+    // ── Tier 3: Legacy Tailscale/public IP (backward-compat) ─────────────────
     if (publicUrl) {
-        const isPublicOnline = await pingUrl(publicUrl);
+        const isPublicOnline = await pingUrl(publicUrl, 3000);
         if (isPublicOnline) {
             if (connectionState !== 'nas_public' || activeNasUrl !== publicUrl) {
-                console.log(`[SUPABASE] Public NAS database (${publicUrl}) is ONLINE. Switched active database to Public NAS.`);
+                console.log(`[SUPABASE] Legacy public NAS (${publicUrl}) is ONLINE. Using legacy connection.`);
                 connectionState = 'nas_public';
                 activeNasUrl = publicUrl;
                 recreateNasClient(publicUrl);
@@ -282,9 +312,9 @@ async function checkNasConnectivity() {
         }
     }
 
-    // 3. Fallback to Supabase Cloud
+    // ── Fallback: Supabase Cloud ───────────────────────────────────────────────
     if (connectionState !== 'supabase') {
-        console.warn(`[SUPABASE] Both NAS connections are OFFLINE. Falling back to remote Supabase.`);
+        console.warn('[SUPABASE] All NAS connections OFFLINE. Falling back to remote Supabase.');
         connectionState = 'supabase';
         activeNasUrl = null;
     }
@@ -338,8 +368,8 @@ export function reinitSupabaseClients(): void {
             }
         }) : null;
 
-        // Initialize NAS Client if configured
-        if (config.nasUrl) {
+        // Initialize NAS Client if configured — trigger if either local or tunnel URL is set
+        if (config.nasLocalUrl || config.nasTunnelUrl || config.nasUrl) {
             // Check immediately and start connectivity interval
             checkNasConnectivity();
             pingInterval = setInterval(checkNasConnectivity, 30000);
