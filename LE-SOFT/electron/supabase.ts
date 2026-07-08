@@ -24,6 +24,8 @@ interface SupabaseConfig {
     nasLocalStorageUrl?: string; // LAN: http://192.168.1.14:8081
     nasTunnelUrl?: string;       // Cloudflare Tunnel: https://db.lenas.me
     nasTunnelStorageUrl?: string;// Cloudflare Tunnel: https://storage.lenas.me
+    cfAccessClientId?: string;   // Cloudflare Access Service Token — Client ID
+    cfAccessClientSecret?: string; // Cloudflare Access Service Token — Client Secret
 }
 
 // SECURITY: No credentials are hardcoded here.
@@ -39,7 +41,9 @@ const EMPTY_DEFAULTS: SupabaseConfig = {
     nasLocalUrl: '',
     nasLocalStorageUrl: '',
     nasTunnelUrl: '',
-    nasTunnelStorageUrl: ''
+    nasTunnelStorageUrl: '',
+    cfAccessClientId: '',
+    cfAccessClientSecret: ''
 };
 
 function loadConfig(): SupabaseConfig {
@@ -209,12 +213,30 @@ let pingInterval: ReturnType<typeof setInterval> | null = null;
 function recreateNasClient(url: string) {
     try {
         const config = loadConfig();
+        const isTunnel = url.startsWith('https://');
+
+        // Build the CF Access headers — only injected on tunnel (HTTPS) connections.
+        // On local LAN (HTTP) there is no Cloudflare edge, so headers are omitted.
+        const cfHeaders: Record<string, string> = {};
+        if (isTunnel && config.cfAccessClientId && config.cfAccessClientSecret) {
+            cfHeaders['CF-Access-Client-Id']     = config.cfAccessClientId;
+            cfHeaders['CF-Access-Client-Secret'] = config.cfAccessClientSecret;
+        }
+
         const nasFetch = (input: RequestInfo | URL, init?: RequestInit) => {
             let reqUrl = typeof input === 'string' ? input : input.toString();
             if (reqUrl.includes('/rest/v1/')) {
                 reqUrl = reqUrl.replace('/rest/v1/', '/');
             }
-            return fetch(reqUrl, init);
+            // Merge CF-Access headers with any headers already on the request
+            const mergedInit: RequestInit = {
+                ...init,
+                headers: {
+                    ...(init?.headers as Record<string, string> || {}),
+                    ...cfHeaders,
+                }
+            };
+            return fetch(reqUrl, mergedInit);
         };
 
         nasClient = createClient(url, config.nasAnonKey || config.anonKey || 'placeholder', {
@@ -225,7 +247,8 @@ function recreateNasClient(url: string) {
             global: {
                 fetch: nasFetch,
                 headers: {
-                    'x-app-name': 'LE-SOFT-NAS'
+                    'x-app-name': 'LE-SOFT-NAS',
+                    ...cfHeaders,
                 }
             }
         });
@@ -252,13 +275,24 @@ async function checkNasConnectivity() {
     const tunnelUrl  = config.nasTunnelUrl  || 'https://db.lenas.me';
     // Legacy Tailscale fallback (still supported if configured)
     const publicUrl  = config.nasUrl;
-    
+
+    // CF-Access headers for tunnel pings — without these the Cloudflare
+    // Access policy returns 403 and the ping would incorrectly show OFFLINE.
+    const cfHeaders: Record<string, string> = {};
+    if (config.cfAccessClientId && config.cfAccessClientSecret) {
+        cfHeaders['CF-Access-Client-Id']     = config.cfAccessClientId;
+        cfHeaders['CF-Access-Client-Secret'] = config.cfAccessClientSecret;
+    }
+
     // Helper to check if a PostgREST URL is responding
-    const pingUrl = async (url: string, timeoutMs = 3000): Promise<boolean> => {
+    const pingUrl = async (url: string, timeoutMs = 3000, extraHeaders: Record<string, string> = {}): Promise<boolean> => {
         try {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-            const res = await fetch(url, { signal: controller.signal });
+            const res = await fetch(url, {
+                signal: controller.signal,
+                headers: extraHeaders
+            });
             clearTimeout(timeoutId);
             return res.ok;
         } catch {
@@ -282,7 +316,7 @@ async function checkNasConnectivity() {
 
     // ── Tier 2: Cloudflare Tunnel (no VPN required, ~4 s timeout) ────────────
     if (tunnelUrl) {
-        const isTunnelOnline = await pingUrl(tunnelUrl, 4000);
+        const isTunnelOnline = await pingUrl(tunnelUrl, 4000, cfHeaders);
         if (isTunnelOnline) {
             if (connectionState !== 'nas_tunnel' || activeNasUrl !== tunnelUrl) {
                 console.log(`[SUPABASE] Cloudflare Tunnel (${tunnelUrl}) is ONLINE. Switched active database to Tunnel.`);

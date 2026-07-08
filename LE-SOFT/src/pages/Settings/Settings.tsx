@@ -330,6 +330,9 @@ const Settings: React.FC = () => {
     const [nasLocalHost, setNasLocalHost] = useState('192.168.1.14');
     const [nasTunnelDbUrl, setNasTunnelDbUrl] = useState('https://db.lenas.me');
     const [nasTunnelStorageUrl, setNasTunnelStorageUrl] = useState('https://storage.lenas.me');
+    const [cfClientId, setCfClientId] = useState('');
+    const [cfClientSecret, setCfClientSecret] = useState('');
+    const [showCfSecret, setShowCfSecret] = useState(false);
     const [nasConfigSaving, setNasConfigSaving] = useState(false);
     const [nasConfigMsg, setNasConfigMsg] = useState('');
 
@@ -350,6 +353,9 @@ const Settings: React.FC = () => {
                     setNasLocalHost(parseHost(cfg.nasLocalUrl, '192.168.1.14'));
                     setNasTunnelDbUrl(cfg.nasTunnelUrl || 'https://db.lenas.me');
                     setNasTunnelStorageUrl(cfg.nasTunnelStorageUrl || 'https://storage.lenas.me');
+                    setCfClientId(cfg.cfAccessClientId || '');
+                    // Show masked secret if one exists (don't reveal the actual value)
+                    setCfClientSecret(cfg.cfAccessClientSecret ? '••••••••••••••••••••••••••••••••' : '');
                 }
             }).catch(console.error);
         }
@@ -370,12 +376,22 @@ const Settings: React.FC = () => {
             const tunnelDb  = nasTunnelDbUrl.trim() || 'https://db.lenas.me';
             const tunnelSt  = nasTunnelStorageUrl.trim() || 'https://storage.lenas.me';
 
-            const res = await window.electron.saveSupabaseConfig({
+            // Only send CF credentials if they were actually changed (not the masked placeholder)
+            const cfIdToSave     = cfClientId.trim();
+            const cfSecretToSave = cfClientSecret.startsWith('\u2022') ? undefined : cfClientSecret.trim();
+
+            const savePayload: Record<string, string | undefined> = {
                 nasLocalUrl:        `http://${localHost}:3001`,
                 nasLocalStorageUrl: `http://${localHost}:8081`,
                 nasTunnelUrl:        tunnelDb,
                 nasTunnelStorageUrl: tunnelSt,
-            });
+                cfAccessClientId:    cfIdToSave || undefined,
+            };
+            if (cfSecretToSave !== undefined) {
+                savePayload.cfAccessClientSecret = cfSecretToSave;
+            }
+
+            const res = await window.electron.saveSupabaseConfig(savePayload);
 
             if (res?.success) {
                 showToast('NAS Server settings saved!', 'success');
@@ -1050,6 +1066,52 @@ const Settings: React.FC = () => {
                                                         placeholder="https://storage.lenas.me"
                                                     />
                                                     <p style={{ margin: '0.3rem 0 0', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>File storage server via Cloudflare Tunnel</p>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Tier 3: Cloudflare Access Service Token */}
+                                        <div style={{ padding: '0.85rem 1rem', borderRadius: '8px', background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.25)' }}>
+                                            <p style={{ margin: '0 0 0.6rem', fontSize: '0.78rem', fontWeight: 700, color: '#8b5cf6', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                                🔐 Tier 3 — Cloudflare Access Service Token (required for security)
+                                            </p>
+                                            <p style={{ margin: '0 0 0.8rem', fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                                                These credentials are sent as headers with every tunnel request. Without them, Cloudflare blocks all access to the NAS — even if someone finds the URL.
+                                            </p>
+                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                                                <div>
+                                                    <span style={label}>CF-Access-Client-Id</span>
+                                                    <input
+                                                        style={input}
+                                                        type="text"
+                                                        value={cfClientId}
+                                                        onChange={e => setCfClientId(e.target.value)}
+                                                        placeholder="xxxxxxxxxxxxxxxx.access"
+                                                        autoComplete="off"
+                                                    />
+                                                    <p style={{ margin: '0.3rem 0 0', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>From Cloudflare Zero Trust → Access → Service Tokens</p>
+                                                </div>
+                                                <div>
+                                                    <span style={label}>CF-Access-Client-Secret</span>
+                                                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                                        <input
+                                                            style={{ ...input, flex: 1, fontFamily: showCfSecret ? 'monospace' : 'inherit' }}
+                                                            type={showCfSecret ? 'text' : 'password'}
+                                                            value={cfClientSecret}
+                                                            onChange={e => setCfClientSecret(e.target.value)}
+                                                            onFocus={() => { if (cfClientSecret.startsWith('•')) setCfClientSecret(''); }}
+                                                            placeholder="64-character secret"
+                                                            autoComplete="new-password"
+                                                        />
+                                                        <button
+                                                            onClick={() => setShowCfSecret(v => !v)}
+                                                            style={{ padding: '0 0.75rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'transparent', cursor: 'pointer', color: 'var(--text-secondary)', flexShrink: 0 }}
+                                                            title={showCfSecret ? 'Hide secret' : 'Show secret'}
+                                                        >
+                                                            {showCfSecret ? <EyeOff size={15} /> : <Eye size={15} />}
+                                                        </button>
+                                                    </div>
+                                                    <p style={{ margin: '0.3rem 0 0', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Shown only once in Cloudflare — paste it here to save</p>
                                                 </div>
                                             </div>
                                         </div>

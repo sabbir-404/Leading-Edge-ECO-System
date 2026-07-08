@@ -2879,6 +2879,8 @@ export function registerHandlers() {
             if (newConfig.nasAnonKey !== undefined)         merged.nasAnonKey         = newConfig.nasAnonKey;
             if (newConfig.nasTunnelUrl !== undefined)        merged.nasTunnelUrl        = newConfig.nasTunnelUrl;
             if (newConfig.nasTunnelStorageUrl !== undefined) merged.nasTunnelStorageUrl = newConfig.nasTunnelStorageUrl;
+            if (newConfig.cfAccessClientId !== undefined)    merged.cfAccessClientId    = newConfig.cfAccessClientId;
+            if (newConfig.cfAccessClientSecret !== undefined) merged.cfAccessClientSecret = newConfig.cfAccessClientSecret;
 
             fs.writeFileSync(currentConfigPath, JSON.stringify(merged, null, 2), 'utf8');
 

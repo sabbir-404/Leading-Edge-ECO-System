@@ -22340,12 +22340,25 @@ function getNasStorageUrl() {
 function recreateNasClient(url) {
   try {
     const config = loadConfig();
+    const isTunnel = url.startsWith("https://");
+    const cfHeaders = {};
+    if (isTunnel && config.cfAccessClientId && config.cfAccessClientSecret) {
+      cfHeaders["CF-Access-Client-Id"] = config.cfAccessClientId;
+      cfHeaders["CF-Access-Client-Secret"] = config.cfAccessClientSecret;
+    }
     const nasFetch = (input, init) => {
       let reqUrl = typeof input === "string" ? input : input.toString();
       if (reqUrl.includes("/rest/v1/")) {
         reqUrl = reqUrl.replace("/rest/v1/", "/");
       }
-      return fetch(reqUrl, init);
+      const mergedInit = {
+        ...init,
+        headers: {
+          ...init?.headers || {},
+          ...cfHeaders
+        }
+      };
+      return fetch(reqUrl, mergedInit);
     };
     nasClient = createClient(url, config.nasAnonKey || config.anonKey || "placeholder", {
       auth: {
@@ -22355,7 +22368,8 @@ function recreateNasClient(url) {
       global: {
         fetch: nasFetch,
         headers: {
-          "x-app-name": "LE-SOFT-NAS"
+          "x-app-name": "LE-SOFT-NAS",
+          ...cfHeaders
         }
       }
     });
@@ -22379,11 +22393,19 @@ async function checkNasConnectivity() {
   const localUrl = config.nasLocalUrl || "http://192.168.1.14:3001";
   const tunnelUrl = config.nasTunnelUrl || "https://db.lenas.me";
   const publicUrl = config.nasUrl;
-  const pingUrl = async (url, timeoutMs = 3e3) => {
+  const cfHeaders = {};
+  if (config.cfAccessClientId && config.cfAccessClientSecret) {
+    cfHeaders["CF-Access-Client-Id"] = config.cfAccessClientId;
+    cfHeaders["CF-Access-Client-Secret"] = config.cfAccessClientSecret;
+  }
+  const pingUrl = async (url, timeoutMs = 3e3, extraHeaders = {}) => {
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-      const res = await fetch(url, { signal: controller.signal });
+      const res = await fetch(url, {
+        signal: controller.signal,
+        headers: extraHeaders
+      });
       clearTimeout(timeoutId);
       return res.ok;
     } catch {
@@ -22403,7 +22425,7 @@ async function checkNasConnectivity() {
     return;
   }
   if (tunnelUrl) {
-    const isTunnelOnline = await pingUrl(tunnelUrl, 4e3);
+    const isTunnelOnline = await pingUrl(tunnelUrl, 4e3, cfHeaders);
     if (isTunnelOnline) {
       if (connectionState !== "nas_tunnel" || activeNasUrl !== tunnelUrl) {
         console.log(`[SUPABASE] Cloudflare Tunnel (${tunnelUrl}) is ONLINE. Switched active database to Tunnel.`);
@@ -22515,7 +22537,9 @@ var init_supabase = __esm({
       nasLocalUrl: "",
       nasLocalStorageUrl: "",
       nasTunnelUrl: "",
-      nasTunnelStorageUrl: ""
+      nasTunnelStorageUrl: "",
+      cfAccessClientId: "",
+      cfAccessClientSecret: ""
     };
     GENERATION_SECRET = "LE-SOFT-MASTER-KEY-2026-Pr0duct10n-S3cret!@#";
     CREDENTIAL_SALT = "LE-SOFT-CREDENTIAL-ENCRYPT-SALT-v1-2026";
@@ -117673,6 +117697,8 @@ function registerHandlers() {
       if (newConfig.nasAnonKey !== void 0) merged.nasAnonKey = newConfig.nasAnonKey;
       if (newConfig.nasTunnelUrl !== void 0) merged.nasTunnelUrl = newConfig.nasTunnelUrl;
       if (newConfig.nasTunnelStorageUrl !== void 0) merged.nasTunnelStorageUrl = newConfig.nasTunnelStorageUrl;
+      if (newConfig.cfAccessClientId !== void 0) merged.cfAccessClientId = newConfig.cfAccessClientId;
+      if (newConfig.cfAccessClientSecret !== void 0) merged.cfAccessClientSecret = newConfig.cfAccessClientSecret;
       import_fs9.default.writeFileSync(currentConfigPath, JSON.stringify(merged, null, 2), "utf8");
       reinitSupabaseClients();
       return { success: true };
