@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, dialog, ipcMain } from 'electron';
+import { app, BrowserWindow, Menu, dialog, ipcMain, session } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import { autoUpdater } from 'electron-updater';
@@ -418,7 +418,37 @@ app.whenReady().then(() => {
     createWindow();
     log('Window created call done');
 
-    // 2. Initialize subsystems asynchronously without blocking UI
+    // 2. Inject CF Access headers for all requests to storage.lenas.me so that
+    //    <img> tags in the renderer can load product images through the Cloudflare Tunnel
+    //    without needing Tailscale. We read credentials at call-time from the config file
+    //    so they're always fresh even after a config update.
+    try {
+        const configPath = path.join(app.getPath('userData'), 'supabase-config.json');
+
+        session.defaultSession.webRequest.onBeforeSendHeaders(
+            { urls: ['https://storage.lenas.me/*'] },
+            (details, callback) => {
+                let cfId = '';
+                let cfSecret = '';
+                try {
+                    const raw = fs.readFileSync(configPath, 'utf-8');
+                    const cfg = JSON.parse(raw);
+                    cfId = cfg.cfAccessClientId || '';
+                    cfSecret = cfg.cfAccessClientSecret || '';
+                } catch { /* config not found or unreadable - headers omitted */ }
+
+                const headers = { ...details.requestHeaders };
+                if (cfId) headers['CF-Access-Client-Id'] = cfId;
+                if (cfSecret) headers['CF-Access-Client-Secret'] = cfSecret;
+                callback({ requestHeaders: headers });
+            }
+        );
+        log('CF Access webRequest interceptor registered for storage.lenas.me');
+    } catch (e: any) {
+        log(`CF Access interceptor setup failed: ${e.message}`);
+    }
+
+
     (async () => {
         try {
             initEncryptionKey();
