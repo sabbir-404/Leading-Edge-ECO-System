@@ -10,6 +10,7 @@ import { useTheme } from '../../context/ThemeContext';
 import DashboardLayout from '../../components/DashboardLayout';
 import { useToast } from '../../context/ToastContext';
 import { PRINT_PAGE_SIZE_OPTIONS, getPrintPageSize, getPrintPageSizeKey } from '../../utils/printPageSize';
+import { isSuperadmin } from '../../utils/permissions';
 import '../Accounting/Masters/Masters.css';
 
 type SettingsTab = 'profile' | 'system_hardware' | 'payment_methods' | 'database_api' | 'policy' | 'about' | 'license_generator' | 'versions';
@@ -1013,127 +1014,129 @@ const Settings: React.FC = () => {
                                     )}
                                 </div>
 
-                                {/* TrueNAS Server Connection Settings */}
-                                <div style={card}>
-                                    <div style={cardHeader}>
-                                        <div style={iconBox('#8b5cf6', 'rgba(139,92,246,0.12)')}><Server size={20} /></div>
-                                        <div>
-                                            <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>TrueNAS Server Configuration</h2>
-                                            <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-secondary)' }}>Configure how LE-SOFT connects to the NAS database</p>
-                                        </div>
-                                    </div>
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-
-                                        {/* Tier 1: Local LAN */}
-                                        <div style={{ padding: '0.85rem 1rem', borderRadius: '8px', background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.2)' }}>
-                                            <p style={{ margin: '0 0 0.6rem', fontSize: '0.78rem', fontWeight: 700, color: '#22c55e', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tier 1 — Local LAN (in-office, fastest)</p>
-                                            <span style={label}>Local NAS IP / Hostname</span>
-                                            <input
-                                                style={input}
-                                                type="text"
-                                                value={nasLocalHost}
-                                                onChange={e => setNasLocalHost(e.target.value)}
-                                                placeholder="e.g. 192.168.1.14"
-                                            />
-                                            <p style={{ margin: '0.3rem 0 0', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
-                                                DB: <code style={{ fontFamily: 'monospace' }}>http://{nasLocalHost || '192.168.1.14'}:3001</code>
-                                                {' · '}Storage: <code style={{ fontFamily: 'monospace' }}>http://{nasLocalHost || '192.168.1.14'}:8081</code>
-                                            </p>
-                                        </div>
-
-                                        {/* Tier 2: Cloudflare Tunnel */}
-                                        <div style={{ padding: '0.85rem 1rem', borderRadius: '8px', background: 'rgba(251,146,60,0.06)', border: '1px solid rgba(251,146,60,0.25)' }}>
-                                            <p style={{ margin: '0 0 0.6rem', fontSize: '0.78rem', fontWeight: 700, color: '#f97316', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tier 2 — Cloudflare Tunnel (remote, no VPN needed)</p>
-                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                                                <div>
-                                                    <span style={label}>Tunnel Database URL</span>
-                                                    <input
-                                                        style={input}
-                                                        type="text"
-                                                        value={nasTunnelDbUrl}
-                                                        onChange={e => setNasTunnelDbUrl(e.target.value)}
-                                                        placeholder="https://db.lenas.me"
-                                                    />
-                                                    <p style={{ margin: '0.3rem 0 0', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>PostgREST via Cloudflare Tunnel</p>
-                                                </div>
-                                                <div>
-                                                    <span style={label}>Tunnel Storage URL</span>
-                                                    <input
-                                                        style={input}
-                                                        type="text"
-                                                        value={nasTunnelStorageUrl}
-                                                        onChange={e => setNasTunnelStorageUrl(e.target.value)}
-                                                        placeholder="https://storage.lenas.me"
-                                                    />
-                                                    <p style={{ margin: '0.3rem 0 0', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>File storage server via Cloudflare Tunnel</p>
-                                                </div>
+                                {/* TrueNAS Server Connection Settings - Hidden unless Superadmin or Easter Egg Unlocked */}
+                                {(isSuperadmin() || adminUnlocked) && (
+                                    <div style={card}>
+                                        <div style={cardHeader}>
+                                            <div style={iconBox('#8b5cf6', 'rgba(139,92,246,0.12)')}><Server size={20} /></div>
+                                            <div>
+                                                <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>TrueNAS Server Configuration</h2>
+                                                <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-secondary)' }}>Configure how LE-SOFT connects to the NAS database</p>
                                             </div>
                                         </div>
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
 
-                                        {/* Tier 3: Cloudflare Access Service Token */}
-                                        <div style={{ padding: '0.85rem 1rem', borderRadius: '8px', background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.25)' }}>
-                                            <p style={{ margin: '0 0 0.6rem', fontSize: '0.78rem', fontWeight: 700, color: '#8b5cf6', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                                                🔐 Tier 3 — Cloudflare Access Service Token (required for security)
-                                            </p>
-                                            <p style={{ margin: '0 0 0.8rem', fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                                                These credentials are sent as headers with every tunnel request. Without them, Cloudflare blocks all access to the NAS — even if someone finds the URL.
-                                            </p>
-                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                                                <div>
-                                                    <span style={label}>CF-Access-Client-Id</span>
-                                                    <input
-                                                        style={input}
-                                                        type="text"
-                                                        value={cfClientId}
-                                                        onChange={e => setCfClientId(e.target.value)}
-                                                        placeholder="xxxxxxxxxxxxxxxx.access"
-                                                        autoComplete="off"
-                                                    />
-                                                    <p style={{ margin: '0.3rem 0 0', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>From Cloudflare Zero Trust → Access → Service Tokens</p>
-                                                </div>
-                                                <div>
-                                                    <span style={label}>CF-Access-Client-Secret</span>
-                                                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                            {/* Tier 1: Local LAN */}
+                                            <div style={{ padding: '0.85rem 1rem', borderRadius: '8px', background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.2)' }}>
+                                                <p style={{ margin: '0 0 0.6rem', fontSize: '0.78rem', fontWeight: 700, color: '#22c55e', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tier 1 — Local LAN (in-office, fastest)</p>
+                                                <span style={label}>Local NAS IP / Hostname</span>
+                                                <input
+                                                    style={input}
+                                                    type="text"
+                                                    value={nasLocalHost}
+                                                    onChange={e => setNasLocalHost(e.target.value)}
+                                                    placeholder="e.g. 192.168.1.14"
+                                                />
+                                                <p style={{ margin: '0.3rem 0 0', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+                                                    DB: <code style={{ fontFamily: 'monospace' }}>http://{nasLocalHost || '192.168.1.14'}:3001</code>
+                                                    {' · '}Storage: <code style={{ fontFamily: 'monospace' }}>http://{nasLocalHost || '192.168.1.14'}:8081</code>
+                                                </p>
+                                            </div>
+
+                                            {/* Tier 2: Cloudflare Tunnel */}
+                                            <div style={{ padding: '0.85rem 1rem', borderRadius: '8px', background: 'rgba(251,146,60,0.06)', border: '1px solid rgba(251,146,60,0.25)' }}>
+                                                <p style={{ margin: '0 0 0.6rem', fontSize: '0.78rem', fontWeight: 700, color: '#f97316', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tier 2 — Cloudflare Tunnel (remote, no VPN needed)</p>
+                                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                                                    <div>
+                                                        <span style={label}>Tunnel Database URL</span>
                                                         <input
-                                                            style={{ ...input, flex: 1, fontFamily: showCfSecret ? 'monospace' : 'inherit' }}
-                                                            type={showCfSecret ? 'text' : 'password'}
-                                                            value={cfClientSecret}
-                                                            onChange={e => setCfClientSecret(e.target.value)}
-                                                            onFocus={() => { if (cfClientSecret.startsWith('•')) setCfClientSecret(''); }}
-                                                            placeholder="64-character secret"
-                                                            autoComplete="new-password"
+                                                            style={input}
+                                                            type="text"
+                                                            value={nasTunnelDbUrl}
+                                                            onChange={e => setNasTunnelDbUrl(e.target.value)}
+                                                            placeholder="https://db.lenas.me"
                                                         />
-                                                        <button
-                                                            onClick={() => setShowCfSecret(v => !v)}
-                                                            style={{ padding: '0 0.75rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'transparent', cursor: 'pointer', color: 'var(--text-secondary)', flexShrink: 0 }}
-                                                            title={showCfSecret ? 'Hide secret' : 'Show secret'}
-                                                        >
-                                                            {showCfSecret ? <EyeOff size={15} /> : <Eye size={15} />}
-                                                        </button>
+                                                        <p style={{ margin: '0.3rem 0 0', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>PostgREST via Cloudflare Tunnel</p>
                                                     </div>
-                                                    <p style={{ margin: '0.3rem 0 0', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Shown only once in Cloudflare — paste it here to save</p>
+                                                    <div>
+                                                        <span style={label}>Tunnel Storage URL</span>
+                                                        <input
+                                                            style={input}
+                                                            type="text"
+                                                            value={nasTunnelStorageUrl}
+                                                            onChange={e => setNasTunnelStorageUrl(e.target.value)}
+                                                            placeholder="https://storage.lenas.me"
+                                                        />
+                                                        <p style={{ margin: '0.3rem 0 0', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>File storage server via Cloudflare Tunnel</p>
+                                                    </div>
                                                 </div>
                                             </div>
-                                        </div>
 
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.25rem' }}>
-                                            <div style={{ flex: 1 }}>
-                                                {nasConfigMsg && (
-                                                    <p style={{ margin: 0, fontSize: '0.85rem', color: nasConfigMsg.includes('Error') ? '#ef4444' : '#22c55e', fontWeight: 600 }}>
-                                                        {nasConfigMsg}
-                                                    </p>
-                                                )}
+                                            {/* Tier 3: Cloudflare Access Service Token */}
+                                            <div style={{ padding: '0.85rem 1rem', borderRadius: '8px', background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.25)' }}>
+                                                <p style={{ margin: '0 0 0.6rem', fontSize: '0.78rem', fontWeight: 700, color: '#8b5cf6', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                                    🔐 Tier 3 — Cloudflare Access Service Token (required for security)
+                                                </p>
+                                                <p style={{ margin: '0 0 0.8rem', fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                                                    These credentials are sent as headers with every tunnel request. Without them, Cloudflare blocks all access to the NAS — even if someone finds the URL.
+                                                </p>
+                                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                                                    <div>
+                                                        <span style={label}>CF-Access-Client-Id</span>
+                                                        <input
+                                                            style={input}
+                                                            type="text"
+                                                            value={cfClientId}
+                                                            onChange={e => setCfClientId(e.target.value)}
+                                                            placeholder="xxxxxxxxxxxxxxxx.access"
+                                                            autoComplete="off"
+                                                        />
+                                                        <p style={{ margin: '0.3rem 0 0', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>From Cloudflare Zero Trust → Access → Service Tokens</p>
+                                                    </div>
+                                                    <div>
+                                                        <span style={label}>CF-Access-Client-Secret</span>
+                                                        <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                                            <input
+                                                                style={{ ...input, flex: 1, fontFamily: showCfSecret ? 'monospace' : 'inherit' }}
+                                                                type={showCfSecret ? 'text' : 'password'}
+                                                                value={cfClientSecret}
+                                                                onChange={e => setCfClientSecret(e.target.value)}
+                                                                onFocus={() => { if (cfClientSecret.startsWith('•')) setCfClientSecret(''); }}
+                                                                placeholder="64-character secret"
+                                                                autoComplete="new-password"
+                                                            />
+                                                            <button
+                                                                onClick={() => setShowCfSecret(v => !v)}
+                                                                style={{ padding: '0 0.75rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'transparent', cursor: 'pointer', color: 'var(--text-secondary)', flexShrink: 0 }}
+                                                                title={showCfSecret ? 'Hide secret' : 'Show secret'}
+                                                            >
+                                                                {showCfSecret ? <EyeOff size={15} /> : <Eye size={15} />}
+                                                            </button>
+                                                        </div>
+                                                        <p style={{ margin: '0.3rem 0 0', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Shown only once in Cloudflare — paste it here to save</p>
+                                                    </div>
+                                                </div>
                                             </div>
-                                            <button
-                                                onClick={handleSaveNasConfig}
-                                                disabled={nasConfigSaving}
-                                                style={{ ...btn('var(--accent-color)'), whiteSpace: 'nowrap', opacity: nasConfigSaving ? 0.7 : 1 }}
-                                            >
-                                                {nasConfigSaving ? 'Saving...' : 'Save NAS Settings'}
-                                            </button>
+
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.25rem' }}>
+                                                <div style={{ flex: 1 }}>
+                                                    {nasConfigMsg && (
+                                                        <p style={{ margin: 0, fontSize: '0.85rem', color: nasConfigMsg.includes('Error') ? '#ef4444' : '#22c55e', fontWeight: 600 }}>
+                                                            {nasConfigMsg}
+                                                        </p>
+                                                    )}
+                                                </div>
+                                                <button
+                                                    onClick={handleSaveNasConfig}
+                                                    disabled={nasConfigSaving}
+                                                    style={{ ...btn('var(--accent-color)'), whiteSpace: 'nowrap', opacity: nasConfigSaving ? 0.7 : 1 }}
+                                                >
+                                                    {nasConfigSaving ? 'Saving...' : 'Save NAS Settings'}
+                                                </button>
+                                            </div>
                                         </div>
                                     </div>
-                                </div>
+                                )}
 
                                 {/* Superadmin Only: Database Cleanup */}
                                 {localStorage.getItem('user_role') === 'superadmin' && (

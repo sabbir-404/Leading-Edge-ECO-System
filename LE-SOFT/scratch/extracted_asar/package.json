@@ -1,0 +1,32 @@
+{
+  "name": "le-soft",
+  "private": true,
+  "version": "1.4.0",
+  "description": "Leading Edge ECO-System Software",
+  "author": "Leading Edge <leadingedge.com.bd>",
+  "type": "module",
+  "main": "core/main.cjs",
+  "dependencies": {
+    "@google/genai": "^1.45.0",
+    "@supabase/supabase-js": "^2.97.0",
+    "asmcrypto.js": "^2.3.2",
+    "bcryptjs": "^3.0.3",
+    "better-sqlite3": "^12.9.0",
+    "cheerio": "^1.2.0",
+    "clsx": "^2.1.1",
+    "electron-updater": "^6.8.3",
+    "exceljs": "^4.4.0",
+    "framer-motion": "^12.34.0",
+    "jsbarcode": "^3.12.3",
+    "jspdf": "^4.1.0",
+    "jspdf-autotable": "^5.0.7",
+    "lucide-react": "^0.363.0",
+    "mysql2": "^3.17.1",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.22.3",
+    "sharp": "^0.34.5",
+    "supabase": "^2.98.2",
+    "tailwind-merge": "^3.4.1"
+  }
+}

@@ -1744,10 +1744,11 @@ export function registerHandlers() {
             String(now.getMonth() + 1).padStart(2, '0') +
             String(now.getDate()).padStart(2, '0');
 
-        // Generate invoice number locally — no waiting for Supabase
-        const serial = String(Math.floor(Math.random() * 9000) + 1000); // fast local serial
+        // Generate collision-resistant local invoice number using timestamp + random entropy
+        const seq = String(Date.now() % 100000).padStart(5, '0');
+        const rand = String(Math.floor(Math.random() * 900) + 100);
         const phoneLast4 = String(customer_id || '0').slice(-4).padStart(4, '0');
-        const invoiceNumber = `${dateStr}-${phoneLast4}-${serial}`;
+        const invoiceNumber = `${dateStr}-${phoneLast4}-${seq}${rand}`;
 
         const billRow = {
             invoice_number: invoiceNumber,
@@ -1831,20 +1832,25 @@ export function registerHandlers() {
                                 }
                             }
                         });
-                        // Decrement stock per item
+                        // Decrement product stock per item
                         for (const item of items) {
                             if (item.product_id && item.quantity) {
-                                enqueue({
-                                    table: 'products',
-                                    operation: 'update',
-                                    data: {},
-                                    filter: [{ column: 'id', value: item.product_id }],
-                                    onSuccess: async () => {
-                                        try { await supabase.rpc('decrement_product_qty', { p_id: item.product_id, qty: item.quantity }); } catch { }
-                                        await checkLowStockForProduct(Number(item.product_id));
-                                        syncStockToMySQL(item.product_id, item.quantity);
-                                    },
-                                } as any);
+                                (async () => {
+                                    try {
+                                        const pId = Number(item.product_id);
+                                        const qty = Number(item.quantity || 0);
+                                        const { data: prod } = await supabase.from('products').select('quantity').eq('id', pId).maybeSingle();
+                                        if (prod) {
+                                            const currentQty = Number(prod.quantity || 0);
+                                            const newQty = Math.max(0, currentQty - qty);
+                                            await supabase.from('products').update({ quantity: newQty }).eq('id', pId);
+                                        }
+                                        await checkLowStockForProduct(pId);
+                                        syncStockToMySQL(pId, qty);
+                                    } catch (err) {
+                                        console.error('[create-bill stock decrement failed]:', err);
+                                    }
+                                })();
                             }
                         }
                     } else {
@@ -2051,11 +2057,22 @@ export function registerHandlers() {
             }));
             await supabase.from('bill_items').insert(newItems);
             
-            // Decrement new stock
+            // Adjust stock per item
             for (const i of items) {
                 if (i.product_id && i.quantity) {
-                    try { await supabase.rpc('decrement_product_qty', { p_id: i.product_id, qty: i.quantity }); } catch { }
-                    await checkLowStockForProduct(Number(i.product_id));
+                    try {
+                        const pId = Number(i.product_id);
+                        const qty = Number(i.quantity || 0);
+                        const { data: prod } = await supabase.from('products').select('quantity').eq('id', pId).maybeSingle();
+                        if (prod) {
+                            const currentQty = Number(prod.quantity || 0);
+                            const newQty = Math.max(0, currentQty - qty);
+                            await supabase.from('products').update({ quantity: newQty }).eq('id', pId);
+                        }
+                        await checkLowStockForProduct(pId);
+                    } catch (e) {
+                        console.error('[update-bill stock update failed]:', e);
+                    }
                 }
             }
         }
@@ -2237,13 +2254,33 @@ export function registerHandlers() {
             // Restore stock for returned items, decrement for new items
             for (const item of (returned_items || [])) {
                 if (item.product_id && item.quantity) {
-                    try { await supabase.rpc('increment_product_qty', { p_id: item.product_id, qty: item.quantity }); } catch { }
+                    try {
+                        const pId = Number(item.product_id);
+                        const qty = Number(item.quantity || 0);
+                        const { data: prod } = await supabase.from('products').select('quantity').eq('id', pId).maybeSingle();
+                        if (prod) {
+                            const newQty = Number(prod.quantity || 0) + qty;
+                            await supabase.from('products').update({ quantity: newQty }).eq('id', pId);
+                        }
+                    } catch (e) {
+                        console.error('[alter-bill restore stock failed]:', e);
+                    }
                 }
             }
             for (const item of (new_items || [])) {
                 if (item.product_id && item.quantity) {
-                    try { await supabase.rpc('decrement_product_qty', { p_id: item.product_id, qty: item.quantity }); } catch { }
-                    await checkLowStockForProduct(Number(item.product_id));
+                    try {
+                        const pId = Number(item.product_id);
+                        const qty = Number(item.quantity || 0);
+                        const { data: prod } = await supabase.from('products').select('quantity').eq('id', pId).maybeSingle();
+                        if (prod) {
+                            const newQty = Math.max(0, Number(prod.quantity || 0) - qty);
+                            await supabase.from('products').update({ quantity: newQty }).eq('id', pId);
+                        }
+                        await checkLowStockForProduct(pId);
+                    } catch (e) {
+                        console.error('[alter-bill decrement stock failed]:', e);
+                    }
                 }
             }
         }
