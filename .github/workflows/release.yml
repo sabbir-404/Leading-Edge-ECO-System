@@ -82,6 +82,7 @@ jobs:
           if-no-files-found: warn
 
   build-windows:
+    needs: build-macos
     runs-on: windows-latest
 
     defaults:
