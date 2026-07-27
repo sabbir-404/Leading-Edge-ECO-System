@@ -1,7 +1,7 @@
 {
   "name": "le-soft",
   "private": true,
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "Leading Edge ECO-System Software",
   "author": "Leading Edge <leadingedge.com.bd>",
   "type": "module",
@@ -12,7 +12,7 @@
     "build:check": "tsc && vite build",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
-    "electron:build": "esbuild electron/main.ts --bundle --platform=node --target=node18 --external:electron --external:better-sqlite3 --external:bcryptjs --external:electron-updater --outfile=core/main.cjs && esbuild electron/preload.ts --bundle --platform=node --target=node18 --external:electron --outfile=core/preload.cjs && electron .",
+    "electron:build": "esbuild electron/main.ts --bundle --platform=node --target=node18 --external:electron --external:better-sqlite3 --external:mysql2 --external:bcryptjs --external:electron-updater --external:sharp --outfile=core/main.cjs && esbuild electron/preload.ts --bundle --platform=node --target=node18 --external:electron --outfile=core/preload.cjs && electron .",
     "electron:dev": "concurrently -k \"vite\" \"npm run electron:build\"",
     "rebuild": "electron-rebuild -f -w better-sqlite3",
     "postinstall": "electron-rebuild -f -w better-sqlite3",

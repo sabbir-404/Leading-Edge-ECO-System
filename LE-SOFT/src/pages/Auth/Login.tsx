@@ -52,8 +52,9 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
             ? JSON.stringify(permsRaw)
             : (typeof permsRaw === 'string' ? permsRaw : '{}');
         localStorage.setItem('user_permissions', permsStr);
-        localStorage.setItem('user_name', result.user.full_name || result.user.username);
-        localStorage.setItem('user_id', String(result.user.id));
+        const nameToSave = result.user.full_name || result.user.username || 'Admin';
+        localStorage.setItem('user_name', nameToSave);
+        localStorage.setItem('user_id', String(result.user.id || 0));
         if (result.licenseWarning) {
             localStorage.setItem('license_warning', result.licenseWarning);
         } else {

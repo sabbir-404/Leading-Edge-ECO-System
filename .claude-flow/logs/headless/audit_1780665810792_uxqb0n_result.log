@@ -1,0 +1,17 @@
+[2026-06-05T13:23:33.206Z] RESULT
+============================================================
+{
+  "success": false,
+  "output": "Credit balance is too low\n",
+  "parsedOutput": {
+    "parseError": true,
+    "rawOutput": "Credit balance is too low\n"
+  },
+  "durationMs": 2412,
+  "model": "haiku",
+  "sandboxMode": "strict",
+  "workerType": "audit",
+  "timestamp": "2026-06-05T13:23:33.204Z",
+  "executionId": "audit_1780665810792_uxqb0n",
+  "error": "Process exited with code 1"
+}

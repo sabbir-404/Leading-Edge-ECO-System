@@ -1,0 +1,625 @@
+[2026-06-05T13:23:31.201Z] PROMPT
+============================================================
+Analyze this codebase for security vulnerabilities:
+- Check for hardcoded secrets (API keys, passwords)
+- Identify SQL injection risks
+- Find XSS vulnerabilities
+- Check for insecure dependencies
+- Identify authentication/authorization issues
+
+Provide a JSON report with:
+{
+  "vulnerabilities": [{ "severity": "high|medium|low", "file": "...", "line": N, "description": "..." }],
+  "riskScore": 0-100,
+  "recommendations": ["..."]
+}
+
+## Codebase Context
+
+--- LE Mail Campaign software/dist-electron/database.js (truncated) ---
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.initDatabase = initDatabase;
+exports.getSmtpSettings = getSmtpSettings;
+exports.saveSmtpSettings = saveSmtpSettings;
+exports.getAllDesigns = getAllDesigns;
+exports.getDesignById = getDesignById;
+exports.saveDesign = saveDesign;
+exports.updateDesign = updateDesign;
+exports.deleteDesign = deleteDesign;
+exports.createCampaign = createCampaign;
+exports.updateCampaignProgress = updateCampaignProgress;
+exports.finishCampaign = finishCampaign;
+exports.addSendRecord = addSendRecord;
+exports.getAllCampaigns = getAllCampaigns;
+exports.getCampaignRecords = getCampaignRecords;
+exports.getAllContactLists = getAllContactLists;
+exports.getContactListById = getContactListById;
+exports.createContactList = createContactList;
+exports.deleteContactList = deleteContactList;
+exports.getContactsByListId = getContactsByListId;
+exports.insertContactsIntoList = insertContactsIntoList;
+exports.updateContactCount = updateContactCount;
+exports.addSingleContact = addSingleContact;
+exports.updateContact = updateContact;
+exports.deleteContact = deleteContact;
+exports.getDashboardStats = getDashboardStats;
+const better_sqlite3_1 = __importDefault(require("better-sqlite3"));
+const path = __importStar(require("path"));
+const electron_1 = require("electron");
+let db;
+function initDatabase() {
+    const dbPath = path.join(electron_1.app.getPath('userData'), 'le_mail_campaign.db');
+    db = new better_sqlite3_1.default(dbPath);
+    db.pragma('journal_mode = WAL');
+    // Mail designs table
+    db.exec(`
+    CREATE TABLE IF NOT EXISTS mail_designs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      subject TEXT NOT NULL DEFAULT '',
+      body_html TEXT NOT NULL DEFAULT '',
+      builder_json TEXT NOT NULL DEFAULT '',
+      use_header INTEGER NOT NULL DEFAULT 1,
+      use_footer INTEGER NOT NULL DEFAULT 1,
+      email_theme TEXT NOT NULL DEFAULT 'light',
+      is_template INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+    // Migrate existing DBs — add new design columns if missing
+    try {
+        db.exec(`ALTER TABLE mail_designs ADD COLUMN email_theme TEXT NOT NULL DEFAULT 'light';`);
+    }
+    catch (_) { /* Column already exists, skip */ }
+    try {
+        db.exec(`ALTER TABLE mail_designs ADD COLUMN builder_json TEXT NOT NULL DEFAULT '';`);
+    }
+    catch (_) { /* Column already exists, skip */ }
+    try {
+        db.exec(`ALTER TABLE mail_designs ADD COLUMN is_template INTEGER NOT NULL DEFAULT 0;`);
+    }
+    catch (_) { /* Column already exists, skip */ }
+    // Campaign history table
+    db.exec(`
+    CREATE TABLE IF NOT EXISTS campaign_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      campaign_name TEXT NOT NULL,
+      design_name TEXT,
+      total_recipients INTEGER NOT NULL DEFAULT 0,
+      sent_count INTEGER NOT NULL DEFAULT 0,
+      failed_count INTEGER NOT NULL DEFAULT 0,
+      from_email TEXT,
+      started_at TEXT NOT NULL DEFAULT (datetime('now')),
+      finished_at TEXT,
+      status TEXT NOT NULL DEFAULT 'running'
+    );
+  `);
+    // Individual send records
+    db.exec(`
+    CREATE TABLE IF NOT EXISTS send_records (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      campaign_id INTEGER NOT NULL,
+      recipient_email TEXT NOT NULL,
+      status TEXT NOT NULL,
+      error_message TEXT,
+      sent_at TEXT NOT NULL DEFAULT (datetime('
+
+--- LE Mail Campaign software/dist-electron/logoData.js (truncated) ---
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.LOGO_WHITE_B64 = exports.LOGO_BLACK_B64 = void 0;
+exports.LOGO_BLACK_B64 = "data:image/png;base64,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
+
+--- LE Mail Campaign software/dist-electron/main.js (truncated) ---
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+const electron_1 = require("electron");
+const path = __importStar(require("path"));
+const fs = __importStar(require("fs"));
+const electron_updater_1 = require("electron-updater");
+const csv_parser_1 = __importDefault(require("csv-parser"));
+const nodemailer_1 = __importDefault(require("nodemailer"));
+const database_1 = require("./database");
+let mainWindow = null;
+let dbInitialized = false;
+let isCampaignRunning = false;
+function createWindow() {
+    mainWindow = new electron_1.BrowserWindow({
+        width: 1200,
+        height: 800,
+        webPreferences: {
+            preload: path.join(__dirname, 'preload.js'),
+            nodeIntegration: false,
+            contextIsolation: true,
+        },
+    });
+    const isDev = !electron_1.app.isPackaged;
+    if (isDev) {
+        // Detect whichever port Vite is actually running on
+        const port = process.env.VITE_PORT || '5173';
+        mainWindow.loadURL(`http://localhost:${port}`).catch(() => {
+            mainWindow?.loadURL('http://localhost:5174');
+        });
+    }
+    else {
+        mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+    }
+    mainWindow.on('closed', () => {
+        mainWindow = null;
+    });
+}
+electron_1.app.whenReady().then(() => {
+    try {
+        (0, database_1.initDatabase)();
+        dbInitialized = true;
+    }
+    catch (err) {
+        console.error('Failed to init DB:', err);
+    }
+    createWindow();
+    electron_1.app.on('activate', () => {
+        if (electron_1.BrowserWindow.getAllWindows().length === 0)
+            createWindow();
+    });
+    electron_updater_1.autoUpdater.checkForUpdatesAndNotify();
+});
+electron_1.app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin')
+        electron_1.app.quit();
+});
+electron_1.ipcMain.handle('ping', () => 'pong');
+electron_1.ipcMain.handle('get-settings', () => (0, database_1.getSmtpSettings)());
+electron_1.ipcMain.on('save-settings', (event, settings) => {
+    (0, database_1.saveSmtpSettings)(settings);
+});
+electron_1.ipcMain.handle('check-for-updates', async () => {
+    if (!electron_1.app.isPackaged) {
+        return { success: false, message: 'Update checks are available in packaged releases only.' };
+    }
+    try {
+        await electron_updater_1.autoUpdater.checkForUpdatesAndNotify();
+        return {
+            success: true,
+            message: 'Checked for updates. If a newer version exists, it will download and prompt for install.'
+        };
+    }
+    catch (err) {
+        return { success: false, message: err?.message || 'Failed to check for updates.' };
+    }
+});
+electron_1.ipcMain.handle('get-designs', () => (0, database_1.getAllDesigns)());
+electron_1.ipcMain.handle('get-design', (_, id) => (0, database_1.getDesignById)(id));
+electron_1.ipcMain.on('save-design', (event, design) => (0, database_1.saveDesign)(design));
+electron_1.ipcMain.on('update-design', (event, id, design) => (0, database_1.updateDesign)(id, design));
+electron_1.ipcMain.on('delete-design', (event, id) => (0, database_1.deleteDesign)(id));
+electron_1.ipcMain.handle('send-test-email', async (_, { to, subject, html }) => {
+    try {
+        const currentSettings = (0, database_1.getSmtpSettings)();
+        if (!currentSettings || !currentSettings.host) {
+            return { success: false, error: 'SMTP Settings missing. Please save them in Settings.' };
+        }
+        const transporter = nodemailer_1.default.createTr
+
+--- LE Mail Campaign software/dist-electron/preload.js ---
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const electron_1 = require("electron");
+electron_1.contextBridge.exposeInMainWorld('electronAPI', {
+    ping: () => electron_1.ipcRenderer.invoke('ping'),
+    // Settings
+    getSettings: () => electron_1.ipcRenderer.invoke('get-settings'),
+    saveSettings: (settings) => electron_1.ipcRenderer.send('save-settings', settings),
+    checkForUpdates: () => electron_1.ipcRenderer.invoke('check-for-updates'),
+    // Designs
+    getDesigns: () => electron_1.ipcRenderer.invoke('get-designs'),
+    getDesign: (id) => electron_1.ipcRenderer.invoke('get-design', id),
+    saveDesign: (design) => electron_1.ipcRenderer.send('save-design', design),
+    updateDesign: (id, design) => electron_1.ipcRenderer.send('update-design', id, design),
+    deleteDesign: (id) => electron_1.ipcRenderer.send('delete-design', id),
+    sendTestEmail: (payload) => electron_1.ipcRenderer.invoke('send-test-email', payload),
+    // History
+    getHistory: () => electron_1.ipcRenderer.invoke('get-history'),
+    getHistoryRecords: (id) => electron_1.ipcRenderer.invoke('get-history-records', id),
+    // Dashboard
+    getDashboardStats: () => electron_1.ipcRenderer.invoke('get-dashboard-stats'),
+    fetchAnalytics: () => electron_1.ipcRenderer.invoke('fetch-analytics'),
+    // Contact Lists
+    getContactLists: () => electron_1.ipcRenderer.invoke('get-contact-lists'),
+    getContacts: (listId) => electron_1.ipcRenderer.invoke('get-contacts', listId),
+    importContactList: (payload) => electron_1.ipcRenderer.invoke('import-contact-list', payload),
+    deleteContactList: (id) => electron_1.ipcRenderer.invoke('delete-contact-list', id),
+    addContact: (data) => electron_1.ipcRenderer.invoke('add-contact', data),
+    updateContact: (data) => electron_1.ipcRenderer.invoke('update-contact', data),
+    deleteContact: (data) => electron_1.ipcRenderer.invoke('delete-contact', data),
+    createBlankList: (data) => electron_1.ipcRenderer.invoke('create-blank-list', data),
+    // Campaign
+    startCampaign: (payload) => electron_1.ipcRenderer.send('start-campaign', payload),
+    stopCampaign: () => electron_1.ipcRenderer.send('stop-campaign'),
+    onCampaignLog: (callback) => {
+        electron_1.ipcRenderer.removeAllListeners('campaign-log');
+        electron_1.ipcRenderer.on('campaign-log', (_event, value) => callback(value));
+    },
+    onCampaignProgress: (callback) => {
+        electron_1.ipcRenderer.removeAllListeners('campaign-progress');
+        electron_1.ipcRenderer.on('campaign-progress', (_event, value) => callback(value));
+    },
+    onCampaignInit: (callback) => {
+        electron_1.ipcRenderer.removeAllListeners('campaign-init');
+        electron_1.ipcRenderer.on('campaign-init', (_event, value) => callback(value));
+    },
+    onCampaignStopped: (callback) => {
+        electron_1.ipcRenderer.removeAllListeners('campaign-stopped');
+        electron_1.ipcRenderer.on('campaign-stopped', () => callback());
+    }
+});
+
+
+--- LE Mail Campaign software/postcss.config.js ---
+module.exports = {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+}
+
+
+--- LE Mail Campaign software/tailwind.config.js ---
+/** @type {import('tailwindcss').Config} */
+module.exports = {
+  content: [
+    "./index.html",
+    "./src/**/*.{js,ts,jsx,tsx}",
+  ],
+  theme: {
+    extend: {},
+  },
+  plugins: [],
+}
+
+
+--- LE-SOFT/dist-electron/database.js ---
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.initDB = void 0;
+const sqlite3_1 = __importDefault(require("sqlite3"));
+const electron_1 = require("electron");
+const path_1 = __importDefault(require("path"));
+const dbPath = path_1.default.join(electron_1.app.getPath('userData'), 'le_soft.db');
+const db = new sqlite3_1.default.Database(dbPath);
+const initDB = () => {
+    db.serialize(() => {
+        // Companies Table
+        db.run(`CREATE TABLE IF NOT EXISTS companies (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            mailing_name TEXT,
+            address TEXT,
+            country TEXT,
+            state TEXT,
+            phone TEXT,
+            email TEXT,
+            financial_year_from TEXT,
+            books_begin_from TEXT,
+            base_currency_symbol TEXT DEFAULT '৳',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`);
+        // Groups Table
+        db.run(`CREATE TABLE IF NOT EXISTS groups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            parent_group_id INTEGER,
+            nature TEXT, -- Assets, Liabilities, Income, Expenses
+            company_id INTEGER,
+            FOREIGN KEY(company_id) REFERENCES companies(id)
+        )`);
+        // Ledgers Table
+        db.run(`CREATE TABLE IF NOT EXISTS ledgers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            group_id INTEGER,
+            opening_balance REAL DEFAULT 0,
+            opening_balance_type TEXT CHECK(opening_balance_type IN ('Dr', 'Cr')),
+            mailing_name TEXT,
+            address TEXT,
+            tax_reg_no TEXT,
+            company_id INTEGER,
+            FOREIGN KEY(group_id) REFERENCES groups(id),
+            FOREIGN KEY(company_id) REFERENCES companies(id)
+        )`);
+        // Vouchers Table
+        db.run(`CREATE TABLE IF NOT EXISTS vouchers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            voucher_type TEXT NOT NULL, -- Payment, Receipt, Journal, Contra, Sales, Purchase
+            voucher_number TEXT NOT NULL,
+            date TEXT NOT NULL,
+            narration TEXT,
+            total_amount REAL,
+            company_id INTEGER,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(company_id) REFERENCES companies(id)
+        )`);
+        // Voucher Entries Table (Credits and Debits)
+        db.run(`CREATE TABLE IF NOT EXISTS voucher_entries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            voucher_id INTEGER,
+            ledger_id INTEGER,
+            amount REAL NOT NULL,
+            type TEXT CHECK(type IN ('Dr', 'Cr')),
+            FOREIGN KEY(voucher_id) REFERENCES vouchers(id),
+            FOREIGN KEY(ledger_id) REFERENCES ledgers(id)
+        )`);
+        // Seed Initial Groups (Simplified Tally List)
+        db.get("SELECT count(*) as count FROM groups", (err, row) => {
+            if (row.count === 0) {
+                const groups = [
+                    ['Capital Account', null, 'Liabilities'],
+                    ['Current Assets', null, 'Assets'],
+                    ['Current Liabilities', null, 'Liabilities'],
+                    ['Fixed Assets', null, 'Assets'],
+                    ['Direct Expenses', null, 'Expenses'],
+                    ['Indirect Expenses', null, 'Expenses'],
+                    ['Sales Accounts', null, 'Income'],
+                    ['Purchase Accounts', null, 'Expenses'],
+                    ['Cash-in-hand', 2, 'Assets'], // Under Current Assets
+                    ['Bank Accounts', 2, 'Assets'], // Under Current Assets
+                    ['Sundry Debtors', 2, 'Assets'], // Under Current Assets
+                    ['Sundry Creditors', 3, 'Liabilities'], // Under Current Liabilities
+                ];
+                const stmt = db.prepare("INSERT INTO groups (name, parent_group_id, nature) VALUES (?, ?, ?)");
+                groups.forEach(g => stmt.run(g));
+                stmt.finalize();
+            }
+        });
+    });
+};
+exports.initDB = initDB;
+exports.default = db;
+
+
+--- LE-SOFT/dist-electron/preload.js ---
+"use strict";
+
+// electron/preload.ts
+var import_electron = require("electron");
+import_electron.contextBridge.exposeInMainWorld("electron", {
+  createVoucher: (voucher) => import_electron.ipcRenderer.invoke("create-voucher", voucher),
+  getLedgers: () => import_electron.ipcRenderer.invoke("get-ledgers"),
+  createLedger: (ledger) => import_electron.ipcRenderer.invoke("create-ledger", ledger),
+  // Inventory
+  getUnits: () => import_electron.ipcRenderer.invoke("get-units"),
+  createUnit: (unit) => import_electron.ipcRenderer.invoke("create-unit", unit),
+  getStockGroups: () => import_electron.ipcRenderer.invoke("get-stock-groups"),
+  createStockGroup: (group) => import_electron.ipcRenderer.invoke("create-stock-group", group),
+  getStockItems: () => import_electron.ipcRenderer.invoke("get-stock-items"),
+  createStockItem: (item) => import_electron.ipcRenderer.invoke("create-stock-item", item)
+});
+
+
+--- LE-SOFT/mobile-customer/babel.config.js ---
+// babel.config.js
+module.exports = function (api) {
+    api.cache(true);
+    return {
+        presets: ['babel-preset-expo'],
+        plugins: ['nativewind/babel', 'react-native-reanimated/plugin'],
+    };
+};
+
+
+--- LE-SOFT/mobile-customer/tailwind.config.js ---
+/** @type {import('tailwindcss').Config} */
+module.exports = {
+  content: ["./App.{js,jsx,ts,tsx}", "./src/**/*.{js,jsx,ts,tsx}"],
+  theme: {
+    extend: {
+      colors: {
+        background: '#ffffff',
+        surface: '#f8fafc',
+        primary: '#000000',
+        secondary: '#64748b',
+        accent: '#3b82f6',
+        border: '#e2e8f0',
+      },
+    },
+  },
+  plugins: [],
+}
+
+
+--- LE-SOFT/mobile-staff/babel.config.js ---
+// babel.config.js
+module.exports = function (api) {
+    api.cache(true);
+    return {
+        presets: [
+            ["babel-preset-expo", { jsxImportSource: "nativewind" }],
+            "nativewind/babel"
+        ],
+    };
+};
+
+
+--- LE-SOFT/mobile-staff/metro.config.js ---
+const { getDefaultConfig } = require('expo/metro-config');
+const { withNativeWind } = require('nativewind/metro');
+
+/** @type {import('expo/metro-config').MetroConfig} */
+const config = getDefaultConfig(__dirname);
+
+module.exports = withNativeWind(config, { input: './global.css' });
+
+
+--- LE-SOFT/mobile-staff/tailwind.config.js ---
+/** @type {import('tailwindcss').Config} */
+module.exports = {
+  content: ["./App.{js,jsx,ts,tsx}", "./src/**/*.{js,jsx,ts,tsx}"],
+  presets: [require("nativewind/preset")],
+  theme: {
+    extend: {
+      colors: {
+        background: '#ffffff',
+        surface: '#f8fafc',
+        primary: '#000000',
+        secondary: '#64748b',
+        accent: '#3b82f6',
+        border: '#e2e8f0',
+      },
+    },
+  },
+  plugins: [],
+}
+
+
+--- LE-SOFT/mobile-staff/test_supabase.js ---
+const { createClient } = require('@supabase/supabase-js');
+
+// Parse .env implicitly or just use the keys from the mobile-staff codebase
+// We don't have the keys here, but we can read them from mobile-staff/src/lib/supabase.ts
+// Wait, I can just use grep to find the supabase URL and anon key from supabase.ts
+
+
+--- LE-SOFT/resource/assets/html2canvas.esm-QH1iLAAe.js (truncated) ---
+/*!
+ * html2canvas 1.4.1 <https://html2canvas.hertzen.com>
+ * Copyright (c) 2022 Niklas von Hertzen <https://hertzen.com>
+ * Released under MIT License
+ *//*! *****************************************************************************
+Copyright (c) Microsoft Corporation.
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY
+AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
+OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+PERFORMANCE OF THIS SOFTWARE.
+***************************************************************************** */var mr=function(e,A){return mr=Object.setPrototypeOf||{__proto__:[]}instanceof Array&&function(t,r){t.__proto__=r}||function(t,r){for(var B in r)Object.prototype.hasOwnProperty.call(r,B)&&(t[B]=r[B])},mr(e,A)};function tA(e,A){if(typeof A!="function"&&A!==null)throw new TypeError("Class extends value "+String(A)+" is not a constructor or null");mr(e,A);function t(){this.constructor=e}e.prototype=A===null?Object.create(A):(t.prototype=A.prototype,new t)}var Lr=function(){return Lr=Object.assign||function(A){for(var t,r=1,B=arguments.length;r<B;r++){t=arguments[r];for(var n in t)Object.prototype.hasOwnProperty.call(t,n)&&(A[n]=t[n])}return A},Lr.apply(this,arguments)};function P(e,A,t,r){function B(n){return n instanceof t?n:new t(function(s){s(n)})}return new(t||(t=Promise))(function(n,s){function i(Q){try{o(r.next(Q))}catch(g){s(g)}}function a(Q){try{o(r.throw(Q))}catch(g){s(g)}}function o(Q){Q.done?n(Q.value):B(Q.value).then(i,a)}o((r=r.apply(e,[])).next())})}function _(e,A){var t={label:0,sent:function(){if(n[0]&1)throw n[1];return n[1]},trys:[],ops:[]},r,B,n,s;return s={next:i(0),throw:i(1),return:i(2)},typeof Symbol=="function"&&(s[Symbol.iterator]=function(){return this}),s;function i(o){return function(Q){return a([o,Q])}}function a(o){if(r)throw new TypeError("Generator is already executing.");for(;t;)try{if(r=1,B&&(n=o[0]&2?B.return:o[0]?B.throw||((n=B.return)&&n.call(B),0):B.next)&&!(n=n.call(B,o[1])).done)return n;switch(B=0,n&&(o=[o[0]&2,n.value]),o[0]){case 0:case 1:n=o;break;case 4:return t.label++,{value:o[1],done:!1};case 5:t.label++,B=o[1],o=[0];continue;case 7:o=t.ops.pop(),t.trys.pop();continue;default:if(n=t.trys,!(n=n.length>0&&n[n.length-1])&&(o[0]===6||o[0]===2)){t=0;continue}if(o[0]===3&&(!n||o[1]>n[0]&&o[1]<n[3])){t.label=o[1];break}if(o[0]===6&&t.label<n[1]){t.label=n[1],n=o;break}if(n&&t.label<n[2]){t.label=n[2],t.ops.push(o);break}n[2]&&t.ops.pop(),t.trys.pop();continue}o=A.call(e,t)}catch(Q){o=[6,Q],B=0}finally{r=n=0}if(o[0]&5)throw o[1];return{value:o[0]?o[1]:void 0,done:!0}}}function ue(e,A,t){if(arguments.length===2)for(var r=0,B=A.length,n;r<B;r++)(n||!(r in A))&&(n||(n=Array.prototype.slice.call(A,0,r)),n[r]=A[r]);return e.concat(n||A)}var cA=(function(){function e(A,t,r,B){this.left=A,this.top=t,this.width=r,this.height=B}return e.prototype.add=function(A,t,r,B){return new e(this.left+A,this.top+t,this.width+r,this.height+B)},e.fromClientRect=function(A,t){return new e(t.left+A.windowBounds.left,t.top+A.windowBounds.top,t.width,t.height)},e.fromDOMRectList=function(A,t){var r=Array.from(t).find(function(B){return B.width!==0});return r?new e(r.left+A.windowBounds.left,r.top+A.windowBounds.top,r.width,r.height):e.EMPTY},e.EMPTY=new e(0,0,0,0),e})(),ze=function(e,A){return cA.fromClientRect(e,A.getBoundingClientRect())},an=function(e){var A=e.body,t=e.documentElement;if(!A||!t)throw new Error("Unable to get document size");var r=Math.max(Math.max(A.scrollWidth,t.scrollWidth),Math.max(A.offsetWidth,t.offsetWidth),Math.max(A.clientWidth,t.clientWidth)),B=Math.max(Math.max(A.scrollHeight,t.scrollHeight),Math.max(A.offsetHeight,t.offsetHeight),Math.max(A.clientHeight,t.clientHeight));return new cA(0,0,r,B)},$e=function(e){for(var A=[],t=0,r=e.length;t<r;){var B=e.charCodeAt(t++);if(B>=55296&&B<=56319&&t<r){var n=e.charCodeAt(t++);(n&64512)===56320?A.push(((B&1023)<<10)+(n&1023)+65536):(A.push(B),t--)}else A.push(B)}return A},S=function(){for(var e=[],A=0;A<arguments.length;A++)e[A]=arguments[A];if(String.fromCodePoint)return String.fromCodePoint.apply(String,e);var t=e.length;if(!t)return"";for(var r=[],B=-1,n="";++B<t;){var s=e[B];s<=65535?r.push(s):(s-=65536,r.push((s>>10)+55296,s%1024+56320)),(B+1===t||r.length>16384)&&(n+=String.fromCharCode.apply(String,r),r.length=0)}return n},nt="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",on=typeof Uint8Array>"u"?[]:new Uint8Array(256);for(var le=0;le<nt.length;le++)on[nt.charCodeAt(le)]=le;var st="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",zA=typeof 
+
+--- LE-SOFT/resource/assets/index-C7LJMtal.js (truncated) ---
+function Ne(t,e){var r={};for(var s in t)Object.prototype.hasOwnProperty.call(t,s)&&e.indexOf(s)<0&&(r[s]=t[s]);if(t!=null&&typeof Object.getOwnPropertySymbols=="function")for(var n=0,s=Object.getOwnPropertySymbols(t);n<s.length;n++)e.indexOf(s[n])<0&&Object.prototype.propertyIsEnumerable.call(t,s[n])&&(r[s[n]]=t[s[n]]);return r}function er(t,e,r,s){function n(i){return i instanceof r?i:new r(function(a){a(i)})}return new(r||(r=Promise))(function(i,a){function o(u){try{c(s.next(u))}catch(h){a(h)}}function l(u){try{c(s.throw(u))}catch(h){a(h)}}function c(u){u.done?i(u.value):n(u.value).then(o,l)}c((s=s.apply(t,e||[])).next())})}const tr=t=>t?(...e)=>t(...e):(...e)=>fetch(...e);class st extends Error{constructor(e,r="FunctionsError",s){super(e),this.name=r,this.context=s}toJSON(){return{name:this.name,message:this.message,context:this.context}}}class rr extends st{constructor(e){super("Failed to send a request to the Edge Function","FunctionsFetchError",e)}}class at extends st{constructor(e){super("Relay Error invoking the Edge Function","FunctionsRelayError",e)}}class ot extends st{constructor(e){super("Edge Function returned a non-2xx status code","FunctionsHttpError",e)}}var Ke;(function(t){t.Any="any",t.ApNortheast1="ap-northeast-1",t.ApNortheast2="ap-northeast-2",t.ApSouth1="ap-south-1",t.ApSoutheast1="ap-southeast-1",t.ApSoutheast2="ap-southeast-2",t.CaCentral1="ca-central-1",t.EuCentral1="eu-central-1",t.EuWest1="eu-west-1",t.EuWest2="eu-west-2",t.EuWest3="eu-west-3",t.SaEast1="sa-east-1",t.UsEast1="us-east-1",t.UsWest1="us-west-1",t.UsWest2="us-west-2"})(Ke||(Ke={}));class sr{constructor(e,{headers:r={},customFetch:s,region:n=Ke.Any}={}){this.url=e,this.headers=r,this.region=n,this.fetch=tr(s)}setAuth(e){this.headers.Authorization=`Bearer ${e}`}invoke(e){return er(this,arguments,void 0,function*(r,s={}){var n;let i,a;try{const{headers:o,method:l,body:c,signal:u,timeout:h}=s;let d={},{region:f}=s;f||(f=this.region);const p=new URL(`${this.url}/${r}`);f&&f!=="any"&&(d["x-region"]=f,p.searchParams.set("forceFunctionRegion",f));let g;c&&(o&&!Object.prototype.hasOwnProperty.call(o,"Content-Type")||!o)?typeof Blob<"u"&&c instanceof Blob||c instanceof ArrayBuffer?(d["Content-Type"]="application/octet-stream",g=c):typeof c=="string"?(d["Content-Type"]="text/plain",g=c):typeof FormData<"u"&&c instanceof FormData?g=c:(d["Content-Type"]="application/json",g=JSON.stringify(c)):c&&typeof c!="string"&&!(typeof Blob<"u"&&c instanceof Blob)&&!(c instanceof ArrayBuffer)&&!(typeof FormData<"u"&&c instanceof FormData)?g=JSON.stringify(c):g=c;let b=u;h&&(a=new AbortController,i=setTimeout(()=>a.abort(),h),u?(b=a.signal,u.addEventListener("abort",()=>a.abort())):b=a.signal);const _=yield this.fetch(p.toString(),{method:l||"POST",headers:Object.assign(Object.assign(Object.assign({},d),this.headers),o),body:g,signal:b}).catch(L=>{throw new rr(L)}),k=_.headers.get("x-relay-error");if(k&&k==="true")throw new at(_);if(!_.ok)throw new ot(_);let v=((n=_.headers.get("Content-Type"))!==null&&n!==void 0?n:"text/plain").split(";")[0].trim(),S;return v==="application/json"?S=yield _.json():v==="application/octet-stream"||v==="application/pdf"?S=yield _.blob():v==="text/event-stream"?S=_:v==="multipart/form-data"?S=yield _.formData():S=yield _.text(),{data:S,error:null,response:_}}catch(o){return{data:null,error:o,response:o instanceof ot||o instanceof at?o.context:void 0}}finally{i&&clearTimeout(i)}})}}const xt=3,lt=t=>Math.min(1e3*2**t,3e4),nr=[520,503],Ut=["GET","HEAD","OPTIONS"];var ir=class extends Error{constructor(t){super(t.message),this.name="PostgrestError",this.details=t.details,this.hint=t.hint,this.code=t.code}toJSON(){return{name:this.name,message:this.message,details:this.details,hint:this.hint,code:this.code}}};function ct(t,e){return new Promise(r=>{if(e!=null&&e.aborted){r();return}const s=setTimeout(()=>{e==null||e.removeEventListener("abort",n),r()},t);function n(){clearTimeout(s),r()}e==null||e.addEventListener("abort",n)})}function ar(t,e,r,s){return!(!s||r>=xt||!Ut.includes(t)||!nr.includes(e))}var or=class{constructor(t){var e,r,s,n;this.shouldThrowOnError=!1,this.retryEnabled=!0,this.method=t.method,this.url=t.url,this.headers=new Headers(t.headers),this.schema=t.schema,this.body=t.body,this.shouldThrowOnError=(e=t.shouldThrowOnError)!==null&&e!==void 0?e:!1,this.signal=t.signal,this.isMaybeSingle=(r=t.isMaybeSingle)!==null&&r!==void 0?r:!1,this.urlLengthLimit=(s=t.urlLengthLimit)!==null&&s!==void 0?s:8e3,this.retryEnabled=(n=t.retry)!==null&&n!==void 0?n:!0,t.fetch?this.fetch=t.fetch:this.fetch=fetch}throwOnError(){return this.shouldThrowOnError=!0,this}setHeader(t,e){return this.headers=new Headers(this.headers),this.headers.set(t,e),this}retry(t){return this.retryEnabled=t,this}then(t,e){var r=this;this.schema===void 0||(["GET","HEAD"].includes(this.method)?this.headers.set("Accept-Profile",this.schema):this.headers.set("Content-Profile",this.schema)),this.method!=="GET"&&this.method!=="HEAD"&&this.headers.
+
+--- LE-SOFT/resource/assets/index-O3XSO1cd.js (truncated) ---
+var w6=Object.defineProperty;var j6=(a,s,t)=>s in a?w6(a,s,{enumerable:!0,configurable:!0,writable:!0,value:t}):a[s]=t;var Dn=(a,s,t)=>j6(a,typeof s!="symbol"?s+"":s,t);function _6(a,s){for(var t=0;t<s.length;t++){const d=s[t];if(typeof d!="string"&&!Array.isArray(d)){for(const p in d)if(p!=="default"&&!(p in a)){const c=Object.getOwnPropertyDescriptor(d,p);c&&Object.defineProperty(a,p,c.get?c:{enumerable:!0,get:()=>d[p]})}}}return Object.freeze(Object.defineProperty(a,Symbol.toStringTag,{value:"Module"}))}(function(){const s=document.createElement("link").relList;if(s&&s.supports&&s.supports("modulepreload"))return;for(const p of document.querySelectorAll('link[rel="modulepreload"]'))d(p);new MutationObserver(p=>{for(const c of p)if(c.type==="childList")for(const o of c.addedNodes)o.tagName==="LINK"&&o.rel==="modulepreload"&&d(o)}).observe(document,{childList:!0,subtree:!0});function t(p){const c={};return p.integrity&&(c.integrity=p.integrity),p.referrerPolicy&&(c.referrerPolicy=p.referrerPolicy),p.crossOrigin==="use-credentials"?c.credentials="include":p.crossOrigin==="anonymous"?c.credentials="omit":c.credentials="same-origin",c}function d(p){if(p.ep)return;p.ep=!0;const c=t(p);fetch(p.href,c)}})();var mn=typeof globalThis<"u"?globalThis:typeof window<"u"?window:typeof global<"u"?global:typeof self<"u"?self:{};function $p(a){return a&&a.__esModule&&Object.prototype.hasOwnProperty.call(a,"default")?a.default:a}var Qm={exports:{}},Ru={},e0={exports:{}},dn={};/**
+ * @license React
+ * react.production.min.js
+ *
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */var Zy;function S6(){if(Zy)return dn;Zy=1;var a=Symbol.for("react.element"),s=Symbol.for("react.portal"),t=Symbol.for("react.fragment"),d=Symbol.for("react.strict_mode"),p=Symbol.for("react.profiler"),c=Symbol.for("react.provider"),o=Symbol.for("react.context"),l=Symbol.for("react.forward_ref"),i=Symbol.for("react.suspense"),r=Symbol.for("react.memo"),n=Symbol.for("react.lazy"),f=Symbol.iterator;function u(B){return B===null||typeof B!="object"?null:(B=f&&B[f]||B["@@iterator"],typeof B=="function"?B:null)}var h={isMounted:function(){return!1},enqueueForceUpdate:function(){},enqueueReplaceState:function(){},enqueueSetState:function(){}},y=Object.assign,g={};function m(B,P,K){this.props=B,this.context=P,this.refs=g,this.updater=K||h}m.prototype.isReactComponent={},m.prototype.setState=function(B,P){if(typeof B!="object"&&typeof B!="function"&&B!=null)throw Error("setState(...): takes an object of state variables to update or a function which returns an object of state variables.");this.updater.enqueueSetState(this,B,P,"setState")},m.prototype.forceUpdate=function(B){this.updater.enqueueForceUpdate(this,B,"forceUpdate")};function b(){}b.prototype=m.prototype;function v(B,P,K){this.props=B,this.context=P,this.refs=g,this.updater=K||h}var w=v.prototype=new b;w.constructor=v,y(w,m.prototype),w.isPureReactComponent=!0;var A=Array.isArray,R=Object.prototype.hasOwnProperty,z={current:null},$={key:!0,ref:!0,__self:!0,__source:!0};function D(B,P,K){var G,re={},U=null,J=null;if(P!=null)for(G in P.ref!==void 0&&(J=P.ref),P.key!==void 0&&(U=""+P.key),P)R.call(P,G)&&!$.hasOwnProperty(G)&&(re[G]=P[G]);var M=arguments.length-2;if(M===1)re.children=K;else if(1<M){for(var O=Array(M),Z=0;Z<M;Z++)O[Z]=arguments[Z+2];re.children=O}if(B&&B.defaultProps)for(G in M=B.defaultProps,M)re[G]===void 0&&(re[G]=M[G]);return{$$typeof:a,type:B,key:U,ref:J,props:re,_owner:z.current}}function F(B,P){return{$$typeof:a,type:B.type,key:P,ref:B.ref,props:B.props,_owner:B._owner}}function H(B){return typeof B=="object"&&B!==null&&B.$$typeof===a}function V(B){var P={"=":"=0",":":"=2"};return"$"+B.replace(/[=:]/g,function(K){return P[K]})}var W=/\/+/g;function E(B,P){return typeof B=="object"&&B!==null&&B.key!=null?V(""+B.key):P.toString(36)}function T(B,P,K,G,re){var U=typeof B;(U==="undefined"||U==="boolean")&&(B=null);var J=!1;if(B===null)J=!0;else switch(U){case"string":case"number":J=!0;break;case"object":switch(B.$$typeof){case a:case s:J=!0}}if(J)return J=B,re=re(J),B=G===""?"."+E(J,0):G,A(re)?(K="",B!=null&&(K=B.replace(W,"$&/")+"/"),T(re,P,K,"",function(Z){return Z})):re!=null&&(H(re)&&(re=F(re,K+(!re.key||J&&J.key===re.key?"":(""+re.key).replace(W,"$&/")+"/")+B)),P.push(re)),1;if(J=0,G=G===""?".":G+":",A(B))for(var M=0;M<B.length;M++){U=B[M];var O=G+E(U,M);J+=T(U,P,K,O,re)}else if(O=u(B),typeof O=="function")for(B=O.call(B),M=0;!(U=B.next()).done;)U=U.value,O=G+E(U,M++),J+=T(U,P,K,O,re);else if(U==="object")throw P=String(B),Error("Objects are not valid as a React child (found: "+(P==="[object Object]"?"object with keys {"+Object.keys(B).join(", ")+"}":P)+"). If you meant to render a collection of children, use an array instead.");return J}function N(B,P,K){if(B==null)return B;var G=[],re=0;return T(B,G,"","",function(U){return P.call(K,U,re++)}),G}fun
+
+--- LE-SOFT/resource/assets/index.es-BTr6OYt2.js (truncated) ---
+import{c as Va,_ as La,g as il}from"./index-O3XSO1cd.js";var fn={},cn={},cr,vn;function Q(){if(vn)return cr;vn=1;var n=function(e){return e&&e.Math===Math&&e};return cr=n(typeof globalThis=="object"&&globalThis)||n(typeof window=="object"&&window)||n(typeof self=="object"&&self)||n(typeof Va=="object"&&Va)||n(typeof cr=="object"&&cr)||(function(){return this})()||Function("return this")(),cr}var Zr={},Jr,gn;function Z(){return gn||(gn=1,Jr=function(n){try{return!!n()}catch{return!0}}),Jr}var et,dn;function we(){if(dn)return et;dn=1;var n=Z();return et=!n(function(){return Object.defineProperty({},1,{get:function(){return 7}})[1]!==7}),et}var rt,pn;function Ar(){if(pn)return rt;pn=1;var n=Z();return rt=!n(function(){var e=(function(){}).bind();return typeof e!="function"||e.hasOwnProperty("prototype")}),rt}var tt,yn;function se(){if(yn)return tt;yn=1;var n=Ar(),e=Function.prototype.call;return tt=n?e.bind(e):function(){return e.apply(e,arguments)},tt}var it={},mn;function Yl(){if(mn)return it;mn=1;var n={}.propertyIsEnumerable,e=Object.getOwnPropertyDescriptor,r=e&&!n.call({1:2},1);return it.f=r?function(i){var a=e(this,i);return!!a&&a.enumerable}:n,it}var at,bn;function Ua(){return bn||(bn=1,at=function(n,e){return{enumerable:!(n&1),configurable:!(n&2),writable:!(n&4),value:e}}),at}var nt,xn;function J(){if(xn)return nt;xn=1;var n=Ar(),e=Function.prototype,r=e.call,t=n&&e.bind.bind(r,r);return nt=n?t:function(i){return function(){return r.apply(i,arguments)}},nt}var st,On;function er(){if(On)return st;On=1;var n=J(),e=n({}.toString),r=n("".slice);return st=function(t){return r(e(t),8,-1)},st}var ot,Tn;function al(){if(Tn)return ot;Tn=1;var n=J(),e=Z(),r=er(),t=Object,i=n("".split);return ot=e(function(){return!t("z").propertyIsEnumerable(0)})?function(a){return r(a)==="String"?i(a,""):t(a)}:t,ot}var ut,Sn;function Ir(){return Sn||(Sn=1,ut=function(n){return n==null}),ut}var lt,En;function Pe(){if(En)return lt;En=1;var n=Ir(),e=TypeError;return lt=function(r){if(n(r))throw new e("Can't call method on "+r);return r},lt}var ht,Rn;function dr(){if(Rn)return ht;Rn=1;var n=al(),e=Pe();return ht=function(r){return n(e(r))},ht}var ft,Cn;function re(){if(Cn)return ft;Cn=1;var n=typeof document=="object"&&document.all;return ft=typeof n>"u"&&n!==void 0?function(e){return typeof e=="function"||e===n}:function(e){return typeof e=="function"},ft}var ct,wn;function ye(){if(wn)return ct;wn=1;var n=re();return ct=function(e){return typeof e=="object"?e!==null:n(e)},ct}var vt,Pn;function rr(){if(Pn)return vt;Pn=1;var n=Q(),e=re(),r=function(t){return e(t)?t:void 0};return vt=function(t,i){return arguments.length<2?r(n[t]):n[t]&&n[t][i]},vt}var gt,An;function Nr(){if(An)return gt;An=1;var n=J();return gt=n({}.isPrototypeOf),gt}var dt,In;function pr(){if(In)return dt;In=1;var n=Q(),e=n.navigator,r=e&&e.userAgent;return dt=r?String(r):"",dt}var pt,Nn;function Ga(){if(Nn)return pt;Nn=1;var n=Q(),e=pr(),r=n.process,t=n.Deno,i=r&&r.versions||t&&t.version,a=i&&i.v8,s,o;return a&&(s=a.split("."),o=s[0]>0&&s[0]<4?1:+(s[0]+s[1])),!o&&e&&(s=e.match(/Edge\/(\d+)/),(!s||s[1]>=74)&&(s=e.match(/Chrome\/(\d+)/),s&&(o=+s[1]))),pt=o,pt}var yt,_n;function nl(){if(_n)return yt;_n=1;var n=Ga(),e=Z(),r=Q(),t=r.String;return yt=!!Object.getOwnPropertySymbols&&!e(function(){var i=Symbol("symbol detection");return!t(i)||!(Object(i)instanceof Symbol)||!Symbol.sham&&n&&n<41}),yt}var mt,Mn;function sl(){if(Mn)return mt;Mn=1;var n=nl();return mt=n&&!Symbol.sham&&typeof Symbol.iterator=="symbol",mt}var bt,qn;function ol(){if(qn)return bt;qn=1;var n=rr(),e=re(),r=Nr(),t=sl(),i=Object;return bt=t?function(a){return typeof a=="symbol"}:function(a){var s=n("Symbol");return e(s)&&r(s.prototype,i(a))},bt}var xt,Dn;function _r(){if(Dn)return xt;Dn=1;var n=String;return xt=function(e){try{return n(e)}catch{return"Object"}},xt}var Ot,Vn;function Fe(){if(Vn)return Ot;Vn=1;var n=re(),e=_r(),r=TypeError;return Ot=function(t){if(n(t))return t;throw new r(e(t)+" is not a function")},Ot}var Tt,Ln;function nr(){if(Ln)return Tt;Ln=1;var n=Fe(),e=Ir();return Tt=function(r,t){var i=r[t];return e(i)?void 0:n(i)},Tt}var St,kn;function Xl(){if(kn)return St;kn=1;var n=se(),e=re(),r=ye(),t=TypeError;return St=function(i,a){var s,o;if(a==="string"&&e(s=i.toString)&&!r(o=n(s,i))||e(s=i.valueOf)&&!r(o=n(s,i))||a!=="string"&&e(s=i.toString)&&!r(o=n(s,i)))return o;throw new t("Can't convert object to primitive value")},St}var Et={exports:{}},Rt,jn;function Me(){return jn||(jn=1,Rt=!1),Rt}var Ct,Bn;function $a(){if(Bn)return Ct;Bn=1;var n=Q(),e=Object.defineProperty;return Ct=function(r,t){try{e(n,r,{value:t,configurable:!0,writable:!0})}catch{n[r]=t}return t},Ct}var Fn;function za(){if(Fn)return Et.exports;Fn=1;var n=Me(),e=Q(),r=$a(),t="__core-js_shared__",i=Et.exports=e[t]||r(t,{});return(i.versions||(i.versions=[])).push({version:"3.49.0",mode:n?"pure":"global",copyright:"© 2013–2025 Denis Pushkarev (zloirock.ru), 2025–2026 CoreJS Company (core-js.io). All rights reserved.",lice
+
+--- LE-SOFT/resource/assets/purify.es-BaNf_EpD.js (truncated) ---
+/*! @license DOMPurify 3.4.2 | (c) Cure53 and other contributors | Released under the Apache license 2.0 and Mozilla Public License 2.0 | github.com/cure53/DOMPurify/blob/3.4.2/LICENSE */const{entries:yt,setPrototypeOf:mt,isFrozen:Kt,getPrototypeOf:Zt,getOwnPropertyDescriptor:Jt}=Object;let{freeze:y,seal:N,create:X}=Object,{apply:Fe,construct:He}=typeof Reflect<"u"&&Reflect;y||(y=function(n){return n});N||(N=function(n){return n});Fe||(Fe=function(n,l){for(var a=arguments.length,f=new Array(a>2?a-2:0),b=2;b<a;b++)f[b-2]=arguments[b];return n.apply(l,f)});He||(He=function(n){for(var l=arguments.length,a=new Array(l>1?l-1:0),f=1;f<l;f++)a[f-1]=arguments[f];return new n(...a)});const ee=T(Array.prototype.forEach),Qt=T(Array.prototype.lastIndexOf),pt=T(Array.prototype.pop),te=T(Array.prototype.push),en=T(Array.prototype.splice),O=Array.isArray,ie=T(String.prototype.toLowerCase),Pe=T(String.prototype.toString),Tt=T(String.prototype.match),Y=T(String.prototype.replace),dt=T(String.prototype.indexOf),tn=T(String.prototype.trim),nn=T(Number.prototype.toString),on=T(Boolean.prototype.toString),_t=typeof BigInt>"u"?null:T(BigInt.prototype.toString),Et=typeof Symbol>"u"?null:T(Symbol.prototype.toString),u=T(Object.prototype.hasOwnProperty),ne=T(Object.prototype.toString),g=T(RegExp.prototype.test),de=rn(TypeError);function T(i){return function(n){n instanceof RegExp&&(n.lastIndex=0);for(var l=arguments.length,a=new Array(l>1?l-1:0),f=1;f<l;f++)a[f-1]=arguments[f];return Fe(i,n,a)}}function rn(i){return function(){for(var n=arguments.length,l=new Array(n),a=0;a<n;a++)l[a]=arguments[a];return He(i,l)}}function s(i,n){let l=arguments.length>2&&arguments[2]!==void 0?arguments[2]:ie;if(mt&&mt(i,null),!O(n))return i;let a=n.length;for(;a--;){let f=n[a];if(typeof f=="string"){const b=l(f);b!==f&&(Kt(n)||(n[a]=b),f=b)}i[f]=!0}return i}function an(i){for(let n=0;n<i.length;n++)u(i,n)||(i[n]=null);return i}function I(i){const n=X(null);for(const[l,a]of yt(i))u(i,l)&&(O(a)?n[l]=an(a):a&&typeof a=="object"&&a.constructor===Object?n[l]=I(a):n[l]=a);return n}function sn(i){switch(typeof i){case"string":return i;case"number":return nn(i);case"boolean":return on(i);case"bigint":return _t?_t(i):"0";case"symbol":return Et?Et(i):"Symbol()";case"undefined":return ne(i);case"function":case"object":{if(i===null)return ne(i);const n=i,l=j(n,"toString");if(typeof l=="function"){const a=l(n);return typeof a=="string"?a:ne(a)}return ne(i)}default:return ne(i)}}function j(i,n){for(;i!==null;){const a=Jt(i,n);if(a){if(a.get)return T(a.get);if(typeof a.value=="function")return T(a.value)}i=Zt(i)}function l(){return null}return l}function ln(i){try{return g(i,""),!0}catch{return!1}}const At=y(["a","abbr","acronym","address","area","article","aside","audio","b","bdi","bdo","big","blink","blockquote","body","br","button","canvas","caption","center","cite","code","col","colgroup","content","data","datalist","dd","decorator","del","details","dfn","dialog","dir","div","dl","dt","element","em","fieldset","figcaption","figure","font","footer","form","h1","h2","h3","h4","h5","h6","head","header","hgroup","hr","html","i","img","input","ins","kbd","label","legend","li","main","map","mark","marquee","menu","menuitem","meter","nav","nobr","ol","optgroup","option","output","p","picture","pre","progress","q","rp","rt","ruby","s","samp","search","section","select","shadow","slot","small","source","spacer","span","strike","strong","style","sub","summary","sup","table","tbody","td","template","textarea","tfoot","th","thead","time","tr","track","tt","u","ul","var","video","wbr"]),xe=y(["svg","a","altglyph","altglyphdef","altglyphitem","animatecolor","animatemotion","animatetransform","circle","clippath","defs","desc","ellipse","enterkeyhint","exportparts","filter","font","g","glyph","glyphref","hkern","image","inputmode","line","lineargradient","marker","mask","metadata","mpath","part","path","pattern","polygon","polyline","radialgradient","rect","stop","style","switch","symbol","text","textpath","title","tref","tspan","view","vkern"]),ke=y(["feBlend","feColorMatrix","feComponentTransfer","feComposite","feConvolveMatrix","feDiffuseLighting","feDisplacementMap","feDistantLight","feDropShadow","feFlood","feFuncA","feFuncB","feFuncG","feFuncR","feGaussianBlur","feImage","feMerge","feMergeNode","feMorphology","feOffset","fePointLight","feSpecularLighting","feSpotLight","feTile","feTurbulence"]),cn=y(["animate","color-profile","cursor","discard","font-face","font-face-format","font-face-name","font-face-src","font-face-uri","foreignobject","hatch","hatchpath","mesh","meshgradient","meshpatch","meshrow","missing-glyph","script","set","solidcolor","unknown","use"]),Ue=y(["math","menclose","merror","mfenced","mfrac","mglyph","mi","mlabeledtr","mmultiscripts","mn","mo","mover","mpadded","mphantom","mroot","mrow","ms","mspace","msqrt","mstyle","msub","msup","msubsup","mtable","mtd","mtext","mtr","munder","munderover","mprescripts"]),fn=y(["maction","maligngroup","malignmark"
+
+--- LE-SOFT/scratch/apply_po_migration.js ---
+import { createClient } from '@supabase/supabase-js';
+import fs from 'fs';
+
+const userEnvPath = '/Users/sabbirislam/Library/Application Support/le-soft/supabase-config.json';
+const conf = JSON.parse(fs.readFileSync(userEnvPath, 'utf8'));
+const supabase = createClient(conf.url, conf.serviceRoleKey || conf.anonKey);
+
+async function run() {
+  console.log('Running database migration to add purchase_order_number column...');
+  
+  const { error } = await supabase.rpc('exec_sql', { sql: `
+    ALTER TABLE purchase_requisitions 
+      ADD COLUMN IF NOT EXISTS purchase_order_number VARCHAR(255);
+  `});
+  
+  if (error) {
+    console.error('Migration error:', error.message);
+  } else {
+    console.log('Migration completed successfully! Columns updated.');
+  }
+}
+run();
+
+
+## Instructions
+
+Analyze the above codebase context and provide your response following the format specified in the task.

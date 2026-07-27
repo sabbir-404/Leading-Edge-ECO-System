@@ -10,7 +10,13 @@ import fs from 'fs';
 import os from 'os';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
-import sharp from 'sharp';
+let sharpModule: any = null;
+try {
+    sharpModule = require('sharp');
+} catch (err) {
+    console.warn('[IPC] sharp native module not loaded:', err);
+}
+
 import supabase, { supabaseAdmin, nasClient, isNasOnline, decryptEmbeddedCredentials, reinitSupabaseClients, getNasStorageUrl } from './supabase';
 import mysql from 'mysql2/promise';
 import * as licenseManager from './license-manager';
@@ -27,30 +33,35 @@ const HOSTINGER_UPLOAD_SECRET = 'LE_SOFT_SECURE_UPLOAD_KEY_2026';
 const MAX_IMAGE_UPLOAD_BYTES = 500 * 1024;
 
 async function optimizeImageBuffer(buffer: Buffer): Promise<Buffer> {
-    const metadata = await sharp(buffer, { failOnError: false }).metadata();
-    const sourceWidth = metadata.width || 1600;
+    if (!sharpModule) return buffer;
+    try {
+        const metadata = await sharpModule(buffer, { failOnError: false }).metadata();
+        const sourceWidth = metadata.width || 1600;
 
-    const attempts = [
-        { width: Math.min(sourceWidth, 1600), quality: 82 },
-        { width: Math.min(sourceWidth, 1280), quality: 74 },
-        { width: Math.min(sourceWidth, 1024), quality: 66 },
-        { width: Math.min(sourceWidth, 800), quality: 58 },
-        { width: Math.min(sourceWidth, 640), quality: 48 },
-        { width: Math.min(sourceWidth, 480), quality: 38 },
-        { width: Math.min(sourceWidth, 360), quality: 30 },
-    ];
+        const attempts = [
+            { width: Math.min(sourceWidth, 1600), quality: 82 },
+            { width: Math.min(sourceWidth, 1280), quality: 74 },
+            { width: Math.min(sourceWidth, 1024), quality: 66 },
+            { width: Math.min(sourceWidth, 800), quality: 58 },
+            { width: Math.min(sourceWidth, 640), quality: 48 },
+            { width: Math.min(sourceWidth, 480), quality: 38 },
+            { width: Math.min(sourceWidth, 360), quality: 30 },
+        ];
 
-    let optimized = buffer;
-    for (const attempt of attempts) {
-        optimized = await sharp(buffer, { failOnError: false })
-            .rotate()
-            .resize({ width: attempt.width, withoutEnlargement: true })
-            .webp({ quality: attempt.quality, effort: 6 })
-            .toBuffer();
-        if (optimized.length <= MAX_IMAGE_UPLOAD_BYTES) break;
+        let optimized = buffer;
+        for (const attempt of attempts) {
+            optimized = await sharpModule(buffer, { failOnError: false })
+                .rotate()
+                .resize({ width: attempt.width, withoutEnlargement: true })
+                .webp({ quality: attempt.quality, effort: 6 })
+                .toBuffer();
+            if (optimized.length <= MAX_IMAGE_UPLOAD_BYTES) break;
+        }
+
+        return optimized;
+    } catch {
+        return buffer;
     }
-
-    return optimized;
 }
 
 async function uploadOptimizedImage(buffer: Buffer, filenamePrefix: string): Promise<string> {

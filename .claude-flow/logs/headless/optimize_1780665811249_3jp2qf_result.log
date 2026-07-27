@@ -1,0 +1,17 @@
+[2026-06-05T13:23:33.673Z] RESULT
+============================================================
+{
+  "success": false,
+  "output": "Credit balance is too low\n",
+  "parsedOutput": {
+    "sections": [],
+    "codeBlocks": []
+  },
+  "durationMs": 2424,
+  "model": "sonnet",
+  "sandboxMode": "permissive",
+  "workerType": "optimize",
+  "timestamp": "2026-06-05T13:23:33.673Z",
+  "executionId": "optimize_1780665811249_3jp2qf",
+  "error": "Process exited with code 1"
+}

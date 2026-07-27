@@ -66,8 +66,9 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
   const [profileModalTab, setProfileModalTab] = useState<'name' | 'password' | 'picture'>('name');
   const profileRef = useRef<HTMLDivElement>(null);
 
-  const userRole = localStorage.getItem('user_role') || '';
-  const userName = localStorage.getItem('user_name') || 'Admin';
+  const userRole = (localStorage.getItem('user_role') || '').toLowerCase();
+  const rawUserName = localStorage.getItem('user_name');
+  const userName = (!rawUserName || rawUserName === 'undefined' || rawUserName === 'null') ? 'Admin' : rawUserName;
   const userId = parseInt(localStorage.getItem('user_id') || '0');
   const licenseWarning = localStorage.getItem('license_warning');
   
@@ -81,7 +82,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
 
   // Helper function to check if user has a specific permission
   const hasPermission = (key: string) => {
-      if (userRole === 'superadmin') return true; // Superadmins override all
+      if (userRole === 'superadmin' || userRole === 'admin' || userRole === 'manager') return true; // Admins and managers override all
       return !!userPermissions[key];
   };
 

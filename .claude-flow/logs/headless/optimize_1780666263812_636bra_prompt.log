@@ -1,0 +1,14 @@
+[2026-06-05T13:31:03.841Z] PROMPT
+============================================================
+Analyze this codebase for performance optimizations:
+- Identify N+1 query patterns
+- Find unnecessary re-renders in React
+- Suggest caching opportunities
+- Identify memory leaks
+- Find redundant computations
+
+Provide actionable suggestions with code examples.
+
+## Instructions
+
+Analyze the codebase and provide your response following the format specified in the task.
