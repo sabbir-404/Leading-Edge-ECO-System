@@ -33,7 +33,7 @@
     "cheerio": "^1.2.0",
     "clsx": "^2.1.1",
     "csv-parser": "^3.2.1",
-    "dompurify": "^3.4.12",
+    "dompurify": "^3.4.13",
     "electron-updater": "^6.8.3",
     "exceljs": "^3.10.0",
     "form-data": "^4.0.6",
