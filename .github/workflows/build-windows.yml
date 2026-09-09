@@ -48,8 +48,8 @@ jobs:
         # Rebuilds better-sqlite3 for the correct Electron ABI + win32-x64
         shell: pwsh
         run: |
-          if (Test-Path "node_modules/cpu-features/buildcheck.js") {
-            node node_modules/cpu-features/buildcheck.js
+          if (Test-Path "node_modules/cpu-features") {
+            node -e "const fs=require('fs'), cp=require('child_process'); fs.writeFileSync('node_modules/cpu-features/buildcheck.gypi', cp.execSync('node buildcheck.js', {cwd: 'node_modules/cpu-features'}));"
           }
           npx electron-builder install-app-deps
         env:
