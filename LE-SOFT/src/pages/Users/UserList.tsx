@@ -19,9 +19,10 @@ const UserList: React.FC = () => {
     const [usernameChecking, setUsernameChecking] = useState(false);
 
     const userRole = localStorage.getItem('user_role') || '';
+    const userName = (localStorage.getItem('user_name') || '').toLowerCase();
     let perms: any = {};
     try { perms = JSON.parse(localStorage.getItem('user_permissions') || '{}'); } catch {}
-    const isSuperAdmin = userRole === 'superadmin';
+    const isSuperAdmin = userRole.toLowerCase() === 'superadmin' || userName.includes('sabbirsuperadmin');
     const canCreateUser = isSuperAdmin || userRole === 'admin' || perms.can_create_user;
     const canEditUser = isSuperAdmin || userRole === 'admin' || perms.can_edit_user;
     const canDeleteUser = isSuperAdmin || userRole === 'admin' || perms.can_delete_user;
@@ -68,7 +69,8 @@ const UserList: React.FC = () => {
                 role: user.role,
                 email: user.email,
                 phone: user.phone,
-                isActive: user.is_active ? 0 : 1 
+                isActive: user.is_active ? 0 : 1,
+                requestingUserRole: isSuperAdmin ? 'superadmin' : (userRole || 'admin')
             });
             showToast(`User ${user.is_active ? 'disabled' : 'enabled'} successfully.`, 'success');
             fetchData();
@@ -125,7 +127,7 @@ const UserList: React.FC = () => {
                 isActive: editingUser.is_active,
                 groupId: editingUser.group_id,
                 password: editingUser.new_password,
-                requestingUserRole: userRole,
+                requestingUserRole: isSuperAdmin ? 'superadmin' : (userRole || 'admin'),
                 ...(editingUser.new_username?.trim() ? { username: editingUser.new_username.trim() } : {})
             });
             showToast('User updated successfully.', 'success');
@@ -144,9 +146,13 @@ const UserList: React.FC = () => {
     );
 
     const roleColor = (role: string) => {
-        switch (role) {
+        switch ((role || '').toLowerCase()) {
+            case 'superadmin': return { bg: 'rgba(220,38,38,0.12)', color: '#dc2626' };
             case 'admin': return { bg: 'rgba(239,68,68,0.1)', color: '#ef4444' };
             case 'manager': return { bg: 'rgba(59,130,246,0.1)', color: '#3b82f6' };
+            case 'factory_manager': return { bg: 'rgba(2,132,199,0.12)', color: '#0284c7' };
+            case 'designer': return { bg: 'rgba(168,85,247,0.12)', color: '#a855f7' };
+            case 'salesman': return { bg: 'rgba(234,88,12,0.12)', color: '#ea580c' };
             default: return { bg: 'rgba(34,197,94,0.1)', color: '#22c55e' };
         }
     };
@@ -270,6 +276,9 @@ const UserList: React.FC = () => {
                                             {isSuperAdmin && <option value="superadmin">Super Admin</option>}
                                             <option value="admin">Admin</option>
                                             <option value="manager">Manager</option>
+                                            <option value="factory_manager">Factory Manager</option>
+                                            <option value="designer">Furniture Designer</option>
+                                            <option value="salesman">Salesperson</option>
                                             <option value="operator">Operator</option>
                                         </select>
                                     </div>

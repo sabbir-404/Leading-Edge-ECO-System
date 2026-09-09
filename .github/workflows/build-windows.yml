@@ -10,7 +10,7 @@ on:
       version:
         description: 'Release version without leading v'
         required: true
-        default: '1.4.0'
+        default: '1.6.0'
 
 permissions:
   contents: write
@@ -56,15 +56,19 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_VERSION: ${{ github.event.inputs.version || '1.4.0' }}
+          RELEASE_VERSION: ${{ github.event.inputs.version || '' }}
           RELEASE_REPO: ${{ github.repository }}
         run: |
           $ErrorActionPreference = 'Stop'
           if ($env:GITHUB_REF_TYPE -eq 'tag') {
             $tag = $env:GITHUB_REF_NAME
           }
-          else {
+          elseif ($env:RELEASE_VERSION) {
             $tag = "v$env:RELEASE_VERSION"
+          }
+          else {
+            $pkgVersion = (Get-Content package.json | ConvertFrom-Json).version
+            $tag = "v$pkgVersion"
           }
 
           $title = "LE-SOFT $($tag.TrimStart('v'))"

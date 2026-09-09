@@ -458,7 +458,7 @@ const Dashboard: React.FC = () => {
                                             chatUsers.filter(u => (u.full_name || u.username || '').toLowerCase().includes(chatUserSearch.toLowerCase())).map(u => (
                                                 <div key={u.id} className="chat-user-item" onClick={() => setSelectedChatUser(u)}>
                                                     <div className="chat-user-avatar">
-                                                        {u.full_name?.charAt(0) || u.username?.charAt(0)}
+                                                        {(u.full_name || u.username || '?').charAt(0)}
                                                         <span className={isUserOnline(u.id) ? 'online-dot' : 'offline-dot'} />
                                                     </div>
                                                     <div className="chat-user-info">

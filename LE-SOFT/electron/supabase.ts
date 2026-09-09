@@ -34,16 +34,16 @@ interface SupabaseConfig {
 const EMPTY_DEFAULTS: SupabaseConfig = {
     url: '',
     anonKey: '',
-    serviceRoleKey: '',
-    nasUrl: '',
+    serviceRoleKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlsZGtrZ2pyb2xjamlqd2Zva2VrIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MTkzMzMyNCwiZXhwIjoyMDg3NTA5MzI0fQ.xRCLXdAXQBZTVTcjI4kwwuFLDcqR928kp_HeFME-eU4',
+    nasUrl: 'http://100.88.85.6:3001',
     nasAnonKey: '',
-    nasStorageUrl: '',
-    nasLocalUrl: '',
-    nasLocalStorageUrl: '',
-    nasTunnelUrl: '',
-    nasTunnelStorageUrl: '',
-    cfAccessClientId: '',
-    cfAccessClientSecret: ''
+    nasStorageUrl: 'http://100.88.85.6:8081',
+    nasLocalUrl: 'http://192.168.1.14:3001',
+    nasLocalStorageUrl: 'http://192.168.1.14:8081',
+    nasTunnelUrl: 'https://db.lenas.me',
+    nasTunnelStorageUrl: 'https://storage.lenas.me',
+    cfAccessClientId: '293c6787c3a98289a1f569b2060eae76.access',
+    cfAccessClientSecret: 'f4fd4f58933a5191b4ab83292d2bfb5515d94c7f681570ec422646c53908a506'
 };
 
 function loadConfig(): SupabaseConfig {
@@ -51,8 +51,15 @@ function loadConfig(): SupabaseConfig {
         if (fs.existsSync(CONFIG_PATH)) {
             const raw = fs.readFileSync(CONFIG_PATH, 'utf-8');
             const parsed = JSON.parse(raw);
-            // Merge with empty defaults — partial configs are handled gracefully
-            return { ...EMPTY_DEFAULTS, ...parsed };
+            const cfg = { ...EMPTY_DEFAULTS, ...parsed };
+            // Ensure CF credentials, serviceRoleKey and proper LAN IP are filled in if missing
+            if (!cfg.serviceRoleKey) cfg.serviceRoleKey = EMPTY_DEFAULTS.serviceRoleKey;
+            if (!cfg.cfAccessClientId) cfg.cfAccessClientId = EMPTY_DEFAULTS.cfAccessClientId;
+            if (!cfg.cfAccessClientSecret) cfg.cfAccessClientSecret = EMPTY_DEFAULTS.cfAccessClientSecret;
+            if (!cfg.nasTunnelUrl) cfg.nasTunnelUrl = EMPTY_DEFAULTS.nasTunnelUrl;
+            if (!cfg.nasTunnelStorageUrl) cfg.nasTunnelStorageUrl = EMPTY_DEFAULTS.nasTunnelStorageUrl;
+            if (cfg.nasLocalUrl === 'http://100.88.85.6:3001') cfg.nasLocalUrl = 'http://192.168.1.14:3001';
+            return cfg;
         }
     } catch (e) {
         console.warn('[SUPABASE] Could not load config file:', e);
@@ -186,6 +193,20 @@ export function getDbClients() {
     };
 }
 
+export function getCfAccessHeaders(): Record<string, string> {
+    try {
+        const config = loadConfig();
+        const headers: Record<string, string> = {};
+        if (config.cfAccessClientId && config.cfAccessClientSecret) {
+            headers['CF-Access-Client-Id']     = config.cfAccessClientId;
+            headers['CF-Access-Client-Secret'] = config.cfAccessClientSecret;
+        }
+        return headers;
+    } catch {
+        return {};
+    }
+}
+
 export function getNasStorageUrl(): string | null {
     try {
         const config = loadConfig();
@@ -200,9 +221,10 @@ export function getNasStorageUrl(): string | null {
         }
         // Legacy Tailscale fallback (nas_public)
         if (connectionState === 'nas_public') {
-            return config.nasStorageUrl || config.nasUrl?.replace(':3001', ':8081') || null;
+            return config.nasStorageUrl || config.nasUrl?.replace(':3001', ':8081') || 'http://100.88.85.6:8081';
         }
-        return null;
+        // Fallback: If NAS is configured, prefer tunnel or local LAN storage
+        return config.nasTunnelStorageUrl || config.nasLocalStorageUrl || config.nasStorageUrl || 'https://storage.lenas.me';
     } catch {
         return null;
     }
@@ -228,12 +250,17 @@ function recreateNasClient(url: string) {
             if (reqUrl.includes('/rest/v1/')) {
                 reqUrl = reqUrl.replace('/rest/v1/', '/');
             }
+            // PostgREST requires application/json for mutating operations (PGRST102 fix)
+            const method = (init?.method || 'GET').toUpperCase();
+            const contentTypeHeader: Record<string, string> = ['POST', 'PATCH', 'PUT'].includes(method)
+                ? { 'Content-Type': 'application/json' } : {};
             // Merge CF-Access headers with any headers already on the request
             const mergedInit: RequestInit = {
                 ...init,
                 headers: {
                     ...(init?.headers as Record<string, string> || {}),
                     ...cfHeaders,
+                    ...contentTypeHeader,
                 }
             };
             return fetch(reqUrl, mergedInit);

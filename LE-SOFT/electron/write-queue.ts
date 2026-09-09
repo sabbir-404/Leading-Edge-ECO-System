@@ -97,6 +97,10 @@ export function enqueue(entry: Omit<QueueEntry, 'id' | 'retries' | 'enqueuedAt'>
 async function executeWriteOnClient(client: any, entry: QueueEntry, encData: any): Promise<any> {
     const { table, operation, filter, upsertConflict, data } = entry;
     if (operation === 'insert') {
+        if (table === 'bills') {
+            const res = await client.from(table).upsert(encData as any, { onConflict: 'invoice_number' });
+            return res.error;
+        }
         const res = await client.from(table).insert(encData as any);
         return res.error;
     } else if (operation === 'upsert') {

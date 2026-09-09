@@ -111,7 +111,7 @@ const CustomerLedgerDetail: React.FC = () => {
                 {/* Header Profile */}
                 <div style={{ background: 'var(--card-bg)', borderRadius: '12px', border: '1px solid var(--border-color)', padding: '1.5rem', display: 'flex', gap: '2rem', alignItems: 'center', flexShrink: 0 }}>
                     <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: '#e0e7ff', color: '#4f46e5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.5rem', fontWeight: 700 }}>
-                        {data.customer.name.charAt(0)}
+                        {(data.customer.name || '?').charAt(0)}
                     </div>
                     <div style={{ flex: 1 }}>
                         <h1 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '0.25rem' }}>{data.customer.name}</h1>

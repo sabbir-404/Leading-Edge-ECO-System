@@ -269,6 +269,8 @@ contextBridge.exposeInMainWorld('electron', {
     makeGetPdfUrls: (orderId: number) => ipcRenderer.invoke('make-get-pdf-urls', orderId),
     makeDeletePdf: (data: any) => ipcRenderer.invoke('make-delete-pdf', data),
     makeDownloadPdf: (data: any) => ipcRenderer.invoke('make-download-pdf', data),
+    makeUploadItemPdf: (data: any) => ipcRenderer.invoke('make-upload-item-pdf', data),
+    makeDeleteItemPdf: (data: any) => ipcRenderer.invoke('make-delete-item-pdf', data),
     // Make — Parts / Dimensions
     makeGetOrderParts: (orderId: number) => ipcRenderer.invoke('make-get-order-parts', orderId),
     makeUpsertPart: (part: any) => ipcRenderer.invoke('make-upsert-part', part),
@@ -282,6 +284,25 @@ contextBridge.exposeInMainWorld('electron', {
     markCustomizationPaid: (data: { orderId: number, updatedBy: string }) => ipcRenderer.invoke('mark-customization-paid', data),
     // Make — Dashboard
     makeGetDashboardStats: () => ipcRenderer.invoke('make-get-dashboard-stats'),
+
+    // Make — Customized Product Catalog
+    makeGetCatalogProducts: (params?: any) => ipcRenderer.invoke('make-get-catalog-products', params),
+    makeSaveCatalogProduct: (product: any) => ipcRenderer.invoke('make-save-catalog-product', product),
+    makeDeleteCatalogProduct: (id: number) => ipcRenderer.invoke('make-delete-catalog-product', id),
+    makeSaveSpec: (spec: any) => ipcRenderer.invoke('make-save-spec', spec),
+    makeDeleteSpec: (id: number) => ipcRenderer.invoke('make-delete-spec', id),
+    makeSaveSize: (size: any) => ipcRenderer.invoke('make-save-size', size),
+    makeDeleteSize: (id: number) => ipcRenderer.invoke('make-delete-size', id),
+    makeSaveColor: (color: any) => ipcRenderer.invoke('make-save-color', color),
+    makeDeleteColor: (id: number) => ipcRenderer.invoke('make-delete-color', id),
+    makeGetProductPurchaseHistory: (productId: number) => ipcRenderer.invoke('make-get-product-purchase-history', productId),
+
+    // Make — Multi-Item Orders, Pricing & Versioning
+    makeGetOrderItems: (orderId: number) => ipcRenderer.invoke('make-get-order-items', orderId),
+    makeDesignerSaveSpecsAndPricing: (data: any) => ipcRenderer.invoke('make-designer-save-specs-and-pricing', data),
+    makeGetOrderVersions: (orderId: number) => ipcRenderer.invoke('make-get-order-versions', orderId),
+    makeGetVersionDiff: (data: any) => ipcRenderer.invoke('make-get-version-diff', data),
+    makeUpdateProductionStage: (data: any) => ipcRenderer.invoke('make-update-production-stage', data),
     // License — Cloud
     checkLicenseCloud: () => ipcRenderer.invoke('check-license-cloud'),
     activateLicenseCloud: (data: any) => ipcRenderer.invoke('activate-license-cloud', data),
@@ -334,6 +355,10 @@ contextBridge.exposeInMainWorld('electron', {
     hrmGetPayroll: (data: any) => ipcRenderer.invoke('hrm-get-payroll', data),
     hrmGeneratePayroll: (pr: any) => ipcRenderer.invoke('hrm-generate-payroll', pr),
     hrmMarkPayrollPaid: (id: number) => ipcRenderer.invoke('hrm-mark-payroll-paid', id),
+
+    hrmGetHolidays: () => ipcRenderer.invoke('hrm-get-holidays'),
+    hrmUpsertHoliday: (data: any) => ipcRenderer.invoke('hrm-upsert-holiday', data),
+    hrmDeleteHoliday: (id: number) => ipcRenderer.invoke('hrm-delete-holiday', id),
 
     // ─── CRM MODULE ───
     crmGetCustomers: () => ipcRenderer.invoke('crm-get-customers'),

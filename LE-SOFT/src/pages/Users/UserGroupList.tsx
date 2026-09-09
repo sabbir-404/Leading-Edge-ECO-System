@@ -20,7 +20,7 @@ const PERMISSION_KEYS = [
     // CRM
     'read_customer', 'write_customer', 'delete_customer', 'read_quotation', 'write_quotation', 'see_all_customers', 'view_customer_contact', 'view_customer_financials', 'view_customer_ledger',
     // MAKE
-    'read_make', 'write_make', 'alter_make',
+    'read_make', 'write_make', 'alter_make', 'read_make_catalog', 'write_make_catalog', 'set_make_cost_price', 'set_make_sale_price', 'approve_make_order', 'access_make_sales_portal',
     // HRM
     'read_hrm', 'write_hrm', 'approve_leave', 'view_payroll',
     // Settings & Security

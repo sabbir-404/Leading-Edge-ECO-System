@@ -81,6 +81,7 @@ import ShippingDashboard from './pages/Shipping/ShippingDashboard';
 import PlaceOrder from './pages/Make/PlaceOrder';
 import TrackOrders from './pages/Make/TrackOrders';
 import MakeDashboard from './pages/Make/MakeDashboard';
+import MakeProductCatalog from './pages/Make/MakeProductCatalog';
 
 
 // Reports
@@ -99,6 +100,7 @@ import HRMEmployees from './pages/HRM/HRMEmployees';
 import HRMAttendance from './pages/HRM/HRMAttendance';
 import HRMLeaves from './pages/HRM/HRMLeaves';
 import HRMPayroll from './pages/HRM/HRMPayroll';
+import HRMHolidays from './pages/HRM/HRMHolidays';
 
 // CRM Module
 import CRMDirectory from './pages/CRM/CRMDirectory';
@@ -330,6 +332,7 @@ function App() {
         {/* MAKE Module */}
         <Route path="/make" element={<Navigate to="/make/dashboard" replace />} />
         <Route path="/make/dashboard" element={<ProtectedRoute><MakeDashboard /></ProtectedRoute>} />
+        <Route path="/make/products" element={<ProtectedRoute><MakeProductCatalog /></ProtectedRoute>} />
         <Route path="/make/place-order" element={<ProtectedRoute><PlaceOrder /></ProtectedRoute>} />
         <Route path="/make/track" element={<ProtectedRoute><TrackOrders /></ProtectedRoute>} />
 
@@ -354,6 +357,7 @@ function App() {
         <Route path="/hrm/attendance" element={<ProtectedRoute><HRMAttendance /></ProtectedRoute>} />
         <Route path="/hrm/leaves" element={<ProtectedRoute><HRMLeaves /></ProtectedRoute>} />
         <Route path="/hrm/payroll" element={<ProtectedRoute><HRMPayroll /></ProtectedRoute>} />
+        <Route path="/hrm/holidays" element={<ProtectedRoute><HRMHolidays /></ProtectedRoute>} />
 
         {/* Shipping */}
         <Route path="/shipping" element={<ProtectedRoute><ShippingDashboard /></ProtectedRoute>} />

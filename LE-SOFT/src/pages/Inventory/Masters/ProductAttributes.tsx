@@ -88,7 +88,7 @@ const ProductAttributes: React.FC = () => {
                 <table className="master-table">
                     <thead><tr><th>Name</th><th>Type</th><th>Unit</th><th>Options</th><th>Status</th><th style={{ textAlign: 'right' }}>Actions</th></tr></thead>
                     <tbody>
-                        {attributes.length === 0 ? <tr><td colSpan={6} className="empty-state">No product attributes created.</td></tr> : attributes.map(attribute => (
+                        {attributes.length === 0 ? <tr key="empty"><td colSpan={6} className="empty-state">No product attributes created.</td></tr> : attributes.map(attribute => (
                             <tr key={attribute.id}>
                                 <td>{attribute.name}</td>
                                 <td>{attribute.input_type}</td>

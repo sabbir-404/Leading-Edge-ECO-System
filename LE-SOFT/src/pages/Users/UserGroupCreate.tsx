@@ -93,7 +93,13 @@ const PERMISSION_GROUPS = [
         perms: [
             { key: 'read_make', label: 'Read Manufacturing Orders' },
             { key: 'write_make', label: 'Create Manufacturing Orders' },
-            { key: 'alter_make', label: 'Alter Manufacturing Orders' }
+            { key: 'alter_make', label: 'Alter Manufacturing Orders' },
+            { key: 'read_make_catalog', label: 'View Customized Product Catalog' },
+            { key: 'write_make_catalog', label: 'Manage Customized Product Catalog (Specs, Sizes, Colors)' },
+            { key: 'set_make_cost_price', label: 'Enter Production Cost Price' },
+            { key: 'set_make_sale_price', label: 'Set Customer Sale Price' },
+            { key: 'approve_make_order', label: 'Approve Manufacturing Orders' },
+            { key: 'access_make_sales_portal', label: 'Authorize WordPress Sales Portal Access' }
         ]
     },
     {

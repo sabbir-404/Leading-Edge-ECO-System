@@ -236,6 +236,9 @@ export interface ElectronAPI {
     hrmGetPayroll: (data: any) => Promise<any[]>;
     hrmGeneratePayroll: (pr: any) => Promise<any>;
     hrmMarkPayrollPaid: (id: number) => Promise<any>;
+    hrmGetHolidays: () => Promise<any[]>;
+    hrmUpsertHoliday: (data: any) => Promise<any>;
+    hrmDeleteHoliday: (id: number) => Promise<any>;
 
     // CRM module
     crmGetCustomers: () => Promise<any[]>;
@@ -255,6 +258,8 @@ export interface ElectronAPI {
     makeGetPdfUrls: (orderId: number) => Promise<any[]>;
     makeDeletePdf: (data: any) => Promise<any>;
     makeDownloadPdf: (data: any) => Promise<any>;
+    makeUploadItemPdf?: (data: { orderId: number; itemId: number; filePath?: string }) => Promise<any>;
+    makeDeleteItemPdf?: (data: { itemId: number; storagePath: string }) => Promise<any>;
     makeGetOrderParts: (orderId: number) => Promise<any[]>;
     makeUpsertPart: (part: any) => Promise<any>;
     makeDeletePart: (partId: number) => Promise<any>;
@@ -382,6 +387,46 @@ export interface ElectronAPI {
     deleteCompetitorUrl: (id: number) => Promise<any>;
     runAutoPriceScan: (productId: number) => Promise<any>;
     getMarketAnalysisHistory: (productId?: number) => Promise<any[]>;
+
+    // MAKE Module
+    getMakeOrders: () => Promise<any[]>;
+    createMakeOrder: (order: any) => Promise<any>;
+    updateMakeOrderStatus: (data: any) => Promise<any>;
+    getMakeOrderUpdates: (orderId: number) => Promise<any[]>;
+    deleteMakeOrder: (id: number) => Promise<any>;
+    getMakeFurnitureNames: () => Promise<string[]>;
+    makeUploadPdf: (data: any) => Promise<any>;
+    makeGetPdfUrls: (orderId: number) => Promise<any[]>;
+    makeDeletePdf: (data: any) => Promise<any>;
+    makeDownloadPdf: (data: any) => Promise<any>;
+    makeUploadItemPdf?: (data: { orderId: number; itemId: number; filePath?: string }) => Promise<any>;
+    makeDeleteItemPdf?: (data: { itemId: number; storagePath: string }) => Promise<any>;
+    makeGetOrderParts: (orderId: number) => Promise<any[]>;
+    makeUpsertPart: (part: any) => Promise<any>;
+    makeDeletePart: (partId: number) => Promise<any>;
+    makeAlterOrder: (data: any) => Promise<any>;
+    makeGetAlterationLog: (orderId: number) => Promise<any[]>;
+    getSalesmen: () => Promise<any[]>;
+    approveMakeOrder: (data: { orderId: number, approvedBy: string }) => Promise<any>;
+    setMakeOrderPrice: (data: { orderId: number, customPrice: number, updatedBy: string }) => Promise<any>;
+    markCustomizationPaid: (data: { orderId: number, updatedBy: string }) => Promise<any>;
+    makeGetDashboardStats: () => Promise<any>;
+
+    // Make Catalog & Versioning
+    makeGetCatalogProducts: (params?: any) => Promise<any[]>;
+    makeSaveCatalogProduct: (product: any) => Promise<any>;
+    makeDeleteCatalogProduct: (id: number) => Promise<any>;
+    makeSaveSpec: (spec: any) => Promise<any>;
+    makeDeleteSpec: (id: number) => Promise<any>;
+    makeSaveSize: (size: any) => Promise<any>;
+    makeDeleteSize: (id: number) => Promise<any>;
+    makeSaveColor: (color: any) => Promise<any>;
+    makeDeleteColor: (id: number) => Promise<any>;
+    makeGetOrderItems: (orderId: number) => Promise<any[]>;
+    makeDesignerSaveSpecsAndPricing: (data: any) => Promise<any>;
+    makeGetOrderVersions: (orderId: number) => Promise<any[]>;
+    makeGetVersionDiff: (data: any) => Promise<any>;
+    makeUpdateProductionStage: (data: any) => Promise<any>;
 
     // Window Controls
     setTheme: (theme: string) => Promise<void>;

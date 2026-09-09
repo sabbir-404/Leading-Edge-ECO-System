@@ -62,6 +62,7 @@ const ActiveUsers: React.FC = () => {
                 email: user.email || '',
                 phone: user.phone || '',
                 isActive: user.is_active ? 0 : 1,
+                requestingUserRole: localStorage.getItem('user_role') || 'admin'
             });
             if (res?.success !== false) {
                 // If active session AND blocking, also kick them

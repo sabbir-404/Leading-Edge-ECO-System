@@ -283,7 +283,7 @@ const Notifications: React.FC = () => {
                                                         color: selected ? 'white' : 'var(--text-secondary)',
                                                         fontWeight: 700, fontSize: '0.8rem'
                                                     }}>
-                                                        {(u.full_name || u.username).charAt(0).toUpperCase()}
+                                                        {(u.full_name || u.username || '?').charAt(0).toUpperCase()}
                                                     </div>
                                                     <div>
                                                         <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>{u.full_name || u.username}</div>

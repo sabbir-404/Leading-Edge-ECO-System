@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
     Search, Printer, Trash2, Plus, Minus, ScanBarcode, Save, UserSearch,
-    Truck, Tag, ChevronDown, ChevronUp, Package, Receipt, Wrench, Sliders, Send
+    Truck, Tag, ChevronDown, ChevronUp, Package, Receipt, Wrench, Sliders, Send,
+    ShieldCheck, DollarSign, Sparkles, X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import DashboardLayout from '../../components/DashboardLayout';
 import { resolveImageSrc } from '../../utils/imageSrc';
-import { canAdjustBillPrice } from '../../utils/permissions';
+import { canAdjustBillPrice, getUserPricingPermissions } from '../../utils/permissions';
 import { getPrintPageSize } from '../../utils/printPageSize';
 
 interface Product {
@@ -14,6 +15,7 @@ interface Product {
     name: string;
     sku: string;
     selling_price: number;
+    purchase_price?: number;
     category: string;
     image_path?: string;
     quantity?: number;
@@ -26,15 +28,17 @@ interface CartItem {
     product_name: string;
     sku: string;
     quantity: number;
-    mrp: number;           // unit price
+    cost_price: number | string;  // Cost Price: entered by Salesperson, Designer, Admin, Superadmin
+    mrp: number | string;         // Sale Price / MRP: entered by Designer, Admin, Superadmin
     discount_pct: number | string;
-    discount_amt: number;  // total discount for row
-    price: number;         // line total after discount
+    discount_amt: number;         // Total discount for row
+    price: number;                // Line total after discount
     image_path?: string;
     stock_group_id?: number;
     origin_type?: string;
     is_customized?: boolean;
     customization?: Record<string, string>;
+    notes?: string;
 }
 
 interface Customer {
@@ -90,6 +94,7 @@ const card: React.CSSProperties = {
 
 // ─── Component ───────────────────────────────────────────────────────────────
 const Billing: React.FC = () => {
+    const pricingPerms = getUserPricingPermissions();
     const [products, setProducts] = useState<Product[]>([]);
     const [cart, setCart] = useState<CartItem[]>([]);
     const [searchTerm, setSearchTerm] = useState('');
@@ -114,6 +119,18 @@ const Billing: React.FC = () => {
     const [maxAdj, setMaxAdj] = useState(0);
     const [globalDiscountPct, setGlobalDiscountPct] = useState<number | string>('');
     const canAdjust = canAdjustBillPrice();
+
+    // Quick Add Custom Product Modal State
+    const [showCustomModal, setShowCustomModal] = useState(false);
+    const [customItemForm, setCustomItemForm] = useState({
+        name: '',
+        sku: '',
+        quantity: 1,
+        cost_price: '' as number | string,
+        sale_price: '' as number | string,
+        discount_pct: '' as number | string,
+        notes: ''
+    });
 
     // Shipping
     const [shippingEnabled, setShippingEnabled] = useState(false);
@@ -140,9 +157,11 @@ const Billing: React.FC = () => {
     const [loadingCustomOrders, setLoadingCustomOrders] = useState(false);
     const [payingOrderId, setPayingOrderId] = useState<number | null>(null);
 
-    // Custom Request states
+    // Custom Request / Price Quotation states
     const [selectedCustomProduct, setSelectedCustomProduct] = useState<Product | null>(null);
     const [customQty, setCustomQty] = useState(1);
+    const [customCostPrice, setCustomCostPrice] = useState<number | string>('');
+    const [customSalePrice, setCustomSalePrice] = useState<number | string>('');
     const [customRequestCustomization, setCustomRequestCustomization] = useState<Record<string, string>>({});
     const [submittingRequest, setSubmittingRequest] = useState(false);
     const [customSearchTerm, setCustomSearchTerm] = useState('');
@@ -291,13 +310,20 @@ const Billing: React.FC = () => {
         setCart(prev => {
             const ex = prev.find(i => i.product_id === product.id);
             if (ex) return prev.map(i => i.product_id === product.id
-                ? { ...i, quantity: i.quantity + 1, price: i.is_customized ? 0 : (i.quantity + 1) * i.mrp * (1 - Number(i.discount_pct) / 100) }
+                ? { ...i, quantity: i.quantity + 1, price: i.is_customized ? 0 : (i.quantity + 1) * Number(i.mrp) * (1 - Number(i.discount_pct) / 100) }
                 : i
             );
             return [...prev, {
-                product_id: product.id, product_name: product.name, sku: product.sku || '',
-                quantity: 1, mrp: product.selling_price, discount_pct: 0, discount_amt: 0,
-                price: product.selling_price, image_path: product.image_path || '',
+                product_id: product.id,
+                product_name: product.name,
+                sku: product.sku || '',
+                quantity: 1,
+                cost_price: (product as any).purchase_price || 0,
+                mrp: product.selling_price || 0,
+                discount_pct: 0,
+                discount_amt: 0,
+                price: product.selling_price || 0,
+                image_path: product.image_path || '',
                 stock_group_id: product.stock_group_id,
                 origin_type: product.origin_type || 'LOCAL',
                 is_customized: false,
@@ -308,43 +334,93 @@ const Billing: React.FC = () => {
         setShowProductDropdown(false);
     };
 
+    const handleAddCustomProduct = () => {
+        if (!customItemForm.name.trim()) return alert('Please enter product / furniture name.');
+        const qty = Math.max(1, Number(customItemForm.quantity) || 1);
+        const cost = Math.max(0, Number(customItemForm.cost_price) || 0);
+        const sale = Math.max(0, Number(customItemForm.sale_price) || 0);
+        const disc = Math.min(100, Math.max(0, Number(customItemForm.discount_pct) || 0));
+        const discAmt = sale * qty * (disc / 100);
+        const finalPrice = sale * qty - discAmt;
+        const customId = -Date.now();
+
+        setCart(prev => [
+            ...prev,
+            {
+                product_id: customId,
+                product_name: customItemForm.name.trim(),
+                sku: customItemForm.sku.trim() || `CUSTOM-${Date.now().toString().slice(-4)}`,
+                quantity: qty,
+                cost_price: cost,
+                mrp: sale,
+                discount_pct: disc,
+                discount_amt: discAmt,
+                price: finalPrice,
+                is_customized: true,
+                notes: customItemForm.notes.trim() || undefined,
+                customization: customItemForm.notes ? { 'Custom Notes': customItemForm.notes.trim() } : {},
+            }
+        ]);
+
+        setCustomItemForm({
+            name: '',
+            sku: '',
+            quantity: 1,
+            cost_price: '',
+            sale_price: '',
+            discount_pct: '',
+            notes: ''
+        });
+        setShowCustomModal(false);
+    };
+
     const removeFromCart = (id: number) => setCart(prev => prev.filter(i => i.product_id !== id));
 
-    // ── Bidirectional discount ────────────────────────────────────────────────
-    // Changing quantity → recalc based on existing %
-    // Changing discount_pct → recalc discounted price
-    // Changing discounted_price (final price) → back-calc % (price can only go DOWN, not above MRP×qty)
-    const updateCartItem = (productId: number, field: 'quantity' | 'discount_pct' | 'discounted_price', rawValue: number | string) => {
+    // ── Bidirectional discount and role-based field updates ────────────────────
+    const updateCartItem = (
+        productId: number,
+        field: 'quantity' | 'discount_pct' | 'discounted_price' | 'cost_price' | 'mrp' | 'product_name' | 'sku' | 'notes',
+        rawValue: number | string
+    ) => {
         setCart(prev => prev.map(item => {
             if (item.product_id !== productId) return item;
-            let { quantity, mrp, discount_pct, discount_amt, price } = item;
+            let { quantity, mrp, cost_price, discount_pct, discount_amt, price } = item;
             const currentDiscPctNum = Number(discount_pct) || 0;
 
-            if (item.is_customized) {
-                if (field === 'quantity') {
-                    quantity = Math.max(1, Number(rawValue) || 1);
-                }
-                return { ...item, quantity, price: 0, discount_amt: 0, discount_pct: 0 };
-            }
-
-            if (field === 'quantity') {
+            if (field === 'cost_price') {
+                cost_price = rawValue === '' ? '' : Math.max(0, Number(rawValue) || 0);
+            } else if (field === 'mrp') {
+                mrp = rawValue === '' ? '' : Math.max(0, Number(rawValue) || 0);
+                const mrpNum = Number(mrp) || 0;
+                discount_amt = mrpNum * quantity * (currentDiscPctNum / 100);
+                price = mrpNum * quantity - discount_amt;
+            } else if (field === 'quantity') {
                 quantity = Math.max(1, Number(rawValue) || 1);
-                discount_amt = mrp * quantity * (currentDiscPctNum / 100);
-                price = mrp * quantity - discount_amt;
+                const mrpNum = Number(mrp) || 0;
+                discount_amt = mrpNum * quantity * (currentDiscPctNum / 100);
+                price = mrpNum * quantity - discount_amt;
             } else if (field === 'discount_pct') {
                 discount_pct = rawValue as any;
                 const parsed = Number(rawValue) || 0;
-                discount_amt = mrp * quantity * (Math.min(100, Math.max(0, parsed)) / 100);
-                price = mrp * quantity - discount_amt;
+                const mrpNum = Number(mrp) || 0;
+                discount_amt = mrpNum * quantity * (Math.min(100, Math.max(0, parsed)) / 100);
+                price = mrpNum * quantity - discount_amt;
             } else if (field === 'discounted_price') {
-                const maxPrice = mrp * quantity;
+                const mrpNum = Number(mrp) || 0;
+                const maxPrice = mrpNum * quantity;
                 const lineTotal = Math.min(maxPrice, Math.max(0, Number(rawValue) || 0));
                 price = lineTotal;
                 discount_amt = maxPrice - lineTotal;
-                const totalMrp = mrp * quantity;
+                const totalMrp = mrpNum * quantity;
                 discount_pct = totalMrp > 0 ? +((discount_amt / totalMrp) * 100).toFixed(2) : 0;
+            } else if (field === 'product_name') {
+                return { ...item, product_name: String(rawValue) };
+            } else if (field === 'sku') {
+                return { ...item, sku: String(rawValue) };
+            } else if (field === 'notes') {
+                return { ...item, notes: String(rawValue) };
             }
-            return { ...item, quantity, discount_pct, discount_amt, price };
+            return { ...item, quantity, mrp, cost_price, discount_pct, discount_amt, price };
         }));
     };
 
@@ -355,11 +431,9 @@ const Billing: React.FC = () => {
         (p.sku || '').toLowerCase().includes(searchTerm.toLowerCase())
     );
 
-
-
     // ── Totals ────────────────────────────────────────────────────────────────
-    const subtotal = cart.reduce((s, i) => s + (i.is_customized ? 0 : i.mrp * i.quantity), 0);
-    const discountTotal = cart.reduce((s, i) => s + (i.is_customized ? 0 : Math.max(0, i.discount_amt)), 0);
+    const subtotal = cart.reduce((s, i) => s + (i.is_customized && Number(i.mrp) === 0 ? 0 : (Number(i.mrp) || 0) * i.quantity), 0);
+    const discountTotal = cart.reduce((s, i) => s + (i.is_customized && Number(i.mrp) === 0 ? 0 : Math.max(0, i.discount_amt)), 0);
     const itemsTotal = subtotal - discountTotal;
     const pAdjNum = Number(priceAdjustment) || 0;
     const shipNum = Number(shippingCharge) || 0;
@@ -375,8 +449,9 @@ const Billing: React.FC = () => {
     const applyGlobalDiscount = (pct: number) => {
         const p = Math.min(100, Math.max(0, pct));
         setCart(prev => prev.map(item => {
-            const disc_amt = item.mrp * item.quantity * (p / 100);
-            return { ...item, discount_pct: p, discount_amt: disc_amt, price: item.mrp * item.quantity - disc_amt };
+            const mrpNum = Number(item.mrp) || 0;
+            const disc_amt = mrpNum * item.quantity * (p / 100);
+            return { ...item, discount_pct: p, discount_amt: disc_amt, price: mrpNum * item.quantity - disc_amt };
         }));
     };
 
@@ -550,6 +625,9 @@ const Billing: React.FC = () => {
         if (!customer.name) return alert('Enter customer name.');
         if (customQty <= 0) return alert('Quantity must be greater than 0.');
 
+        const costP = Math.max(0, Number(customCostPrice) || 0);
+        const saleP = Math.max(0, Number(customSalePrice) || 0);
+
         setSubmittingRequest(true);
         try {
             const el = window.electron as any;
@@ -562,27 +640,32 @@ const Billing: React.FC = () => {
                 product_name: selectedCustomProduct.name,
                 sku: selectedCustomProduct.sku,
                 quantity: customQty,
-                mrp: selectedCustomProduct.selling_price,
+                cost_price: costP,
+                mrp: saleP > 0 ? saleP : selectedCustomProduct.selling_price,
                 discount_pct: 0,
                 discount_amt: 0,
-                price: 0,
+                price: saleP,
                 image_path: selectedCustomProduct.image_path,
                 stock_group_id: selectedCustomProduct.stock_group_id,
                 origin_type: selectedCustomProduct.origin_type,
                 is_customized: true,
-                customization: customRequestCustomization
+                customization: {
+                    ...customRequestCustomization,
+                    ...(costP > 0 ? { 'Estimated Cost Price': `৳${costP.toLocaleString()}` } : {}),
+                    ...(saleP > 0 ? { 'Quoted Sale Price': `৳${saleP.toLocaleString()}` } : {})
+                }
             };
 
             const result = await el.createBill({
                 customer_id: custId,
                 billed_by: billedBy,
                 items: [cartItem],
-                subtotal: 0,
+                subtotal: saleP * customQty,
                 discount_total: 0,
                 price_adjustment: 0,
                 installation_charge: 0,
                 installation_note: '',
-                grand_total: 0,
+                grand_total: saleP * customQty,
                 payment_method_id: selectedPaymentMethod,
                 payment_ref: paymentRef,
             });
@@ -591,6 +674,8 @@ const Billing: React.FC = () => {
                 alert(`Price Quotation Request placed successfully! Invoice: ${result.invoice_number}`);
                 setSelectedCustomProduct(null);
                 setCustomQty(1);
+                setCustomCostPrice('');
+                setCustomSalePrice('');
                 setCustomRequestCustomization({});
                 setCustomSearchTerm('');
                 setActiveTab('customizations');
@@ -724,22 +809,56 @@ const Billing: React.FC = () => {
                                 </div>
                             )}
 
-                            <div>
-                                <label style={lbl}>Quantity</label>
-                                <input
-                                    type="number"
-                                    min={1}
-                                    value={customQty}
-                                    onChange={e => setCustomQty(Math.max(1, parseInt(e.target.value) || 1))}
-                                    style={{ ...inp, width: '100px' }}
-                                />
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.6rem' }}>
+                                <div>
+                                    <label style={lbl}>Quantity *</label>
+                                    <input
+                                        type="number"
+                                        min={1}
+                                        value={customQty}
+                                        onChange={e => setCustomQty(Math.max(1, parseInt(e.target.value) || 1))}
+                                        style={inp}
+                                    />
+                                </div>
+
+                                {/* Cost Price: Salesperson, Designer, Admin, Superadmin */}
+                                <div>
+                                    <label style={{ ...lbl, color: '#f97316' }}>
+                                        Cost Price (৳) {pricingPerms.isSalesperson && <span style={{ fontSize: '0.65rem', color: '#ea580c' }}>(Salesperson Entry)</span>}
+                                    </label>
+                                    <input
+                                        type="number"
+                                        min={0}
+                                        placeholder="Enter cost price..."
+                                        value={customCostPrice}
+                                        onChange={e => setCustomCostPrice(e.target.value)}
+                                        disabled={!pricingPerms.canEditCostPrice}
+                                        style={{ ...inp, borderColor: '#f97316', fontWeight: 600 }}
+                                    />
+                                </div>
+
+                                {/* Sale Price: Designer, Admin, Superadmin (Salesperson sees notice) */}
+                                <div>
+                                    <label style={{ ...lbl, color: pricingPerms.canEditSalePrice ? '#22c55e' : 'var(--text-secondary)' }}>
+                                        Sale Price (৳) {pricingPerms.canEditSalePrice ? <span style={{ fontSize: '0.65rem', color: '#16a34a' }}>(Designer / Admin)</span> : <span style={{ fontSize: '0.65rem' }}>(By Designer)</span>}
+                                    </label>
+                                    <input
+                                        type="number"
+                                        min={0}
+                                        placeholder={pricingPerms.canEditSalePrice ? "Enter sale price..." : "Set by Designer"}
+                                        value={customSalePrice}
+                                        onChange={e => setCustomSalePrice(e.target.value)}
+                                        disabled={!pricingPerms.canEditSalePrice}
+                                        style={{ ...inp, borderColor: pricingPerms.canEditSalePrice ? '#22c55e' : 'var(--border-color)', fontWeight: 600, background: pricingPerms.canEditSalePrice ? 'var(--input-bg)' : 'rgba(0,0,0,0.04)' }}
+                                    />
+                                </div>
                             </div>
                         </div>
                     </div>
                 </div>
 
                 {/* ══ RIGHT COLUMN: Attributes / Parameters Form ══ */}
-                <div style={{ width: '360px', display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+                <div style={{ width: '380px', display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
                     <div style={{ ...card, flex: 1, display: 'flex', flexDirection: 'column' }}>
                         <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--accent-color)', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
                             <Sliders size={16} /> Custom Specifications
@@ -789,20 +908,20 @@ const Billing: React.FC = () => {
                                         onClick={handleSubmitCustomRequest}
                                         disabled={submittingRequest}
                                         style={{
-                                            width: '100%',
-                                            padding: '0.8rem',
-                                            background: '#f97316',
-                                            color: 'white',
-                                            border: 'none',
-                                            borderRadius: '10px',
-                                            fontWeight: 700,
-                                            fontSize: '0.9rem',
-                                            cursor: submittingRequest ? 'wait' : 'pointer',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            justifyContent: 'center',
-                                            gap: '8px',
-                                            boxShadow: '0 4px 6px rgba(249,115,22,0.2)'
+                                             width: '100%',
+                                             padding: '0.8rem',
+                                             background: '#f97316',
+                                             color: 'white',
+                                             border: 'none',
+                                             borderRadius: '10px',
+                                             fontWeight: 700,
+                                             fontSize: '0.9rem',
+                                             cursor: submittingRequest ? 'wait' : 'pointer',
+                                             display: 'flex',
+                                             alignItems: 'center',
+                                             justifyContent: 'center',
+                                             gap: '8px',
+                                             boxShadow: '0 4px 6px rgba(249,115,22,0.2)'
                                         }}
                                     >
                                         <Send size={16} /> {submittingRequest ? 'Submitting Price Quotation...' : 'Submit Price Quotation'}
@@ -951,11 +1070,56 @@ const Billing: React.FC = () => {
                                 )}
                             </div>
 
+                            {/* ── Role Pricing Guidance Banner ── */}
+                            <div style={{
+                                background: pricingPerms.canModifyAll 
+                                    ? 'rgba(34, 197, 94, 0.08)' 
+                                    : pricingPerms.isFurnitureDesigner 
+                                        ? 'rgba(99, 102, 241, 0.08)' 
+                                        : 'rgba(249, 115, 22, 0.08)',
+                                border: `1px solid ${pricingPerms.canModifyAll ? 'rgba(34,197,94,0.3)' : pricingPerms.isFurnitureDesigner ? 'rgba(99,102,241,0.3)' : 'rgba(249,115,22,0.3)'}`,
+                                borderRadius: '10px',
+                                padding: '0.45rem 0.85rem',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                fontSize: '0.8rem',
+                                gap: '8px'
+                            }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <ShieldCheck size={16} color={pricingPerms.canModifyAll ? '#22c55e' : pricingPerms.isFurnitureDesigner ? '#6366f1' : '#f97316'} />
+                                    <div>
+                                        <strong style={{ color: pricingPerms.canModifyAll ? '#15803d' : pricingPerms.isFurnitureDesigner ? '#4f46e5' : '#c2410c' }}>
+                                            {pricingPerms.displayRoleName} Mode:
+                                        </strong>{' '}
+                                        {pricingPerms.canModifyAll ? (
+                                            <span style={{ color: 'var(--text-secondary)' }}>Full administrative authority to modify all product information, cost prices, sale prices, quantities, and discounts.</span>
+                                        ) : pricingPerms.isFurnitureDesigner ? (
+                                            <span style={{ color: 'var(--text-secondary)' }}>You can enter both <strong>Cost Price</strong> and <strong>Sale Price</strong> for all bill items.</span>
+                                        ) : (
+                                            <span style={{ color: 'var(--text-secondary)' }}>You enter the <strong>Cost Price</strong> for bill items. Sale prices are governed by Furniture Designer and Admin.</span>
+                                        )}
+                                    </div>
+                                </div>
+                                <span style={{
+                                    fontSize: '0.7rem',
+                                    fontWeight: 800,
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '0.5px',
+                                    padding: '2px 8px',
+                                    borderRadius: '12px',
+                                    background: pricingPerms.canModifyAll ? '#22c55e' : pricingPerms.isFurnitureDesigner ? '#6366f1' : '#f97316',
+                                    color: 'white'
+                                }}>
+                                    {pricingPerms.displayRoleName}
+                                </span>
+                            </div>
+
                             {/* ── Product Search + Table (main area) ── */}
                             <div style={{ ...card, flex: 1, display: 'flex', flexDirection: 'column', padding: 0, overflow: 'hidden' }}>
 
-                                {/* Search bar */}
-                                <div style={{ padding: '0.7rem 0.9rem', borderBottom: '1px solid var(--border-color)', display: 'flex', gap: '0.5rem' }}>
+                                {/* Search bar & Action Buttons */}
+                                <div style={{ padding: '0.7rem 0.9rem', borderBottom: '1px solid var(--border-color)', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                                     <form onSubmit={e => { 
                                         e.preventDefault(); 
                                         const t = searchTerm.trim().toLowerCase(); 
@@ -1012,16 +1176,47 @@ const Billing: React.FC = () => {
                                                                     <div style={{ fontSize: '0.72rem', color: '#888' }}>SKU: {p.sku || 'N/A'} {p.quantity !== undefined && ` • Stock: ${p.quantity}`}</div>
                                                                 </div>
                                                             </div>
-                                                            <span style={{ fontWeight: 700, color: 'var(--accent-color)', fontSize: '0.9rem' }}>৳{p.selling_price.toLocaleString()}</span>
+                                                            <div style={{ textAlign: 'right' }}>
+                                                                <div style={{ fontWeight: 700, color: 'var(--accent-color)', fontSize: '0.9rem' }}>৳{p.selling_price.toLocaleString()}</div>
+                                                                {pricingPerms.canEditCostPrice && p.purchase_price ? (
+                                                                    <div style={{ fontSize: '0.68rem', color: '#ea580c' }}>Cost: ৳{Number(p.purchase_price).toLocaleString()}</div>
+                                                                ) : null}
+                                                            </div>
                                                         </div>
                                                     ))}
                                                 </motion.div>
                                             )}
                                         </AnimatePresence>
                                     </form>
+
                                     <button onClick={() => barcodeInputRef.current?.focus()}
+                                        title="Scan Barcode (F2)"
                                         style={{ height: '36px', width: '40px', background: 'var(--accent-color)', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                         <ScanBarcode size={16} />
+                                    </button>
+
+                                    {/* Add Custom / Bespoke Item Button */}
+                                    <button
+                                        onClick={() => setShowCustomModal(true)}
+                                        title="Add Custom Furniture / Product Item"
+                                        style={{
+                                            height: '36px',
+                                            padding: '0 0.85rem',
+                                            background: '#f97316',
+                                            color: 'white',
+                                            border: 'none',
+                                            borderRadius: '8px',
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '6px',
+                                            fontWeight: 700,
+                                            fontSize: '0.8rem',
+                                            whiteSpace: 'nowrap',
+                                            boxShadow: '0 2px 4px rgba(249,115,22,0.2)'
+                                        }}
+                                    >
+                                        <Plus size={15} /> Add Custom Product
                                     </button>
                                 </div>
 
@@ -1031,26 +1226,43 @@ const Billing: React.FC = () => {
                                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', opacity: 0.35, gap: '0.5rem' }}>
                                             <Package size={44} />
                                             <p style={{ fontSize: '0.95rem' }}>Scan or search to add products</p>
-                                            <p style={{ fontSize: '0.8rem' }}>Press F2 to focus barcode scanner</p>
+                                            <p style={{ fontSize: '0.8rem' }}>Or click "+ Add Custom Product" to add bespoke furniture</p>
                                         </div>
                                     ) : (
                                         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
                                             <thead style={{ background: 'var(--hover-bg)', position: 'sticky', top: 0, zIndex: 5 }}>
                                                 <tr>
-                                                    <th style={{ padding: '0.55rem 0.5rem', textAlign: 'center', width: '40px', fontWeight: 700, color: 'var(--text-secondary)' }}>#</th>
-                                                    <th style={{ padding: '0.55rem 0.75rem', textAlign: 'left', fontWeight: 700 }}>Product</th>
-                                                    <th style={{ padding: '0.55rem 0.5rem', textAlign: 'center', width: '105px', fontWeight: 700 }}>Qty</th>
-                                                    <th style={{ padding: '0.55rem 0.5rem', textAlign: 'right', width: '90px', fontWeight: 700 }}>Unit MRP</th>
-                                                    <th style={{ padding: '0.55rem 0.5rem', textAlign: 'center', width: '80px', fontWeight: 700 }}>
+                                                    <th style={{ padding: '0.55rem 0.5rem', textAlign: 'center', width: '35px', fontWeight: 700, color: 'var(--text-secondary)' }}>#</th>
+                                                    <th style={{ padding: '0.55rem 0.75rem', textAlign: 'left', fontWeight: 700 }}>Product / Details</th>
+                                                    <th style={{ padding: '0.55rem 0.5rem', textAlign: 'center', width: '95px', fontWeight: 700 }}>Qty</th>
+                                                    
+                                                    {/* Cost Price: Salesperson, Designer, Admin, Superadmin */}
+                                                    <th style={{ padding: '0.55rem 0.5rem', textAlign: 'right', width: '105px', fontWeight: 700, color: '#ea580c' }}>
+                                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '2px' }}>
+                                                            <Tag size={12} color="#ea580c" /> Cost Price
+                                                        </div>
+                                                    </th>
+
+                                                    {/* Sale Price: Designer, Admin, Superadmin (Read-only for Salesperson) */}
+                                                    <th style={{ padding: '0.55rem 0.5rem', textAlign: 'right', width: '115px', fontWeight: 700, color: 'var(--accent-color)' }}>
+                                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '2px' }}>
+                                                            <DollarSign size={12} /> Sale Price
+                                                        </div>
+                                                    </th>
+
+                                                    <th style={{ padding: '0.55rem 0.5rem', textAlign: 'center', width: '75px', fontWeight: 700 }}>
                                                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '3px' }}><Tag size={12} />Disc%</div>
                                                     </th>
-                                                    <th style={{ padding: '0.55rem 0.5rem', textAlign: 'right', width: '105px', fontWeight: 700 }}>Final Price</th>
-                                                    <th style={{ padding: '0.55rem 0.5rem', textAlign: 'right', width: '90px', fontWeight: 700, color: '#22c55e' }}>Savings</th>
+                                                    <th style={{ padding: '0.55rem 0.5rem', textAlign: 'right', width: '100px', fontWeight: 700 }}>Final Total</th>
                                                     <th style={{ width: '34px' }}></th>
                                                 </tr>
                                             </thead>
                                             <tbody>
                                                 {cart.map((item, idx) => {
+                                                    const costNum = Number(item.cost_price) || 0;
+                                                    const lineCostTotal = costNum * item.quantity;
+                                                    const lineMargin = item.price - lineCostTotal;
+
                                                     return (
                                                         <React.Fragment key={item.product_id}>
                                                             <tr style={{ borderBottom: '1px solid var(--border-color)', background: idx % 2 === 0 ? 'var(--hover-bg)' : 'var(--card-bg)', transition: 'background 0.1s' }}>
@@ -1059,15 +1271,41 @@ const Billing: React.FC = () => {
                                                                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
                                                                         {item.image_path
                                                                             ? <img src={resolveImageSrc(item.image_path)} alt="" style={{ width: '28px', height: '28px', borderRadius: '4px', objectFit: 'cover', border: '1px solid #eee', flexShrink: 0 }} />
-                                                                            : <div style={{ width: '28px', height: '28px', borderRadius: '4px', background: '#f1f5f9', flexShrink: 0 }} />}
-                                                                        <div>
-                                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                                                                                <div style={{ fontWeight: 600, lineHeight: 1.2 }}>{item.product_name}</div>
+                                                                            : <div style={{ width: '28px', height: '28px', borderRadius: '4px', background: item.is_customized ? 'rgba(249,115,22,0.1)' : '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.6rem', color: item.is_customized ? '#f97316' : '#94a3b8', fontWeight: 700, flexShrink: 0 }}>{item.is_customized ? 'CUST' : 'IMG'}</div>}
+                                                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                                                                                {pricingPerms.canModifyAll ? (
+                                                                                    <input
+                                                                                        type="text"
+                                                                                        value={item.product_name}
+                                                                                        onChange={e => updateCartItem(item.product_id, 'product_name', e.target.value)}
+                                                                                        style={{ ...inp, padding: '2px 4px', fontSize: '0.82rem', fontWeight: 700, height: '24px' }}
+                                                                                    />
+                                                                                ) : (
+                                                                                    <div style={{ fontWeight: 600, lineHeight: 1.2 }}>{item.product_name}</div>
+                                                                                )}
+                                                                                {item.is_customized && (
+                                                                                    <span style={{ fontSize: '0.65rem', background: 'rgba(249,115,22,0.15)', color: '#ea580c', padding: '1px 5px', borderRadius: '4px', fontWeight: 700 }}>Customized</span>
+                                                                                )}
                                                                             </div>
-                                                                            <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>{item.sku || 'No SKU'}</div>
+                                                                            <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+                                                                                {pricingPerms.canModifyAll ? (
+                                                                                    <input
+                                                                                        type="text"
+                                                                                        placeholder="SKU"
+                                                                                        value={item.sku}
+                                                                                        onChange={e => updateCartItem(item.product_id, 'sku', e.target.value)}
+                                                                                        style={{ border: 'none', background: 'transparent', fontSize: '0.7rem', color: 'var(--text-secondary)', padding: 0, outline: 'none' }}
+                                                                                    />
+                                                                                ) : (
+                                                                                    item.sku || 'No SKU'
+                                                                                )}
+                                                                                {item.notes ? ` • Note: ${item.notes}` : ''}
+                                                                            </div>
                                                                         </div>
                                                                     </div>
                                                                 </td>
+
                                                                 {/* Qty */}
                                                                 <td style={{ padding: '0.4rem 0.3rem' }}>
                                                                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '3px' }}>
@@ -1077,33 +1315,93 @@ const Billing: React.FC = () => {
                                                                         </button>
                                                                         <input type="number" value={item.quantity}
                                                                             onChange={e => updateCartItem(item.product_id, 'quantity', parseInt(e.target.value) || 1)}
-                                                                            style={{ width: '38px', textAlign: 'center', border: '1px solid var(--border-color)', borderRadius: '4px', padding: '2px', fontSize: '0.82rem' }} min={1} />
+                                                                            style={{ width: '36px', textAlign: 'center', border: '1px solid var(--border-color)', borderRadius: '4px', padding: '2px', fontSize: '0.82rem' }} min={1} />
                                                                         <button onClick={() => updateCartItem(item.product_id, 'quantity', item.quantity + 1)}
                                                                             style={{ width: '22px', height: '22px', border: '1px solid var(--border-color)', borderRadius: '4px', background: 'var(--card-bg)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                                                             <Plus size={10} />
                                                                         </button>
                                                                     </div>
                                                                 </td>
-                                                                {/* MRP */}
-                                                                <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right', fontWeight: 500, color: 'var(--text-secondary)' }}>
-                                                                    ৳{item.mrp.toLocaleString()}
-                                                                    <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)' }}>×{item.quantity}</div>
+
+                                                                {/* Cost Price: Salesperson, Designer, Admin, Superadmin */}
+                                                                <td style={{ padding: '0.4rem 0.3rem', textAlign: 'right' }}>
+                                                                    <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                                                                        <span style={{ position: 'absolute', left: '4px', fontSize: '0.7rem', color: '#ea580c', fontWeight: 600 }}>৳</span>
+                                                                        <input
+                                                                            type="number"
+                                                                            min={0}
+                                                                            placeholder="0"
+                                                                            value={item.cost_price === 0 ? '' : item.cost_price}
+                                                                            onChange={e => updateCartItem(item.product_id, 'cost_price', e.target.value)}
+                                                                            disabled={!pricingPerms.canEditCostPrice}
+                                                                            title="Cost Price (Entered by Salesperson / Designer / Admin)"
+                                                                            style={{
+                                                                                width: '90px',
+                                                                                textAlign: 'right',
+                                                                                border: '1px solid #fed7aa',
+                                                                                borderRadius: '6px',
+                                                                                padding: '3px 4px 3px 14px',
+                                                                                fontSize: '0.82rem',
+                                                                                fontWeight: 600,
+                                                                                color: '#c2410c',
+                                                                                background: '#fffaf5',
+                                                                                outline: 'none'
+                                                                            }}
+                                                                        />
+                                                                    </div>
                                                                 </td>
+
+                                                                {/* Sale Price / Unit MRP: Designer, Admin, Superadmin (Read-only for Salesperson) */}
+                                                                <td style={{ padding: '0.4rem 0.3rem', textAlign: 'right' }}>
+                                                                    {pricingPerms.canEditSalePrice ? (
+                                                                        <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                                                                            <span style={{ position: 'absolute', left: '4px', fontSize: '0.7rem', color: '#16a34a', fontWeight: 600 }}>৳</span>
+                                                                            <input
+                                                                                type="number"
+                                                                                min={0}
+                                                                                placeholder="0"
+                                                                                value={item.mrp === 0 ? '' : item.mrp}
+                                                                                onChange={e => updateCartItem(item.product_id, 'mrp', e.target.value)}
+                                                                                title="Sale Price (Entered by Designer / Admin)"
+                                                                                style={{
+                                                                                    width: '95px',
+                                                                                    textAlign: 'right',
+                                                                                    border: '1px solid #bbf7d0',
+                                                                                    borderRadius: '6px',
+                                                                                    padding: '3px 4px 3px 14px',
+                                                                                    fontSize: '0.82rem',
+                                                                                    fontWeight: 700,
+                                                                                    color: '#15803d',
+                                                                                    background: '#f0fdf4',
+                                                                                    outline: 'none'
+                                                                                }}
+                                                                            />
+                                                                        </div>
+                                                                    ) : (
+                                                                        <div style={{ textAlign: 'right', padding: '3px 6px', fontWeight: 700, color: 'var(--text-primary)', fontSize: '0.85rem' }}>
+                                                                            ৳{Number(item.mrp || 0).toLocaleString()}
+                                                                            <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>Catalog Price</div>
+                                                                        </div>
+                                                                    )}
+                                                                </td>
+
                                                                 {/* Discount % */}
                                                                 <td style={{ padding: '0.4rem 0.3rem' }}>
                                                                     <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
                                                                         <input type="number"
                                                                             value={item.discount_pct === 0 ? '' : item.discount_pct}
                                                                             placeholder="0"
+                                                                            disabled={!pricingPerms.canModifyAll && !canAdjust}
                                                                             onChange={e => updateCartItem(item.product_id, 'discount_pct', e.target.value)}
-                                                                            style={{ width: '58px', textAlign: 'center', border: `1px solid ${Number(item.discount_pct) > 0 ? '#f97316' : 'var(--border-color)'}`, borderRadius: '6px', padding: '3px 18px 3px 5px', fontSize: '0.82rem', background: Number(item.discount_pct) > 0 ? '#fff7ed' : 'var(--card-bg)', color: Number(item.discount_pct) > 0 ? '#c2410c' : 'inherit', fontWeight: Number(item.discount_pct) > 0 ? 700 : 400 }}
+                                                                            style={{ width: '52px', textAlign: 'center', border: `1px solid ${Number(item.discount_pct) > 0 ? '#f97316' : 'var(--border-color)'}`, borderRadius: '6px', padding: '3px 14px 3px 3px', fontSize: '0.82rem', background: Number(item.discount_pct) > 0 ? '#fff7ed' : 'var(--card-bg)', color: Number(item.discount_pct) > 0 ? '#c2410c' : 'inherit', fontWeight: Number(item.discount_pct) > 0 ? 700 : 400 }}
                                                                             min={0} max={100} />
-                                                                        <span style={{ position: 'absolute', right: '5px', fontSize: '0.72rem', color: '#c2410c', fontWeight: 700 }}>%</span>
+                                                                        <span style={{ position: 'absolute', right: '4px', fontSize: '0.7rem', color: '#c2410c', fontWeight: 700 }}>%</span>
                                                                     </div>
                                                                 </td>
+
                                                                 {/* Final price */}
-                                                                <td style={{ padding: '0.4rem 0.3rem' }}>
-                                                                    {editingPriceId === item.product_id ? (
+                                                                <td style={{ padding: '0.4rem 0.3rem', textAlign: 'right' }}>
+                                                                    {editingPriceId === item.product_id && pricingPerms.canModifyAll ? (
                                                                         <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
                                                                             <span style={{ position: 'absolute', left: '6px', fontSize: '0.78rem', color: 'var(--text-secondary)', fontWeight: 600 }}>৳</span>
                                                                             <input type="number" autoFocus
@@ -1111,20 +1409,22 @@ const Billing: React.FC = () => {
                                                                                 onBlur={e => { updateCartItem(item.product_id, 'discounted_price', parseFloat(e.target.value) || 0); setEditingPriceId(null); }}
                                                                                 onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') setEditingPriceId(null); }}
                                                                                 style={{ width: '85px', textAlign: 'right', border: '1px solid var(--accent-color)', borderRadius: '6px', padding: '3px 5px 3px 16px', fontSize: '0.87rem', fontWeight: 700, color: 'var(--accent-color)', background: '#f0fdf4', outline: 'none' }}
-                                                                                min={0} max={+(item.mrp * item.quantity).toFixed(2)} />
+                                                                                min={0} max={+(Number(item.mrp) * item.quantity).toFixed(2)} />
                                                                         </div>
                                                                     ) : (
-                                                                        <div onClick={() => setEditingPriceId(item.product_id)}
-                                                                            title="Click to edit price"
-                                                                            style={{ width: '85px', textAlign: 'right', padding: '3px 5px', fontSize: '0.87rem', fontWeight: 700, color: 'var(--accent-color)', background: item.discount_amt > 0 ? '#f0fdf4' : 'transparent', borderRadius: '6px', border: `1px solid ${item.discount_amt > 0 ? '#86efac' : 'transparent'}`, cursor: 'text', userSelect: 'none' }}>
+                                                                        <div onClick={() => pricingPerms.canModifyAll && setEditingPriceId(item.product_id)}
+                                                                            title={pricingPerms.canModifyAll ? "Click to override total price (Admin)" : ""}
+                                                                            style={{ textAlign: 'right', padding: '3px 5px', fontSize: '0.87rem', fontWeight: 700, color: 'var(--accent-color)', background: item.discount_amt > 0 ? '#f0fdf4' : 'transparent', borderRadius: '6px', border: `1px solid ${item.discount_amt > 0 ? '#86efac' : 'transparent'}`, cursor: pricingPerms.canModifyAll ? 'text' : 'default', userSelect: 'none' }}>
                                                                             ৳{item.price.toFixed(0)}
+                                                                            {costNum > 0 && (
+                                                                                <div style={{ fontSize: '0.65rem', color: lineMargin >= 0 ? '#16a34a' : '#ef4444', fontWeight: 600 }}>
+                                                                                    {lineMargin >= 0 ? `+৳${lineMargin.toFixed(0)}` : `-৳${Math.abs(lineMargin).toFixed(0)}`}
+                                                                                </div>
+                                                                            )}
                                                                         </div>
                                                                     )}
                                                                 </td>
-                                                                {/* Savings */}
-                                                                <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right', color: item.discount_amt > 0 ? '#22c55e' : 'var(--text-secondary)', fontWeight: item.discount_amt > 0 ? 700 : 400, fontSize: '0.8rem' }}>
-                                                                    {item.discount_amt > 0 ? `-৳${item.discount_amt.toFixed(0)}` : '—'}
-                                                                </td>
+
                                                                 <td style={{ padding: '0.4rem 0.3rem', textAlign: 'center' }}>
                                                                     <button onClick={() => removeFromCart(item.product_id)}
                                                                         style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', padding: '3px' }}>
@@ -1140,6 +1440,160 @@ const Billing: React.FC = () => {
                                     )}
                                 </div>
                             </div>
+
+                            {/* ── Add Custom Product Modal ── */}
+                            <AnimatePresence>
+                                {showCustomModal && (
+                                    <div style={{
+                                        position: 'fixed',
+                                        top: 0,
+                                        left: 0,
+                                        right: 0,
+                                        bottom: 0,
+                                        background: 'rgba(0,0,0,0.5)',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        zIndex: 1000,
+                                        backdropFilter: 'blur(3px)'
+                                    }}>
+                                        <motion.div
+                                            initial={{ scale: 0.9, opacity: 0 }}
+                                            animate={{ scale: 1, opacity: 1 }}
+                                            exit={{ scale: 0.9, opacity: 0 }}
+                                            style={{
+                                                background: 'var(--card-bg)',
+                                                border: '1px solid var(--border-color)',
+                                                borderRadius: '14px',
+                                                padding: '1.25rem',
+                                                width: '460px',
+                                                maxWidth: '90vw',
+                                                boxShadow: '0 20px 40px rgba(0,0,0,0.25)',
+                                                display: 'flex',
+                                                flexDirection: 'column',
+                                                gap: '0.85rem'
+                                            }}
+                                        >
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '1rem', fontWeight: 800, color: 'var(--accent-color)' }}>
+                                                    <Sparkles size={18} /> Add Custom Product to Bill
+                                                </div>
+                                                <button onClick={() => setShowCustomModal(false)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                                                    <X size={18} />
+                                                </button>
+                                            </div>
+
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                                                <div>
+                                                    <label style={lbl}>Product / Furniture Name *</label>
+                                                    <input
+                                                        style={inp}
+                                                        placeholder="e.g. Custom Solid Teak 6-Seater Table"
+                                                        value={customItemForm.name}
+                                                        onChange={e => setCustomItemForm(p => ({ ...p, name: e.target.value }))}
+                                                        autoFocus
+                                                    />
+                                                </div>
+
+                                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                                                    <div>
+                                                        <label style={lbl}>SKU / Code (Optional)</label>
+                                                        <input
+                                                            style={inp}
+                                                            placeholder="e.g. CUST-TBL-01"
+                                                            value={customItemForm.sku}
+                                                            onChange={e => setCustomItemForm(p => ({ ...p, sku: e.target.value }))}
+                                                        />
+                                                    </div>
+                                                    <div>
+                                                        <label style={lbl}>Quantity *</label>
+                                                        <input
+                                                            type="number"
+                                                            min={1}
+                                                            style={inp}
+                                                            value={customItemForm.quantity}
+                                                            onChange={e => setCustomItemForm(p => ({ ...p, quantity: Math.max(1, parseInt(e.target.value) || 1) }))}
+                                                        />
+                                                    </div>
+                                                </div>
+
+                                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                                                    {/* Cost Price: Salesperson, Designer, Admin, Superadmin */}
+                                                    <div>
+                                                        <label style={{ ...lbl, color: '#f97316' }}>
+                                                            Cost Price (৳) * {pricingPerms.isSalesperson && <span style={{ fontSize: '0.65rem' }}>(Salesperson)</span>}
+                                                        </label>
+                                                        <input
+                                                            type="number"
+                                                            min={0}
+                                                            placeholder="Cost price..."
+                                                            style={{ ...inp, borderColor: '#f97316', fontWeight: 700 }}
+                                                            value={customItemForm.cost_price}
+                                                            onChange={e => setCustomItemForm(p => ({ ...p, cost_price: e.target.value }))}
+                                                        />
+                                                    </div>
+
+                                                    {/* Sale Price: Designer, Admin, Superadmin */}
+                                                    <div>
+                                                        <label style={{ ...lbl, color: pricingPerms.canEditSalePrice ? '#22c55e' : 'var(--text-secondary)' }}>
+                                                            Sale Price (৳) {pricingPerms.canEditSalePrice ? <span style={{ fontSize: '0.65rem' }}>(Designer / Admin)</span> : <span style={{ fontSize: '0.65rem' }}>(By Designer)</span>}
+                                                        </label>
+                                                        <input
+                                                            type="number"
+                                                            min={0}
+                                                            placeholder={pricingPerms.canEditSalePrice ? "Sale price..." : "Set by Designer"}
+                                                            disabled={!pricingPerms.canEditSalePrice}
+                                                            style={{ ...inp, borderColor: pricingPerms.canEditSalePrice ? '#22c55e' : 'var(--border-color)', fontWeight: 700, background: pricingPerms.canEditSalePrice ? 'var(--input-bg)' : 'rgba(0,0,0,0.05)' }}
+                                                            value={customItemForm.sale_price}
+                                                            onChange={e => setCustomItemForm(p => ({ ...p, sale_price: e.target.value }))}
+                                                        />
+                                                    </div>
+                                                </div>
+
+                                                {pricingPerms.canModifyAll && (
+                                                    <div>
+                                                        <label style={lbl}>Discount % (Admin Override)</label>
+                                                        <input
+                                                            type="number"
+                                                            min={0}
+                                                            max={100}
+                                                            placeholder="0"
+                                                            style={inp}
+                                                            value={customItemForm.discount_pct}
+                                                            onChange={e => setCustomItemForm(p => ({ ...p, discount_pct: e.target.value }))}
+                                                        />
+                                                    </div>
+                                                )}
+
+                                                <div>
+                                                    <label style={lbl}>Custom Specifications / Remarks</label>
+                                                    <textarea
+                                                        style={{ ...inp, minHeight: '60px', resize: 'vertical' }}
+                                                        placeholder="Wood finish, specific dimensions, fabric details, etc."
+                                                        value={customItemForm.notes}
+                                                        onChange={e => setCustomItemForm(p => ({ ...p, notes: e.target.value }))}
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', borderTop: '1px solid var(--border-color)', paddingTop: '0.75rem', marginTop: '0.25rem' }}>
+                                                <button
+                                                    onClick={() => setShowCustomModal(false)}
+                                                    style={{ padding: '0.5rem 1rem', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' }}
+                                                >
+                                                    Cancel
+                                                </button>
+                                                <button
+                                                    onClick={handleAddCustomProduct}
+                                                    style={{ padding: '0.5rem 1.25rem', background: '#f97316', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 700, fontSize: '0.85rem', boxShadow: '0 2px 4px rgba(249,115,22,0.3)' }}
+                                                >
+                                                    Add Item to Cart
+                                                </button>
+                                            </div>
+                                        </motion.div>
+                                    </div>
+                                )}
+                            </AnimatePresence>
 
                             {/* ── Collapsible: Shipping ── */}
                             <div style={{ ...card, padding: 0, overflow: 'hidden', border: `1px solid ${shippingEnabled ? 'var(--accent-color)' : 'var(--border-color)'}` }}>

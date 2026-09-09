@@ -194,7 +194,7 @@ const ProductModelRules: React.FC = () => {
                 <table className="master-table">
                     <thead><tr><th>Rule</th><th>Origin</th><th>Stock Group</th><th>Pattern</th><th>Customizable</th><th style={{ textAlign: 'right' }}>Actions</th></tr></thead>
                     <tbody>
-                        {rules.length === 0 ? <tr><td colSpan={6} className="empty-state">No product model rules created.</td></tr> : rules.map(rule => (
+                        {rules.length === 0 ? <tr key="empty"><td colSpan={6} className="empty-state">No product model rules created.</td></tr> : rules.map(rule => (
                             <tr key={rule.id}>
                                 <td>{rule.name}</td>
                                 <td>{origins.find(origin => origin.origin_key === rule.origin_type)?.name || rule.origin_type}</td>

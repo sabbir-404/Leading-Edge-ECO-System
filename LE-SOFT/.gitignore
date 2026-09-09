@@ -34,3 +34,4 @@ resource/assets/.manuscript-profile/
 # Custom profiles with credentials
 .manuscript-profile/
 .user-guide-light-profile/
+scratch/

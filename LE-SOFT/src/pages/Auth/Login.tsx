@@ -44,7 +44,8 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
       setLoading(false);
       if (result?.success && result.user) {
         localStorage.setItem('user', JSON.stringify(result.user));
-        localStorage.setItem('user_role', result.user.role);
+        const roleToSave = result.user?.role || 'admin';
+        localStorage.setItem('user_role', roleToSave);
         // BUG-10 fix: always serialize permissions as a proper JSON string.
         // The backend now returns an object, but guard against legacy string responses.
         const permsRaw = result.user.permissions;

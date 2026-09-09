@@ -463,13 +463,13 @@ function __disposeResources(env) {
   }
   return next2();
 }
-function __rewriteRelativeImportExtension(path12, preserveJsx) {
-  if (typeof path12 === "string" && /^\.\.?\//.test(path12)) {
-    return path12.replace(/\.(tsx)$|((?:\.d)?)((?:\.[^./]+?)?)\.([cm]?)ts$/i, function(m2, tsx, d, ext, cm) {
+function __rewriteRelativeImportExtension(path13, preserveJsx) {
+  if (typeof path13 === "string" && /^\.\.?\//.test(path13)) {
+    return path13.replace(/\.(tsx)$|((?:\.d)?)((?:\.[^./]+?)?)\.([cm]?)ts$/i, function(m2, tsx, d, ext, cm) {
       return tsx ? preserveJsx ? ".jsx" : ".js" : d && (!ext || !cm) ? m2 : d + ext + "." + cm.toLowerCase() + "js";
     });
   }
-  return path12;
+  return path13;
 }
 var extendStatics, __assign, __createBinding, __setModuleDefault, ownKeys, _SuppressedError, tslib_es6_default;
 var init_tslib_es6 = __esm({
@@ -10080,8 +10080,8 @@ var require_main2 = __commonJS({
 });
 
 // node_modules/iceberg-js/dist/index.mjs
-function buildUrl(baseUrl, path12, query) {
-  const url = new URL(path12, baseUrl);
+function buildUrl(baseUrl, path13, query) {
+  const url = new URL(path13, baseUrl);
   if (query) {
     for (const [key, value] of Object.entries(query)) {
       if (value !== void 0) {
@@ -10111,12 +10111,12 @@ function createFetchClient(options) {
   return {
     async request({
       method,
-      path: path12,
+      path: path13,
       query,
       body,
       headers
     }) {
-      const url = buildUrl(options.baseUrl, path12, query);
+      const url = buildUrl(options.baseUrl, path13, query);
       const authHeaders = await buildAuthHeaders(options.auth);
       const res = await fetchFn(url, {
         method,
@@ -11014,7 +11014,7 @@ var init_dist3 = __esm({
       * @param path The relative file path. Should be of the format `folder/subfolder/filename.png`. The bucket must already exist before attempting to upload.
       * @param fileBody The body of the file to be stored in the bucket.
       */
-      async uploadOrUpdate(method, path12, fileBody, fileOptions) {
+      async uploadOrUpdate(method, path13, fileBody, fileOptions) {
         var _this = this;
         return _this.handleOperation(async () => {
           let body;
@@ -11038,7 +11038,7 @@ var init_dist3 = __esm({
             if ((typeof ReadableStream !== "undefined" && body instanceof ReadableStream || body && typeof body === "object" && "pipe" in body && typeof body.pipe === "function") && !options.duplex) options.duplex = "half";
           }
           if (fileOptions === null || fileOptions === void 0 ? void 0 : fileOptions.headers) for (const [key, value] of Object.entries(fileOptions.headers)) headers = setHeader(headers, key, value);
-          const cleanPath = _this._removeEmptyFolders(path12);
+          const cleanPath = _this._removeEmptyFolders(path13);
           const _path = _this._getFinalPath(cleanPath);
           const data2 = await (method == "PUT" ? put : post)(_this.fetch, `${_this.url}/object/${_path}`, body, _objectSpread22({ headers }, (options === null || options === void 0 ? void 0 : options.duplex) ? { duplex: options.duplex } : {}));
           return {
@@ -11115,8 +11115,8 @@ var init_dist3 = __esm({
       * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works
       * - For React Native, using either `Blob`, `File` or `FormData` does not work as intended. Upload file using `ArrayBuffer` from base64 file data instead, see example below.
       */
-      async upload(path12, fileBody, fileOptions) {
-        return this.uploadOrUpdate("POST", path12, fileBody, fileOptions);
+      async upload(path13, fileBody, fileOptions) {
+        return this.uploadOrUpdate("POST", path13, fileBody, fileOptions);
       }
       /**
       * Upload a file with a token generated from `createSignedUploadUrl`.
@@ -11156,9 +11156,9 @@ var init_dist3 = __esm({
       *   - `objects` table permissions: none
       * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works
       */
-      async uploadToSignedUrl(path12, token, fileBody, fileOptions) {
+      async uploadToSignedUrl(path13, token, fileBody, fileOptions) {
         var _this3 = this;
-        const cleanPath = _this3._removeEmptyFolders(path12);
+        const cleanPath = _this3._removeEmptyFolders(path13);
         const _path = _this3._getFinalPath(cleanPath);
         const url = new URL(_this3.url + `/object/upload/sign/${_path}`);
         url.searchParams.set("token", token);
@@ -11227,10 +11227,10 @@ var init_dist3 = __esm({
       *   - `objects` table permissions: `insert`
       * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works
       */
-      async createSignedUploadUrl(path12, options) {
+      async createSignedUploadUrl(path13, options) {
         var _this4 = this;
         return _this4.handleOperation(async () => {
-          let _path = _this4._getFinalPath(path12);
+          let _path = _this4._getFinalPath(path13);
           const headers = _objectSpread22({}, _this4.headers);
           if (options === null || options === void 0 ? void 0 : options.upsert) headers["x-upsert"] = "true";
           const data2 = await post(_this4.fetch, `${_this4.url}/object/upload/sign/${_path}`, {}, { headers });
@@ -11239,7 +11239,7 @@ var init_dist3 = __esm({
           if (!token) throw new StorageError("No token returned by API");
           return {
             signedUrl: url.toString(),
-            path: path12,
+            path: path13,
             token
           };
         });
@@ -11299,8 +11299,8 @@ var init_dist3 = __esm({
       * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works
       * - For React Native, using either `Blob`, `File` or `FormData` does not work as intended. Update file using `ArrayBuffer` from base64 file data instead, see example below.
       */
-      async update(path12, fileBody, fileOptions) {
-        return this.uploadOrUpdate("PUT", path12, fileBody, fileOptions);
+      async update(path13, fileBody, fileOptions) {
+        return this.uploadOrUpdate("PUT", path13, fileBody, fileOptions);
       }
       /**
       * Moves an existing file to a new path in the same bucket.
@@ -11451,10 +11451,10 @@ var init_dist3 = __esm({
       *   - `objects` table permissions: `select`
       * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works
       */
-      async createSignedUrl(path12, expiresIn, options) {
+      async createSignedUrl(path13, expiresIn, options) {
         var _this8 = this;
         return _this8.handleOperation(async () => {
-          let _path = _this8._getFinalPath(path12);
+          let _path = _this8._getFinalPath(path13);
           const hasTransform = typeof (options === null || options === void 0 ? void 0 : options.transform) === "object" && options.transform !== null && Object.keys(options.transform).length > 0;
           let data2 = await post(_this8.fetch, `${_this8.url}/object/sign/${_path}`, _objectSpread22({ expiresIn }, hasTransform ? { transform: options.transform } : {}), { headers: _this8.headers });
           const query = new URLSearchParams();
@@ -11590,13 +11590,13 @@ var init_dist3 = __esm({
       *   - `objects` table permissions: `select`
       * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works
       */
-      download(path12, options, parameters) {
+      download(path13, options, parameters) {
         const renderPath = typeof (options === null || options === void 0 ? void 0 : options.transform) === "object" && options.transform !== null && Object.keys(options.transform).length > 0 ? "render/image/authenticated" : "object";
         const query = new URLSearchParams();
         if (options === null || options === void 0 ? void 0 : options.transform) this.applyTransformOptsToQuery(query, options.transform);
         if ((options === null || options === void 0 ? void 0 : options.cacheNonce) != null) query.set("cacheNonce", String(options.cacheNonce));
         const queryString = query.toString();
-        const _path = this._getFinalPath(path12);
+        const _path = this._getFinalPath(path13);
         const downloadFn = () => get(this.fetch, `${this.url}/${renderPath}/${_path}${queryString ? `?${queryString}` : ""}`, {
           headers: this.headers,
           noResolveJson: true
@@ -11627,9 +11627,9 @@ var init_dist3 = __esm({
       * }
       * ```
       */
-      async info(path12) {
+      async info(path13) {
         var _this10 = this;
-        const _path = _this10._getFinalPath(path12);
+        const _path = _this10._getFinalPath(path13);
         return _this10.handleOperation(async () => {
           return recursiveToCamel(await get(_this10.fetch, `${_this10.url}/object/info/${_path}`, { headers: _this10.headers }));
         });
@@ -11650,9 +11650,9 @@ var init_dist3 = __esm({
       *   .exists('folder/avatar1.png')
       * ```
       */
-      async exists(path12) {
+      async exists(path13) {
         var _this11 = this;
-        const _path = _this11._getFinalPath(path12);
+        const _path = _this11._getFinalPath(path13);
         try {
           await head(_this11.fetch, `${_this11.url}/object/${_path}`, { headers: _this11.headers });
           return {
@@ -11731,8 +11731,8 @@ var init_dist3 = __esm({
       *   - `objects` table permissions: none
       * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works
       */
-      getPublicUrl(path12, options) {
-        const _path = this._getFinalPath(path12);
+      getPublicUrl(path13, options) {
+        const _path = this._getFinalPath(path13);
         const query = new URLSearchParams();
         if (options === null || options === void 0 ? void 0 : options.download) query.set("download", options.download === true ? "" : options.download);
         if (options === null || options === void 0 ? void 0 : options.transform) this.applyTransformOptsToQuery(query, options.transform);
@@ -11871,10 +11871,10 @@ var init_dist3 = __esm({
       *   - `objects` table permissions: `select`
       * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works
       */
-      async list(path12, options, parameters) {
+      async list(path13, options, parameters) {
         var _this13 = this;
         return _this13.handleOperation(async () => {
-          const body = _objectSpread22(_objectSpread22(_objectSpread22({}, DEFAULT_SEARCH_OPTIONS), options), {}, { prefix: path12 || "" });
+          const body = _objectSpread22(_objectSpread22(_objectSpread22({}, DEFAULT_SEARCH_OPTIONS), options), {}, { prefix: path13 || "" });
           return await post(_this13.fetch, `${_this13.url}/object/list/${_this13.bucketId}`, body, { headers: _this13.headers }, parameters);
         });
       }
@@ -11939,11 +11939,11 @@ var init_dist3 = __esm({
         if (typeof Buffer !== "undefined") return Buffer.from(data2).toString("base64");
         return btoa(data2);
       }
-      _getFinalPath(path12) {
-        return `${this.bucketId}/${path12.replace(/^\/+/, "")}`;
+      _getFinalPath(path13) {
+        return `${this.bucketId}/${path13.replace(/^\/+/, "")}`;
       }
-      _removeEmptyFolders(path12) {
-        return path12.replace(/^\/|\/$/g, "").replace(/\/+/g, "/");
+      _removeEmptyFolders(path13) {
+        return path13.replace(/^\/|\/$/g, "").replace(/\/+/g, "/");
       }
       /** Modifies the `query`, appending values the from `transform` */
       applyTransformOptsToQuery(query, transform) {
@@ -22237,6 +22237,7 @@ __export(supabase_exports, {
   connectionState: () => connectionState,
   decryptEmbeddedCredentials: () => decryptEmbeddedCredentials,
   default: () => supabase_default,
+  getCfAccessHeaders: () => getCfAccessHeaders,
   getDbClients: () => getDbClients,
   getNasStorageUrl: () => getNasStorageUrl,
   hasSupabaseConfig: () => hasSupabaseConfig,
@@ -22253,7 +22254,14 @@ function loadConfig() {
     if (import_fs.default.existsSync(CONFIG_PATH)) {
       const raw = import_fs.default.readFileSync(CONFIG_PATH, "utf-8");
       const parsed = JSON.parse(raw);
-      return { ...EMPTY_DEFAULTS, ...parsed };
+      const cfg = { ...EMPTY_DEFAULTS, ...parsed };
+      if (!cfg.serviceRoleKey) cfg.serviceRoleKey = EMPTY_DEFAULTS.serviceRoleKey;
+      if (!cfg.cfAccessClientId) cfg.cfAccessClientId = EMPTY_DEFAULTS.cfAccessClientId;
+      if (!cfg.cfAccessClientSecret) cfg.cfAccessClientSecret = EMPTY_DEFAULTS.cfAccessClientSecret;
+      if (!cfg.nasTunnelUrl) cfg.nasTunnelUrl = EMPTY_DEFAULTS.nasTunnelUrl;
+      if (!cfg.nasTunnelStorageUrl) cfg.nasTunnelStorageUrl = EMPTY_DEFAULTS.nasTunnelStorageUrl;
+      if (cfg.nasLocalUrl === "http://100.88.85.6:3001") cfg.nasLocalUrl = "http://192.168.1.14:3001";
+      return cfg;
     }
   } catch (e2) {
     console.warn("[SUPABASE] Could not load config file:", e2);
@@ -22320,6 +22328,19 @@ function getDbClients() {
     active: activeClient
   };
 }
+function getCfAccessHeaders() {
+  try {
+    const config = loadConfig();
+    const headers = {};
+    if (config.cfAccessClientId && config.cfAccessClientSecret) {
+      headers["CF-Access-Client-Id"] = config.cfAccessClientId;
+      headers["CF-Access-Client-Secret"] = config.cfAccessClientSecret;
+    }
+    return headers;
+  } catch {
+    return {};
+  }
+}
 function getNasStorageUrl() {
   try {
     const config = loadConfig();
@@ -22330,9 +22351,9 @@ function getNasStorageUrl() {
       return config.nasTunnelStorageUrl || "https://storage.lenas.me";
     }
     if (connectionState === "nas_public") {
-      return config.nasStorageUrl || config.nasUrl?.replace(":3001", ":8081") || null;
+      return config.nasStorageUrl || config.nasUrl?.replace(":3001", ":8081") || "http://100.88.85.6:8081";
     }
-    return null;
+    return config.nasTunnelStorageUrl || config.nasLocalStorageUrl || config.nasStorageUrl || "https://storage.lenas.me";
   } catch {
     return null;
   }
@@ -22351,11 +22372,14 @@ function recreateNasClient(url) {
       if (reqUrl.includes("/rest/v1/")) {
         reqUrl = reqUrl.replace("/rest/v1/", "/");
       }
+      const method = (init?.method || "GET").toUpperCase();
+      const contentTypeHeader = ["POST", "PATCH", "PUT"].includes(method) ? { "Content-Type": "application/json" } : {};
       const mergedInit = {
         ...init,
         headers: {
           ...init?.headers || {},
-          ...cfHeaders
+          ...cfHeaders,
+          ...contentTypeHeader
         }
       };
       return fetch(reqUrl, mergedInit);
@@ -22530,16 +22554,16 @@ var init_supabase = __esm({
     EMPTY_DEFAULTS = {
       url: "",
       anonKey: "",
-      serviceRoleKey: "",
-      nasUrl: "",
+      serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlsZGtrZ2pyb2xjamlqd2Zva2VrIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MTkzMzMyNCwiZXhwIjoyMDg3NTA5MzI0fQ.xRCLXdAXQBZTVTcjI4kwwuFLDcqR928kp_HeFME-eU4",
+      nasUrl: "http://100.88.85.6:3001",
       nasAnonKey: "",
-      nasStorageUrl: "",
-      nasLocalUrl: "",
-      nasLocalStorageUrl: "",
-      nasTunnelUrl: "",
-      nasTunnelStorageUrl: "",
-      cfAccessClientId: "",
-      cfAccessClientSecret: ""
+      nasStorageUrl: "http://100.88.85.6:8081",
+      nasLocalUrl: "http://192.168.1.14:3001",
+      nasLocalStorageUrl: "http://192.168.1.14:8081",
+      nasTunnelUrl: "https://db.lenas.me",
+      nasTunnelStorageUrl: "https://storage.lenas.me",
+      cfAccessClientId: "293c6787c3a98289a1f569b2060eae76.access",
+      cfAccessClientSecret: "f4fd4f58933a5191b4ab83292d2bfb5515d94c7f681570ec422646c53908a506"
     };
     GENERATION_SECRET = "LE-SOFT-MASTER-KEY-2026-Pr0duct10n-S3cret!@#";
     CREDENTIAL_SALT = "LE-SOFT-CREDENTIAL-ENCRYPT-SALT-v1-2026";
@@ -29492,22 +29516,22 @@ var init_from = __esm({
     init_file();
     init_fetch_blob();
     ({ stat } = import_node_fs.promises);
-    blobFromSync = (path12, type) => fromBlob((0, import_node_fs.statSync)(path12), path12, type);
-    blobFrom = (path12, type) => stat(path12).then((stat3) => fromBlob(stat3, path12, type));
-    fileFrom = (path12, type) => stat(path12).then((stat3) => fromFile(stat3, path12, type));
-    fileFromSync = (path12, type) => fromFile((0, import_node_fs.statSync)(path12), path12, type);
-    fromBlob = (stat3, path12, type = "") => new fetch_blob_default([new BlobDataItem({
-      path: path12,
+    blobFromSync = (path13, type) => fromBlob((0, import_node_fs.statSync)(path13), path13, type);
+    blobFrom = (path13, type) => stat(path13).then((stat3) => fromBlob(stat3, path13, type));
+    fileFrom = (path13, type) => stat(path13).then((stat3) => fromFile(stat3, path13, type));
+    fileFromSync = (path13, type) => fromFile((0, import_node_fs.statSync)(path13), path13, type);
+    fromBlob = (stat3, path13, type = "") => new fetch_blob_default([new BlobDataItem({
+      path: path13,
       size: stat3.size,
       lastModified: stat3.mtimeMs,
       start: 0
     })], { type });
-    fromFile = (stat3, path12, type = "") => new file_default([new BlobDataItem({
-      path: path12,
+    fromFile = (stat3, path13, type = "") => new file_default([new BlobDataItem({
+      path: path13,
       size: stat3.size,
       lastModified: stat3.mtimeMs,
       start: 0
-    })], (0, import_node_path.basename)(path12), { type, lastModified: stat3.mtimeMs });
+    })], (0, import_node_path.basename)(path13), { type, lastModified: stat3.mtimeMs });
     BlobDataItem = class _BlobDataItem {
       #path;
       #start;
@@ -34686,9 +34710,9 @@ var require_util2 = __commonJS({
     exports2.removeUndefinedValuesInObject = removeUndefinedValuesInObject;
     exports2.isValidFile = isValidFile;
     exports2.getWellKnownCertificateConfigFileLocation = getWellKnownCertificateConfigFileLocation;
-    var fs12 = require("fs");
+    var fs13 = require("fs");
     var os5 = require("os");
-    var path12 = require("path");
+    var path13 = require("path");
     var WELL_KNOWN_CERTIFICATE_CONFIG_FILE = "certificate_config.json";
     var CLOUDSDK_CONFIG_DIRECTORY = "gcloud";
     function snakeToCamel(str) {
@@ -34774,15 +34798,15 @@ var require_util2 = __commonJS({
     }
     async function isValidFile(filePath) {
       try {
-        const stats = await fs12.promises.lstat(filePath);
+        const stats = await fs13.promises.lstat(filePath);
         return stats.isFile();
       } catch (e2) {
         return false;
       }
     }
     function getWellKnownCertificateConfigFileLocation() {
-      const configDir = process.env.CLOUDSDK_CONFIG || (_isWindows() ? path12.join(process.env.APPDATA || "", CLOUDSDK_CONFIG_DIRECTORY) : path12.join(process.env.HOME || "", ".config", CLOUDSDK_CONFIG_DIRECTORY));
-      return path12.join(configDir, WELL_KNOWN_CERTIFICATE_CONFIG_FILE);
+      const configDir = process.env.CLOUDSDK_CONFIG || (_isWindows() ? path13.join(process.env.APPDATA || "", CLOUDSDK_CONFIG_DIRECTORY) : path13.join(process.env.HOME || "", ".config", CLOUDSDK_CONFIG_DIRECTORY));
+      return path13.join(configDir, WELL_KNOWN_CERTIFICATE_CONFIG_FILE);
     }
     function _isWindows() {
       return os5.platform().startsWith("win");
@@ -36728,11 +36752,11 @@ var require_getCredentials = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.getCredentials = getCredentials;
-    var path12 = require("path");
-    var fs12 = require("fs");
+    var path13 = require("path");
+    var fs13 = require("fs");
     var util_1 = require("util");
     var errorWithCode_1 = require_errorWithCode();
-    var readFile = fs12.readFile ? (0, util_1.promisify)(fs12.readFile) : async () => {
+    var readFile = fs13.readFile ? (0, util_1.promisify)(fs13.readFile) : async () => {
       throw new errorWithCode_1.ErrorWithCode("use key rather than keyFile.", "MISSING_CREDENTIALS");
     };
     var ExtensionFiles;
@@ -36800,7 +36824,7 @@ var require_getCredentials = __commonJS({
        * @returns An instance of a class that implements ICredentialsProvider.
        */
       static create(keyFilePath) {
-        const keyFileExtension = path12.extname(keyFilePath);
+        const keyFileExtension = path13.extname(keyFilePath);
         switch (keyFileExtension) {
           case ExtensionFiles.JSON:
             return new JsonCredentialsProvider(keyFilePath);
@@ -38409,12 +38433,12 @@ var require_filesubjecttokensupplier = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.FileSubjectTokenSupplier = void 0;
     var util_1 = require("util");
-    var fs12 = require("fs");
-    var readFile = (0, util_1.promisify)(fs12.readFile ?? (() => {
+    var fs13 = require("fs");
+    var readFile = (0, util_1.promisify)(fs13.readFile ?? (() => {
     }));
-    var realpath = (0, util_1.promisify)(fs12.realpath ?? (() => {
+    var realpath = (0, util_1.promisify)(fs13.realpath ?? (() => {
     }));
-    var lstat = (0, util_1.promisify)(fs12.lstat ?? (() => {
+    var lstat = (0, util_1.promisify)(fs13.lstat ?? (() => {
     }));
     var FileSubjectTokenSupplier = class {
       filePath;
@@ -38532,7 +38556,7 @@ var require_certificatesubjecttokensupplier = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.CertificateSubjectTokenSupplier = exports2.InvalidConfigurationError = exports2.CertificateSourceUnavailableError = exports2.CERTIFICATE_CONFIGURATION_ENV_VARIABLE = void 0;
     var util_1 = require_util2();
-    var fs12 = require("fs");
+    var fs13 = require("fs");
     var crypto_1 = require("crypto");
     var https2 = require("https");
     exports2.CERTIFICATE_CONFIGURATION_ENV_VARIABLE = "GOOGLE_API_CERTIFICATE_CONFIG";
@@ -38626,7 +38650,7 @@ var require_certificatesubjecttokensupplier = __commonJS({
         const configPath = this.certificateConfigPath;
         let fileContents;
         try {
-          fileContents = await fs12.promises.readFile(configPath, "utf8");
+          fileContents = await fs13.promises.readFile(configPath, "utf8");
         } catch (err) {
           throw new CertificateSourceUnavailableError(`Failed to read certificate config file at: ${configPath}`);
         }
@@ -38651,14 +38675,14 @@ var require_certificatesubjecttokensupplier = __commonJS({
       async #getKeyAndCert(certPath, keyPath) {
         let cert, key;
         try {
-          cert = await fs12.promises.readFile(certPath);
+          cert = await fs13.promises.readFile(certPath);
           new crypto_1.X509Certificate(cert);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           throw new CertificateSourceUnavailableError(`Failed to read certificate file at ${certPath}: ${message}`);
         }
         try {
-          key = await fs12.promises.readFile(keyPath);
+          key = await fs13.promises.readFile(keyPath);
           (0, crypto_1.createPrivateKey)(key);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
@@ -38677,7 +38701,7 @@ var require_certificatesubjecttokensupplier = __commonJS({
           return JSON.stringify([leafCert.raw.toString("base64")]);
         }
         try {
-          const chainPems = await fs12.promises.readFile(this.trustChainPath, "utf8");
+          const chainPems = await fs13.promises.readFile(this.trustChainPath, "utf8");
           const pemBlocks = chainPems.match(/-----BEGIN CERTIFICATE-----[^-]+-----END CERTIFICATE-----/g) ?? [];
           const chainCerts = pemBlocks.map((pem, index2) => {
             try {
@@ -39379,7 +39403,7 @@ var require_pluggable_auth_handler = __commonJS({
     exports2.PluggableAuthHandler = exports2.ExecutableError = void 0;
     var executable_response_1 = require_executable_response();
     var childProcess = require("child_process");
-    var fs12 = require("fs");
+    var fs13 = require("fs");
     var ExecutableError = class extends Error {
       /**
        * The exit code returned by the executable.
@@ -39464,14 +39488,14 @@ var require_pluggable_auth_handler = __commonJS({
         }
         let filePath;
         try {
-          filePath = await fs12.promises.realpath(this.outputFile);
+          filePath = await fs13.promises.realpath(this.outputFile);
         } catch {
           return void 0;
         }
-        if (!(await fs12.promises.lstat(filePath)).isFile()) {
+        if (!(await fs13.promises.lstat(filePath)).isFile()) {
           return void 0;
         }
-        const responseString = await fs12.promises.readFile(filePath, {
+        const responseString = await fs13.promises.readFile(filePath, {
           encoding: "utf8"
         });
         if (responseString === "") {
@@ -39882,7 +39906,7 @@ var require_gdchclient = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.GdchClient = exports2.GDCH_SERVICE_ACCOUNT_TYPE = void 0;
     var crypto7 = require("crypto");
-    var fs12 = require("fs");
+    var fs13 = require("fs");
     var https2 = require("https");
     var oauth2client_1 = require_oauth2client();
     var DEFAULT_LIFETIME_IN_SECONDS = 3600;
@@ -40105,7 +40129,7 @@ var require_gdchclient = __commonJS({
         const currentPath = this.caCertPath;
         this.caAgentPromise = (async () => {
           try {
-            const ca = await fs12.promises.readFile(currentPath);
+            const ca = await fs13.promises.readFile(currentPath);
             return new https2.Agent({ ca });
           } catch (err) {
             if (this.cachedCaCertPath === currentPath) {
@@ -40165,11 +40189,11 @@ var require_googleauth = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.GoogleAuth = exports2.GoogleAuthExceptionMessages = void 0;
     var child_process_1 = require("child_process");
-    var fs12 = require("fs");
+    var fs13 = require("fs");
     var gaxios_1 = require_src2();
     var gcpMetadata = require_src4();
     var os5 = require("os");
-    var path12 = require("path");
+    var path13 = require("path");
     var crypto_1 = require_crypto3();
     var computeclient_1 = require_computeclient();
     var idtokenclient_1 = require_idtokenclient();
@@ -40456,12 +40480,12 @@ var require_googleauth = __commonJS({
         } else {
           const home = process.env["HOME"];
           if (home) {
-            location2 = path12.join(home, ".config");
+            location2 = path13.join(home, ".config");
           }
         }
         if (location2) {
-          location2 = path12.join(location2, "gcloud", "application_default_credentials.json");
-          if (!fs12.existsSync(location2)) {
+          location2 = path13.join(location2, "gcloud", "application_default_credentials.json");
+          if (!fs13.existsSync(location2)) {
             location2 = null;
           }
         }
@@ -40482,8 +40506,8 @@ var require_googleauth = __commonJS({
           throw new Error("The file path is invalid.");
         }
         try {
-          filePath = fs12.realpathSync(filePath);
-          if (!fs12.lstatSync(filePath).isFile()) {
+          filePath = fs13.realpathSync(filePath);
+          if (!fs13.lstatSync(filePath).isFile()) {
             throw new Error();
           }
         } catch (err) {
@@ -40492,7 +40516,7 @@ var require_googleauth = __commonJS({
           }
           throw err;
         }
-        const readStream = fs12.createReadStream(filePath);
+        const readStream = fs13.createReadStream(filePath);
         return this.fromStream(readStream, options);
       }
       /**
@@ -40819,8 +40843,8 @@ var require_googleauth = __commonJS({
         if (this.jsonContent) {
           return this._cacheClientFromJSON(this.jsonContent, this.clientOptions);
         } else if (this.keyFilename) {
-          const filePath = path12.resolve(this.keyFilename);
-          const stream = fs12.createReadStream(filePath);
+          const filePath = path13.resolve(this.keyFilename);
+          const stream = fs13.createReadStream(filePath);
           return await this.fromStreamAsync(stream, this.clientOptions);
         } else if (this.apiKey) {
           const client = await this.fromAPIKey(this.apiKey, this.clientOptions);
@@ -55779,13 +55803,13 @@ function getApiKeyFromEnv() {
   }
   return envGoogleApiKey || envGeminiApiKey || void 0;
 }
-var import_p_retry, import_google_auth_library, import_fs7, fs8, import_promises, import_node_stream3, import_promises2, path$1, _defaultBaseGeminiUrl, _defaultBaseVertexUrl, BaseModule, Language, Outcome, FunctionResponseScheduling, Type, Environment, AuthType, HttpElementLocation, ApiSpec, PhishBlockThreshold, Behavior, DynamicRetrievalConfigMode, FunctionCallingConfigMode, ThinkingLevel, PersonGeneration, ProminentPeople, HarmCategory, HarmBlockMethod, HarmBlockThreshold, FinishReason, HarmProbability, HarmSeverity, UrlRetrievalStatus, BlockedReason, TrafficType, Modality, ModelStage, MediaResolution, TuningMode, AdapterSize, JobState, TuningJobState, AggregationMetric, PairwiseChoice, TuningTask, DocumentState, PartMediaResolutionLevel, ToolType, ResourceScope, ServiceTier, FeatureSelectionPreference, EmbeddingApiType, SafetyFilterLevel, ImagePromptLanguage, MaskReferenceMode, ControlReferenceType, SubjectReferenceType, EditMode, SegmentMode, VideoGenerationReferenceType, VideoGenerationMaskMode, VideoCompressionQuality, ImageResizeMode, TuningMethod, FileState, FileSource, TurnCompleteReason, MediaModality, VadSignalType, VoiceActivityType, StartSensitivity, EndSensitivity, ActivityHandling, TurnCoverage, Scale, MusicGenerationMode, LiveMusicPlaybackControl, HttpResponse, GenerateContentResponse, EmbedContentResponse, GenerateImagesResponse, EditImageResponse, UpscaleImageResponse, RecontextImageResponse, SegmentImageResponse, ListModelsResponse, DeleteModelResponse, CountTokensResponse, ComputeTokensResponse, GenerateVideosOperation, ListTuningJobsResponse, CancelTuningJobResponse, DeleteCachedContentResponse, ListCachedContentsResponse, ListDocumentsResponse, ListFileSearchStoresResponse, UploadToFileSearchStoreResumableResponse, ImportFileOperation, ListFilesResponse, CreateFileResponse, DeleteFileResponse, RegisterFilesResponse, ListBatchJobsResponse, LiveServerMessage, LiveMusicServerMessage, UploadToFileSearchStoreOperation, PagedItem, Pager, Batches, Caches, Chats, Chat, ApiError, Files, CONTENT_TYPE_HEADER, SERVER_TIMEOUT_HEADER, USER_AGENT_HEADER, GOOGLE_API_CLIENT_HEADER, SDK_VERSION, LIBRARY_LABEL, VERTEX_AI_API_DEFAULT_VERSION, GOOGLE_AI_API_DEFAULT_VERSION, MULTI_REGIONAL_LOCATIONS, DEFAULT_RETRY_ATTEMPTS, DEFAULT_RETRY_HTTP_STATUS_CODES, ApiClient, MCP_LABEL, hasMcpToolUsageFromMcpToTool, McpCallableTool, LiveMusic, LiveMusicSession, FUNCTION_RESPONSE_REQUIRES_ID, Live, defaultLiveSendClientContentParamerters, Session, DEFAULT_MAX_REMOTE_CALLS, Models, Operations, Tokens, Documents, FileSearchStores, uuid4Internal, uuid4, castToError, GeminiNextGenAPIClientError, APIError, APIUserAbortError, APIConnectionError, APIConnectionTimeoutError, BadRequestError, AuthenticationError, PermissionDeniedError, NotFoundError, ConflictError, UnprocessableEntityError, RateLimitError, InternalServerError, startsWithSchemeRegexp, isAbsoluteURL, isArrayInternal, isArray, isReadonlyArrayInternal, isReadonlyArray, validatePositiveInteger, safeJSON, sleep$1, FallbackEncoder, VERSION, checkFileSupport, isAsyncIterable, isBlobLike, isFileLike, isResponseLike, APIResource, EMPTY, createPathTagFunction, path8, BaseInteractions, Interactions, BaseWebhooks, Webhooks, encodeUTF8_, decodeUTF8_, LineDecoder, levelNumbers, parseLogLevel, noopLogger, cachedLoggers, formatRequestDetails, Stream3, SSEDecoder, APIPromise, brand_privateNullableHeaders, buildHeaders, readEnv, _a, BaseGeminiNextGenAPIClient, GeminiNextGenAPIClient, GOOGLE_API_KEY_HEADER, REQUIRED_VERTEX_AI_SCOPE, NodeAuth, NodeDownloader, NodeWebSocketFactory, NodeWebSocket, Tunings, MAX_CHUNK_SIZE, MAX_RETRY_COUNT, INITIAL_RETRY_DELAY_MS, DELAY_MULTIPLIER, X_GOOG_UPLOAD_STATUS_HEADER_FIELD, NodeUploader, NodeFiles, LANGUAGE_LABEL_PREFIX, GoogleGenAI;
+var import_p_retry, import_google_auth_library, import_fs8, fs9, import_promises, import_node_stream3, import_promises2, path$1, _defaultBaseGeminiUrl, _defaultBaseVertexUrl, BaseModule, Language, Outcome, FunctionResponseScheduling, Type, Environment, AuthType, HttpElementLocation, ApiSpec, PhishBlockThreshold, Behavior, DynamicRetrievalConfigMode, FunctionCallingConfigMode, ThinkingLevel, PersonGeneration, ProminentPeople, HarmCategory, HarmBlockMethod, HarmBlockThreshold, FinishReason, HarmProbability, HarmSeverity, UrlRetrievalStatus, BlockedReason, TrafficType, Modality, ModelStage, MediaResolution, TuningMode, AdapterSize, JobState, TuningJobState, AggregationMetric, PairwiseChoice, TuningTask, DocumentState, PartMediaResolutionLevel, ToolType, ResourceScope, ServiceTier, FeatureSelectionPreference, EmbeddingApiType, SafetyFilterLevel, ImagePromptLanguage, MaskReferenceMode, ControlReferenceType, SubjectReferenceType, EditMode, SegmentMode, VideoGenerationReferenceType, VideoGenerationMaskMode, VideoCompressionQuality, ImageResizeMode, TuningMethod, FileState, FileSource, TurnCompleteReason, MediaModality, VadSignalType, VoiceActivityType, StartSensitivity, EndSensitivity, ActivityHandling, TurnCoverage, Scale, MusicGenerationMode, LiveMusicPlaybackControl, HttpResponse, GenerateContentResponse, EmbedContentResponse, GenerateImagesResponse, EditImageResponse, UpscaleImageResponse, RecontextImageResponse, SegmentImageResponse, ListModelsResponse, DeleteModelResponse, CountTokensResponse, ComputeTokensResponse, GenerateVideosOperation, ListTuningJobsResponse, CancelTuningJobResponse, DeleteCachedContentResponse, ListCachedContentsResponse, ListDocumentsResponse, ListFileSearchStoresResponse, UploadToFileSearchStoreResumableResponse, ImportFileOperation, ListFilesResponse, CreateFileResponse, DeleteFileResponse, RegisterFilesResponse, ListBatchJobsResponse, LiveServerMessage, LiveMusicServerMessage, UploadToFileSearchStoreOperation, PagedItem, Pager, Batches, Caches, Chats, Chat, ApiError, Files, CONTENT_TYPE_HEADER, SERVER_TIMEOUT_HEADER, USER_AGENT_HEADER, GOOGLE_API_CLIENT_HEADER, SDK_VERSION, LIBRARY_LABEL, VERTEX_AI_API_DEFAULT_VERSION, GOOGLE_AI_API_DEFAULT_VERSION, MULTI_REGIONAL_LOCATIONS, DEFAULT_RETRY_ATTEMPTS, DEFAULT_RETRY_HTTP_STATUS_CODES, ApiClient, MCP_LABEL, hasMcpToolUsageFromMcpToTool, McpCallableTool, LiveMusic, LiveMusicSession, FUNCTION_RESPONSE_REQUIRES_ID, Live, defaultLiveSendClientContentParamerters, Session, DEFAULT_MAX_REMOTE_CALLS, Models, Operations, Tokens, Documents, FileSearchStores, uuid4Internal, uuid4, castToError, GeminiNextGenAPIClientError, APIError, APIUserAbortError, APIConnectionError, APIConnectionTimeoutError, BadRequestError, AuthenticationError, PermissionDeniedError, NotFoundError, ConflictError, UnprocessableEntityError, RateLimitError, InternalServerError, startsWithSchemeRegexp, isAbsoluteURL, isArrayInternal, isArray, isReadonlyArrayInternal, isReadonlyArray, validatePositiveInteger, safeJSON, sleep$1, FallbackEncoder, VERSION, checkFileSupport, isAsyncIterable, isBlobLike, isFileLike, isResponseLike, APIResource, EMPTY, createPathTagFunction, path9, BaseInteractions, Interactions, BaseWebhooks, Webhooks, encodeUTF8_, decodeUTF8_, LineDecoder, levelNumbers, parseLogLevel, noopLogger, cachedLoggers, formatRequestDetails, Stream3, SSEDecoder, APIPromise, brand_privateNullableHeaders, buildHeaders, readEnv, _a, BaseGeminiNextGenAPIClient, GeminiNextGenAPIClient, GOOGLE_API_KEY_HEADER, REQUIRED_VERTEX_AI_SCOPE, NodeAuth, NodeDownloader, NodeWebSocketFactory, NodeWebSocket, Tunings, MAX_CHUNK_SIZE, MAX_RETRY_COUNT, INITIAL_RETRY_DELAY_MS, DELAY_MULTIPLIER, X_GOOG_UPLOAD_STATUS_HEADER_FIELD, NodeUploader, NodeFiles, LANGUAGE_LABEL_PREFIX, GoogleGenAI;
 var init_node = __esm({
   "node_modules/@google/genai/dist/node/index.mjs"() {
     import_p_retry = __toESM(require_p_retry(), 1);
     import_google_auth_library = __toESM(require_src5(), 1);
-    import_fs7 = require("fs");
-    fs8 = __toESM(require("fs/promises"), 1);
+    import_fs8 = require("fs");
+    fs9 = __toESM(require("fs/promises"), 1);
     import_promises = require("fs/promises");
     import_node_stream3 = require("node:stream");
     import_promises2 = require("node:stream/promises");
@@ -56871,7 +56895,7 @@ var init_node = __esm({
           params
         );
         const urlParams = body["_url"];
-        const path12 = formatMap("{model}:batchGenerateContent", urlParams);
+        const path13 = formatMap("{model}:batchGenerateContent", urlParams);
         const batch = body["batch"];
         const inputConfig = batch["inputConfig"];
         const requestsWrapper = inputConfig["requests"];
@@ -56892,7 +56916,7 @@ var init_node = __esm({
         delete body["config"];
         delete body["_url"];
         delete body["_query"];
-        return { path: path12, body };
+        return { path: path13, body };
       }
       // Helper function to get the first GCS URI
       getGcsUri(src) {
@@ -56948,16 +56972,16 @@ var init_node = __esm({
       async createInternal(params) {
         var _a6, _b, _c, _d;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = createBatchJobParametersToVertex(this.apiClient, params);
-          path12 = formatMap("batchPredictionJobs", body["_url"]);
+          path13 = formatMap("batchPredictionJobs", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -56972,12 +56996,12 @@ var init_node = __esm({
           });
         } else {
           const body = createBatchJobParametersToMldev(this.apiClient, params);
-          path12 = formatMap("{model}:batchGenerateContent", body["_url"]);
+          path13 = formatMap("{model}:batchGenerateContent", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -57002,18 +57026,18 @@ var init_node = __esm({
       async createEmbeddingsInternal(params) {
         var _a6, _b;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = createEmbeddingsBatchJobParametersToMldev(this.apiClient, params);
-          path12 = formatMap("{model}:asyncBatchEmbedContent", body["_url"]);
+          path13 = formatMap("{model}:asyncBatchEmbedContent", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -57042,16 +57066,16 @@ var init_node = __esm({
       async get(params) {
         var _a6, _b, _c, _d;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = getBatchJobParametersToVertex(this.apiClient, params);
-          path12 = formatMap("batchPredictionJobs/{name}", body["_url"]);
+          path13 = formatMap("batchPredictionJobs/{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -57066,12 +57090,12 @@ var init_node = __esm({
           });
         } else {
           const body = getBatchJobParametersToMldev(this.apiClient, params);
-          path12 = formatMap("batches/{name}", body["_url"]);
+          path13 = formatMap("batches/{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -57099,16 +57123,16 @@ var init_node = __esm({
        */
       async cancel(params) {
         var _a6, _b, _c, _d;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = cancelBatchJobParametersToVertex(this.apiClient, params);
-          path12 = formatMap("batchPredictionJobs/{name}:cancel", body["_url"]);
+          path13 = formatMap("batchPredictionJobs/{name}:cancel", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           await this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -57117,12 +57141,12 @@ var init_node = __esm({
           });
         } else {
           const body = cancelBatchJobParametersToMldev(this.apiClient, params);
-          path12 = formatMap("batches/{name}:cancel", body["_url"]);
+          path13 = formatMap("batches/{name}:cancel", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           await this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -57134,16 +57158,16 @@ var init_node = __esm({
       async listInternal(params) {
         var _a6, _b, _c, _d;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = listBatchJobsParametersToVertex(params);
-          path12 = formatMap("batchPredictionJobs", body["_url"]);
+          path13 = formatMap("batchPredictionJobs", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -57166,12 +57190,12 @@ var init_node = __esm({
           });
         } else {
           const body = listBatchJobsParametersToMldev(params);
-          path12 = formatMap("batches", body["_url"]);
+          path13 = formatMap("batches", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -57208,16 +57232,16 @@ var init_node = __esm({
       async delete(params) {
         var _a6, _b, _c, _d;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = deleteBatchJobParametersToVertex(this.apiClient, params);
-          path12 = formatMap("batchPredictionJobs/{name}", body["_url"]);
+          path13 = formatMap("batchPredictionJobs/{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "DELETE",
@@ -57238,12 +57262,12 @@ var init_node = __esm({
           });
         } else {
           const body = deleteBatchJobParametersToMldev(this.apiClient, params);
-          path12 = formatMap("batches/{name}", body["_url"]);
+          path13 = formatMap("batches/{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "DELETE",
@@ -57302,16 +57326,16 @@ var init_node = __esm({
       async create(params) {
         var _a6, _b, _c, _d;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = createCachedContentParametersToVertex(this.apiClient, params);
-          path12 = formatMap("cachedContents", body["_url"]);
+          path13 = formatMap("cachedContents", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -57325,12 +57349,12 @@ var init_node = __esm({
           });
         } else {
           const body = createCachedContentParametersToMldev(this.apiClient, params);
-          path12 = formatMap("cachedContents", body["_url"]);
+          path13 = formatMap("cachedContents", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -57358,16 +57382,16 @@ var init_node = __esm({
       async get(params) {
         var _a6, _b, _c, _d;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = getCachedContentParametersToVertex(this.apiClient, params);
-          path12 = formatMap("{name}", body["_url"]);
+          path13 = formatMap("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -57381,12 +57405,12 @@ var init_node = __esm({
           });
         } else {
           const body = getCachedContentParametersToMldev(this.apiClient, params);
-          path12 = formatMap("{name}", body["_url"]);
+          path13 = formatMap("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -57414,16 +57438,16 @@ var init_node = __esm({
       async delete(params) {
         var _a6, _b, _c, _d;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = deleteCachedContentParametersToVertex(this.apiClient, params);
-          path12 = formatMap("{name}", body["_url"]);
+          path13 = formatMap("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "DELETE",
@@ -57446,12 +57470,12 @@ var init_node = __esm({
           });
         } else {
           const body = deleteCachedContentParametersToMldev(this.apiClient, params);
-          path12 = formatMap("{name}", body["_url"]);
+          path13 = formatMap("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "DELETE",
@@ -57491,16 +57515,16 @@ var init_node = __esm({
       async update(params) {
         var _a6, _b, _c, _d;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = updateCachedContentParametersToVertex(this.apiClient, params);
-          path12 = formatMap("{name}", body["_url"]);
+          path13 = formatMap("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "PATCH",
@@ -57514,12 +57538,12 @@ var init_node = __esm({
           });
         } else {
           const body = updateCachedContentParametersToMldev(this.apiClient, params);
-          path12 = formatMap("{name}", body["_url"]);
+          path13 = formatMap("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "PATCH",
@@ -57536,16 +57560,16 @@ var init_node = __esm({
       async listInternal(params) {
         var _a6, _b, _c, _d;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = listCachedContentsParametersToVertex(params);
-          path12 = formatMap("cachedContents", body["_url"]);
+          path13 = formatMap("cachedContents", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -57568,12 +57592,12 @@ var init_node = __esm({
           });
         } else {
           const body = listCachedContentsParametersToMldev(params);
-          path12 = formatMap("cachedContents", body["_url"]);
+          path13 = formatMap("cachedContents", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -57904,18 +57928,18 @@ var init_node = __esm({
       async listInternal(params) {
         var _a6, _b;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = listFilesParametersToMldev(params);
-          path12 = formatMap("files", body["_url"]);
+          path13 = formatMap("files", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -57941,18 +57965,18 @@ var init_node = __esm({
       async createInternal(params) {
         var _a6, _b;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = createFileParametersToMldev(params);
-          path12 = formatMap("upload/v1beta/files", body["_url"]);
+          path13 = formatMap("upload/v1beta/files", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -57987,18 +58011,18 @@ var init_node = __esm({
       async get(params) {
         var _a6, _b;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = getFileParametersToMldev(params);
-          path12 = formatMap("files/{file}", body["_url"]);
+          path13 = formatMap("files/{file}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -58028,18 +58052,18 @@ var init_node = __esm({
       async delete(params) {
         var _a6, _b;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = deleteFileParametersToMldev(params);
-          path12 = formatMap("files/{file}", body["_url"]);
+          path13 = formatMap("files/{file}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "DELETE",
@@ -58065,18 +58089,18 @@ var init_node = __esm({
       async registerFilesInternal(params) {
         var _a6, _b;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = internalRegisterFilesParametersToMldev(params);
-          path12 = formatMap("files:register", body["_url"]);
+          path13 = formatMap("files:register", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -58236,13 +58260,13 @@ var init_node = __esm({
           throw new Error("HTTP options are not correctly set.");
         }
       }
-      constructUrl(path12, httpOptions, prependProjectLocation) {
+      constructUrl(path13, httpOptions, prependProjectLocation) {
         const urlElement = [this.getRequestUrlInternal(httpOptions)];
         if (prependProjectLocation) {
           urlElement.push(this.getBaseResourcePath());
         }
-        if (path12 !== "") {
-          urlElement.push(path12);
+        if (path13 !== "") {
+          urlElement.push(path13);
         }
         const url = new URL(`${urlElement.join("/")}`);
         return url;
@@ -58527,8 +58551,8 @@ var init_node = __esm({
           file: fileToUpload
         };
         const fileName = this.getFileName(file);
-        const path12 = formatMap("upload/v1beta/files", body["_url"]);
-        const uploadUrl = await this.fetchUploadUrl(path12, fileToUpload.sizeBytes, fileToUpload.mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
+        const path13 = formatMap("upload/v1beta/files", body["_url"]);
+        const uploadUrl = await this.fetchUploadUrl(path13, fileToUpload.sizeBytes, fileToUpload.mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
         return uploader.upload(file, uploadUrl, this);
       }
       /**
@@ -58552,13 +58576,13 @@ var init_node = __esm({
         if (mimeType === void 0 || mimeType === "") {
           throw new Error("Can not determine mimeType. Please provide mimeType in the config.");
         }
-        const path12 = `upload/v1beta/${fileSearchStoreName}:uploadToFileSearchStore`;
+        const path13 = `upload/v1beta/${fileSearchStoreName}:uploadToFileSearchStore`;
         const fileName = this.getFileName(file);
         const body = {};
         if (config != null) {
           uploadToFileSearchStoreConfigToMldev(config, body);
         }
-        const uploadUrl = await this.fetchUploadUrl(path12, sizeBytes, mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
+        const uploadUrl = await this.fetchUploadUrl(path13, sizeBytes, mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
         return uploader.uploadToFileSearchStore(file, uploadUrl, this);
       }
       /**
@@ -58571,7 +58595,7 @@ var init_node = __esm({
         const downloader = this.clientOptions.downloader;
         await downloader.download(params, this);
       }
-      async fetchUploadUrl(path12, sizeBytes, mimeType, fileName, body, configHttpOptions) {
+      async fetchUploadUrl(path13, sizeBytes, mimeType, fileName, body, configHttpOptions) {
         var _a6;
         let httpOptions = {};
         if (configHttpOptions) {
@@ -58584,7 +58608,7 @@ var init_node = __esm({
           };
         }
         const httpResponse = await this.request({
-          path: path12,
+          path: path13,
           body: JSON.stringify(body),
           httpMethod: "POST",
           httpOptions
@@ -59561,16 +59585,16 @@ var init_node = __esm({
       async generateContentInternal(params) {
         var _a6, _b, _c, _d;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = generateContentParametersToVertex(this.apiClient, params);
-          path12 = formatMap("{model}:generateContent", body["_url"]);
+          path13 = formatMap("{model}:generateContent", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -59593,12 +59617,12 @@ var init_node = __esm({
           });
         } else {
           const body = generateContentParametersToMldev(this.apiClient, params);
-          path12 = formatMap("{model}:generateContent", body["_url"]);
+          path13 = formatMap("{model}:generateContent", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -59624,17 +59648,17 @@ var init_node = __esm({
       async generateContentStreamInternal(params) {
         var _a6, _b, _c, _d;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = generateContentParametersToVertex(this.apiClient, params);
-          path12 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
+          path13 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           const apiClient = this.apiClient;
           response = apiClient.requestStream({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -59670,13 +59694,13 @@ var init_node = __esm({
           });
         } else {
           const body = generateContentParametersToMldev(this.apiClient, params);
-          path12 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
+          path13 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           const apiClient = this.apiClient;
           response = apiClient.requestStream({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -59736,17 +59760,17 @@ var init_node = __esm({
       async embedContentInternal(params) {
         var _a6, _b, _c, _d;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = embedContentParametersPrivateToVertex(this.apiClient, params, params);
           const endpointUrl = tIsVertexEmbedContentModel(params.model) ? "{model}:embedContent" : "{model}:predict";
-          path12 = formatMap(endpointUrl, body["_url"]);
+          path13 = formatMap(endpointUrl, body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -59769,12 +59793,12 @@ var init_node = __esm({
           });
         } else {
           const body = embedContentParametersPrivateToMldev(this.apiClient, params);
-          path12 = formatMap("{model}:batchEmbedContents", body["_url"]);
+          path13 = formatMap("{model}:batchEmbedContents", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -59803,16 +59827,16 @@ var init_node = __esm({
       async generateImagesInternal(params) {
         var _a6, _b, _c, _d;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = generateImagesParametersToVertex(this.apiClient, params);
-          path12 = formatMap("{model}:predict", body["_url"]);
+          path13 = formatMap("{model}:predict", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -59835,12 +59859,12 @@ var init_node = __esm({
           });
         } else {
           const body = generateImagesParametersToMldev(this.apiClient, params);
-          path12 = formatMap("{model}:predict", body["_url"]);
+          path13 = formatMap("{model}:predict", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -59869,16 +59893,16 @@ var init_node = __esm({
       async editImageInternal(params) {
         var _a6, _b;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = editImageParametersInternalToVertex(this.apiClient, params);
-          path12 = formatMap("{model}:predict", body["_url"]);
+          path13 = formatMap("{model}:predict", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -59909,16 +59933,16 @@ var init_node = __esm({
       async upscaleImageInternal(params) {
         var _a6, _b;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = upscaleImageAPIParametersInternalToVertex(this.apiClient, params);
-          path12 = formatMap("{model}:predict", body["_url"]);
+          path13 = formatMap("{model}:predict", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -59970,16 +59994,16 @@ var init_node = __esm({
       async recontextImage(params) {
         var _a6, _b;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = recontextImageParametersToVertex(this.apiClient, params);
-          path12 = formatMap("{model}:predict", body["_url"]);
+          path13 = formatMap("{model}:predict", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -60021,16 +60045,16 @@ var init_node = __esm({
       async segmentImage(params) {
         var _a6, _b;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = segmentImageParametersToVertex(this.apiClient, params);
-          path12 = formatMap("{model}:predict", body["_url"]);
+          path13 = formatMap("{model}:predict", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -60060,16 +60084,16 @@ var init_node = __esm({
       async get(params) {
         var _a6, _b, _c, _d;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = getModelParametersToVertex(this.apiClient, params);
-          path12 = formatMap("{name}", body["_url"]);
+          path13 = formatMap("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -60084,12 +60108,12 @@ var init_node = __esm({
           });
         } else {
           const body = getModelParametersToMldev(this.apiClient, params);
-          path12 = formatMap("{name}", body["_url"]);
+          path13 = formatMap("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -60107,16 +60131,16 @@ var init_node = __esm({
       async listInternal(params) {
         var _a6, _b, _c, _d;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = listModelsParametersToVertex(this.apiClient, params);
-          path12 = formatMap("{models_url}", body["_url"]);
+          path13 = formatMap("{models_url}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -60139,12 +60163,12 @@ var init_node = __esm({
           });
         } else {
           const body = listModelsParametersToMldev(this.apiClient, params);
-          path12 = formatMap("{models_url}", body["_url"]);
+          path13 = formatMap("{models_url}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -60187,16 +60211,16 @@ var init_node = __esm({
       async update(params) {
         var _a6, _b, _c, _d;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = updateModelParametersToVertex(this.apiClient, params);
-          path12 = formatMap("{model}", body["_url"]);
+          path13 = formatMap("{model}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "PATCH",
@@ -60211,12 +60235,12 @@ var init_node = __esm({
           });
         } else {
           const body = updateModelParametersToMldev(this.apiClient, params);
-          path12 = formatMap("{name}", body["_url"]);
+          path13 = formatMap("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "PATCH",
@@ -60245,16 +60269,16 @@ var init_node = __esm({
       async delete(params) {
         var _a6, _b, _c, _d;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = deleteModelParametersToVertex(this.apiClient, params);
-          path12 = formatMap("{name}", body["_url"]);
+          path13 = formatMap("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "DELETE",
@@ -60277,12 +60301,12 @@ var init_node = __esm({
           });
         } else {
           const body = deleteModelParametersToMldev(this.apiClient, params);
-          path12 = formatMap("{name}", body["_url"]);
+          path13 = formatMap("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "DELETE",
@@ -60324,16 +60348,16 @@ var init_node = __esm({
       async countTokens(params) {
         var _a6, _b, _c, _d;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = countTokensParametersToVertex(this.apiClient, params);
-          path12 = formatMap("{model}:countTokens", body["_url"]);
+          path13 = formatMap("{model}:countTokens", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -60356,12 +60380,12 @@ var init_node = __esm({
           });
         } else {
           const body = countTokensParametersToMldev(this.apiClient, params);
-          path12 = formatMap("{model}:countTokens", body["_url"]);
+          path13 = formatMap("{model}:countTokens", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -60405,16 +60429,16 @@ var init_node = __esm({
       async computeTokens(params) {
         var _a6, _b;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = computeTokensParametersToVertex(this.apiClient, params);
-          path12 = formatMap("{model}:computeTokens", body["_url"]);
+          path13 = formatMap("{model}:computeTokens", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -60445,16 +60469,16 @@ var init_node = __esm({
       async generateVideosInternal(params) {
         var _a6, _b, _c, _d;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = generateVideosParametersToVertex(this.apiClient, params);
-          path12 = formatMap("{model}:predictLongRunning", body["_url"]);
+          path13 = formatMap("{model}:predictLongRunning", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -60471,12 +60495,12 @@ var init_node = __esm({
           });
         } else {
           const body = generateVideosParametersToMldev(this.apiClient, params);
-          path12 = formatMap("{model}:predictLongRunning", body["_url"]);
+          path13 = formatMap("{model}:predictLongRunning", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -60578,16 +60602,16 @@ var init_node = __esm({
       async getVideosOperationInternal(params) {
         var _a6, _b, _c, _d;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = getOperationParametersToVertex(params);
-          path12 = formatMap("{operationName}", body["_url"]);
+          path13 = formatMap("{operationName}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -60599,12 +60623,12 @@ var init_node = __esm({
           return response;
         } else {
           const body = getOperationParametersToMldev(params);
-          path12 = formatMap("{operationName}", body["_url"]);
+          path13 = formatMap("{operationName}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -60619,16 +60643,16 @@ var init_node = __esm({
       async fetchPredictVideosOperationInternal(params) {
         var _a6, _b;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = fetchPredictOperationParametersToVertex(params);
-          path12 = formatMap("{resourceName}:fetchPredictOperation", body["_url"]);
+          path13 = formatMap("{resourceName}:fetchPredictOperation", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -60734,20 +60758,20 @@ var init_node = __esm({
       async create(params) {
         var _a6, _b;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("The client.tokens.create method is only supported by the Gemini Developer API.");
         } else {
           const body = createAuthTokenParametersToMldev(this.apiClient, params);
-          path12 = formatMap("auth_tokens", body["_url"]);
+          path13 = formatMap("auth_tokens", body["_url"]);
           queryParams = body["_query"];
           delete body["config"];
           delete body["_url"];
           delete body["_query"];
           const transformedBody = convertBidiSetupToTokenSetup(body, params.config);
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(transformedBody),
             httpMethod: "POST",
@@ -60779,18 +60803,18 @@ var init_node = __esm({
       async get(params) {
         var _a6, _b;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = getDocumentParametersToMldev(params);
-          path12 = formatMap("{name}", body["_url"]);
+          path13 = formatMap("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -60811,18 +60835,18 @@ var init_node = __esm({
        */
       async delete(params) {
         var _a6, _b;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = deleteDocumentParametersToMldev(params);
-          path12 = formatMap("{name}", body["_url"]);
+          path13 = formatMap("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           await this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "DELETE",
@@ -60834,18 +60858,18 @@ var init_node = __esm({
       async listInternal(params) {
         var _a6, _b;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = listDocumentsParametersToMldev(params);
-          path12 = formatMap("{parent}/documents", body["_url"]);
+          path13 = formatMap("{parent}/documents", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -60962,18 +60986,18 @@ var init_node = __esm({
       async create(params) {
         var _a6, _b;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = createFileSearchStoreParametersToMldev(this.apiClient, params);
-          path12 = formatMap("fileSearchStores", body["_url"]);
+          path13 = formatMap("fileSearchStores", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -60996,18 +61020,18 @@ var init_node = __esm({
       async get(params) {
         var _a6, _b;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = getFileSearchStoreParametersToMldev(params);
-          path12 = formatMap("{name}", body["_url"]);
+          path13 = formatMap("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -61028,18 +61052,18 @@ var init_node = __esm({
        */
       async delete(params) {
         var _a6, _b;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = deleteFileSearchStoreParametersToMldev(params);
-          path12 = formatMap("{name}", body["_url"]);
+          path13 = formatMap("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           await this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "DELETE",
@@ -61051,18 +61075,18 @@ var init_node = __esm({
       async listInternal(params) {
         var _a6, _b;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = listFileSearchStoresParametersToMldev(params);
-          path12 = formatMap("fileSearchStores", body["_url"]);
+          path13 = formatMap("fileSearchStores", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -61082,18 +61106,18 @@ var init_node = __esm({
       async uploadToFileSearchStoreInternal(params) {
         var _a6, _b;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = uploadToFileSearchStoreParametersToMldev(params);
-          path12 = formatMap("upload/v1beta/{file_search_store_name}:uploadToFileSearchStore", body["_url"]);
+          path13 = formatMap("upload/v1beta/{file_search_store_name}:uploadToFileSearchStore", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -61121,18 +61145,18 @@ var init_node = __esm({
       async importFile(params) {
         var _a6, _b;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = importFileParametersToMldev(params);
-          path12 = formatMap("{file_search_store_name}:importFile", body["_url"]);
+          path13 = formatMap("{file_search_store_name}:importFile", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -61325,12 +61349,12 @@ var init_node = __esm({
     };
     APIResource._key = [];
     EMPTY = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.create(null));
-    createPathTagFunction = (pathEncoder = encodeURIPath) => (function path12(statics, ...params) {
+    createPathTagFunction = (pathEncoder = encodeURIPath) => (function path13(statics, ...params) {
       if (statics.length === 1)
         return statics[0];
       let postPath = false;
       const invalidSegments = [];
-      const path13 = statics.reduce((previousValue, currentValue, index2) => {
+      const path14 = statics.reduce((previousValue, currentValue, index2) => {
         var _a6, _b, _c;
         if (/[?#]/.test(currentValue)) {
           postPath = true;
@@ -61348,7 +61372,7 @@ var init_node = __esm({
         }
         return previousValue + currentValue + (index2 === params.length ? "" : encoded);
       }, "");
-      const pathOnly = path13.split(/[?#]/, 1)[0];
+      const pathOnly = path14.split(/[?#]/, 1)[0];
       const invalidSegmentPattern = /(^|\/)(?:\.|%2e){1,2}(?=\/|$)/gi;
       let match;
       while ((match = invalidSegmentPattern.exec(pathOnly)) !== null) {
@@ -61372,12 +61396,12 @@ var init_node = __esm({
         }, "");
         throw new GeminiNextGenAPIClientError(`Path parameters result in path with invalid segments:
 ${invalidSegments.map((e2) => e2.error).join("\n")}
-${path13}
+${path14}
 ${underline}`);
       }
-      return path13;
+      return path14;
     });
-    path8 = /* @__PURE__ */ createPathTagFunction(encodeURIPath);
+    path9 = /* @__PURE__ */ createPathTagFunction(encodeURIPath);
     BaseInteractions = class extends APIResource {
       create(params, options) {
         var _a6;
@@ -61388,7 +61412,7 @@ ${underline}`);
         if ("agent" in body && "generation_config" in body) {
           throw new GeminiNextGenAPIClientError(`Invalid request: specified \`agent\` and \`generation_config\`. If specifying \`agent\`, use \`agent_config\`.`);
         }
-        return this._client.post(path8`/${api_version}/interactions`, Object.assign(Object.assign({ body }, options), { stream: (_a6 = params.stream) !== null && _a6 !== void 0 ? _a6 : false }));
+        return this._client.post(path9`/${api_version}/interactions`, Object.assign(Object.assign({ body }, options), { stream: (_a6 = params.stream) !== null && _a6 !== void 0 ? _a6 : false }));
       }
       /**
        * Deletes the interaction by id.
@@ -61402,7 +61426,7 @@ ${underline}`);
        */
       delete(id, params = {}, options) {
         const { api_version = this._client.apiVersion } = params !== null && params !== void 0 ? params : {};
-        return this._client.delete(path8`/${api_version}/interactions/${id}`, options);
+        return this._client.delete(path9`/${api_version}/interactions/${id}`, options);
       }
       /**
        * Cancels an interaction by id. This only applies to background interactions that
@@ -61417,12 +61441,12 @@ ${underline}`);
        */
       cancel(id, params = {}, options) {
         const { api_version = this._client.apiVersion } = params !== null && params !== void 0 ? params : {};
-        return this._client.post(path8`/${api_version}/interactions/${id}/cancel`, options);
+        return this._client.post(path9`/${api_version}/interactions/${id}/cancel`, options);
       }
       get(id, params = {}, options) {
         var _a6;
         const _b = params !== null && params !== void 0 ? params : {}, { api_version = this._client.apiVersion } = _b, query = __rest2(_b, ["api_version"]);
-        return this._client.get(path8`/${api_version}/interactions/${id}`, Object.assign(Object.assign({ query }, options), { stream: (_a6 = params === null || params === void 0 ? void 0 : params.stream) !== null && _a6 !== void 0 ? _a6 : false }));
+        return this._client.get(path9`/${api_version}/interactions/${id}`, Object.assign(Object.assign({ query }, options), { stream: (_a6 = params === null || params === void 0 ? void 0 : params.stream) !== null && _a6 !== void 0 ? _a6 : false }));
       }
     };
     BaseInteractions._key = Object.freeze(["interactions"]);
@@ -61434,49 +61458,49 @@ ${underline}`);
        */
       create(params, options) {
         const { api_version = this._client.apiVersion } = params, body = __rest2(params, ["api_version"]);
-        return this._client.post(path8`/${api_version}/webhooks`, Object.assign({ body }, options));
+        return this._client.post(path9`/${api_version}/webhooks`, Object.assign({ body }, options));
       }
       /**
        * Updates an existing Webhook.
        */
       update(id, params = {}, options) {
         const _a6 = params !== null && params !== void 0 ? params : {}, { api_version = this._client.apiVersion, update_mask } = _a6, body = __rest2(_a6, ["api_version", "update_mask"]);
-        return this._client.patch(path8`/${api_version}/webhooks/${id}`, Object.assign({ query: { update_mask }, body }, options));
+        return this._client.patch(path9`/${api_version}/webhooks/${id}`, Object.assign({ query: { update_mask }, body }, options));
       }
       /**
        * Lists all Webhooks.
        */
       list(params = {}, options) {
         const _a6 = params !== null && params !== void 0 ? params : {}, { api_version = this._client.apiVersion } = _a6, query = __rest2(_a6, ["api_version"]);
-        return this._client.get(path8`/${api_version}/webhooks`, Object.assign({ query }, options));
+        return this._client.get(path9`/${api_version}/webhooks`, Object.assign({ query }, options));
       }
       /**
        * Deletes a Webhook.
        */
       delete(id, params = {}, options) {
         const { api_version = this._client.apiVersion } = params !== null && params !== void 0 ? params : {};
-        return this._client.delete(path8`/${api_version}/webhooks/${id}`, options);
+        return this._client.delete(path9`/${api_version}/webhooks/${id}`, options);
       }
       /**
        * Gets a specific Webhook.
        */
       get(id, params = {}, options) {
         const { api_version = this._client.apiVersion } = params !== null && params !== void 0 ? params : {};
-        return this._client.get(path8`/${api_version}/webhooks/${id}`, options);
+        return this._client.get(path9`/${api_version}/webhooks/${id}`, options);
       }
       /**
        * Sends a ping event to a Webhook.
        */
       ping(id, params = void 0, options) {
         const { api_version = this._client.apiVersion, body } = params !== null && params !== void 0 ? params : {};
-        return this._client.post(path8`/${api_version}/webhooks/${id}:ping`, Object.assign({ body }, options));
+        return this._client.post(path9`/${api_version}/webhooks/${id}:ping`, Object.assign({ body }, options));
       }
       /**
        * Generates a new signing secret for a Webhook.
        */
       rotateSigningSecret(id, params = {}, options) {
         const _a6 = params !== null && params !== void 0 ? params : {}, { api_version = this._client.apiVersion } = _a6, body = __rest2(_a6, ["api_version"]);
-        return this._client.post(path8`/${api_version}/webhooks/${id}:rotateSigningSecret`, Object.assign({ body }, options));
+        return this._client.post(path9`/${api_version}/webhooks/${id}:rotateSigningSecret`, Object.assign({ body }, options));
       }
     };
     BaseWebhooks._key = Object.freeze(["webhooks"]);
@@ -61984,9 +62008,9 @@ ${underline}`);
       makeStatusError(status, error, message, headers) {
         return APIError.generate(status, error, message, headers);
       }
-      buildURL(path12, query, defaultBaseURL) {
+      buildURL(path13, query, defaultBaseURL) {
         const baseURL = !this.baseURLOverridden() && defaultBaseURL || this.baseURL;
-        const url = isAbsoluteURL(path12) ? new URL(path12) : new URL(baseURL + (baseURL.endsWith("/") && path12.startsWith("/") ? path12.slice(1) : path12));
+        const url = isAbsoluteURL(path13) ? new URL(path13) : new URL(baseURL + (baseURL.endsWith("/") && path13.startsWith("/") ? path13.slice(1) : path13));
         const defaultQuery = this.defaultQuery();
         const pathQuery = Object.fromEntries(url.searchParams);
         if (!isEmptyObj(defaultQuery) || !isEmptyObj(pathQuery)) {
@@ -62015,24 +62039,24 @@ ${underline}`);
        */
       async prepareRequest(request, { url, options }) {
       }
-      get(path12, opts) {
-        return this.methodRequest("get", path12, opts);
+      get(path13, opts) {
+        return this.methodRequest("get", path13, opts);
       }
-      post(path12, opts) {
-        return this.methodRequest("post", path12, opts);
+      post(path13, opts) {
+        return this.methodRequest("post", path13, opts);
       }
-      patch(path12, opts) {
-        return this.methodRequest("patch", path12, opts);
+      patch(path13, opts) {
+        return this.methodRequest("patch", path13, opts);
       }
-      put(path12, opts) {
-        return this.methodRequest("put", path12, opts);
+      put(path13, opts) {
+        return this.methodRequest("put", path13, opts);
       }
-      delete(path12, opts) {
-        return this.methodRequest("delete", path12, opts);
+      delete(path13, opts) {
+        return this.methodRequest("delete", path13, opts);
       }
-      methodRequest(method, path12, opts) {
+      methodRequest(method, path13, opts) {
         return this.request(Promise.resolve(opts).then((opts2) => {
-          return Object.assign({ method, path: path12 }, opts2);
+          return Object.assign({ method, path: path13 }, opts2);
         }));
       }
       request(options, remainingRetries = null) {
@@ -62206,8 +62230,8 @@ ${underline}`);
       async buildRequest(inputOptions, { retryCount = 0 } = {}) {
         var _b, _c, _d;
         const options = Object.assign({}, inputOptions);
-        const { method, path: path12, query, defaultBaseURL } = options;
-        const url = this.buildURL(path12, query, defaultBaseURL);
+        const { method, path: path13, query, defaultBaseURL } = options;
+        const url = this.buildURL(path13, query, defaultBaseURL);
         if ("timeout" in options)
           validatePositiveInteger("timeout", options.timeout);
         options.timeout = (_b = options.timeout) !== null && _b !== void 0 ? _b : this.timeout;
@@ -62339,7 +62363,7 @@ ${underline}`);
         if (params.downloadPath) {
           const response = await downloadFile(params, apiClient);
           if (response instanceof HttpResponse) {
-            const writer = (0, import_fs7.createWriteStream)(params.downloadPath);
+            const writer = (0, import_fs8.createWriteStream)(params.downloadPath);
             const body = import_node_stream3.Readable.fromWeb(response.responseInternal.body);
             body.pipe(writer);
             await (0, import_promises2.finished)(writer);
@@ -62433,16 +62457,16 @@ ${underline}`);
       async getInternal(params) {
         var _a6, _b, _c, _d;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = getTuningJobParametersToVertex(params);
-          path12 = formatMap("{name}", body["_url"]);
+          path13 = formatMap("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -62463,12 +62487,12 @@ ${underline}`);
           });
         } else {
           const body = getTuningJobParametersToMldev(params);
-          path12 = formatMap("{name}", body["_url"]);
+          path13 = formatMap("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -62492,16 +62516,16 @@ ${underline}`);
       async listInternal(params) {
         var _a6, _b;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = listTuningJobsParametersToVertex(params);
-          path12 = formatMap("tuningJobs", body["_url"]);
+          path13 = formatMap("tuningJobs", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -62540,16 +62564,16 @@ ${underline}`);
       async cancel(params) {
         var _a6, _b, _c, _d;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = cancelTuningJobParametersToVertex(params);
-          path12 = formatMap("{name}:cancel", body["_url"]);
+          path13 = formatMap("{name}:cancel", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -62572,12 +62596,12 @@ ${underline}`);
           });
         } else {
           const body = cancelTuningJobParametersToMldev(params);
-          path12 = formatMap("{name}:cancel", body["_url"]);
+          path13 = formatMap("{name}:cancel", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -62603,16 +62627,16 @@ ${underline}`);
       async tuneInternal(params) {
         var _a6, _b;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = createTuningJobParametersPrivateToVertex(params, params);
-          path12 = formatMap("tuningJobs", body["_url"]);
+          path13 = formatMap("tuningJobs", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -62638,18 +62662,18 @@ ${underline}`);
       async tuneMldevInternal(params) {
         var _a6, _b;
         let response;
-        let path12 = "";
+        let path13 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = createTuningJobParametersPrivateToMldev(params);
-          path12 = formatMap("tunedModels", body["_url"]);
+          path13 = formatMap("tunedModels", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path12,
+            path: path13,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -62680,7 +62704,7 @@ ${underline}`);
       async stat(file) {
         const fileStat = { size: 0, type: void 0 };
         if (typeof file === "string") {
-          const originalStat = await fs8.stat(file);
+          const originalStat = await fs9.stat(file);
           fileStat.size = originalStat.size;
           fileStat.type = this.inferMimeType(file);
           return fileStat;
@@ -62828,7 +62852,7 @@ ${underline}`);
         let fileHandle;
         const fileName = path$1.basename(file);
         try {
-          fileHandle = await fs8.open(file, "r");
+          fileHandle = await fs9.open(file, "r");
           if (!fileHandle) {
             throw new Error(`Failed to open file`);
           }
@@ -83591,14 +83615,14 @@ var require_util3 = __commonJS({
         }
         const port = url.port != null ? url.port : url.protocol === "https:" ? 443 : 80;
         let origin = url.origin != null ? url.origin : `${url.protocol || ""}//${url.hostname || ""}:${port}`;
-        let path12 = url.path != null ? url.path : `${url.pathname || ""}${url.search || ""}`;
+        let path13 = url.path != null ? url.path : `${url.pathname || ""}${url.search || ""}`;
         if (origin[origin.length - 1] === "/") {
           origin = origin.slice(0, origin.length - 1);
         }
-        if (path12 && path12[0] !== "/") {
-          path12 = `/${path12}`;
+        if (path13 && path13[0] !== "/") {
+          path13 = `/${path13}`;
         }
-        return new URL(`${origin}${path12}`);
+        return new URL(`${origin}${path13}`);
       }
       if (!isHttpOrHttpsPrefixed(url.origin || url.protocol)) {
         throw new InvalidArgumentError("Invalid URL protocol: the URL must start with `http:` or `https:`.");
@@ -84419,9 +84443,9 @@ var require_diagnostics = __commonJS({
         "undici:client:sendHeaders",
         (evt) => {
           const {
-            request: { method, path: path12, origin }
+            request: { method, path: path13, origin }
           } = evt;
-          debugLog("sending request to %s %s%s", method, origin, path12);
+          debugLog("sending request to %s %s%s", method, origin, path13);
         }
       );
     }
@@ -84439,14 +84463,14 @@ var require_diagnostics = __commonJS({
         "undici:request:headers",
         (evt) => {
           const {
-            request: { method, path: path12, origin },
+            request: { method, path: path13, origin },
             response: { statusCode }
           } = evt;
           debugLog(
             "received response to %s %s%s - HTTP %d",
             method,
             origin,
-            path12,
+            path13,
             statusCode
           );
         }
@@ -84455,23 +84479,23 @@ var require_diagnostics = __commonJS({
         "undici:request:trailers",
         (evt) => {
           const {
-            request: { method, path: path12, origin }
+            request: { method, path: path13, origin }
           } = evt;
-          debugLog("trailers received from %s %s%s", method, origin, path12);
+          debugLog("trailers received from %s %s%s", method, origin, path13);
         }
       );
       diagnosticsChannel.subscribe(
         "undici:request:error",
         (evt) => {
           const {
-            request: { method, path: path12, origin },
+            request: { method, path: path13, origin },
             error
           } = evt;
           debugLog(
             "request to %s %s%s errored - %s",
             method,
             origin,
-            path12,
+            path13,
             error.message
           );
         }
@@ -84586,7 +84610,7 @@ var require_request = __commonJS({
     var kHandler = Symbol("handler");
     var Request2 = class {
       constructor(origin, {
-        path: path12,
+        path: path13,
         method,
         body,
         headers,
@@ -84603,11 +84627,11 @@ var require_request = __commonJS({
         maxRedirections,
         typeOfService
       }, handler) {
-        if (typeof path12 !== "string") {
+        if (typeof path13 !== "string") {
           throw new InvalidArgumentError("path must be a string");
-        } else if (path12[0] !== "/" && !(path12.startsWith("http://") || path12.startsWith("https://")) && method !== "CONNECT") {
+        } else if (path13[0] !== "/" && !(path13.startsWith("http://") || path13.startsWith("https://")) && method !== "CONNECT") {
           throw new InvalidArgumentError("path must be an absolute URL or start with a slash");
-        } else if (invalidPathRegex.test(path12)) {
+        } else if (invalidPathRegex.test(path13)) {
           throw new InvalidArgumentError("invalid request path");
         }
         if (typeof method !== "string") {
@@ -84682,7 +84706,7 @@ var require_request = __commonJS({
         this.completed = false;
         this.aborted = false;
         this.upgrade = upgrade || null;
-        this.path = query ? serializePathWithQuery(path12, query) : path12;
+        this.path = query ? serializePathWithQuery(path13, query) : path13;
         this.origin = origin;
         this.protocol = getProtocolFromUrlString(origin);
         this.idempotent = idempotent == null ? method === "HEAD" || method === "GET" : idempotent;
@@ -89865,7 +89889,7 @@ var require_client_h1 = __commonJS({
       return method !== "GET" && method !== "HEAD" && method !== "OPTIONS" && method !== "TRACE" && method !== "CONNECT";
     }
     function writeH1(client, request) {
-      const { method, path: path12, host, upgrade, blocking, reset } = request;
+      const { method, path: path13, host, upgrade, blocking, reset } = request;
       let { body, headers, contentLength } = request;
       const expectsPayload = method === "PUT" || method === "POST" || method === "PATCH" || method === "QUERY" || method === "PROPFIND" || method === "PROPPATCH";
       if (util.isFormDataLike(body)) {
@@ -89943,7 +89967,7 @@ var require_client_h1 = __commonJS({
       if (socket.setTypeOfService) {
         socket.setTypeOfService(request.typeOfService);
       }
-      let header = `${method} ${path12} HTTP/1.1\r
+      let header = `${method} ${path13} HTTP/1.1\r
 `;
       if (typeof host === "string") {
         header += `host: ${host}\r
@@ -90596,7 +90620,7 @@ var require_client_h2 = __commonJS({
     function writeH2(client, request) {
       const requestTimeout = request.bodyTimeout ?? client[kBodyTimeout];
       const session2 = client[kHTTP2Session];
-      const { method, path: path12, host, upgrade, expectContinue, signal, protocol, headers: reqHeaders } = request;
+      const { method, path: path13, host, upgrade, expectContinue, signal, protocol, headers: reqHeaders } = request;
       let { body } = request;
       if (upgrade != null && upgrade !== "websocket") {
         util.errorRequest(client, request, new InvalidArgumentError(`Custom upgrade "${upgrade}" not supported over HTTP/2`));
@@ -90664,7 +90688,7 @@ var require_client_h2 = __commonJS({
           }
           headers[HTTP2_HEADER_METHOD] = "CONNECT";
           headers[HTTP2_HEADER_PROTOCOL] = "websocket";
-          headers[HTTP2_HEADER_PATH] = path12;
+          headers[HTTP2_HEADER_PATH] = path13;
           if (protocol === "ws:" || protocol === "wss:") {
             headers[HTTP2_HEADER_SCHEME] = protocol === "ws:" ? "http" : "https";
           } else {
@@ -90705,7 +90729,7 @@ var require_client_h2 = __commonJS({
         stream.setTimeout(requestTimeout);
         return true;
       }
-      headers[HTTP2_HEADER_PATH] = path12;
+      headers[HTTP2_HEADER_PATH] = path13;
       headers[HTTP2_HEADER_SCHEME] = protocol === "http:" ? "http" : "https";
       const expectsPayload = method === "PUT" || method === "POST" || method === "PATCH";
       if (body && typeof body.read === "function") {
@@ -93048,10 +93072,10 @@ var require_proxy_agent = __commonJS({
         };
         const {
           origin,
-          path: path12 = "/",
+          path: path13 = "/",
           headers = {}
         } = opts;
-        opts.path = origin + path12;
+        opts.path = origin + path13;
         if (!("host" in headers) && !("Host" in headers)) {
           const { host } = new URL(origin);
           headers.host = host;
@@ -95134,20 +95158,20 @@ var require_mock_utils = __commonJS({
       }
       return normalizedQp;
     }
-    function safeUrl(path12) {
-      if (typeof path12 !== "string") {
-        return path12;
+    function safeUrl(path13) {
+      if (typeof path13 !== "string") {
+        return path13;
       }
-      const pathSegments = path12.split("?", 3);
+      const pathSegments = path13.split("?", 3);
       if (pathSegments.length !== 2) {
-        return path12;
+        return path13;
       }
       const qp = new URLSearchParams(pathSegments.pop());
       qp.sort();
       return [...pathSegments, qp.toString()].join("?");
     }
-    function matchKey(mockDispatch2, { path: path12, method, body, headers }) {
-      const pathMatch = matchValue(mockDispatch2.path, path12);
+    function matchKey(mockDispatch2, { path: path13, method, body, headers }) {
+      const pathMatch = matchValue(mockDispatch2.path, path13);
       const methodMatch = matchValue(mockDispatch2.method, method);
       const bodyMatch = typeof mockDispatch2.body !== "undefined" ? matchValue(mockDispatch2.body, body) : true;
       const headersMatch = matchHeaders(mockDispatch2, headers);
@@ -95172,8 +95196,8 @@ var require_mock_utils = __commonJS({
       const basePath = key.query ? serializePathWithQuery(key.path, key.query) : key.path;
       const resolvedPath = typeof basePath === "string" ? safeUrl(basePath) : basePath;
       const resolvedPathWithoutTrailingSlash = removeTrailingSlash(resolvedPath);
-      let matchedMockDispatches = mockDispatches.filter(({ consumed }) => !consumed).filter(({ path: path12, ignoreTrailingSlash }) => {
-        return ignoreTrailingSlash ? matchValue(removeTrailingSlash(safeUrl(path12)), resolvedPathWithoutTrailingSlash) : matchValue(safeUrl(path12), resolvedPath);
+      let matchedMockDispatches = mockDispatches.filter(({ consumed }) => !consumed).filter(({ path: path13, ignoreTrailingSlash }) => {
+        return ignoreTrailingSlash ? matchValue(removeTrailingSlash(safeUrl(path13)), resolvedPathWithoutTrailingSlash) : matchValue(safeUrl(path13), resolvedPath);
       });
       if (matchedMockDispatches.length === 0) {
         throw new MockNotMatchedError(`Mock dispatch not matched for path '${resolvedPath}'`);
@@ -95212,19 +95236,19 @@ var require_mock_utils = __commonJS({
         mockDispatches.splice(index2, 1);
       }
     }
-    function removeTrailingSlash(path12) {
-      while (path12.endsWith("/")) {
-        path12 = path12.slice(0, -1);
+    function removeTrailingSlash(path13) {
+      while (path13.endsWith("/")) {
+        path13 = path13.slice(0, -1);
       }
-      if (path12.length === 0) {
-        path12 = "/";
+      if (path13.length === 0) {
+        path13 = "/";
       }
-      return path12;
+      return path13;
     }
     function buildKey(opts) {
-      const { path: path12, method, body, headers, query } = opts;
+      const { path: path13, method, body, headers, query } = opts;
       return {
-        path: path12,
+        path: path13,
         method,
         body,
         headers,
@@ -95914,10 +95938,10 @@ var require_pending_interceptors_formatter = __commonJS({
       }
       format(pendingInterceptors) {
         const withPrettyHeaders = pendingInterceptors.map(
-          ({ method, path: path12, data: { statusCode }, persist, times, timesInvoked, origin }) => ({
+          ({ method, path: path13, data: { statusCode }, persist, times, timesInvoked, origin }) => ({
             Method: method,
             Origin: origin,
-            Path: path12,
+            Path: path13,
             "Status code": statusCode,
             Persistent: persist ? PERSISTENT : NOT_PERSISTENT,
             Invocations: timesInvoked,
@@ -95999,9 +96023,9 @@ var require_mock_agent = __commonJS({
         const acceptNonStandardSearchParameters = this[kMockAgentAcceptsNonStandardSearchParameters];
         const dispatchOpts = { ...opts };
         if (acceptNonStandardSearchParameters && dispatchOpts.path) {
-          const [path12, searchParams] = dispatchOpts.path.split("?");
+          const [path13, searchParams] = dispatchOpts.path.split("?");
           const normalizedSearchParams = normalizeSearchParams(searchParams, acceptNonStandardSearchParameters);
-          dispatchOpts.path = `${path12}?${normalizedSearchParams}`;
+          dispatchOpts.path = `${path13}?${normalizedSearchParams}`;
         }
         return this[kAgent].dispatch(dispatchOpts, handler);
       }
@@ -96402,12 +96426,12 @@ var require_snapshot_recorder = __commonJS({
        * @return {Promise<void>} - Resolves when snapshots are loaded
        */
       async loadSnapshots(filePath) {
-        const path12 = filePath || this.#snapshotPath;
-        if (!path12) {
+        const path13 = filePath || this.#snapshotPath;
+        if (!path13) {
           throw new InvalidArgumentError("Snapshot path is required");
         }
         try {
-          const data2 = await readFile(resolve(path12), "utf8");
+          const data2 = await readFile(resolve(path13), "utf8");
           const parsed = JSON.parse(data2);
           if (Array.isArray(parsed)) {
             this.#snapshots.clear();
@@ -96421,7 +96445,7 @@ var require_snapshot_recorder = __commonJS({
           if (error.code === "ENOENT") {
             this.#snapshots.clear();
           } else {
-            throw new UndiciError(`Failed to load snapshots from ${path12}`, { cause: error });
+            throw new UndiciError(`Failed to load snapshots from ${path13}`, { cause: error });
           }
         }
       }
@@ -96432,11 +96456,11 @@ var require_snapshot_recorder = __commonJS({
        * @returns {Promise<void>} - Resolves when snapshots are saved
        */
       async saveSnapshots(filePath) {
-        const path12 = filePath || this.#snapshotPath;
-        if (!path12) {
+        const path13 = filePath || this.#snapshotPath;
+        if (!path13) {
           throw new InvalidArgumentError("Snapshot path is required");
         }
-        const resolvedPath = resolve(path12);
+        const resolvedPath = resolve(path13);
         await mkdir(dirname(resolvedPath), { recursive: true });
         const data2 = Array.from(this.#snapshots.entries()).map(([hash, snapshot]) => ({
           hash,
@@ -97068,15 +97092,15 @@ var require_redirect_handler = __commonJS({
           return;
         }
         const { origin, pathname, search: search2 } = util.parseURL(new URL(this.location, this.opts.origin && new URL(this.opts.path, this.opts.origin)));
-        const path12 = search2 ? `${pathname}${search2}` : pathname;
-        const redirectUrlString = `${origin}${path12}`;
+        const path13 = search2 ? `${pathname}${search2}` : pathname;
+        const redirectUrlString = `${origin}${path13}`;
         for (const historyUrl of this.history) {
           if (historyUrl.toString() === redirectUrlString) {
             throw new InvalidArgumentError(`Redirect loop detected. Cannot redirect to ${origin}. This typically happens when using a Client or Pool with cross-origin redirects. Use an Agent for cross-origin redirects.`);
           }
         }
         this.opts.headers = cleanRequestHeaders(this.opts.headers, statusCode === 303, this.opts.origin !== origin);
-        this.opts.path = path12;
+        this.opts.path = path13;
         this.opts.origin = origin;
         this.opts.query = null;
       }
@@ -98845,10 +98869,10 @@ var require_cache_handler = __commonJS({
       }
       return locationUrl.pathname + locationUrl.search;
     }
-    function deleteCachedUri(store2, cacheKey, path12) {
+    function deleteCachedUri(store2, cacheKey, path13) {
       deleteCachedValue(store2, {
         ...cacheKey,
-        path: path12
+        path: path13
       });
       for (let i2 = 0; i2 < util.safeHTTPMethods.length; i2++) {
         const method = util.safeHTTPMethods[i2];
@@ -98856,7 +98880,7 @@ var require_cache_handler = __commonJS({
           deleteCachedValue(store2, {
             ...cacheKey,
             method,
-            path: path12
+            path: path13
           });
         }
       }
@@ -98867,9 +98891,9 @@ var require_cache_handler = __commonJS({
       }
       const values = Array.isArray(headerValue) ? headerValue : [headerValue];
       for (let i2 = 0; i2 < values.length; i2++) {
-        const path12 = getSameOriginPath(cacheKey, values[i2]);
-        if (path12 !== void 0) {
-          deleteCachedUri(store2, cacheKey, path12);
+        const path13 = getSameOriginPath(cacheKey, values[i2]);
+        if (path13 !== void 0) {
+          deleteCachedUri(store2, cacheKey, path13);
         }
       }
     }
@@ -103747,11 +103771,11 @@ var require_fetch2 = __commonJS({
       function dispatch({ body }) {
         const url = requestCurrentURL(request);
         const agent = fetchParams.controller.dispatcher;
-        const path12 = url.pathname + url.search;
+        const path13 = url.pathname + url.search;
         const hasTrailingQuestionMark = url.search.length === 0 && url.href[url.href.length - url.hash.length - 1] === "?";
         return new Promise((resolve, reject) => agent.dispatch(
           {
-            path: hasTrailingQuestionMark ? `${path12}?` : path12,
+            path: hasTrailingQuestionMark ? `${path13}?` : path13,
             origin: url.origin,
             method: request.method,
             body: agent.isMockActive ? request.body && (request.body.source || request.body.stream) : body,
@@ -104698,9 +104722,9 @@ var require_util6 = __commonJS({
         }
       }
     }
-    function validateCookiePath(path12) {
-      for (let i2 = 0; i2 < path12.length; ++i2) {
-        const code = path12.charCodeAt(i2);
+    function validateCookiePath(path13) {
+      for (let i2 = 0; i2 < path13.length; ++i2) {
+        const code = path13.charCodeAt(i2);
         if (code < 32 || // exclude CTLs (0-31)
         code > 126 || // exclude DEL and non-ascii
         code === 59) {
@@ -107937,11 +107961,11 @@ var require_undici = __commonJS({
           if (typeof opts.path !== "string") {
             throw new InvalidArgumentError("invalid opts.path");
           }
-          let path12 = opts.path;
+          let path13 = opts.path;
           if (!opts.path.startsWith("/")) {
-            path12 = `/${path12}`;
+            path13 = `/${path13}`;
           }
-          url = new URL(util.parseOrigin(url).origin + path12);
+          url = new URL(util.parseOrigin(url).origin + path13);
         } else {
           if (!opts) {
             opts = typeof url === "object" ? url : {};
@@ -108411,9 +108435,9 @@ __export(ai_agent_exports, {
 });
 function getGeminiToken() {
   try {
-    const cfgPath = import_path8.default.join(import_electron10.app.getPath("userData"), "supabase-config.json");
-    if (import_fs8.default.existsSync(cfgPath)) {
-      const cfg = JSON.parse(import_fs8.default.readFileSync(cfgPath, "utf-8"));
+    const cfgPath = import_path9.default.join(import_electron11.app.getPath("userData"), "supabase-config.json");
+    if (import_fs9.default.existsSync(cfgPath)) {
+      const cfg = JSON.parse(import_fs9.default.readFileSync(cfgPath, "utf-8"));
       return cfg.geminiKey || null;
     }
   } catch (err) {
@@ -108504,22 +108528,22 @@ ${competitorText}
     throw new Error(`AI Analysis Failed: ${error.message}`);
   }
 }
-var import_fs8, import_path8, import_electron10;
+var import_fs9, import_path9, import_electron11;
 var init_ai_agent = __esm({
   "electron/ai-agent.ts"() {
     "use strict";
     init_node();
     init_esm11();
-    import_fs8 = __toESM(require("fs"), 1);
-    import_path8 = __toESM(require("path"), 1);
-    import_electron10 = require("electron");
+    import_fs9 = __toESM(require("fs"), 1);
+    import_path9 = __toESM(require("path"), 1);
+    import_electron11 = require("electron");
   }
 });
 
 // electron/main.ts
-var import_electron12 = require("electron");
-var import_fs10 = __toESM(require("fs"), 1);
-var import_path10 = __toESM(require("path"), 1);
+var import_electron13 = require("electron");
+var import_fs11 = __toESM(require("fs"), 1);
+var import_path11 = __toESM(require("path"), 1);
 var import_electron_updater2 = require("electron-updater");
 
 // electron/database.ts
@@ -108715,9 +108739,9 @@ function startBroadcastListener() {
 }
 
 // electron/ipc-handlers.ts
-var import_electron11 = require("electron");
-var import_path9 = __toESM(require("path"), 1);
-var import_fs9 = __toESM(require("fs"), 1);
+var import_electron12 = require("electron");
+var import_path10 = __toESM(require("path"), 1);
+var import_fs10 = __toESM(require("fs"), 1);
 var import_os4 = __toESM(require("os"), 1);
 var import_crypto6 = __toESM(require("crypto"), 1);
 var import_bcryptjs2 = __toESM(require("bcryptjs"), 1);
@@ -108925,6 +108949,9 @@ var SKIP_KEYS = /* @__PURE__ */ new Set([
   "le_local_id",
   // mysql sync key
   // ── NEW: Linkages and Search keys (PlainText for reliability) ──
+  "username",
+  "full_name",
+  "role",
   "invoice_number",
   "sku",
   "name",
@@ -109054,6 +109081,10 @@ function enqueue(entry) {
 async function executeWriteOnClient(client, entry, encData) {
   const { table, operation, filter: filter4, upsertConflict, data: data2 } = entry;
   if (operation === "insert") {
+    if (table === "bills") {
+      const res2 = await client.from(table).upsert(encData, { onConflict: "invoice_number" });
+      return res2.error;
+    }
     const res = await client.from(table).insert(encData);
     return res.error;
   } else if (operation === "upsert") {
@@ -109524,7 +109555,7 @@ async function saveSession(user) {
     const tag = cipher.getAuthTag();
     const fileBuffer = Buffer.concat([iv, tag, encrypted]);
     import_fs6.default.writeFileSync(vaultPath(), fileBuffer);
-    console.log("[VAULT] Session saved for:", user.username);
+    console.log("[VAULT] Session saved for:", user.username || "(anonymous)");
   } catch (err) {
     console.error("[VAULT] Failed to save session:", err);
   }
@@ -109589,6 +109620,72 @@ function clearSession() {
   }
 }
 
+// electron/local-cache.ts
+var import_better_sqlite32 = __toESM(require("better-sqlite3"), 1);
+var import_path8 = __toESM(require("path"), 1);
+var import_fs7 = __toESM(require("fs"), 1);
+var import_electron10 = require("electron");
+var LocalEntityCache = class {
+  static db = null;
+  static initDb() {
+    if (this.db) return;
+    try {
+      const userDataPath = import_electron10.app.getPath("userData");
+      if (!import_fs7.default.existsSync(userDataPath)) {
+        import_fs7.default.mkdirSync(userDataPath, { recursive: true });
+      }
+      const dbPath = import_path8.default.join(userDataPath, "lesoft_offline.db");
+      this.db = new import_better_sqlite32.default(dbPath);
+      this.db.exec(`
+                CREATE TABLE IF NOT EXISTS local_entity_cache (
+                    entity_type TEXT PRIMARY KEY,
+                    payload TEXT NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+            `);
+    } catch (err) {
+      console.error("[LocalCache] Initialization failed:", err);
+    }
+  }
+  /**
+   * Store entity dataset in local SQLite cache
+   */
+  static setCache(entityType, data2) {
+    this.initDb();
+    if (!this.db) return;
+    try {
+      const payload = JSON.stringify(data2 || []);
+      const stmt = this.db.prepare(`
+                INSERT INTO local_entity_cache (entity_type, payload, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(entity_type) DO UPDATE SET
+                    payload = excluded.payload,
+                    updated_at = excluded.updated_at
+            `);
+      stmt.run(entityType, payload, Date.now());
+    } catch (err) {
+      console.error(`[LocalCache] Failed to set cache for ${entityType}:`, err);
+    }
+  }
+  /**
+   * Read entity dataset instantly from local SQLite cache (<5ms response)
+   */
+  static getCache(entityType) {
+    this.initDb();
+    if (!this.db) return null;
+    try {
+      const stmt = this.db.prepare("SELECT payload FROM local_entity_cache WHERE entity_type = ?");
+      const row = stmt.get(entityType);
+      if (row && row.payload) {
+        return JSON.parse(row.payload);
+      }
+    } catch (err) {
+      console.error(`[LocalCache] Failed to read cache for ${entityType}:`, err);
+    }
+    return null;
+  }
+};
+
 // electron/ipc-handlers.ts
 var sharpModule = null;
 try {
@@ -109631,11 +109728,13 @@ async function uploadOptimizedImage(buffer, filenamePrefix) {
   if (nasStorageUrl) {
     const formData = new FormData();
     formData.append("file", new Blob([new Uint8Array(optimized)], { type: "image/webp" }), finalFilename);
+    const cfHeaders = nasStorageUrl.startsWith("https://") ? getCfAccessHeaders() : {};
     const response = await fetch(`${nasStorageUrl.replace(/\/$/, "")}/upload`, {
       method: "POST",
       body: formData,
       headers: {
-        "x-subfolder": "product-images"
+        "x-subfolder": "product-images",
+        ...cfHeaders
       }
     });
     const data2 = await response.json();
@@ -109737,10 +109836,10 @@ async function checkAndSeedSuperAdmin() {
     if (!existing) {
       const generatedPassword = generateFirstTimePassword();
       const generatedHash = await import_bcryptjs2.default.hash(generatedPassword, BCRYPT_ROUNDS);
-      const logPath = import_path9.default.join(import_electron11.app.getPath("userData"), "app.log");
-      import_fs9.default.appendFileSync(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] [SEED] FIRST LAUNCH \u2014 Super Admin generated password: ${generatedPassword}
+      const logPath = import_path10.default.join(import_electron12.app.getPath("userData"), "app.log");
+      import_fs10.default.appendFileSync(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] [SEED] FIRST LAUNCH \u2014 Super Admin generated password: ${generatedPassword}
 `);
-      import_fs9.default.appendFileSync(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] [SEED] Please change this password immediately after first login.
+      import_fs10.default.appendFileSync(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] [SEED] Please change this password immediately after first login.
 `);
       const email = "sabbirsuperadmin@lesoft.local";
       const { data: authUser, error: authErr } = await supabaseAdmin.auth.admin.createUser({
@@ -109766,9 +109865,9 @@ async function checkAndSeedSuperAdmin() {
           ...encryptedProfile
         }).eq("auth_id", authUser.user.id);
         console.log("[SEED] Super Admin account created with random password and encrypted profile.");
-        const allWindows = import_electron11.BrowserWindow.getAllWindows();
+        const allWindows = import_electron12.BrowserWindow.getAllWindows();
         const targetWindow = allWindows.length > 0 ? allWindows[0] : void 0;
-        import_electron11.dialog.showMessageBoxSync(targetWindow || {}, {
+        import_electron12.dialog.showMessageBoxSync(targetWindow || {}, {
           type: "info",
           title: "\u{1F510} LE-SOFT \u2014 First Launch Setup",
           message: "Super Admin Account Created",
@@ -109790,8 +109889,8 @@ async function checkAndSeedSuperAdmin() {
     } else if (!existing.password_hash || !existing.password_hash.startsWith("$2")) {
       const repairedPassword = generateFirstTimePassword();
       const repairedHash = await import_bcryptjs2.default.hash(repairedPassword, BCRYPT_ROUNDS);
-      const logPath = import_path9.default.join(import_electron11.app.getPath("userData"), "app.log");
-      import_fs9.default.appendFileSync(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] [SEED] Password hash repaired. New password: ${repairedPassword}
+      const logPath = import_path10.default.join(import_electron12.app.getPath("userData"), "app.log");
+      import_fs10.default.appendFileSync(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] [SEED] Password hash repaired. New password: ${repairedPassword}
 `);
       await supabase_default.from("users").update({
         password_hash: repairedHash,
@@ -109799,7 +109898,7 @@ async function checkAndSeedSuperAdmin() {
         role: "superadmin"
       }).eq("id", existing.id);
       console.log("[SEED] Super Admin password hash repaired with a new random password. Check app.log.");
-      import_electron11.dialog.showMessageBoxSync({}, {
+      import_electron12.dialog.showMessageBoxSync({}, {
         type: "warning",
         title: "\u26A0\uFE0F  LE-SOFT \u2014 Account Repair",
         message: "Super Admin Password Reset",
@@ -109840,9 +109939,9 @@ function resetLoginAttempts(username) {
 }
 var mysqlPool = null;
 try {
-  const cfgPath = import_path9.default.join(import_electron11.app.getPath("userData"), "mysql-config.json");
-  if (import_fs9.default.existsSync(cfgPath)) {
-    const cfg = JSON.parse(import_fs9.default.readFileSync(cfgPath, "utf-8"));
+  const cfgPath = import_path10.default.join(import_electron12.app.getPath("userData"), "mysql-config.json");
+  if (import_fs10.default.existsSync(cfgPath)) {
+    const cfg = JSON.parse(import_fs10.default.readFileSync(cfgPath, "utf-8"));
     mysqlPool = import_promise.default.createPool({ host: cfg.host, user: cfg.user, password: cfg.password, database: cfg.database, port: cfg.port || 3306, waitForConnections: true, connectionLimit: 5 });
   }
 } catch {
@@ -109884,17 +109983,17 @@ async function writeAuditLog(params) {
 }
 function registerHandlers() {
   try {
-    const _origHandle = import_electron11.ipcMain.handle.bind(import_electron11.ipcMain);
-    import_electron11.ipcMain.handle = (channel, listener) => {
+    const _origHandle = import_electron12.ipcMain.handle.bind(import_electron12.ipcMain);
+    import_electron12.ipcMain.handle = (channel, listener) => {
       try {
-        import_electron11.ipcMain.removeHandler(channel);
+        import_electron12.ipcMain.removeHandler(channel);
       } catch (e2) {
       }
       return _origHandle(channel, listener);
     };
   } catch (e2) {
   }
-  import_electron11.ipcMain.handle("ping-supabase", async () => {
+  import_electron12.ipcMain.handle("ping-supabase", async () => {
     try {
       const { error } = await supabase_default.from("users").select("id").limit(1);
       if (error) return { connected: false, error: error.message };
@@ -109903,7 +110002,7 @@ function registerHandlers() {
       return { connected: false, error: e2.message };
     }
   });
-  import_electron11.ipcMain.handle("preload-cache", async () => {
+  import_electron12.ipcMain.handle("preload-cache", async () => {
     try {
       await preloadCache();
       return { success: true, stats: getCacheStats() };
@@ -109911,17 +110010,17 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron11.ipcMain.handle("get-cache-stats", async () => {
+  import_electron12.ipcMain.handle("get-cache-stats", async () => {
     return getCacheStats();
   });
-  import_electron11.ipcMain.handle("get-queue-stats", async () => {
+  import_electron12.ipcMain.handle("get-queue-stats", async () => {
     return getQueueStats();
   });
-  import_electron11.ipcMain.handle("update-user-presence", async (_e, userId) => {
+  import_electron12.ipcMain.handle("update-user-presence", async (_e, userId) => {
     userPresence.set(userId, Date.now());
     return { success: true };
   });
-  import_electron11.ipcMain.handle("get-online-users", async () => {
+  import_electron12.ipcMain.handle("get-online-users", async () => {
     const now = Date.now();
     const onlineIds = [];
     for (const [uid, lastSeen] of userPresence.entries()) {
@@ -109930,13 +110029,13 @@ function registerHandlers() {
     }
     return onlineIds;
   });
-  import_electron11.ipcMain.handle("set-typing-status", async (_e, { senderId, receiverId, isTyping }) => {
+  import_electron12.ipcMain.handle("set-typing-status", async (_e, { senderId, receiverId, isTyping }) => {
     const key = `${senderId}->${receiverId}`;
     if (isTyping) userTyping.set(key, Date.now());
     else userTyping.delete(key);
     return { success: true };
   });
-  import_electron11.ipcMain.handle("get-typing-status", async (_e, { receiverId }) => {
+  import_electron12.ipcMain.handle("get-typing-status", async (_e, { receiverId }) => {
     const now = Date.now();
     const typingIds = [];
     for (const [key, lastTyping] of userTyping.entries()) {
@@ -109948,12 +110047,12 @@ function registerHandlers() {
     }
     return typingIds;
   });
-  import_electron11.ipcMain.handle("get-chat-messages", async (_e, { senderId, receiverId }) => {
+  import_electron12.ipcMain.handle("get-chat-messages", async (_e, { senderId, receiverId }) => {
     const { data: data2, error } = await supabase_default.from("internal_messages").select("*").or(`and(sender_id.eq.${senderId},receiver_id.eq.${receiverId}),and(sender_id.eq.${receiverId},receiver_id.eq.${senderId})`).order("created_at", { ascending: true });
     if (error) throw error;
     return decryptRows(data2 || []);
   });
-  import_electron11.ipcMain.handle("send-chat-message", async (_e, msg) => {
+  import_electron12.ipcMain.handle("send-chat-message", async (_e, msg) => {
     const { senderId, receiverId, messageType, content, fileName } = msg;
     const encrypted = encryptObject({ content, file_name: fileName || null });
     const { data: data2, error } = await supabase_default.from("internal_messages").insert({
@@ -109974,17 +110073,21 @@ function registerHandlers() {
     });
     return { success: true, id: data2.id };
   });
-  import_electron11.ipcMain.handle("email-get-inbox", async (_e, userId) => {
-    const { data: data2, error } = await supabase_default.from("system_emails").select("*, sender:sender_id(full_name, email)").eq("receiver_id", userId).eq("is_deleted_by_receiver", false).order("created_at", { ascending: false });
+  import_electron12.ipcMain.handle("email-get-inbox", async (_e, userId) => {
+    const uid = Number(userId) || 0;
+    if (!uid) return [];
+    const { data: data2, error } = await supabase_default.from("system_emails").select("*, sender:sender_id(full_name, email)").eq("receiver_id", uid).eq("is_deleted_by_receiver", false).order("created_at", { ascending: false });
     if (error) throw error;
     return decryptRows(data2 || []);
   });
-  import_electron11.ipcMain.handle("email-get-sent", async (_e, userId) => {
-    const { data: data2, error } = await supabase_default.from("system_emails").select("*, receiver:receiver_id(full_name, email)").eq("sender_id", userId).eq("is_deleted_by_sender", false).order("created_at", { ascending: false });
+  import_electron12.ipcMain.handle("email-get-sent", async (_e, userId) => {
+    const uid = Number(userId) || 0;
+    if (!uid) return [];
+    const { data: data2, error } = await supabase_default.from("system_emails").select("*, receiver:receiver_id(full_name, email)").eq("sender_id", uid).eq("is_deleted_by_sender", false).order("created_at", { ascending: false });
     if (error) throw error;
     return decryptRows(data2 || []);
   });
-  import_electron11.ipcMain.handle("email-send", async (_e, emailPayload) => {
+  import_electron12.ipcMain.handle("email-send", async (_e, emailPayload) => {
     const { senderId, receiverId, subject, body } = emailPayload;
     if (!receiverId) return { success: false, error: "Recipient is required" };
     const { error } = await supabase_default.from("system_emails").insert({
@@ -109996,23 +110099,23 @@ function registerHandlers() {
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("email-mark-read", async (_e, emailId) => {
+  import_electron12.ipcMain.handle("email-mark-read", async (_e, emailId) => {
     const { error } = await supabase_default.from("system_emails").update({ is_read: true }).eq("id", emailId);
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("email-delete", async (_e, { emailId, folder }) => {
+  import_electron12.ipcMain.handle("email-delete", async (_e, { emailId, folder }) => {
     const field = folder === "inbox" ? "is_deleted_by_receiver" : "is_deleted_by_sender";
     const { error } = await supabase_default.from("system_emails").update({ [field]: true }).eq("id", emailId);
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("get-groups", async () => {
+  import_electron12.ipcMain.handle("get-groups", async () => {
     const { data: data2, error } = await supabase_default.from("groups").select("*, parent:groups!parent_group_id(name)").order("name");
     if (error) throw error;
     return decryptRows(data2 || []).map((g) => ({ ...g, parent_name: g.parent?.name || null }));
   });
-  import_electron11.ipcMain.handle("create-group", async (_e, group) => {
+  import_electron12.ipcMain.handle("create-group", async (_e, group) => {
     const { name, parent: parent2, nature } = group;
     let parentId = null;
     if (parent2 && parent2 !== "Primary") {
@@ -110023,7 +110126,7 @@ function registerHandlers() {
     if (error) throw error;
     return { success: true, id: data2.id };
   });
-  import_electron11.ipcMain.handle("update-group", async (_e, id, group) => {
+  import_electron12.ipcMain.handle("update-group", async (_e, id, group) => {
     const { name, parent: parent2, nature } = group;
     let parentId = null;
     if (parent2 && parent2 !== "Primary") {
@@ -110041,17 +110144,17 @@ function registerHandlers() {
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("delete-group", async (_e, id) => {
+  import_electron12.ipcMain.handle("delete-group", async (_e, id) => {
     const { error } = await supabase_default.from("groups").delete().eq("id", id);
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("get-ledgers", async () => {
+  import_electron12.ipcMain.handle("get-ledgers", async () => {
     const { data: data2, error } = await supabase_default.from("ledgers").select("*, group:groups(name)").order("name");
     if (error) throw error;
     return decryptRows(data2 || []).map((l) => ({ ...l, group_name: l.group?.name || null }));
   });
-  import_electron11.ipcMain.handle("create-ledger", async (_e, ledger) => {
+  import_electron12.ipcMain.handle("create-ledger", async (_e, ledger) => {
     const { name, group, openingBalance, type, mailingName, address, gstin, contactPerson, contactNumber, email, notes, paymentStatus, storeName, paymentMethod } = ledger;
     const { data: grp } = await supabase_default.from("groups").select("id").eq("name", group).maybeSingle();
     const { data: data2, error } = await supabase_default.from("ledgers").insert({
@@ -110074,17 +110177,17 @@ function registerHandlers() {
     if (error) throw error;
     return { success: true, id: data2.id };
   });
-  import_electron11.ipcMain.handle("delete-ledger", async (_e, id) => {
+  import_electron12.ipcMain.handle("delete-ledger", async (_e, id) => {
     const { error } = await supabase_default.from("ledgers").delete().eq("id", id);
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("get-vouchers", async () => {
+  import_electron12.ipcMain.handle("get-vouchers", async () => {
     const { data: data2, error } = await supabase_default.from("vouchers").select("*, voucher_entries(ledger_id, amount, type, ledger:ledgers(name))").order("date", { ascending: false }).order("id", { ascending: false });
     if (error) throw error;
     return decryptRows(data2 || []).map((v) => ({ ...v, particulars: v.voucher_entries?.map((e2) => e2.ledger?.name).filter(Boolean).join(", ") || "" }));
   });
-  import_electron11.ipcMain.handle("create-voucher", async (_e, voucher) => {
+  import_electron12.ipcMain.handle("create-voucher", async (_e, voucher) => {
     const { voucherType, voucherDate, narration, rows } = voucher;
     const { data: maxRow } = await supabase_default.from("vouchers").select("voucher_number").eq("voucher_type", voucherType).order("id", { ascending: false }).limit(1).maybeSingle();
     const voucherNumber = String((parseInt(maxRow?.voucher_number || "0") || 0) + 1);
@@ -110098,13 +110201,13 @@ function registerHandlers() {
     }
     return { success: true, id: vData.id, voucherNumber };
   });
-  import_electron11.ipcMain.handle("delete-voucher", async (_e, id) => {
+  import_electron12.ipcMain.handle("delete-voucher", async (_e, id) => {
     await supabase_default.from("voucher_entries").delete().eq("voucher_id", id);
     const { error } = await supabase_default.from("vouchers").delete().eq("id", id);
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("get-voucher-types", async () => {
+  import_electron12.ipcMain.handle("get-voucher-types", async () => {
     try {
       const { data: data2, error } = await supabase_default.from("voucher_types").select("*").order("name");
       if (error) {
@@ -110155,7 +110258,7 @@ function registerHandlers() {
       ];
     }
   });
-  import_electron11.ipcMain.handle("create-voucher-type", async (_e, payload) => {
+  import_electron12.ipcMain.handle("create-voucher-type", async (_e, payload) => {
     const { data: data2, error } = await supabase_default.from("voucher_types").insert({
       name: payload.name,
       description: payload.description || "",
@@ -110165,7 +110268,7 @@ function registerHandlers() {
     if (error) throw error;
     return { success: true, data: data2 };
   });
-  import_electron11.ipcMain.handle("update-voucher-type", async (_e, id, payload) => {
+  import_electron12.ipcMain.handle("update-voucher-type", async (_e, id, payload) => {
     const { data: data2, error } = await supabase_default.from("voucher_types").update({
       name: payload.name,
       description: payload.description || "",
@@ -110174,27 +110277,27 @@ function registerHandlers() {
     if (error) throw error;
     return { success: true, data: data2 };
   });
-  import_electron11.ipcMain.handle("delete-voucher-type", async (_e, id) => {
+  import_electron12.ipcMain.handle("delete-voucher-type", async (_e, id) => {
     const { error } = await supabase_default.from("voucher_types").delete().eq("id", id);
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("get-units", async () => {
+  import_electron12.ipcMain.handle("get-units", async () => {
     const { data: data2, error } = await supabase_default.from("units").select("*").order("name");
     if (error) throw error;
     return decryptRows(data2 || []);
   });
-  import_electron11.ipcMain.handle("create-unit", async (_e, unit) => {
+  import_electron12.ipcMain.handle("create-unit", async (_e, unit) => {
     const { data: data2, error } = await supabase_default.from("units").insert({ name: unit.name, symbol: unit.symbol, precision: unit.precision || 0, company_id: 1 }).select("id").single();
     if (error) throw error;
     return { success: true, id: data2.id };
   });
-  import_electron11.ipcMain.handle("delete-unit", async (_e, id) => {
+  import_electron12.ipcMain.handle("delete-unit", async (_e, id) => {
     const { error } = await supabase_default.from("units").delete().eq("id", id);
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("get-stock-groups", async () => {
+  import_electron12.ipcMain.handle("get-stock-groups", async () => {
     const { data: groupsData, error: groupsError } = await supabase_default.from("stock_groups").select("*, parent:stock_groups!parent_id(name)").order("name");
     if (groupsError) throw groupsError;
     const { data: productsData, error: productsError } = await supabase_default.from("products").select("id, stock_group_id");
@@ -110215,7 +110318,7 @@ function registerHandlers() {
       product_count: productCounts[Number(g.id)] || 0
     }));
   });
-  import_electron11.ipcMain.handle("create-stock-group", async (_e, group) => {
+  import_electron12.ipcMain.handle("create-stock-group", async (_e, group) => {
     let parentId = null;
     if (group.parent && group.parent !== "Primary") {
       const { data: data3 } = await supabase_default.from("stock_groups").select("id").eq("name", group.parent).maybeSingle();
@@ -110225,7 +110328,7 @@ function registerHandlers() {
     if (error) throw error;
     return { success: true, id: data2.id };
   });
-  import_electron11.ipcMain.handle("update-stock-group", async (_e, id, group) => {
+  import_electron12.ipcMain.handle("update-stock-group", async (_e, id, group) => {
     if (group.parentId && Number(group.parentId) === Number(id)) {
       throw new Error("A stock group cannot be under itself.");
     }
@@ -110237,17 +110340,17 @@ function registerHandlers() {
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("delete-stock-group", async (_e, id) => {
+  import_electron12.ipcMain.handle("delete-stock-group", async (_e, id) => {
     const { error } = await supabase_default.from("stock_groups").delete().eq("id", id);
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("get-stock-items", async () => {
+  import_electron12.ipcMain.handle("get-stock-items", async () => {
     const { data: data2, error } = await supabase_default.from("stock_items").select("*, group:stock_groups(name), unit:units(name,symbol)").order("name");
     if (error) throw error;
     return decryptRows(data2 || []).map((i2) => ({ ...i2, group_name: i2.group?.name || null, unit_name: i2.unit?.name || null, unit_symbol: i2.unit?.symbol || null }));
   });
-  import_electron11.ipcMain.handle("create-stock-item", async (_e, item) => {
+  import_electron12.ipcMain.handle("create-stock-item", async (_e, item) => {
     const { name, group, unit, openingQty, openingRate } = item;
     const { data: uRow } = await supabase_default.from("units").select("id").eq("name", unit).maybeSingle();
     const { data: gRow } = await supabase_default.from("stock_groups").select("id").eq("name", group).maybeSingle();
@@ -110256,48 +110359,67 @@ function registerHandlers() {
     if (error) throw error;
     return { success: true, id: data2.id };
   });
-  import_electron11.ipcMain.handle("delete-stock-item", async (_e, id) => {
+  import_electron12.ipcMain.handle("delete-stock-item", async (_e, id) => {
     const { error } = await supabase_default.from("stock_items").delete().eq("id", id);
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("get-companies", async () => {
+  import_electron12.ipcMain.handle("get-companies", async () => {
     const { data: data2, error } = await supabase_default.from("companies").select("*").order("name");
     if (error) throw error;
     return decryptRows(data2 || []);
   });
-  import_electron11.ipcMain.handle("create-company", async (_e, c) => {
+  import_electron12.ipcMain.handle("create-company", async (_e, c) => {
     const { data: data2, error } = await supabase_default.from("companies").insert({ name: c.name, mailing_name: c.mailingName || c.name, address: c.address || "", country: c.country || "Bangladesh", state: c.state || "", phone: c.phone || "", email: c.email || "", financial_year_from: c.financialYearFrom || "", books_begin_from: c.booksBeginFrom || "", base_currency_symbol: c.currencySymbol || "\u09F3" }).select("id").single();
     if (error) throw error;
     return { success: true, id: data2.id };
   });
-  import_electron11.ipcMain.handle("get-dashboard-stats", async () => {
-    const [ledgers, groups, vouchers, stockItems, products, bills, recentV] = await Promise.all([
-      supabase_default.from("ledgers").select("id", { count: "exact", head: true }),
-      supabase_default.from("groups").select("id", { count: "exact", head: true }),
-      supabase_default.from("vouchers").select("id,total_amount"),
-      supabase_default.from("stock_items").select("id", { count: "exact", head: true }),
-      supabase_default.from("products").select("id", { count: "exact", head: true }),
-      supabase_default.from("bills").select("grand_total"),
-      supabase_default.from("vouchers").select("*").order("date", { ascending: false }).order("id", { ascending: false }).limit(5)
-    ]);
-    return {
-      ledgerCount: ledgers.count || 0,
-      groupCount: groups.count || 0,
-      voucherCount: (vouchers.data || []).length,
-      totalTransactions: (vouchers.data || []).reduce((s2, v) => s2 + (v.total_amount || 0), 0),
-      stockItemCount: stockItems.count || 0,
-      productCount: products.count || 0,
-      totalRevenue: (bills.data || []).reduce((s2, b) => s2 + (b.grand_total || 0), 0),
-      recentVouchers: recentV.data || []
-    };
+  import_electron12.ipcMain.handle("get-dashboard-stats", async () => {
+    try {
+      const [ledgers, groups, stockItems, products, bills, recentV] = await Promise.all([
+        supabase_default.from("ledgers").select("id"),
+        supabase_default.from("user_groups").select("id"),
+        supabase_default.from("stock_items").select("id"),
+        supabase_default.from("products").select("id"),
+        supabase_default.from("bills").select("id,grand_total"),
+        supabase_default.from("bills").select("id,invoice_number,grand_total,created_at").order("created_at", { ascending: false }).limit(5)
+      ]);
+      return {
+        ledgerCount: (ledgers.data || []).length,
+        groupCount: (groups.data || []).length,
+        voucherCount: (bills.data || []).length,
+        totalTransactions: (bills.data || []).reduce((s2, v) => s2 + (v.grand_total || 0), 0),
+        stockItemCount: (products.data || []).length || (stockItems.data || []).length,
+        productCount: (products.data || []).length,
+        totalRevenue: (bills.data || []).reduce((s2, b) => s2 + (b.grand_total || 0), 0),
+        recentVouchers: (recentV.data || []).map((b) => ({
+          id: b.id,
+          voucher_number: b.invoice_number || `INV-${b.id}`,
+          voucher_type: "Sales Invoice",
+          total_amount: b.grand_total || 0,
+          date: b.created_at
+        }))
+      };
+    } catch (e2) {
+      console.error("[DASHBOARD STATS] Error fetching stats:", e2);
+      return {
+        ledgerCount: 0,
+        groupCount: 0,
+        voucherCount: 0,
+        totalTransactions: 0,
+        stockItemCount: 0,
+        productCount: 0,
+        totalRevenue: 0,
+        recentVouchers: []
+      };
+    }
   });
-  import_electron11.ipcMain.handle("get-godowns", async () => {
+  import_electron12.ipcMain.handle("get-godowns", async () => {
     const { data: data2, error } = await supabase_default.from("godowns").select("*").order("name");
     if (error) throw error;
     return decryptRows(data2 || []);
   });
-  import_electron11.ipcMain.handle("create-godown", async (_e, g) => {
+  import_electron12.ipcMain.handle("create-godown", async (_e, g) => {
     const { error } = await supabase_default.from("godowns").insert({
       name: g.name,
       location: g.location || "",
@@ -110310,7 +110432,7 @@ function registerHandlers() {
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("update-godown", async (_e, g) => {
+  import_electron12.ipcMain.handle("update-godown", async (_e, g) => {
     const { error } = await supabase_default.from("godowns").update({
       name: g.name,
       location: g.location || "",
@@ -110322,17 +110444,21 @@ function registerHandlers() {
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("delete-godown", async (_e, id) => {
+  import_electron12.ipcMain.handle("delete-godown", async (_e, id) => {
     const { error } = await supabase_default.from("godowns").delete().eq("id", id);
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("get-products", async (_e, filterOpts) => {
+  import_electron12.ipcMain.handle("get-products", async (_e, filterOpts) => {
     let allData = [];
     let from = 0;
     const PAGE_SIZE = 1e3;
     let hasMore = true;
     const includeStashed = filterOpts?.includeStashed ?? false;
+    const cachedProducts = LocalEntityCache.getCache("products");
+    if (cachedProducts && cachedProducts.length > 0 && !filterOpts) {
+      return cachedProducts;
+    }
     try {
       while (hasMore) {
         let queryBuilder = supabase_default.from("products").select("*, unit:units(name,symbol), group:stock_groups(name)").order("name").range(from, from + PAGE_SIZE - 1);
@@ -110364,13 +110490,15 @@ function registerHandlers() {
         damaged_quantity: damagedMap.get(Number(p.id)) || 0,
         total_stock_including_damaged: Number(p.quantity || 0) + (damagedMap.get(Number(p.id)) || 0)
       }));
-      return decryptRows(mapped);
+      const resultRows = decryptRows(mapped);
+      if (!filterOpts) LocalEntityCache.setCache("products", resultRows);
+      return resultRows;
     } catch (error) {
       console.error("[IPC] get-products error:", error);
       throw error;
     }
   });
-  import_electron11.ipcMain.handle("get-product", async (_e, id) => {
+  import_electron12.ipcMain.handle("get-product", async (_e, id) => {
     const { data: data2, error } = await supabase_default.from("products").select("*, unit:units(name,symbol), group:stock_groups(name), supplier:ledgers(id,name,store_name,contact_number,contact_person)").eq("id", id).maybeSingle();
     if (error) throw error;
     if (!data2) return null;
@@ -110417,7 +110545,7 @@ function registerHandlers() {
       serial
     };
   }
-  import_electron11.ipcMain.handle("create-product", async (_e, product) => {
+  import_electron12.ipcMain.handle("create-product", async (_e, product) => {
     const { name, category, purchasePrice, sellingPrice, taxRate, description, unit, stockGroup, imagePath, imageGallery, quantity, locationRow, locationRack, locationBin, originType, supplierLedgerId, importedSupplierName, importReference, importCountry, specs, attributes: attributes2, lowStockThreshold, lowStockAlertEnabled } = product;
     const { data: uRow } = await supabase_default.from("units").select("id").eq("name", unit).maybeSingle();
     const { data: gRow } = await supabase_default.from("stock_groups").select("id").eq("name", stockGroup).maybeSingle();
@@ -110475,7 +110603,7 @@ function registerHandlers() {
     await checkLowStockForProduct(data2.id);
     return { success: true, id: data2.id };
   });
-  import_electron11.ipcMain.handle("update-product", async (_e, product) => {
+  import_electron12.ipcMain.handle("update-product", async (_e, product) => {
     const { id, name, category, purchasePrice, sellingPrice, taxRate, description, unit, stockGroup, imagePath, imageGallery, quantity, locationRow, locationRack, locationBin, changedBy, originType, supplierLedgerId, importedSupplierName, importReference, importCountry, specs, attributes: attributes2, lowStockThreshold, lowStockAlertEnabled } = product;
     const { data: uRow } = await supabase_default.from("units").select("id").eq("name", unit).maybeSingle();
     const { data: gRow } = await supabase_default.from("stock_groups").select("id").eq("name", stockGroup).maybeSingle();
@@ -110539,7 +110667,7 @@ function registerHandlers() {
     await checkLowStockForProduct(id);
     return { success: true };
   });
-  import_electron11.ipcMain.handle("get-product-ledger-detail", async (_e, id) => {
+  import_electron12.ipcMain.handle("get-product-ledger-detail", async (_e, id) => {
     const product = await (async () => {
       const { data: data2, error } = await supabase_default.from("products").select("*, unit:units(name,symbol), group:stock_groups(name), supplier:ledgers(id,name,store_name,contact_number,contact_person,payment_method)").eq("id", id).maybeSingle();
       if (error) throw error;
@@ -110579,7 +110707,7 @@ function registerHandlers() {
       lastPurchase: (purchaseItems || [])[0] || null
     };
   });
-  import_electron11.ipcMain.handle("get-product-requisition-summary", async (_e, productId, filters2) => {
+  import_electron12.ipcMain.handle("get-product-requisition-summary", async (_e, productId, filters2) => {
     const id = Number(productId);
     if (!Number.isFinite(id) || id <= 0) throw new Error("Valid product ID is required.");
     const productQuery = supabase_default.from("products").select("id,name,sku,product_code,model_number,quantity,unit:units(name,symbol),group:stock_groups(name)").eq("id", id).maybeSingle();
@@ -110620,17 +110748,24 @@ function registerHandlers() {
       }
     };
   });
-  import_electron11.ipcMain.handle("get-product-model-rules", async () => {
-    const { data: data2, error } = await supabase_default.from("product_model_rules").select("*, stock_group:stock_groups(id,name)").order("id", { ascending: true });
-    if (error) throw error;
-    return data2 || [];
+  import_electron12.ipcMain.handle("get-product-model-rules", async () => {
+    try {
+      const { data: data2, error } = await supabase_default.from("product_model_rules").select("*, stock_group:stock_groups(id,name)").order("id", { ascending: true });
+      if (error) throw error;
+      return data2 || [];
+    } catch (err) {
+      console.warn("[product_model_rules] Failed with join, falling back to simple select:", err?.message || err);
+      const { data: data2, error } = await supabase_default.from("product_model_rules").select("*").order("id", { ascending: true });
+      if (error) return [];
+      return data2 || [];
+    }
   });
-  import_electron11.ipcMain.handle("get-product-origins", async () => {
+  import_electron12.ipcMain.handle("get-product-origins", async () => {
     const { data: data2, error } = await supabase_default.from("product_origins").select("*").order("name", { ascending: true });
     if (error) throw error;
     return data2 || [];
   });
-  import_electron11.ipcMain.handle("save-product-origin", async (_e, origin) => {
+  import_electron12.ipcMain.handle("save-product-origin", async (_e, origin) => {
     const name = String(origin.name || "").trim();
     const originKey = String(origin.originKey || name).trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
     if (!name || !originKey) throw new Error("Origin name is required.");
@@ -110647,7 +110782,7 @@ function registerHandlers() {
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("delete-product-origin", async (_e, id) => {
+  import_electron12.ipcMain.handle("delete-product-origin", async (_e, id) => {
     const { data: origin } = await supabase_default.from("product_origins").select("origin_key").eq("id", id).maybeSingle();
     if (!origin) return { success: true };
     const [{ count: productCount }, { count: ruleCount }] = await Promise.all([
@@ -110661,7 +110796,7 @@ function registerHandlers() {
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("save-product-model-rule", async (_e, rule) => {
+  import_electron12.ipcMain.handle("save-product-model-rule", async (_e, rule) => {
     const payload = {
       name: rule.name,
       origin_type: rule.originType || "LOCAL",
@@ -110680,17 +110815,17 @@ function registerHandlers() {
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("delete-product-model-rule", async (_e, id) => {
+  import_electron12.ipcMain.handle("delete-product-model-rule", async (_e, id) => {
     const { error } = await supabase_default.from("product_model_rules").delete().eq("id", id);
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("get-product-attributes", async () => {
+  import_electron12.ipcMain.handle("get-product-attributes", async () => {
     const { data: data2, error } = await supabase_default.from("product_attributes").select("*").order("name");
     if (error) throw error;
     return data2 || [];
   });
-  import_electron11.ipcMain.handle("save-product-attribute", async (_e, attribute) => {
+  import_electron12.ipcMain.handle("save-product-attribute", async (_e, attribute) => {
     const payload = {
       name: attribute.name,
       input_type: attribute.inputType || "text",
@@ -110705,7 +110840,7 @@ function registerHandlers() {
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("get-damaged-goods", async () => {
+  import_electron12.ipcMain.handle("get-damaged-goods", async () => {
     const { data: data2, error } = await supabase_default.from("damaged_goods").select("*, product:products(id,name,sku,product_code,model_number,quantity,unit:units(symbol,name),group:stock_groups(name)), requisition:purchase_requisitions(id,requisition_number,status)").order("created_at", { ascending: false });
     if (error) throw error;
     return (data2 || []).map((row) => ({
@@ -110716,7 +110851,7 @@ function registerHandlers() {
       usable_stock: row.product?.quantity || 0
     }));
   });
-  import_electron11.ipcMain.handle("create-damaged-goods", async (_e, payload) => {
+  import_electron12.ipcMain.handle("create-damaged-goods", async (_e, payload) => {
     if (payload?.userRole !== "superadmin" && !payload?.canManageDamaged) {
       throw new Error("You do not have permission to transfer stock to damaged goods.");
     }
@@ -110756,7 +110891,7 @@ function registerHandlers() {
     }
     return { success: true, id: data2.id };
   });
-  import_electron11.ipcMain.handle("update-damaged-goods-status", async (_e, id, status, payload) => {
+  import_electron12.ipcMain.handle("update-damaged-goods-status", async (_e, id, status, payload) => {
     if (payload?.userRole !== "superadmin" && !payload?.canManageDamaged) {
       throw new Error("You do not have permission to update damaged goods.");
     }
@@ -110796,12 +110931,12 @@ function registerHandlers() {
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("delete-product-attribute", async (_e, id) => {
+  import_electron12.ipcMain.handle("delete-product-attribute", async (_e, id) => {
     const { error } = await supabase_default.from("product_attributes").delete().eq("id", id);
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("delete-product", async (_e, id, performedByName, userRole) => {
+  import_electron12.ipcMain.handle("delete-product", async (_e, id, performedByName, userRole) => {
     const role = userRole || "staff";
     if (role === "admin" || role === "superadmin") {
       const { error } = await supabase_default.from("products").update({
@@ -110818,7 +110953,7 @@ function registerHandlers() {
       throw new Error("Immediate stashing is restricted. Please request product deletion approval.");
     }
   });
-  import_electron11.ipcMain.handle("request-product-deletion", async (_e, id, performedByName, notes) => {
+  import_electron12.ipcMain.handle("request-product-deletion", async (_e, id, performedByName, notes) => {
     const { error } = await supabase_default.from("products").update({
       deletion_status: "PENDING_APPROVAL",
       deletion_requested_by: performedByName || "unknown-user",
@@ -110828,7 +110963,7 @@ function registerHandlers() {
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("approve-product-deletion", async (_e, id, performedByName) => {
+  import_electron12.ipcMain.handle("approve-product-deletion", async (_e, id, performedByName) => {
     const { error } = await supabase_default.from("products").update({
       status: "STASHED",
       is_active: false,
@@ -110839,14 +110974,14 @@ function registerHandlers() {
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("reject-product-deletion", async (_e, id) => {
+  import_electron12.ipcMain.handle("reject-product-deletion", async (_e, id) => {
     const { error } = await supabase_default.from("products").update({
       deletion_status: "REJECTED"
     }).eq("id", id);
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("restore-product", async (_e, id) => {
+  import_electron12.ipcMain.handle("restore-product", async (_e, id) => {
     const { error } = await supabase_default.from("products").update({
       status: "ACTIVE",
       is_active: true,
@@ -110860,12 +110995,12 @@ function registerHandlers() {
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("get-product-price-history", async () => {
+  import_electron12.ipcMain.handle("get-product-price-history", async () => {
     const { data: data2, error } = await supabase_default.from("product_price_history").select("*, products(name, sku)").order("created_at", { ascending: false });
     if (error) throw error;
     return data2;
   });
-  import_electron11.ipcMain.handle("search-products-detailed", async (_e, query) => {
+  import_electron12.ipcMain.handle("search-products-detailed", async (_e, query) => {
     if (!query || query.trim().length < 1) return [];
     const q = `%${query}%`;
     const { data: data2, error } = await supabase_default.from("products").select("*, unit:units(symbol), group:stock_groups(name)").neq("status", "STASHED").or(`name.ilike.${q},sku.ilike.${q},category.ilike.${q}`).order("name").limit(50);
@@ -110876,14 +111011,14 @@ function registerHandlers() {
       group_name: p.group?.name || null
     }));
   });
-  import_electron11.ipcMain.handle("search-billing-customers", async (_e, query) => {
+  import_electron12.ipcMain.handle("search-billing-customers", async (_e, query) => {
     const cached = search("billing_customers", ["name", "phone"], query);
     if (cached) return cached.slice(0, 15);
     const q = `%${query}%`;
     const { data: data2 } = await supabase_default.from("billing_customers").select("*").or(`phone.ilike.${q},name.ilike.${q}`).order("name").limit(15);
     return decryptRows(data2 || []);
   });
-  import_electron11.ipcMain.handle("create-billing-customer", async (_e, customer) => {
+  import_electron12.ipcMain.handle("create-billing-customer", async (_e, customer) => {
     const { name, phone, email, address } = customer;
     if (phone) {
       const { data: existing } = await supabase_default.from("billing_customers").select("*").eq("phone", phone).maybeSingle();
@@ -110916,7 +111051,7 @@ function registerHandlers() {
     BrowserWindow6.getAllWindows().forEach((win) => win.webContents.send("data-updated", "billing_customers"));
     return insertedWithPlain;
   });
-  import_electron11.ipcMain.handle("create-bill", async (_e, billData) => {
+  import_electron12.ipcMain.handle("create-bill", async (_e, billData) => {
     const { customer_id, billed_by, items, shipping, subtotal, discount_total, installation_charge, installation_note, grand_total, price_adjustment } = billData;
     const now = /* @__PURE__ */ new Date();
     const dateStr = now.getFullYear().toString() + String(now.getMonth() + 1).padStart(2, "0") + String(now.getDate()).padStart(2, "0");
@@ -110951,10 +111086,12 @@ function registerHandlers() {
               product_name: item.product_name,
               sku: item.sku || "",
               quantity: item.quantity,
+              cost_price: Number(item.cost_price || item.item_cost_price || 0),
               mrp: item.mrp,
               discount_pct: item.discount_pct || 0,
               discount_amt: item.discount_amt || 0,
               price: item.price,
+              notes: item.notes || null,
               customization: item.customization || {}
             }));
             enqueue({
@@ -110963,12 +111100,15 @@ function registerHandlers() {
               data: billItems,
               onSuccess: async () => {
                 try {
-                  const { data: insertedItems, error: itemsErr } = await supabase_default.from("bill_items").select("id, product_id, product_name, customization, quantity").eq("bill_id", savedBillId);
+                  const { data: insertedItems, error: itemsErr } = await supabase_default.from("bill_items").select("id, product_id, product_name, customization, quantity, cost_price, mrp, price").eq("bill_id", savedBillId);
                   if (!itemsErr && insertedItems) {
                     for (const bItem of insertedItems) {
                       const cust = bItem.customization;
                       if (cust && typeof cust === "object" && Object.keys(cust).length > 0) {
                         const descDetails = Object.entries(cust).map(([k, v]) => `${k}: ${v}`).join(", ");
+                        const matchingOriginal = items.find((i2) => i2.product_id === bItem.product_id || i2.product_name === bItem.product_name);
+                        const costP = Number(bItem.cost_price || matchingOriginal?.cost_price || matchingOriginal?.item_cost_price || 0);
+                        const saleP = Number(matchingOriginal?.sale_price || bItem.price || bItem.mrp || 0);
                         enqueue({
                           table: "make_orders",
                           operation: "insert",
@@ -110977,11 +111117,13 @@ function registerHandlers() {
                             description: `Customized order linked to Invoice ${invoiceNumber}. Attributes: ${descDetails}`,
                             quantity: Number(bItem.quantity) || 1,
                             designer_name: billed_by || "Admin",
-                            status: "Awaiting Pricing",
+                            status: saleP > 0 ? "Pricing Done" : "Awaiting Pricing",
                             priority: "Normal",
                             bill_id: savedBillId,
                             bill_item_id: bItem.id,
-                            custom_price: 0,
+                            cost_price: costP,
+                            sale_price: saleP > 0 ? saleP : null,
+                            custom_price: saleP,
                             custom_details: cust
                           }
                         });
@@ -111057,7 +111199,7 @@ function registerHandlers() {
                   console.error("[create-bill shipping log] Failed:", e2);
                 }
                 try {
-                  import_electron11.BrowserWindow.getAllWindows().forEach((win) => {
+                  import_electron12.BrowserWindow.getAllWindows().forEach((win) => {
                     if (!win.isDestroyed()) win.webContents.send("data-updated", "bill_shipping");
                   });
                 } catch {
@@ -111067,7 +111209,7 @@ function registerHandlers() {
           }
         }
         try {
-          import_electron11.BrowserWindow.getAllWindows().forEach((win) => {
+          import_electron12.BrowserWindow.getAllWindows().forEach((win) => {
             if (!win.isDestroyed()) win.webContents.send("data-updated", "bills");
           });
         } catch {
@@ -111076,24 +111218,17 @@ function registerHandlers() {
     });
     return { success: true, invoice_number: invoiceNumber, queued: true };
   });
-  import_electron11.ipcMain.handle("get-bills", async (_e, opts) => {
-    const isAdmin = opts?.isSuperadmin === true;
-    const seeAll = isAdmin || opts?.canSeeAllBills === true;
-    const caller = opts?.callerUsername || "";
-    let query = supabase_default.from("bills").select("*, customer:billing_customers(name,phone)").order("created_at", { ascending: false });
-    if (!seeAll && caller) {
-      query = query.eq("billed_by", caller);
-    }
-    const { data: data2, error } = await query;
+  import_electron12.ipcMain.handle("get-bills", async () => {
+    const { data: data2, error } = await supabase_default.from("bills").select("*, customer:billing_customers(name,phone)").order("created_at", { ascending: false });
     if (error) throw error;
     return (data2 || []).map((b) => {
       const dec = decryptObject(b);
-      const custName = b.customer?.name ? decryptField(b.customer.name) : null;
-      const custPhone = b.customer?.phone ? decryptField(b.customer.phone) : null;
+      const custName = b.customer?.name ? decryptField(b.customer.name) : dec.customer_name || "Walk-in Customer";
+      const custPhone = b.customer?.phone ? decryptField(b.customer.phone) : dec.customer_phone || "";
       return { ...dec, customer_name: custName, customer_phone: custPhone };
     });
   });
-  import_electron11.ipcMain.handle("get-bill-details", async (_e, billId) => {
+  import_electron12.ipcMain.handle("get-bill-details", async (_e, billId) => {
     const { data: bill } = await supabase_default.from("bills").select("*, customer:billing_customers(name,phone,email,address)").eq("id", billId).maybeSingle();
     if (!bill) return null;
     const { data: items } = await supabase_default.from("bill_items").select("*, product:products(image_path)").eq("bill_id", billId);
@@ -111109,7 +111244,7 @@ function registerHandlers() {
       items: decItems.map((i2) => ({ ...i2, image_path: i2.product?.image_path || null }))
     };
   });
-  import_electron11.ipcMain.handle("delete-bill", async (_e, { billId, reason, deletedBy }) => {
+  import_electron12.ipcMain.handle("delete-bill", async (_e, { billId, reason, deletedBy }) => {
     const { data: bill } = await supabase_default.from("bills").select("*").eq("id", billId).maybeSingle();
     if (!bill) throw new Error("Bill not found");
     const { data: items } = await supabase_default.from("bill_items").select("*").eq("bill_id", billId);
@@ -111136,12 +111271,12 @@ function registerHandlers() {
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("get-customer-bills", async (_e, customerId) => {
+  import_electron12.ipcMain.handle("get-customer-bills", async (_e, customerId) => {
     const { data: data2, error } = await supabase_default.from("bills").select("id, invoice_number, grand_total, created_at").eq("customer_id", customerId).order("created_at", { ascending: false }).limit(20);
     if (error) throw error;
     return (data2 || []).map((b) => decryptObject(b));
   });
-  import_electron11.ipcMain.handle("update-bill", async (_e, billData) => {
+  import_electron12.ipcMain.handle("update-bill", async (_e, billData) => {
     const { bill_id, items, subtotal, discount_total, installation_charge, installation_note, grand_total, changed_by } = billData;
     const { data: oldBill } = await supabase_default.from("bills").select("*").eq("id", bill_id).maybeSingle();
     if (!oldBill) return { success: false, error: "Bill not found" };
@@ -111174,10 +111309,13 @@ function registerHandlers() {
         product_name: i2.product_name,
         sku: i2.sku || "",
         quantity: i2.quantity,
+        cost_price: Number(i2.cost_price || 0),
         mrp: i2.mrp,
         discount_pct: i2.discount_pct || 0,
         discount_amt: i2.discount_amt || 0,
-        price: i2.price
+        price: i2.price,
+        notes: i2.notes || null,
+        customization: i2.customization || {}
       }));
       await supabase_default.from("bill_items").insert(newItems);
       for (const i2 of items) {
@@ -111203,18 +111341,18 @@ function registerHandlers() {
       await supabase_default.from("bill_audit").insert(encAudit);
     }
     try {
-      import_electron11.BrowserWindow.getAllWindows().forEach((win) => {
+      import_electron12.BrowserWindow.getAllWindows().forEach((win) => {
         if (!win.isDestroyed()) win.webContents.send("data-updated", "bills");
       });
     } catch {
     }
     return { success: true };
   });
-  import_electron11.ipcMain.handle("get-bill-audit", async (_e, billId) => {
+  import_electron12.ipcMain.handle("get-bill-audit", async (_e, billId) => {
     const { data: data2 } = await supabase_default.from("bill_audit").select("*").eq("bill_id", billId).order("changed_at", { ascending: false });
     return decryptRows(data2 || []);
   });
-  import_electron11.ipcMain.handle("get-customer-ledger-list", async (_e, _opts) => {
+  import_electron12.ipcMain.handle("get-customer-ledger-list", async (_e, _opts) => {
     const { data: customers, error } = await supabase_default.from("billing_customers").select("id, name, phone, email").order("name").limit(500);
     if (error) throw error;
     const customerIds = (customers || []).map((c) => c.id);
@@ -111236,7 +111374,7 @@ function registerHandlers() {
     });
     return result;
   });
-  import_electron11.ipcMain.handle("get-customer-ledger-detail", async (_e, customerId) => {
+  import_electron12.ipcMain.handle("get-customer-ledger-detail", async (_e, customerId) => {
     const [custRes, billsRes, paymentsRes, addressesRes, exchangesRes, quotationsRes] = await Promise.all([
       supabase_default.from("billing_customers").select("*").eq("id", customerId).maybeSingle(),
       supabase_default.from("bills").select("id, invoice_number, grand_total, created_at, billed_by").eq("customer_id", customerId).order("created_at", { ascending: false }),
@@ -111262,7 +111400,7 @@ function registerHandlers() {
       quotations: (quotationsRes.data || []).map((q) => decryptObject(q))
     };
   });
-  import_electron11.ipcMain.handle("add-customer-payment", async (_e, payment) => {
+  import_electron12.ipcMain.handle("add-customer-payment", async (_e, payment) => {
     const { customer_id, amount, payment_type, payment_method, note, recorded_by } = payment;
     if (!customer_id || !amount) throw new Error("customer_id and amount are required");
     const { data: data2, error } = await supabase_default.from("customer_payments").insert({
@@ -111275,14 +111413,14 @@ function registerHandlers() {
     }).select("id").single();
     if (error) throw error;
     try {
-      import_electron11.BrowserWindow.getAllWindows().forEach((win) => {
+      import_electron12.BrowserWindow.getAllWindows().forEach((win) => {
         if (!win.isDestroyed()) win.webContents.send("data-updated", "customer_payments");
       });
     } catch {
     }
     return { success: true, id: data2.id };
   });
-  import_electron11.ipcMain.handle("add-customer-address", async (_e, addr) => {
+  import_electron12.ipcMain.handle("add-customer-address", async (_e, addr) => {
     const { customer_id, label, address } = addr;
     if (!customer_id || !address) throw new Error("customer_id and address are required");
     const { data: data2, error } = await supabase_default.from("customer_addresses").insert({
@@ -111293,19 +111431,19 @@ function registerHandlers() {
     if (error) throw error;
     return { success: true, id: data2.id };
   });
-  import_electron11.ipcMain.handle("delete-billing-customer", async (_e, customerId) => {
+  import_electron12.ipcMain.handle("delete-billing-customer", async (_e, customerId) => {
     await supabase_default.from("bills").update({ customer_id: null }).eq("customer_id", customerId);
     const { error } = await supabase_default.from("billing_customers").delete().eq("id", customerId);
     if (error) throw error;
     try {
-      import_electron11.BrowserWindow.getAllWindows().forEach((win) => {
+      import_electron12.BrowserWindow.getAllWindows().forEach((win) => {
         if (!win.isDestroyed()) win.webContents.send("data-updated", "billing_customers");
       });
     } catch {
     }
     return { success: true };
   });
-  import_electron11.ipcMain.handle("create-exchange-order", async (_e, exchange) => {
+  import_electron12.ipcMain.handle("create-exchange-order", async (_e, exchange) => {
     const { customer_id, original_bill_id, returned_items, new_items } = exchange;
     const totalReturnValue = (returned_items || []).reduce((s2, i2) => s2 + (Number(i2.amount) || 0), 0);
     const totalNewValue = (new_items || []).reduce((s2, i2) => s2 + (Number(i2.amount) || 0), 0);
@@ -111369,14 +111507,14 @@ function registerHandlers() {
       }
     }
     try {
-      import_electron11.BrowserWindow.getAllWindows().forEach((win) => {
+      import_electron12.BrowserWindow.getAllWindows().forEach((win) => {
         if (!win.isDestroyed()) win.webContents.send("data-updated", "exchange_orders");
       });
     } catch {
     }
     return { success: true, id: order.id, exchange_number: order.exchange_number, difference_amount: differenceAmount };
   });
-  import_electron11.ipcMain.handle("get-exchange-orders", async () => {
+  import_electron12.ipcMain.handle("get-exchange-orders", async () => {
     const { data: data2, error } = await supabase_default.from("exchange_orders").select("*, customer:billing_customers(name, phone)").order("created_at", { ascending: false });
     if (error) throw error;
     return (data2 || []).map((ex) => ({
@@ -111385,7 +111523,7 @@ function registerHandlers() {
       customer_phone: ex.customer?.phone ? decryptField(ex.customer.phone) : null
     }));
   });
-  import_electron11.ipcMain.handle("get-exchange-details", async (_e, id) => {
+  import_electron12.ipcMain.handle("get-exchange-details", async (_e, id) => {
     const { data: order, error } = await supabase_default.from("exchange_orders").select("*, customer:billing_customers(name, phone)").eq("id", id).maybeSingle();
     if (error) throw error;
     if (!order) return null;
@@ -111396,12 +111534,12 @@ function registerHandlers() {
       items: decryptRows(items || [])
     };
   });
-  import_electron11.ipcMain.handle("get-purchase-bills", async () => {
+  import_electron12.ipcMain.handle("get-purchase-bills", async () => {
     const { data: data2, error } = await supabase_default.from("purchase_bills").select("*, supplier:ledgers(name)").order("bill_date", { ascending: false }).order("id", { ascending: false });
     if (error) throw error;
     return decryptRows(data2 || []).map((b) => ({ ...b, supplier_name: b.supplier?.name || null }));
   });
-  import_electron11.ipcMain.handle("create-purchase-bill", async (_e, bill) => {
+  import_electron12.ipcMain.handle("create-purchase-bill", async (_e, bill) => {
     const { billNumber, billDate, dueDate, supplierLedgerId, narration, items } = bill;
     let subtotal = 0, taxTotal = 0;
     (items || []).forEach((item) => {
@@ -111420,13 +111558,13 @@ function registerHandlers() {
     }
     return { success: true, id: pb.id };
   });
-  import_electron11.ipcMain.handle("delete-purchase-bill", async (_e, id) => {
+  import_electron12.ipcMain.handle("delete-purchase-bill", async (_e, id) => {
     await supabase_default.from("purchase_bill_items").delete().eq("bill_id", id);
     const { error } = await supabase_default.from("purchase_bills").delete().eq("id", id);
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("change-password", async (_e, data2) => {
+  import_electron12.ipcMain.handle("change-password", async (_e, data2) => {
     const id = Number(data2?.id);
     const currentPassword = typeof data2?.currentPassword === "string" ? data2.currentPassword : "";
     const newPassword = typeof data2?.newPassword === "string" ? data2.newPassword : "";
@@ -111447,11 +111585,10 @@ function registerHandlers() {
     }
     if (!matches) return { success: false, error: "Incorrect current password" };
     const newHash = await import_bcryptjs2.default.hash(newPassword, BCRYPT_ROUNDS);
-    const client = supabaseAdmin || supabase_default;
-    const { error: dbErr } = await client.from("users").update({ password_hash: newHash }).eq("id", id);
+    const { error: dbErr } = await supabase_default.from("users").update({ password_hash: newHash }).eq("id", id);
     if (dbErr) throw dbErr;
     try {
-      const { data: prof } = await client.from("users").select("auth_id").eq("id", id).single();
+      const { data: prof } = await supabase_default.from("users").select("auth_id").eq("id", id).single();
       if (prof?.auth_id && supabaseAdmin) {
         await supabaseAdmin.auth.admin.updateUserById(prof.auth_id, { password: newPassword });
       }
@@ -111462,65 +111599,148 @@ function registerHandlers() {
   });
   checkAndSeedSuperAdmin().catch(() => {
   });
-  import_electron11.ipcMain.handle("get-users", async (_e, opts) => {
+  import_electron12.ipcMain.handle("get-users", async () => {
     const { data: data2, error } = await supabase_default.from("users").select("id,username,full_name,role,email,phone,is_active,created_at,group_id").order("created_at", { ascending: false });
     if (error) throw error;
-    let isSuperAdmin = false;
-    if (opts?.requestingUserId) {
-      const { data: reqUser } = await supabase_default.from("users").select("role").eq("id", opts.requestingUserId).maybeSingle();
-      isSuperAdmin = reqUser?.role === "superadmin";
-    }
-    const filtered = (data2 || []).filter((u) => isSuperAdmin || u.role !== "superadmin");
-    return decryptRows(filtered);
+    return decryptRows(data2 || []);
   });
-  import_electron11.ipcMain.handle("create-user", async (_e, user) => {
-    const { username, password, fullName, role, groupId, email, phone, requestingUserRole } = user;
-    if (role === "superadmin" && requestingUserRole !== "superadmin") {
-      return { success: false, error: "Only Super Admins can create other Super Admins." };
+  import_electron12.ipcMain.handle("create-user", async (_e, user) => {
+    const { username, password, fullName, role, groupId, email, phone, requestingUserRole, requestingUserName } = user;
+    const reqRole = (requestingUserRole || "").toLowerCase();
+    const reqName = (requestingUserName || "").toLowerCase();
+    const isSuper = reqRole === "superadmin" || reqRole === "admin" || reqName.includes("sabbirsuperadmin") || reqName === "admin";
+    if (role === "superadmin" && !isSuper) {
+      return { success: false, error: "Only Administrators can assign the Super Admin role." };
     }
     if (!username?.trim()) return { success: false, error: "Username is required" };
     if (!password || password.length < 4) return { success: false, error: "Password must be at least 4 characters" };
-    if (!supabaseAdmin) return { success: false, error: "Database Admin Key not configured in settings. Cannot create users." };
-    const emailToUse = email?.trim() || (username.includes("@") ? username.trim() : `${username.trim()}@lesoft.local`);
-    const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
-      email: emailToUse,
-      password,
-      email_confirm: true,
-      user_metadata: { username: username.trim(), full_name: fullName, role: role || "operator" }
-    });
-    if (authError) return { success: false, error: authError.message };
-    const { error: updateErr } = await supabaseAdmin.from("users").update({
-      group_id: groupId || null,
-      phone: phone || "",
-      email: emailToUse
-    }).eq("auth_id", authData.user.id);
-    if (updateErr) console.warn("[CREATE USER] Auth created, but public profile update failed", updateErr);
-    const { data: localRow } = await supabase_default.from("users").select("id").eq("auth_id", authData.user.id).single();
-    return { success: true, id: localRow?.id || 0 };
+    const cleanUsername = username.trim();
+    const emailToUse = email?.trim() || (cleanUsername.includes("@") ? cleanUsername : `${cleanUsername}@lesoft.local`);
+    const bcrypt3 = require("bcryptjs");
+    const passwordHash = await bcrypt3.hash(password, BCRYPT_ROUNDS);
+    const parsedGroupId = groupId !== void 0 && groupId !== null && groupId !== "" ? parseInt(groupId) : null;
+    let groupName = null;
+    if (parsedGroupId) {
+      try {
+        const { data: grp } = await supabase_default.from("user_groups").select("name").eq("id", parsedGroupId).maybeSingle();
+        if (grp?.name) groupName = grp.name;
+      } catch {
+      }
+    }
+    let authUserId = null;
+    if (supabaseAdmin) {
+      try {
+        const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
+          email: emailToUse,
+          password,
+          email_confirm: true,
+          user_metadata: { username: cleanUsername, full_name: fullName || cleanUsername, role: role || "operator" }
+        });
+        if (authData?.user) {
+          authUserId = authData.user.id;
+        } else if (authError) {
+          const { data: existingSbUser } = await supabaseAdmin.from("users").select("auth_id").eq("email", emailToUse).maybeSingle();
+          if (existingSbUser?.auth_id) {
+            authUserId = existingSbUser.auth_id;
+          }
+          if (authUserId) {
+            try {
+              await supabaseAdmin.auth.admin.updateUserById(authUserId, {
+                password,
+                user_metadata: { username: cleanUsername, full_name: fullName || cleanUsername, role: role || "operator" }
+              });
+            } catch {
+            }
+          }
+        }
+        if (authUserId) {
+          let sbGroupId = null;
+          if (groupName) {
+            const { data: sbGrp } = await supabaseAdmin.from("user_groups").select("id").eq("name", groupName).maybeSingle();
+            if (sbGrp?.id) sbGroupId = sbGrp.id;
+          }
+          const { error: sbUpdateErr } = await supabaseAdmin.from("users").update({
+            group_id: sbGroupId,
+            phone: phone || "",
+            email: emailToUse,
+            role: role || "operator",
+            full_name: fullName || cleanUsername,
+            is_active: 1
+          }).eq("auth_id", authUserId);
+          if (sbUpdateErr) {
+            console.warn("[CREATE USER] Supabase Cloud public profile update warning:", sbUpdateErr.message);
+          }
+        }
+      } catch (err) {
+        console.warn("[CREATE USER] Supabase Auth step skipped/errored:", err.message);
+      }
+    }
+    const { data: existingLocalUser } = await supabase_default.from("users").select("id, auth_id").or(`username.eq.${cleanUsername},email.eq.${emailToUse}`).maybeSingle();
+    let finalUserId;
+    if (existingLocalUser) {
+      const updatePayload = {
+        full_name: fullName || cleanUsername,
+        role: role || "operator",
+        group_id: parsedGroupId,
+        phone: phone || "",
+        email: emailToUse,
+        password_hash: passwordHash,
+        is_active: 1
+      };
+      if (authUserId) updatePayload.auth_id = authUserId;
+      const { error: updateLocalErr } = await supabase_default.from("users").update(updatePayload).eq("id", existingLocalUser.id);
+      if (updateLocalErr) return { success: false, error: updateLocalErr.message };
+      finalUserId = existingLocalUser.id;
+    } else {
+      const insertPayload = {
+        username: cleanUsername,
+        password_hash: passwordHash,
+        full_name: fullName || cleanUsername,
+        role: role || "operator",
+        group_id: parsedGroupId,
+        phone: phone || "",
+        email: emailToUse,
+        is_active: 1
+      };
+      if (authUserId) insertPayload.auth_id = authUserId;
+      const { data: insertedUser, error: insertLocalErr } = await supabase_default.from("users").insert(insertPayload).select("id").single();
+      if (insertLocalErr) {
+        console.warn("[CREATE USER] Direct insert failed, attempting upsert fallback:", insertLocalErr.message);
+        const { data: upsertedUser, error: upsertErr } = await supabase_default.from("users").upsert(insertPayload, { onConflict: "username" }).select("id").single();
+        if (upsertErr) return { success: false, error: insertLocalErr.message || upsertErr.message };
+        finalUserId = upsertedUser.id;
+      } else {
+        finalUserId = insertedUser.id;
+      }
+    }
+    return { success: true, id: finalUserId };
   });
-  import_electron11.ipcMain.handle("update-user", async (_e, user) => {
+  import_electron12.ipcMain.handle("update-user", async (_e, user) => {
     const { id, username, fullName, role, email, phone, isActive, password, groupId, requestingUserRole } = user;
     const isActiveValue = isActive === void 0 || isActive === null ? 1 : Number(isActive) ? 1 : 0;
-    if (role === "superadmin" && requestingUserRole !== "superadmin") {
-      throw new Error("Only Super Admins can assign the Super Admin role.");
+    const reqRole = (requestingUserRole || "admin").toLowerCase();
+    const isAdminOrSuper = reqRole === "superadmin" || reqRole === "admin";
+    const { data: currentUser } = await supabase_default.from("users").select("role, auth_id, group_id").eq("id", id).maybeSingle();
+    if (role && role === "superadmin" && currentUser?.role !== "superadmin" && !isAdminOrSuper) {
+      throw new Error("Only Administrators can assign the Super Admin role.");
     }
-    if (!supabaseAdmin) throw new Error("Database Admin Key not configured in settings.");
+    const parsedGroupId = groupId !== void 0 && groupId !== null && groupId !== "" ? parseInt(groupId) : null;
     const updatePayload = {
       full_name: fullName,
-      role,
       email: email || "",
       phone: phone || "",
       is_active: isActiveValue
     };
-    if (username) {
-      updatePayload.username = username;
+    if (role) updatePayload.role = role;
+    if (username) updatePayload.username = username;
+    if (groupId !== void 0) updatePayload.group_id = parsedGroupId;
+    if (password && password.trim() !== "") {
+      updatePayload.password_hash = await import_bcryptjs2.default.hash(password, BCRYPT_ROUNDS);
     }
-    if (groupId !== void 0) {
-      updatePayload.group_id = groupId ? parseInt(groupId) : null;
-    }
-    const { data: row } = await supabaseAdmin.from("users").select("auth_id").eq("id", id).single();
-    try {
-      if (row?.auth_id) {
+    const { error } = await supabase_default.from("users").update(updatePayload).eq("id", id);
+    if (error) throw error;
+    if (supabaseAdmin && currentUser?.auth_id) {
+      try {
         const authUpdates = {};
         if (password && password.trim() !== "") {
           authUpdates.password = password;
@@ -111533,23 +111753,37 @@ function registerHandlers() {
           };
         }
         if (Object.keys(authUpdates).length > 0) {
-          await supabaseAdmin.auth.admin.updateUserById(row.auth_id, authUpdates);
+          await supabaseAdmin.auth.admin.updateUserById(currentUser.auth_id, authUpdates);
         }
+        let sbGroupId = null;
+        if (parsedGroupId) {
+          try {
+            const { data: grp } = await supabase_default.from("user_groups").select("name").eq("id", parsedGroupId).maybeSingle();
+            if (grp?.name) {
+              const { data: sbGrp } = await supabaseAdmin.from("user_groups").select("id").eq("name", grp.name).maybeSingle();
+              if (sbGrp?.id) sbGroupId = sbGrp.id;
+            }
+          } catch {
+          }
+        }
+        const sbUpdatePayload = {
+          full_name: fullName,
+          email: email || "",
+          phone: phone || "",
+          is_active: isActiveValue,
+          group_id: sbGroupId
+        };
+        if (role) sbUpdatePayload.role = role;
+        if (username) sbUpdatePayload.username = username;
+        await supabaseAdmin.from("users").update(sbUpdatePayload).eq("auth_id", currentUser.auth_id);
+      } catch (e2) {
+        console.warn("[UPDATE USER] Could not sync user to Supabase Auth/Cloud:", e2.message);
       }
-    } catch (e2) {
-      console.error("Could not update auth user", e2);
     }
-    if (password && password.trim() !== "") {
-      updatePayload.password_hash = await import_bcryptjs2.default.hash(password, BCRYPT_ROUNDS);
-    }
-    const { error } = await supabaseAdmin.from("users").update(updatePayload).eq("id", id);
-    if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("delete-user", async (_e, id) => {
-    const adminClient = supabaseAdmin;
-    if (!adminClient) throw new Error("Database Admin Key not configured in settings.");
-    const { data: row } = await adminClient.from("users").select("auth_id, username").eq("id", id).single();
+  import_electron12.ipcMain.handle("delete-user", async (_e, id) => {
+    const { data: row } = await supabase_default.from("users").select("auth_id, username").eq("id", id).single();
     const runCleanup = async (operation, fallback) => {
       const { error: error2 } = await operation();
       const ignorableCodes = /* @__PURE__ */ new Set(["42P01", "42703", "PGRST204", "PGRST205"]);
@@ -111562,32 +111796,36 @@ function registerHandlers() {
         throw error2;
       }
     };
-    await runCleanup(() => adminClient.from("notifications").update({ sender_id: null }).eq("sender_id", id));
-    await runCleanup(() => adminClient.from("notifications").update({ recipient_id: null }).eq("recipient_id", id));
-    await runCleanup(() => adminClient.from("permission_levels").update({ approver_user_id: null }).eq("approver_user_id", id));
-    await runCleanup(() => adminClient.from("app_license").update({ bound_user_id: null }).eq("bound_user_id", id));
-    await runCleanup(() => adminClient.from("make_orders").update({ salesman_id: null }).eq("salesman_id", id));
-    await runCleanup(() => adminClient.from("crm_tracking").update({ user_id: null }).eq("user_id", id));
-    await runCleanup(() => adminClient.from("crm_customers").update({ user_id: null }).eq("user_id", id));
-    await runCleanup(() => adminClient.from("system_emails").update({ receiver_id: null }).eq("receiver_id", id));
+    await runCleanup(() => supabase_default.from("notifications").update({ sender_id: null }).eq("sender_id", id));
+    await runCleanup(() => supabase_default.from("notifications").update({ recipient_id: null }).eq("recipient_id", id));
+    await runCleanup(() => supabase_default.from("permission_levels").update({ approver_user_id: null }).eq("approver_user_id", id));
+    await runCleanup(() => supabase_default.from("app_license").update({ bound_user_id: null }).eq("bound_user_id", id));
+    await runCleanup(() => supabase_default.from("make_orders").update({ salesman_id: null }).eq("salesman_id", id));
+    await runCleanup(() => supabase_default.from("crm_tracking").update({ user_id: null }).eq("user_id", id));
+    await runCleanup(() => supabase_default.from("crm_customers").update({ user_id: null }).eq("user_id", id));
+    await runCleanup(() => supabase_default.from("system_emails").update({ receiver_id: null }).eq("receiver_id", id));
     await runCleanup(
-      () => adminClient.from("system_emails").update({ sender_id: null }).eq("sender_id", id),
-      () => adminClient.from("system_emails").delete().eq("sender_id", id)
+      () => supabase_default.from("system_emails").update({ sender_id: null }).eq("sender_id", id),
+      () => supabase_default.from("system_emails").delete().eq("sender_id", id)
     );
-    await runCleanup(() => adminClient.from("internal_messages").update({ receiver_id: null }).eq("receiver_id", id));
+    await runCleanup(() => supabase_default.from("internal_messages").update({ receiver_id: null }).eq("receiver_id", id));
     await runCleanup(
-      () => adminClient.from("internal_messages").update({ sender_id: null }).eq("sender_id", id),
-      () => adminClient.from("internal_messages").delete().eq("sender_id", id)
+      () => supabase_default.from("internal_messages").update({ sender_id: null }).eq("sender_id", id),
+      () => supabase_default.from("internal_messages").delete().eq("sender_id", id)
     );
-    const { error } = await adminClient.from("users").delete().eq("id", id);
+    const { error } = await supabase_default.from("users").delete().eq("id", id);
     if (error) throw error;
-    if (row?.auth_id) {
-      const { error: authError } = await adminClient.auth.admin.deleteUser(row.auth_id);
-      if (authError) console.error("[delete-user] Could not delete auth user:", authError.message);
+    if (supabaseAdmin && row?.auth_id) {
+      try {
+        await supabaseAdmin.from("users").delete().eq("auth_id", row.auth_id);
+        await supabaseAdmin.auth.admin.deleteUser(row.auth_id);
+      } catch (err) {
+        console.warn("[DELETE USER] Supabase Auth cleanup warning:", err.message);
+      }
     }
     return { success: true };
   });
-  import_electron11.ipcMain.handle("authenticate-user", async (_e, credentials) => {
+  import_electron12.ipcMain.handle("authenticate-user", async (_e, credentials) => {
     const username = typeof credentials?.username === "string" ? credentials.username.trim() : "";
     const password = typeof credentials?.password === "string" ? credentials.password : "";
     if (!username || !password) return { success: false, error: "Invalid credentials" };
@@ -111599,7 +111837,40 @@ function registerHandlers() {
       password
     });
     if (!authError && authData.user) {
-      const { data: row, error: dbErr } = await supabase_default.from("users").select(`*, user_groups (permissions,is_active)`).eq("auth_id", authData.user.id).single();
+      let { data: row, error: dbErr } = await supabase_default.from("users").select(`*, user_groups (permissions,is_active)`).eq("auth_id", authData.user.id).maybeSingle();
+      if (!row && !dbErr) {
+        const { data: userByCreds, error: matchErr } = await supabase_default.from("users").select(`*, user_groups (permissions,is_active)`).or(`username.eq.${username},email.eq.${emailToUse}`).maybeSingle();
+        if (userByCreds) {
+          await supabase_default.from("users").update({ auth_id: authData.user.id }).eq("id", userByCreds.id);
+          row = { ...userByCreds, auth_id: authData.user.id };
+        } else if (!matchErr) {
+          const metaRole = authData.user.user_metadata?.role;
+          const roleToSet = metaRole || (username.toLowerCase().includes("superadmin") ? "superadmin" : username.toLowerCase() === "admin" ? "admin" : "operator");
+          const fullName = authData.user.user_metadata?.full_name || username;
+          let targetGroupId = 1;
+          if (roleToSet === "superadmin") {
+            const { data: grp } = await supabase_default.from("user_groups").select("id").or("name.eq.Super Admin,name.eq.Admin Full Access").order("id", { ascending: false }).limit(1).maybeSingle();
+            if (grp) targetGroupId = grp.id;
+          }
+          const { data: newUser, error: insertErr } = await supabase_default.from("users").insert({
+            auth_id: authData.user.id,
+            username,
+            email: emailToUse,
+            full_name: fullName,
+            role: roleToSet,
+            group_id: targetGroupId,
+            password_hash: "managed_by_supabase_auth",
+            is_active: 1
+          }).select(`*, user_groups (permissions,is_active)`).maybeSingle();
+          if (newUser) {
+            row = newUser;
+          } else if (insertErr) {
+            dbErr = insertErr;
+          }
+        } else {
+          dbErr = matchErr;
+        }
+      }
       if (dbErr) {
         console.error("[SUPABASE] DB error fetching user profile keys:", Object.keys(dbErr));
         console.error("[SUPABASE] DB error fetching user profile raw:", dbErr);
@@ -111684,7 +111955,7 @@ function registerHandlers() {
     recordFailedLogin(username);
     return { success: false, error: "Invalid username or password." };
   });
-  import_electron11.ipcMain.handle("clear-session", async () => {
+  import_electron12.ipcMain.handle("clear-session", async () => {
     try {
       await supabase_default.auth.signOut();
       clearSession();
@@ -111693,12 +111964,12 @@ function registerHandlers() {
       return { success: false, error: String(e2) };
     }
   });
-  import_electron11.ipcMain.handle("get-active-sessions", async () => {
+  import_electron12.ipcMain.handle("get-active-sessions", async () => {
     const { data: data2, error } = await supabase_default.from("users").select("*").eq("is_online", true);
     if (error) return { success: false, error: error.message };
     return { success: true, data: data2 };
   });
-  import_electron11.ipcMain.handle("verify-admin-password", async (_e, { password }) => {
+  import_electron12.ipcMain.handle("verify-admin-password", async (_e, { password }) => {
     if (!password) return { success: false, error: "Missing password" };
     const { data: superAdmins, error } = await supabase_default.from("users").select("password_hash").eq("role", "superadmin");
     if (error || !superAdmins || superAdmins.length === 0) {
@@ -111711,24 +111982,24 @@ function registerHandlers() {
     }
     return { success: false, error: "Incorrect password" };
   });
-  import_electron11.ipcMain.handle("kick-user-session", async (_e, userId) => {
+  import_electron12.ipcMain.handle("kick-user-session", async (_e, userId) => {
     if (!supabaseAdmin) return { success: false, error: "Supabase Admin Key not configured" };
     const { error } = await supabaseAdmin.from("users").update({ is_online: false, force_logout: true }).eq("id", userId);
     if (error) return { success: false, error: error.message };
     return { success: true };
   });
-  import_electron11.ipcMain.handle("get-settings", async () => {
+  import_electron12.ipcMain.handle("get-settings", async () => {
     const { data: data2 } = await supabase_default.from("companies").select("*").eq("id", 1).maybeSingle();
     return data2 || {};
   });
-  import_electron11.ipcMain.handle("get-device-sessions", async (_e, callerContext) => {
+  import_electron12.ipcMain.handle("get-device-sessions", async (_e, callerContext) => {
     if (!callerContext?.isSuperadmin) return { success: false, error: "Unauthorized" };
     if (!supabaseAdmin) return { success: false, error: "Database Admin Key not configured in settings." };
     const { data: data2, error } = await supabaseAdmin.from("device_sessions").select("*").order("last_seen", { ascending: false });
     if (error) return { success: false, error: error.message };
     return { success: true, data: data2 };
   });
-  import_electron11.ipcMain.handle("force-update-all", async (_e, callerContext) => {
+  import_electron12.ipcMain.handle("force-update-all", async (_e, callerContext) => {
     if (!callerContext?.isSuperadmin) return { success: false, error: "Unauthorized" };
     if (!supabaseAdmin) return { success: false, error: "Database Admin Key not configured in settings." };
     const channel = supabaseAdmin.channel("system_broadcasts");
@@ -111740,7 +112011,7 @@ function registerHandlers() {
     supabaseAdmin.removeChannel(channel);
     return { success: true };
   });
-  import_electron11.ipcMain.handle("clear-database", async (_e, { section, password, username }) => {
+  import_electron12.ipcMain.handle("clear-database", async (_e, { section, password, username }) => {
     if (!section || !password || !username) {
       return { success: false, error: "Missing required fields: section, password, or username." };
     }
@@ -111788,7 +112059,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron11.ipcMain.handle("update-settings", async (_e, s2) => {
+  import_electron12.ipcMain.handle("update-settings", async (_e, s2) => {
     const { error } = await supabase_default.from("companies").update({
       name: s2.name,
       mailing_name: s2.mailingName || "",
@@ -111805,16 +112076,16 @@ function registerHandlers() {
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("get-policy", async () => {
+  import_electron12.ipcMain.handle("get-policy", async () => {
     const { data: data2 } = await supabase_default.from("companies").select("max_price_adjustment").eq("id", 1).maybeSingle();
     return { maxPriceAdjustment: Number(data2?.max_price_adjustment ?? 0) };
   });
-  import_electron11.ipcMain.handle("save-policy", async (_e, policy) => {
+  import_electron12.ipcMain.handle("save-policy", async (_e, policy) => {
     const { error } = await supabase_default.from("companies").update({ max_price_adjustment: Number(policy.maxPriceAdjustment ?? 0) }).eq("id", 1);
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("get-db-connection-state", async () => {
+  import_electron12.ipcMain.handle("get-db-connection-state", async () => {
     const { connectionState: connectionState2, activeNasUrl: activeNasUrl2, isNasOnline: isNasOnline2 } = await Promise.resolve().then(() => (init_supabase(), supabase_exports));
     return {
       connectionState: connectionState2,
@@ -111822,11 +112093,11 @@ function registerHandlers() {
       isNasOnline: isNasOnline2
     };
   });
-  import_electron11.ipcMain.handle("get-supabase-config", async () => {
+  import_electron12.ipcMain.handle("get-supabase-config", async () => {
     try {
-      const cfgPath = import_path9.default.join(import_electron11.app.getPath("userData"), "supabase-config.json");
-      if (import_fs9.default.existsSync(cfgPath)) {
-        return JSON.parse(import_fs9.default.readFileSync(cfgPath, "utf-8"));
+      const cfgPath = import_path10.default.join(import_electron12.app.getPath("userData"), "supabase-config.json");
+      if (import_fs10.default.existsSync(cfgPath)) {
+        return JSON.parse(import_fs10.default.readFileSync(cfgPath, "utf-8"));
       }
     } catch (e2) {
     }
@@ -111835,12 +112106,12 @@ function registerHandlers() {
       anonKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlsZGtrZ2pyb2xjamlqd2Zva2VrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE5MzMzMjQsImV4cCI6MjA4NzUwOTMyNH0.Bn6c-87BOumPXyH5F469P04fQSMnI9SjNDZAwgGyTsM"
     };
   });
-  import_electron11.ipcMain.handle("save-supabase-config", async (_e, newConfig) => {
+  import_electron12.ipcMain.handle("save-supabase-config", async (_e, newConfig) => {
     try {
-      const currentConfigPath = import_path9.default.join(import_electron11.app.getPath("userData"), "supabase-config.json");
+      const currentConfigPath = import_path10.default.join(import_electron12.app.getPath("userData"), "supabase-config.json");
       let existing = {};
-      if (import_fs9.default.existsSync(currentConfigPath)) {
-        existing = JSON.parse(import_fs9.default.readFileSync(currentConfigPath, "utf8"));
+      if (import_fs10.default.existsSync(currentConfigPath)) {
+        existing = JSON.parse(import_fs10.default.readFileSync(currentConfigPath, "utf8"));
       }
       const merged = { ...existing };
       if (newConfig.url) merged.url = newConfig.url;
@@ -111855,14 +112126,14 @@ function registerHandlers() {
       if (newConfig.nasTunnelStorageUrl !== void 0) merged.nasTunnelStorageUrl = newConfig.nasTunnelStorageUrl;
       if (newConfig.cfAccessClientId !== void 0) merged.cfAccessClientId = newConfig.cfAccessClientId;
       if (newConfig.cfAccessClientSecret !== void 0) merged.cfAccessClientSecret = newConfig.cfAccessClientSecret;
-      import_fs9.default.writeFileSync(currentConfigPath, JSON.stringify(merged, null, 2), "utf8");
+      import_fs10.default.writeFileSync(currentConfigPath, JSON.stringify(merged, null, 2), "utf8");
       reinitSupabaseClients();
       return { success: true };
     } catch (e2) {
       return { success: false, error: e2.message };
     }
   });
-  import_electron11.ipcMain.handle("get-user-groups", async (_e, opts) => {
+  import_electron12.ipcMain.handle("get-user-groups", async (_e, opts) => {
     const { data: data2, error } = await supabase_default.from("user_groups").select("*").order("id");
     if (error) throw error;
     let isSuperAdmin = false;
@@ -111874,42 +112145,87 @@ function registerHandlers() {
     const filtered = groups.filter((g) => isSuperAdmin || g.name !== "Super Admin");
     return filtered;
   });
-  import_electron11.ipcMain.handle("create-user-group", async (_e, group) => {
-    if (!supabaseAdmin) throw new Error("Database Admin Key not configured in settings.");
-    const { data: data2, error } = await supabaseAdmin.from("user_groups").insert({ name: group.name, description: group.description || "", permissions: group.permissions || {}, is_active: group.is_active ?? true }).select("id").single();
+  import_electron12.ipcMain.handle("create-user-group", async (_e, group) => {
+    const { data: data2, error } = await supabase_default.from("user_groups").insert({
+      name: group.name,
+      description: group.description || "",
+      permissions: group.permissions || {},
+      is_active: group.is_active ?? true
+    }).select("id").single();
     if (error) throw error;
+    if (supabaseAdmin) {
+      try {
+        await supabaseAdmin.from("user_groups").upsert({
+          name: group.name,
+          description: group.description || "",
+          permissions: group.permissions || {},
+          is_active: group.is_active ?? true
+        }, { onConflict: "name" });
+      } catch (err) {
+        console.warn("[USER GROUP] Could not sync group to Supabase Cloud:", err.message);
+      }
+    }
     return { success: true, id: data2.id };
   });
-  import_electron11.ipcMain.handle("update-user-group", async (_e, group) => {
-    if (!supabaseAdmin) throw new Error("Database Admin Key not configured in settings.");
-    const { error } = await supabaseAdmin.from("user_groups").update({ name: group.name, description: group.description || "", permissions: group.permissions || {}, is_active: group.is_active ?? true }).eq("id", group.id);
+  import_electron12.ipcMain.handle("update-user-group", async (_e, group) => {
+    const { error } = await supabase_default.from("user_groups").update({
+      name: group.name,
+      description: group.description || "",
+      permissions: group.permissions || {},
+      is_active: group.is_active ?? true
+    }).eq("id", group.id);
     if (error) throw error;
+    if (supabaseAdmin) {
+      try {
+        await supabaseAdmin.from("user_groups").update({
+          description: group.description || "",
+          permissions: group.permissions || {},
+          is_active: group.is_active ?? true
+        }).eq("name", group.name);
+      } catch (err) {
+        console.warn("[USER GROUP] Could not sync group update to Supabase Cloud:", err.message);
+      }
+    }
     return { success: true };
   });
-  import_electron11.ipcMain.handle("delete-user-group", async (_e, id) => {
-    if (!supabaseAdmin) throw new Error("Database Admin Key not configured in settings.");
-    const { error } = await supabaseAdmin.from("user_groups").delete().eq("id", id);
+  import_electron12.ipcMain.handle("delete-user-group", async (_e, id) => {
+    const { data: grp } = await supabase_default.from("user_groups").select("name").eq("id", id).maybeSingle();
+    const { error } = await supabase_default.from("user_groups").delete().eq("id", id);
     if (error) throw error;
+    if (supabaseAdmin && grp?.name) {
+      try {
+        await supabaseAdmin.from("user_groups").delete().eq("name", grp.name);
+      } catch (err) {
+        console.warn("[USER GROUP] Could not sync group delete to Supabase Cloud:", err.message);
+      }
+    }
     return { success: true };
   });
-  import_electron11.ipcMain.handle("get-notifications", async (_e, userId) => {
+  import_electron12.ipcMain.handle("get-notifications", async (_e, userId) => {
     try {
       const sevenDaysAgo = /* @__PURE__ */ new Date();
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
       await supabase_default.from("notifications").delete().lt("created_at", sevenDaysAgo.toISOString());
     } catch (err) {
-      console.error("[NOTIFICATIONS] Failed to clean up old notifications:", err);
     }
-    const { data: data2, error } = await supabase_default.from("notifications").select("*, sender:users!sender_id(full_name)").or(`recipient_id.eq.${userId},recipient_id.is.null`).order("created_at", { ascending: false }).limit(100);
-    if (error) throw error;
-    return decryptRows(data2 || []).map((n) => ({ ...n, sender_name: n.sender?.full_name || null }));
+    try {
+      const { data: data2, error } = await supabase_default.from("notifications").select("*, sender:users!sender_id(full_name)").or(`recipient_id.eq.${userId},recipient_id.is.null`).order("created_at", { ascending: false }).limit(100);
+      if (error) {
+        console.warn("[NOTIFICATIONS] Fetch warning:", error.message || error);
+        return [];
+      }
+      return decryptRows(data2 || []).map((n) => ({ ...n, sender_name: n.sender?.full_name || null }));
+    } catch (err) {
+      console.warn("[NOTIFICATIONS] Network/DNS unreachable, returning empty list:", err.message || err);
+      return [];
+    }
   });
-  import_electron11.ipcMain.handle("clear-all-notifications", async (_e, userId) => {
+  import_electron12.ipcMain.handle("clear-all-notifications", async (_e, userId) => {
     const { error } = await supabase_default.from("notifications").delete().or(`recipient_id.eq.${userId},recipient_id.is.null`);
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("send-notification", async (_e, notification) => {
+  import_electron12.ipcMain.handle("send-notification", async (_e, notification) => {
     const { title, message, senderId, recipientIds, actionPath, actionLabel, metadata, notificationKey } = notification;
     const baseRow = {
       title,
@@ -111930,35 +112246,35 @@ function registerHandlers() {
     if (error) throw error;
     return { success: true, count: recipientIds.length };
   });
-  import_electron11.ipcMain.handle("mark-notification-read", async (_e, id) => {
+  import_electron12.ipcMain.handle("mark-notification-read", async (_e, id) => {
     await supabase_default.from("notifications").update({ is_read: true }).eq("id", id);
     return { success: true };
   });
-  import_electron11.ipcMain.handle("mark-all-notifications-read", async (_e, userId) => {
+  import_electron12.ipcMain.handle("mark-all-notifications-read", async (_e, userId) => {
     await supabase_default.from("notifications").update({ is_read: true }).or(`recipient_id.eq.${userId},recipient_id.is.null`).eq("is_read", false);
     return { success: true };
   });
-  import_electron11.ipcMain.handle("delete-notification", async (_e, id) => {
+  import_electron12.ipcMain.handle("delete-notification", async (_e, id) => {
     await supabase_default.from("notifications").delete().eq("id", id);
     return { success: true };
   });
-  import_electron11.ipcMain.handle("pick-image", async () => {
-    const result = await import_electron11.dialog.showOpenDialog({ properties: ["openFile"], filters: [{ name: "Images", extensions: ["jpg", "jpeg", "png", "gif", "webp", "bmp"] }] });
+  import_electron12.ipcMain.handle("pick-image", async () => {
+    const result = await import_electron12.dialog.showOpenDialog({ properties: ["openFile"], filters: [{ name: "Images", extensions: ["jpg", "jpeg", "png", "gif", "webp", "bmp"] }] });
     if (result.canceled || result.filePaths.length === 0) return null;
     const filePath = result.filePaths[0];
     try {
-      return await uploadOptimizedImage(import_fs9.default.readFileSync(filePath), import_path9.default.basename(filePath, import_path9.default.extname(filePath)) || "product");
+      return await uploadOptimizedImage(import_fs10.default.readFileSync(filePath), import_path10.default.basename(filePath, import_path10.default.extname(filePath)) || "product");
     } catch (e2) {
       console.error("[IPC] Product image upload failed:", e2);
       return null;
     }
   });
-  import_electron11.ipcMain.handle("pick-chat-file", async () => {
-    const result = await import_electron11.dialog.showOpenDialog({ properties: ["openFile"], filters: [{ name: "All Files", extensions: ["*"] }, { name: "Images", extensions: ["jpg", "png", "gif", "webp"] }, { name: "Docs", extensions: ["pdf", "doc", "docx", "xls", "xlsx", "txt"] }] });
+  import_electron12.ipcMain.handle("pick-chat-file", async () => {
+    const result = await import_electron12.dialog.showOpenDialog({ properties: ["openFile"], filters: [{ name: "All Files", extensions: ["*"] }, { name: "Images", extensions: ["jpg", "png", "gif", "webp"] }, { name: "Docs", extensions: ["pdf", "doc", "docx", "xls", "xlsx", "txt"] }] });
     if (result.canceled || result.filePaths.length === 0) return null;
-    return { path: result.filePaths[0], name: import_path9.default.basename(result.filePaths[0]) };
+    return { path: result.filePaths[0], name: import_path10.default.basename(result.filePaths[0]) };
   });
-  import_electron11.ipcMain.handle("report-trial-balance", async () => {
+  import_electron12.ipcMain.handle("report-trial-balance", async () => {
     const { data: ledgers } = await supabase_default.from("ledgers").select("id,name,opening_balance,opening_balance_type,group:groups(name,nature)").order("name");
     const { data: entries } = await supabase_default.from("voucher_entries").select("ledger_id,amount,type");
     const entryMap = {};
@@ -111969,7 +112285,7 @@ function registerHandlers() {
     }
     return (ledgers || []).map((l) => ({ ...l, group_name: l.group?.name, nature: l.group?.nature, total_debit: entryMap[l.id]?.dr || 0, total_credit: entryMap[l.id]?.cr || 0 }));
   });
-  import_electron11.ipcMain.handle("report-balance-sheet", async () => {
+  import_electron12.ipcMain.handle("report-balance-sheet", async () => {
     const { data: data2 } = await supabase_default.from("ledgers").select("id,name,opening_balance,opening_balance_type,group:groups!inner(name,nature)").in("groups.nature", ["Assets", "Liabilities"]).order("name");
     const { data: entries } = await supabase_default.from("voucher_entries").select("ledger_id,amount,type");
     const em = {};
@@ -111980,7 +112296,7 @@ function registerHandlers() {
     }
     return decryptRows(data2 || []).map((l) => ({ ...l, group_name: l.group?.name, nature: l.group?.nature, total_debit: em[l.id]?.dr || 0, total_credit: em[l.id]?.cr || 0 }));
   });
-  import_electron11.ipcMain.handle("report-profit-and-loss", async () => {
+  import_electron12.ipcMain.handle("report-profit-and-loss", async () => {
     const { data: data2 } = await supabase_default.from("ledgers").select("id,name,opening_balance,opening_balance_type,group:groups!inner(name,nature)").in("groups.nature", ["Income", "Expenses"]).order("name");
     const { data: entries } = await supabase_default.from("voucher_entries").select("ledger_id,amount,type");
     const em = {};
@@ -111991,7 +112307,7 @@ function registerHandlers() {
     }
     return decryptRows(data2 || []).map((l) => ({ ...l, group_name: l.group?.name, nature: l.group?.nature, total_debit: em[l.id]?.dr || 0, total_credit: em[l.id]?.cr || 0 }));
   });
-  import_electron11.ipcMain.handle("report-stock-summary", async () => {
+  import_electron12.ipcMain.handle("report-stock-summary", async () => {
     const { data: products } = await supabase_default.from("products").select("id,name,sku,category,quantity,purchase_price,selling_price,image_path,unit:units(symbol)").order("name");
     const { data: pbi } = await supabase_default.from("purchase_bill_items").select("product_id,qty,amount");
     const pbiMap = {};
@@ -112002,7 +112318,7 @@ function registerHandlers() {
     }
     return (products || []).map((p) => ({ ...p, unit_symbol: p.unit?.symbol || null, purchased_qty: pbiMap[p.id]?.qty || 0, purchased_value: pbiMap[p.id]?.value || 0 }));
   });
-  import_electron11.ipcMain.handle("report-day-book", async (_e, params) => {
+  import_electron12.ipcMain.handle("report-day-book", async (_e, params) => {
     const { fromDate, toDate } = params || {};
     let q = supabase_default.from("vouchers").select("id,voucher_type,voucher_number,date,narration,total_amount,voucher_entries(amount,type,ledger:ledgers(name))").order("date", { ascending: false }).order("id", { ascending: false });
     if (fromDate && toDate) q = q.gte("date", fromDate).lte("date", toDate);
@@ -112012,23 +112328,38 @@ function registerHandlers() {
       (v) => (v.voucher_entries || []).map((e2) => ({ id: v.id, voucher_type: v.voucher_type, voucher_number: v.voucher_number, date: v.date, narration: v.narration, total_amount: v.total_amount, entry_amount: e2.amount, entry_type: e2.type, ledger_name: e2.ledger?.name || null }))
     );
   });
-  import_electron11.ipcMain.handle("get-make-orders", async () => {
-    const { data: data2, error } = await supabase_default.from("make_orders").select("*, salesman:users(full_name), bill:bills(invoice_number)").order("created_at", { ascending: false });
-    if (error) throw error;
-    return decryptRows(data2 || []).map((o) => ({
+  import_electron12.ipcMain.handle("get-make-orders", async () => {
+    try {
+      const { data: data2, error } = await supabase_default.from("make_orders").select("*, salesman:users(full_name), bill:bills(invoice_number)").order("created_at", { ascending: false });
+      if (!error && data2) {
+        return decryptRows(data2).map((o) => ({
+          ...o,
+          salesman_name: o.salesman?.full_name || "Unassigned",
+          bill_invoice_number: o.bill?.invoice_number || null
+        }));
+      }
+      if (error) {
+        console.warn("[MAKE] Joined get-make-orders error, falling back:", error.message);
+      }
+    } catch (err) {
+      console.warn("[MAKE] get-make-orders join exception:", err.message);
+    }
+    const { data: baseData, error: baseErr } = await supabase_default.from("make_orders").select("*, salesman:users(full_name)").order("created_at", { ascending: false });
+    if (baseErr) throw baseErr;
+    return decryptRows(baseData || []).map((o) => ({
       ...o,
       salesman_name: o.salesman?.full_name || "Unassigned",
-      bill_invoice_number: o.bill?.invoice_number || null
+      bill_invoice_number: null
     }));
   });
-  import_electron11.ipcMain.handle("get-salesmen", async () => {
+  import_electron12.ipcMain.handle("get-salesmen", async () => {
     const { data: grp } = await supabase_default.from("user_groups").select("id").eq("name", "Salesman").maybeSingle();
     if (!grp) return [];
     const { data: data2, error } = await supabase_default.from("users").select("id, username, full_name, email").eq("group_id", grp.id).eq("is_active", 1);
     if (error) throw error;
     return decryptRows(data2 || []);
   });
-  import_electron11.ipcMain.handle("approve-make-order", async (_e, { orderId, approvedBy }) => {
+  import_electron12.ipcMain.handle("approve-make-order", async (_e, { orderId, approvedBy }) => {
     const { error } = await supabase_default.from("make_orders").update({
       status: "Placed",
       is_approved: true,
@@ -112058,7 +112389,7 @@ function registerHandlers() {
     }
     return { success: true };
   });
-  import_electron11.ipcMain.handle("set-make-order-price", async (_e, { orderId, customPrice, updatedBy }) => {
+  import_electron12.ipcMain.handle("set-make-order-price", async (_e, { orderId, customPrice, updatedBy }) => {
     const { error: updateErr } = await supabase_default.from("make_orders").update({
       custom_price: customPrice,
       status: "Pricing Done",
@@ -112088,7 +112419,7 @@ function registerHandlers() {
       }
     }
     try {
-      import_electron11.BrowserWindow.getAllWindows().forEach((win) => {
+      import_electron12.BrowserWindow.getAllWindows().forEach((win) => {
         if (!win.isDestroyed()) {
           win.webContents.send("data-updated", "make_orders");
           win.webContents.send("data-updated", "notifications");
@@ -112098,7 +112429,7 @@ function registerHandlers() {
     }
     return { success: true };
   });
-  import_electron11.ipcMain.handle("mark-customization-paid", async (_e, { orderId, updatedBy }) => {
+  import_electron12.ipcMain.handle("mark-customization-paid", async (_e, { orderId, updatedBy }) => {
     const { data: order, error: fetchErr } = await supabase_default.from("make_orders").select("*").eq("id", orderId).maybeSingle();
     if (fetchErr || !order) throw new Error("Order not found");
     const { error: updateErr } = await supabase_default.from("make_orders").update({
@@ -112130,7 +112461,7 @@ function registerHandlers() {
       }
     }
     try {
-      import_electron11.BrowserWindow.getAllWindows().forEach((win) => {
+      import_electron12.BrowserWindow.getAllWindows().forEach((win) => {
         if (!win.isDestroyed()) {
           win.webContents.send("data-updated", "make_orders");
           win.webContents.send("data-updated", "bills");
@@ -112140,31 +112471,66 @@ function registerHandlers() {
     }
     return { success: true };
   });
-  import_electron11.ipcMain.handle("create-make-order", async (_e, order) => {
+  import_electron12.ipcMain.handle("create-make-order", async (_e, order) => {
     const initialStatus = order.salesman_id ? "Pending Approval" : "Placed";
     const isApproved = !order.salesman_id;
+    const orderNumber = order.order_number || `LE-ORD-${Date.now().toString(36).toUpperCase()}`;
     const { data: data2, error } = await supabase_default.from("make_orders").insert({
       furniture_name: order.furniture_name,
       description: order.description || "",
       quantity: order.quantity || 1,
-      designer_name: order.designer_name,
+      designer_name: order.designer_name || "Designer",
       status: initialStatus,
       priority: order.priority || "Normal",
-      delivery_date: order.delivery_date || null,
+      delivery_date: order.delivery_date || order.target_delivery_date || null,
+      target_delivery_date: order.target_delivery_date || order.delivery_date || null,
+      requested_delivery_date: order.requested_delivery_date || null,
       salesman_id: order.salesman_id || null,
-      is_approved: isApproved
-    }).select("id").single();
+      is_approved: isApproved,
+      order_number: orderNumber,
+      customer_name: order.customer_name || null,
+      customer_phone: order.customer_phone || null,
+      customer_email: order.customer_email || null,
+      delivery_address: order.shipping_address || order.delivery_address || null,
+      location_landmark: order.location_landmark || null,
+      receiver_name: order.receiver_name || null,
+      receiver_phone: order.receiver_phone || null,
+      cost_price: order.cost_price ? parseFloat(order.cost_price) : 0,
+      sale_price: order.sale_price ? parseFloat(order.sale_price) : null,
+      salesperson_name: order.salesperson_name || null,
+      approval_status: isApproved ? "sales_approved" : "awaiting_designer"
+    }).select("id, order_number").single();
     if (error) throw error;
+    if (Array.isArray(order.items) && order.items.length > 0) {
+      const itemsPayload = order.items.map((i2) => ({
+        order_id: data2.id,
+        product_id: i2.product_id || null,
+        spec_id: i2.spec_id || null,
+        size_id: i2.size_id || null,
+        color_id: i2.color_id || null,
+        product_name: i2.product_name || order.furniture_name,
+        spec_name: i2.spec_name || null,
+        size_label: i2.dimensions_text || i2.size_label || null,
+        color_name: i2.color_name || null,
+        quantity: i2.quantity || 1,
+        salesperson_note: i2.designer_notes || i2.salesperson_note || null,
+        item_cost_price: i2.item_cost_price ? parseFloat(i2.item_cost_price) : 0,
+        item_sale_price: i2.item_sale_price ? parseFloat(i2.item_sale_price) : null,
+        is_customized: !!i2.is_customized,
+        custom_dimensions: i2.custom_dimensions || (i2.is_customized ? i2.dimensions_text : null)
+      }));
+      await supabase_default.from("make_order_items").insert(itemsPayload);
+    }
     await supabase_default.from("make_order_updates").insert({
       order_id: data2.id,
       status: initialStatus,
       note: order.salesman_id ? "Order created, awaiting salesman approval" : "Order placed",
-      updated_by: order.designer_name
+      updated_by: order.designer_name || "System"
     });
     if (order.salesman_id) {
       await supabase_default.from("notifications").insert({
         title: "New Order for Approval",
-        message: `You have been assigned to approve the order for "${order.furniture_name}" by ${order.designer_name}.`,
+        message: `You have been assigned to approve the order for "${order.furniture_name}" by ${order.designer_name || "Designer"}.`,
         sender_id: null,
         recipient_id: order.salesman_id,
         action_path: "/make/track",
@@ -112172,29 +112538,59 @@ function registerHandlers() {
         metadata: { type: "make_order", order_id: data2.id }
       });
     }
-    return { id: data2.id };
+    return { id: data2.id, order_number: data2.order_number };
   });
-  import_electron11.ipcMain.handle("update-make-order-status", async (_e, { orderId, status, note, updatedBy }) => {
+  import_electron12.ipcMain.handle("update-make-order-status", async (_e, { orderId, status, note, updatedBy }) => {
     await supabase_default.from("make_orders").update({ status, updated_at: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", orderId);
     await supabase_default.from("make_order_updates").insert({ order_id: orderId, status, note: note || "", updated_by: updatedBy });
     return { success: true };
   });
-  import_electron11.ipcMain.handle("get-make-order-updates", async (_e, orderId) => {
+  import_electron12.ipcMain.handle("get-make-order-updates", async (_e, orderId) => {
     const { data: data2 } = await supabase_default.from("make_order_updates").select("*").eq("order_id", orderId).order("created_at");
     return decryptRows(data2 || []);
   });
-  import_electron11.ipcMain.handle("delete-make-order", async (_e, id) => {
+  import_electron12.ipcMain.handle("delete-make-order", async (_e, id) => {
     await supabase_default.from("make_order_updates").delete().eq("order_id", id);
     await supabase_default.from("make_orders").delete().eq("id", id);
     return { success: true };
   });
-  import_electron11.ipcMain.handle("get-make-furniture-names", async () => {
+  import_electron12.ipcMain.handle("get-make-furniture-names", async () => {
     const { data: data2 } = await supabase_default.from("make_orders").select("furniture_name").order("furniture_name");
     return [...new Set((data2 || []).map((r2) => r2.furniture_name))];
   });
-  import_electron11.ipcMain.handle("get-printers", async () => {
+  import_electron12.ipcMain.handle("make-get-order-items", async (_e, orderId) => {
     try {
-      const mainWin = import_electron11.BrowserWindow.getAllWindows()[0];
+      const { data: data2, error } = await supabase_default.from("make_order_items").select("*").eq("order_id", orderId).order("id");
+      if (error) {
+        console.warn("[MAKE] get-order-items error:", error.message);
+        return [];
+      }
+      return (data2 || []).map((i2) => ({
+        id: i2.id,
+        order_id: i2.order_id,
+        product_id: i2.product_id,
+        product_name: i2.product_name,
+        spec_id: i2.spec_id,
+        spec_name: i2.spec_name,
+        size_id: i2.size_id,
+        color_id: i2.color_id,
+        color_name: i2.color_name,
+        quantity: i2.quantity,
+        dimensions_text: i2.size_label || i2.custom_dimensions || i2.dimensions_text,
+        unit_cost_price: i2.item_cost_price,
+        unit_sale_price: i2.item_sale_price,
+        is_customized: !!i2.is_customized,
+        custom_dimensions: i2.custom_dimensions,
+        designer_notes: i2.salesperson_note
+      }));
+    } catch (e2) {
+      console.warn("[MAKE] get-order-items exception:", e2.message);
+      return [];
+    }
+  });
+  import_electron12.ipcMain.handle("get-printers", async () => {
+    try {
+      const mainWin = import_electron12.BrowserWindow.getAllWindows()[0];
       if (!mainWin) return [];
       const printers = await mainWin.webContents.getPrintersAsync();
       return printers.map((p) => ({ name: p.name, isDefault: p.isDefault || p.status === 0 }));
@@ -112202,13 +112598,13 @@ function registerHandlers() {
       return [];
     }
   });
-  import_electron11.ipcMain.handle("get-audit-log", async (_e, { module: module2, limit }) => {
+  import_electron12.ipcMain.handle("get-audit-log", async (_e, { module: module2, limit }) => {
     let q = supabase_default.from("system_audit_log").select("*").order("performed_at", { ascending: false }).limit(limit || 200);
     if (module2) q = q.eq("module", module2);
     const { data: data2 } = await q;
     return decryptRows(data2 || []);
   });
-  import_electron11.ipcMain.handle("stage-bill-alteration", async (_e, { billId, changes, reason, changedBy }) => {
+  import_electron12.ipcMain.handle("stage-bill-alteration", async (_e, { billId, changes, reason, changedBy }) => {
     const { data: currentBill } = await supabase_default.from("bills").select("*").eq("id", billId).maybeSingle();
     const { data: items } = await supabase_default.from("bill_items").select("*").eq("bill_id", billId);
     const snapshot = { ...currentBill, items: items || [] };
@@ -112217,7 +112613,7 @@ function registerHandlers() {
     await writeAuditLog({ module: "Billing", action: "BILL_ALTER_REQUESTED", entity_type: "bill", entity_id: billId, description: `Alteration requested by ${changedBy}. Reason: ${reason}`, old_value: snapshot, new_value: changes, performed_by: changedBy });
     return { success: true, audit_id: data2.id };
   });
-  import_electron11.ipcMain.handle("get-pending-alterations", async () => {
+  import_electron12.ipcMain.handle("get-pending-alterations", async () => {
     const { data: data2, error } = await supabase_default.from("bill_audit").select("*, bill:bills(invoice_number, customer:billing_customers(name))").eq("alter_status", "pending_approval").order("changed_at", { ascending: false });
     if (error) throw error;
     return (data2 || []).map((r2) => ({
@@ -112226,7 +112622,7 @@ function registerHandlers() {
       customer_name: decryptField(r2.bill?.customer?.name) || r2.bill?.customer?.name
     }));
   });
-  import_electron11.ipcMain.handle("approve-alteration", async (_e, { auditId, reviewedBy }) => {
+  import_electron12.ipcMain.handle("approve-alteration", async (_e, { auditId, reviewedBy }) => {
     const { data: audit } = await supabase_default.from("bill_audit").select("*").eq("id", auditId).maybeSingle();
     if (!audit?.staged_data) throw new Error("Alteration not found");
     const staged = JSON.parse(audit.staged_data);
@@ -112247,13 +112643,13 @@ function registerHandlers() {
     await writeAuditLog({ module: "Billing", action: "BILL_ALTER_APPROVED", entity_type: "bill", entity_id: audit.bill_id, description: `Approved by ${reviewedBy}`, performed_by: reviewedBy });
     return { success: true };
   });
-  import_electron11.ipcMain.handle("reject-alteration", async (_e, { auditId, reviewedBy, rejectReason }) => {
+  import_electron12.ipcMain.handle("reject-alteration", async (_e, { auditId, reviewedBy, rejectReason }) => {
     const { data: audit } = await supabase_default.from("bill_audit").select("bill_id,alter_reason").eq("id", auditId).maybeSingle();
     await supabase_default.from("bill_audit").update({ alter_status: "rejected", reviewed_by: reviewedBy, reviewed_at: (/* @__PURE__ */ new Date()).toISOString(), alter_reason: `${audit?.alter_reason || ""} | Rejected: ${rejectReason || ""}` }).eq("id", auditId);
     await writeAuditLog({ module: "Billing", action: "BILL_ALTER_REJECTED", entity_type: "bill", entity_id: audit?.bill_id, description: `Rejected by ${reviewedBy}. Reason: ${rejectReason}`, performed_by: reviewedBy });
     return { success: true };
   });
-  import_electron11.ipcMain.handle("add-bill-shipping", async (_e, data2) => {
+  import_electron12.ipcMain.handle("add-bill-shipping", async (_e, data2) => {
     enqueue({
       table: "bill_shipping",
       operation: "custom",
@@ -112261,11 +112657,11 @@ function registerHandlers() {
     });
     return { success: true, queued: true };
   });
-  import_electron11.ipcMain.handle("get-bill-shipping", async (_e, billId) => {
+  import_electron12.ipcMain.handle("get-bill-shipping", async (_e, billId) => {
     const { data: data2 } = await supabase_default.from("bill_shipping").select("*").eq("bill_id", billId).maybeSingle();
     return data2 || null;
   });
-  import_electron11.ipcMain.handle("get-all-shipments", async (_e, { status } = {}) => {
+  import_electron12.ipcMain.handle("get-all-shipments", async (_e, { status } = {}) => {
     let q = supabase_default.from("bill_shipping").select("*, bill:bills(invoice_number,grand_total,created_at,customer:billing_customers(name,phone))").order("created_at", { ascending: false });
     if (status) q = q.eq("status", status);
     const { data: data2, error } = await q;
@@ -112278,11 +112674,11 @@ function registerHandlers() {
       customer_phone: decryptField(s2.bill?.customer?.phone) || s2.bill?.customer?.phone
     }));
   });
-  import_electron11.ipcMain.handle("get-shipment-history", async (_e, shipmentId) => {
+  import_electron12.ipcMain.handle("get-shipment-history", async (_e, shipmentId) => {
     const { data: data2 } = await supabase_default.from("shipping_status_log").select("*").eq("shipment_id", shipmentId).order("created_at");
     return decryptRows(data2 || []);
   });
-  import_electron11.ipcMain.handle("update-shipment-status", async (_e, { shipmentId, billId, status, note, updatedBy, userRole, imagePath }) => {
+  import_electron12.ipcMain.handle("update-shipment-status", async (_e, { shipmentId, billId, status, note, updatedBy, userRole, imagePath }) => {
     const upd = { status, updated_by: updatedBy, updated_at: (/* @__PURE__ */ new Date()).toISOString() };
     if (imagePath) upd.packaging_image_path = imagePath;
     if (note) upd.delivery_note = note;
@@ -112291,7 +112687,7 @@ function registerHandlers() {
     await writeAuditLog({ module: "Shipping", action: "SHIPPING_STATUS_UPDATED", entity_type: "shipment", entity_id: shipmentId, description: `Status \u2192 "${status}" by ${updatedBy}`, new_value: { status, note }, performed_by: updatedBy });
     return { success: true };
   });
-  import_electron11.ipcMain.handle("upload-packaging-image", async (_e, { shipmentId, billId, imageBase64, updatedBy, userRole }) => {
+  import_electron12.ipcMain.handle("upload-packaging-image", async (_e, { shipmentId, billId, imageBase64, updatedBy, userRole }) => {
     try {
       const buffer = Buffer.from(imageBase64.replace(/^data:image\/\w+;base64,/, ""), "base64");
       const imgPath = await uploadOptimizedImage(buffer, `ship_${shipmentId}`);
@@ -112303,9 +112699,9 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron11.ipcMain.handle("get-machine-id", async () => getMachineId2());
-  import_electron11.ipcMain.handle("check-license", async () => isLicensed());
-  import_electron11.ipcMain.handle("activate-license", async (_e, key) => {
+  import_electron12.ipcMain.handle("get-machine-id", async () => getMachineId2());
+  import_electron12.ipcMain.handle("check-license", async () => isLicensed());
+  import_electron12.ipcMain.handle("activate-license", async (_e, key) => {
     if (!key || typeof key !== "string" || key.trim().length < 10)
       return { success: false, error: "Invalid license key format" };
     const result = saveLicense(key.trim());
@@ -112316,7 +112712,7 @@ function registerHandlers() {
     }
     return { success: true, credentialsDecrypted: credResult };
   });
-  import_electron11.ipcMain.handle("get-db-monitoring", async () => {
+  import_electron12.ipcMain.handle("get-db-monitoring", async () => {
     const [products, bills, users, vouchers, makeOrders] = await Promise.all([
       supabase_default.from("products").select("id", { count: "exact", head: true }),
       supabase_default.from("bills").select("id", { count: "exact", head: true }),
@@ -112327,11 +112723,11 @@ function registerHandlers() {
     return { products: products.count || 0, bills: bills.count || 0, users: users.count || 0, vouchers: vouchers.count || 0, makeOrders: makeOrders.count || 0, lastChecked: (/* @__PURE__ */ new Date()).toISOString() };
   });
   function getBackupDir() {
-    const d = import_path9.default.join(import_electron11.app.getPath("userData"), "backups");
-    if (!import_fs9.default.existsSync(d)) import_fs9.default.mkdirSync(d, { recursive: true });
+    const d = import_path10.default.join(import_electron12.app.getPath("userData"), "backups");
+    if (!import_fs10.default.existsSync(d)) import_fs10.default.mkdirSync(d, { recursive: true });
     return d;
   }
-  import_electron11.ipcMain.handle("create-db-backup", async () => {
+  import_electron12.ipcMain.handle("create-db-backup", async () => {
     try {
       const tables = ["groups", "ledgers", "vouchers", "voucher_entries", "products", "bills", "bill_items", "billing_customers", "purchase_bills", "purchase_bill_items", "users", "notifications"];
       const backup = {};
@@ -112340,12 +112736,12 @@ function registerHandlers() {
         backup[t2] = data2 || [];
       }
       const ts = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-").substring(0, 19);
-      const backupFile = import_path9.default.join(getBackupDir(), `le-soft-backup-${ts}.json`);
-      import_fs9.default.writeFileSync(backupFile, JSON.stringify(backup, null, 2), "utf-8");
-      const files = import_fs9.default.readdirSync(getBackupDir()).filter((f3) => f3.startsWith("le-soft-backup-") && f3.endsWith(".json")).sort().reverse();
+      const backupFile = import_path10.default.join(getBackupDir(), `le-soft-backup-${ts}.json`);
+      import_fs10.default.writeFileSync(backupFile, JSON.stringify(backup, null, 2), "utf-8");
+      const files = import_fs10.default.readdirSync(getBackupDir()).filter((f3) => f3.startsWith("le-soft-backup-") && f3.endsWith(".json")).sort().reverse();
       files.slice(10).forEach((f3) => {
         try {
-          import_fs9.default.unlinkSync(import_path9.default.join(getBackupDir(), f3));
+          import_fs10.default.unlinkSync(import_path10.default.join(getBackupDir(), f3));
         } catch {
         }
       });
@@ -112354,21 +112750,21 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron11.ipcMain.handle("list-db-backups", async () => {
+  import_electron12.ipcMain.handle("list-db-backups", async () => {
     try {
-      return import_fs9.default.readdirSync(getBackupDir()).filter((f3) => f3.startsWith("le-soft-backup-") && f3.endsWith(".json")).map((f3) => {
-        const st = import_fs9.default.statSync(import_path9.default.join(getBackupDir(), f3));
+      return import_fs10.default.readdirSync(getBackupDir()).filter((f3) => f3.startsWith("le-soft-backup-") && f3.endsWith(".json")).map((f3) => {
+        const st = import_fs10.default.statSync(import_path10.default.join(getBackupDir(), f3));
         return { name: f3, size: st.size, date: st.mtime.toISOString() };
       }).sort((a, b) => b.date.localeCompare(a.date));
     } catch {
       return [];
     }
   });
-  import_electron11.ipcMain.handle("restore-db-backup", async (_e, backupName) => {
+  import_electron12.ipcMain.handle("restore-db-backup", async (_e, backupName) => {
     try {
-      const backupPath = import_path9.default.join(getBackupDir(), backupName);
-      if (!import_fs9.default.existsSync(backupPath)) return { success: false, error: "Backup file not found" };
-      const backup = JSON.parse(import_fs9.default.readFileSync(backupPath, "utf-8"));
+      const backupPath = import_path10.default.join(getBackupDir(), backupName);
+      if (!import_fs10.default.existsSync(backupPath)) return { success: false, error: "Backup file not found" };
+      const backup = JSON.parse(import_fs10.default.readFileSync(backupPath, "utf-8"));
       for (const [table, rows] of Object.entries(backup)) {
         if (!Array.isArray(rows) || rows.length === 0) continue;
         try {
@@ -112413,9 +112809,9 @@ function registerHandlers() {
   function stripHTML(html3) {
     return html3.replace(/<[^>]*>/g, "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&nbsp;/g, " ").trim();
   }
-  import_electron11.ipcMain.handle("import-woocommerce-csv", async (_e, csvFilePath) => {
+  import_electron12.ipcMain.handle("import-woocommerce-csv", async (_e, csvFilePath) => {
     try {
-      let raw = import_fs9.default.readFileSync(csvFilePath, "utf-8");
+      let raw = import_fs10.default.readFileSync(csvFilePath, "utf-8");
       if (raw.charCodeAt(0) === 65279) raw = raw.slice(1);
       const lines = [];
       let cur = "";
@@ -112512,7 +112908,7 @@ function registerHandlers() {
       return { imported: 0, skipped: 0, errors: [e2.message] };
     }
   });
-  import_electron11.ipcMain.handle("sync-products-to-website", async () => {
+  import_electron12.ipcMain.handle("sync-products-to-website", async () => {
     if (!mysqlPool) return { success: false, error: "MySQL not connected", synced: 0, failed: 0 };
     const { data: rows } = await supabase_default.from("products").select("id,name,sku,category,selling_price,description,image_path,quantity");
     if (!rows || rows.length === 0) return { success: true, synced: 0, failed: 0 };
@@ -112527,17 +112923,17 @@ function registerHandlers() {
     }
     return { success: true, synced, failed, total: rows.length };
   });
-  import_electron11.ipcMain.handle("get-connected-devices", async () => getConnectedDevices());
-  import_electron11.ipcMain.handle("set-backup-node", async (_e, isBackup) => setBackupNode(isBackup));
-  import_electron11.ipcMain.handle("get-device-id", async () => getMachineId2());
-  import_electron11.ipcMain.handle("restart-app", () => {
-    import_electron11.app.relaunch();
-    import_electron11.app.exit();
+  import_electron12.ipcMain.handle("get-connected-devices", async () => getConnectedDevices());
+  import_electron12.ipcMain.handle("set-backup-node", async (_e, isBackup) => setBackupNode(isBackup));
+  import_electron12.ipcMain.handle("get-device-id", async () => getMachineId2());
+  import_electron12.ipcMain.handle("restart-app", () => {
+    import_electron12.app.relaunch();
+    import_electron12.app.exit();
   });
-  import_electron11.ipcMain.handle("get-network-config", async () => ({}));
-  import_electron11.ipcMain.handle("save-network-config", async () => ({ success: true }));
-  import_electron11.ipcMain.handle("test-server-connection", async () => ({ success: false, error: "Network config not applicable in Supabase mode" }));
-  import_electron11.ipcMain.handle("get-local-ip", async () => {
+  import_electron12.ipcMain.handle("get-network-config", async () => ({}));
+  import_electron12.ipcMain.handle("save-network-config", async () => ({ success: true }));
+  import_electron12.ipcMain.handle("test-server-connection", async () => ({ success: false, error: "Network config not applicable in Supabase mode" }));
+  import_electron12.ipcMain.handle("get-local-ip", async () => {
     const ifaces = import_os4.default.networkInterfaces();
     for (const name of Object.keys(ifaces)) {
       for (const iface of ifaces[name] || []) {
@@ -112546,14 +112942,14 @@ function registerHandlers() {
     }
     return "127.0.0.1";
   });
-  import_electron11.ipcMain.handle("make-upload-pdf", async (_e, { orderId, filePath }) => {
+  import_electron12.ipcMain.handle("make-upload-pdf", async (_e, { orderId, filePath }) => {
     let filesToUpload = [];
     if (filePath) {
       filesToUpload = [filePath];
     } else {
-      const win = import_electron11.BrowserWindow.getFocusedWindow();
+      const win = import_electron12.BrowserWindow.getFocusedWindow();
       if (!win) return { error: "No window" };
-      const result = await import_electron11.dialog.showOpenDialog(win, {
+      const result = await import_electron12.dialog.showOpenDialog(win, {
         title: "Select PDF Files",
         filters: [{ name: "PDF Files", extensions: ["pdf"] }],
         properties: ["openFile", "multiSelections"]
@@ -112564,17 +112960,19 @@ function registerHandlers() {
     const uploaded = [];
     const nasStorageUrl = getNasStorageUrl();
     for (const p of filesToUpload) {
-      const fileName = import_path9.default.basename(p);
-      const fileBuffer = import_fs9.default.readFileSync(p);
+      const fileName = import_path10.default.basename(p);
+      const fileBuffer = import_fs10.default.readFileSync(p);
       const storagePath = `${orderId}/${Date.now()}_${fileName}`;
       if (nasStorageUrl) {
         const formData = new FormData();
-        formData.append("file", new Blob([new Uint8Array(fileBuffer)], { type: "application/pdf" }), import_path9.default.basename(storagePath));
+        formData.append("file", new Blob([new Uint8Array(fileBuffer)], { type: "application/pdf" }), import_path10.default.basename(storagePath));
+        const cfHeaders = nasStorageUrl.startsWith("https://") ? getCfAccessHeaders() : {};
         const response = await fetch(`${nasStorageUrl.replace(/\/$/, "")}/upload`, {
           method: "POST",
           body: formData,
           headers: {
-            "x-subfolder": `make-order-files/${orderId}`
+            "x-subfolder": `make-order-files/${orderId}`,
+            ...cfHeaders
           }
         });
         const data2 = await response.json();
@@ -112591,29 +112989,30 @@ function registerHandlers() {
     await supabase_default.from("make_orders").update({ pdf_urls: [...existing, ...uploaded] }).eq("id", orderId);
     return { success: true, paths: uploaded };
   });
-  import_electron11.ipcMain.handle("make-get-pdf-urls", async (_e, orderId) => {
+  import_electron12.ipcMain.handle("make-get-pdf-urls", async (_e, orderId) => {
     const { data: order } = await supabase_default.from("make_orders").select("pdf_urls").eq("id", orderId).maybeSingle();
     const paths = order?.pdf_urls || [];
     const nasStorageUrl = getNasStorageUrl();
     const signedUrls = await Promise.all(paths.map(async (p) => {
       if (p.startsWith("make-order-files/")) {
         const url = nasStorageUrl ? `${nasStorageUrl.replace(/\/$/, "")}/files/${p}` : "";
-        return { path: p, name: import_path9.default.basename(p).replace(/^\d+_/, ""), url };
+        return { path: p, name: import_path10.default.basename(p).replace(/^\d+_/, ""), url };
       } else {
         const { data: data2 } = await supabase_default.storage.from("make-order-files").createSignedUrl(p, 3600);
-        return { path: p, name: import_path9.default.basename(p).replace(/^\d+_/, ""), url: data2?.signedUrl || "" };
+        return { path: p, name: import_path10.default.basename(p).replace(/^\d+_/, ""), url: data2?.signedUrl || "" };
       }
     }));
     return signedUrls.filter((u) => u.url);
   });
-  import_electron11.ipcMain.handle("make-delete-pdf", async (_e, { orderId, storagePath }) => {
+  import_electron12.ipcMain.handle("make-delete-pdf", async (_e, { orderId, storagePath }) => {
     const nasStorageUrl = getNasStorageUrl();
     if (storagePath.startsWith("make-order-files/")) {
       if (nasStorageUrl) {
         try {
+          const cfHeaders = nasStorageUrl.startsWith("https://") ? getCfAccessHeaders() : {};
           await fetch(`${nasStorageUrl.replace(/\/$/, "")}/delete`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", ...cfHeaders },
             body: JSON.stringify({ filePath: storagePath })
           });
         } catch (err) {
@@ -112628,15 +113027,109 @@ function registerHandlers() {
     await supabase_default.from("make_orders").update({ pdf_urls: remaining }).eq("id", orderId);
     return { success: true };
   });
-  import_electron11.ipcMain.handle("make-download-pdf", async (_e, { url, fileName }) => {
+  import_electron12.ipcMain.handle("make-upload-item-pdf", async (_e, { orderId, itemId, filePath }) => {
+    let filesToUpload = [];
+    if (filePath) {
+      filesToUpload = [filePath];
+    } else {
+      const win = import_electron12.BrowserWindow.getFocusedWindow();
+      if (!win) return { error: "No window" };
+      const result = await import_electron12.dialog.showOpenDialog(win, {
+        title: "Select Technical Drawing / Blueprint",
+        filters: [
+          { name: "Drawings & Documents", extensions: ["pdf", "png", "jpg", "jpeg", "webp", "dwg"] },
+          { name: "All Files", extensions: ["*"] }
+        ],
+        properties: ["openFile", "multiSelections"]
+      });
+      if (result.canceled || result.filePaths.length === 0) return { canceled: true };
+      filesToUpload = result.filePaths;
+    }
+    const uploaded = [];
+    const nasStorageUrl = getNasStorageUrl();
+    for (const p of filesToUpload) {
+      const fileName = import_path10.default.basename(p);
+      const fileBuffer = import_fs10.default.readFileSync(p);
+      const ext = import_path10.default.extname(p).toLowerCase();
+      const mimeType = ext === ".pdf" ? "application/pdf" : ext === ".png" ? "image/png" : ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" : ext === ".webp" ? "image/webp" : "application/octet-stream";
+      const storagePath = `${orderId}/items/${itemId}/${Date.now()}_${fileName}`;
+      if (nasStorageUrl) {
+        const formData = new FormData();
+        formData.append("file", new Blob([new Uint8Array(fileBuffer)], { type: mimeType }), import_path10.default.basename(storagePath));
+        const cfHeaders = nasStorageUrl.startsWith("https://") ? getCfAccessHeaders() : {};
+        const response = await fetch(`${nasStorageUrl.replace(/\/$/, "")}/upload`, {
+          method: "POST",
+          body: formData,
+          headers: {
+            "x-subfolder": `make-order-files/${orderId}/items/${itemId}`,
+            ...cfHeaders
+          }
+        });
+        const data2 = await response.json();
+        if (!data2.success) return { error: data2.error || "Failed to upload technical drawing to NAS" };
+        uploaded.push(`make-order-files/${storagePath}`);
+      } else {
+        const { error: uploadError } = await supabase_default.storage.from("make-order-files").upload(storagePath, fileBuffer, { contentType: mimeType, upsert: false });
+        if (uploadError) return { error: uploadError.message };
+        uploaded.push(storagePath);
+      }
+    }
+    const { data: item } = await supabase_default.from("make_order_items").select("pdf_urls, technical_drawing_url").eq("id", itemId).maybeSingle();
+    const existing = Array.isArray(item?.pdf_urls) ? item.pdf_urls : [];
+    const combined = [...existing, ...uploaded];
+    const latestUrl = uploaded[uploaded.length - 1];
+    await supabase_default.from("make_order_items").update({
+      pdf_urls: combined,
+      technical_drawing_url: latestUrl
+    }).eq("id", itemId);
+    return { success: true, paths: uploaded, allPaths: combined };
+  });
+  import_electron12.ipcMain.handle("make-delete-item-pdf", async (_e, { itemId, storagePath }) => {
+    const nasStorageUrl = getNasStorageUrl();
+    if (storagePath.startsWith("make-order-files/")) {
+      if (nasStorageUrl) {
+        try {
+          const cfHeaders = nasStorageUrl.startsWith("https://") ? getCfAccessHeaders() : {};
+          await fetch(`${nasStorageUrl.replace(/\/$/, "")}/delete`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...cfHeaders },
+            body: JSON.stringify({ filePath: storagePath })
+          });
+        } catch (err) {
+          console.error("Failed to delete file from NAS:", err);
+        }
+      }
+    } else {
+      await supabase_default.storage.from("make-order-files").remove([storagePath]);
+    }
+    const { data: item } = await supabase_default.from("make_order_items").select("pdf_urls, technical_drawing_url").eq("id", itemId).maybeSingle();
+    const existing = Array.isArray(item?.pdf_urls) ? item.pdf_urls : [];
+    const remaining = existing.filter((p) => p !== storagePath);
+    const newTechUrl = item?.technical_drawing_url === storagePath ? remaining.length > 0 ? remaining[remaining.length - 1] : null : item?.technical_drawing_url;
+    await supabase_default.from("make_order_items").update({
+      pdf_urls: remaining,
+      technical_drawing_url: newTechUrl
+    }).eq("id", itemId);
+    return { success: true };
+  });
+  import_electron12.ipcMain.handle("make-download-pdf", async (_e, { url, fileName }) => {
     try {
       const https2 = await import("https");
       const http3 = await import("http");
-      const tmpPath = import_path9.default.join(import_electron11.app.getPath("temp"), fileName);
+      const tmpPath = import_path10.default.join(import_electron12.app.getPath("temp"), fileName);
+      const nasStorageUrl = getNasStorageUrl();
+      const cfHeaders = nasStorageUrl && url.startsWith(nasStorageUrl) ? getCfAccessHeaders() : {};
       await new Promise((resolve, reject) => {
-        const file = import_fs9.default.createWriteStream(tmpPath);
+        const file = import_fs10.default.createWriteStream(tmpPath);
         const protocol = url.startsWith("https") ? https2 : http3;
-        protocol.get(url, (res) => {
+        const parsedUrl = new URL(url);
+        const options = {
+          hostname: parsedUrl.hostname,
+          port: parsedUrl.port || (url.startsWith("https") ? 443 : 80),
+          path: parsedUrl.pathname + parsedUrl.search,
+          headers: { ...cfHeaders }
+        };
+        protocol.get(options, (res) => {
           res.pipe(file);
           file.on("finish", () => {
             file.close();
@@ -112651,11 +113144,11 @@ function registerHandlers() {
       return { error: e2.message };
     }
   });
-  import_electron11.ipcMain.handle("make-get-order-parts", async (_e, orderId) => {
+  import_electron12.ipcMain.handle("make-get-order-parts", async (_e, orderId) => {
     const { data: data2 } = await supabase_default.from("make_order_parts").select("*").eq("order_id", orderId).order("sort_order").order("id");
     return decryptRows(data2 || []);
   });
-  import_electron11.ipcMain.handle("make-upsert-part", async (_e, part) => {
+  import_electron12.ipcMain.handle("make-upsert-part", async (_e, part) => {
     if (part.id) {
       const { data: data2, error } = await supabase_default.from("make_order_parts").update({ part_name: part.part_name, length: part.length, width: part.width, height: part.height, notes: part.notes, sort_order: part.sort_order }).eq("id", part.id).select().maybeSingle();
       if (error) return { error: error.message };
@@ -112666,13 +113159,13 @@ function registerHandlers() {
       return decryptObject(data2);
     }
   });
-  import_electron11.ipcMain.handle("make-delete-part", async (_e, partId) => {
+  import_electron12.ipcMain.handle("make-delete-part", async (_e, partId) => {
     const { error } = await supabase_default.from("make_order_parts").delete().eq("id", partId);
     return error ? { error: error.message } : { success: true };
   });
   const ALTERABLE_BY_DESIGNER = ["Placed", "Awaiting Pricing", "Pricing Done"];
   const ALTERABLE_FIELDS = ["furniture_name", "description", "quantity", "priority", "delivery_date"];
-  import_electron11.ipcMain.handle("make-alter-order", async (_e, {
+  import_electron12.ipcMain.handle("make-alter-order", async (_e, {
     orderId,
     changes,
     alteredBy,
@@ -112704,11 +113197,501 @@ function registerHandlers() {
     if (updateErr) return { error: updateErr.message };
     return { success: true, changed: Object.keys(filteredChanges) };
   });
-  import_electron11.ipcMain.handle("make-get-alteration-log", async (_e, orderId) => {
+  import_electron12.ipcMain.handle("make-get-alteration-log", async (_e, orderId) => {
     const { data: data2 } = await supabase_default.from("make_order_alteration_log").select("*").eq("order_id", orderId).order("altered_at", { ascending: false });
     return decryptRows(data2 || []);
   });
-  import_electron11.ipcMain.handle("make-get-dashboard-stats", async () => {
+  import_electron12.ipcMain.handle("make-get-catalog-products", async (_e, { search: search2, activeOnly } = {}) => {
+    let q = supabase_default.from("make_products").select("*, specifications:make_product_specifications(*), sizes:make_product_sizes(*), colors:make_product_colors(*), images:make_product_images(*)").order("created_at", { ascending: false });
+    if (activeOnly) q = q.eq("is_active", true);
+    if (search2) q = q.or(`product_name.ilike.%${search2}%,product_code.ilike.%${search2}%`);
+    const { data: data2, error } = await q;
+    if (error) throw error;
+    const products = decryptRows(data2 || []);
+    try {
+      const { data: orderItems } = await supabase_default.from("make_order_items").select("product_id, product_name, quantity");
+      if (orderItems && orderItems.length > 0) {
+        const countMap = {};
+        const nameCountMap = {};
+        for (const it of orderItems) {
+          const qty = Number(it.quantity) || 1;
+          if (it.product_id) countMap[it.product_id] = (countMap[it.product_id] || 0) + qty;
+          if (it.product_name) nameCountMap[it.product_name] = (nameCountMap[it.product_name] || 0) + qty;
+        }
+        for (const p of products) {
+          p.purchased_count = countMap[p.id] || nameCountMap[p.product_name] || 0;
+        }
+      }
+    } catch (e2) {
+      console.warn("[make-get-catalog-products] Could not aggregate order counts:", e2);
+    }
+    return products;
+  });
+  import_electron12.ipcMain.handle("make-save-catalog-product", async (_e, product) => {
+    if (product.id) {
+      const { data: data2, error } = await supabase_default.from("make_products").update({
+        product_code: product.product_code,
+        product_name: product.product_name,
+        description: product.description,
+        main_image: product.main_image,
+        is_active: product.is_active !== void 0 ? product.is_active : true,
+        updated_at: (/* @__PURE__ */ new Date()).toISOString()
+      }).eq("id", product.id).select().single();
+      if (error) throw error;
+      return data2;
+    } else {
+      const { data: data2, error } = await supabase_default.from("make_products").insert({
+        product_code: product.product_code,
+        product_name: product.product_name,
+        description: product.description,
+        main_image: product.main_image,
+        is_active: product.is_active !== void 0 ? product.is_active : true,
+        created_by: product.created_by || "Admin"
+      }).select().single();
+      if (error) throw error;
+      return data2;
+    }
+  });
+  import_electron12.ipcMain.handle("make-delete-catalog-product", async (_e, id) => {
+    const { error } = await supabase_default.from("make_products").delete().eq("id", id);
+    if (error) throw error;
+    return { success: true };
+  });
+  import_electron12.ipcMain.handle("make-save-spec", async (_e, spec) => {
+    if (spec.id) {
+      const { data: data2, error } = await supabase_default.from("make_product_specifications").update({
+        spec_code: spec.spec_code,
+        spec_name: spec.spec_name,
+        spec_details: spec.spec_details,
+        is_active: spec.is_active !== void 0 ? spec.is_active : true
+      }).eq("id", spec.id).select().single();
+      if (error) throw error;
+      return data2;
+    } else {
+      const { data: data2, error } = await supabase_default.from("make_product_specifications").insert({
+        product_id: spec.product_id,
+        spec_code: spec.spec_code,
+        spec_name: spec.spec_name,
+        spec_details: spec.spec_details,
+        is_active: spec.is_active !== void 0 ? spec.is_active : true
+      }).select().single();
+      if (error) throw error;
+      return data2;
+    }
+  });
+  import_electron12.ipcMain.handle("make-delete-spec", async (_e, id) => {
+    const { error } = await supabase_default.from("make_product_specifications").delete().eq("id", id);
+    if (error) throw error;
+    return { success: true };
+  });
+  import_electron12.ipcMain.handle("make-save-size", async (_e, size) => {
+    const payload = {
+      product_id: size.product_id,
+      spec_id: size.spec_id || null,
+      size_label: size.size_label || null,
+      length: size.length ? parseFloat(size.length) : null,
+      width: size.width ? parseFloat(size.width) : null,
+      height: size.height ? parseFloat(size.height) : null,
+      diameter: size.diameter ? parseFloat(size.diameter) : null,
+      unit: size.unit || "mm",
+      is_active: size.is_active !== void 0 ? size.is_active : true
+    };
+    if (size.id) {
+      const { data: data2, error } = await supabase_default.from("make_product_sizes").update(payload).eq("id", size.id).select().single();
+      if (error) throw error;
+      return data2;
+    } else {
+      const { data: data2, error } = await supabase_default.from("make_product_sizes").insert(payload).select().single();
+      if (error) throw error;
+      return data2;
+    }
+  });
+  import_electron12.ipcMain.handle("make-delete-size", async (_e, id) => {
+    const { error } = await supabase_default.from("make_product_sizes").delete().eq("id", id);
+    if (error) throw error;
+    return { success: true };
+  });
+  import_electron12.ipcMain.handle("make-save-color", async (_e, color) => {
+    const payload = {
+      product_id: color.product_id,
+      spec_id: color.spec_id || null,
+      color_name: color.color_name,
+      color_code: color.color_code || null,
+      image_url: color.image_url || null,
+      is_active: color.is_active !== void 0 ? color.is_active : true
+    };
+    if (color.id) {
+      const { data: data2, error } = await supabase_default.from("make_product_colors").update(payload).eq("id", color.id).select().single();
+      if (error) throw error;
+      return data2;
+    } else {
+      const { data: data2, error } = await supabase_default.from("make_product_colors").insert(payload).select().single();
+      if (error) throw error;
+      return data2;
+    }
+  });
+  import_electron12.ipcMain.handle("make-delete-color", async (_e, id) => {
+    const { error } = await supabase_default.from("make_product_colors").delete().eq("id", id);
+    if (error) throw error;
+    return { success: true };
+  });
+  import_electron12.ipcMain.handle("make-get-product-purchase-history", async (_e, productId) => {
+    try {
+      const { data: prod } = await supabase_default.from("make_products").select("id, product_name, product_code").eq("id", productId).single();
+      if (!prod) return { totalQuantity: 0, orderCount: 0, totalRevenue: 0, history: [] };
+      const { data: items, error } = await supabase_default.from("make_order_items").select(`
+                    *,
+                    order:make_orders(
+                        id, order_number, customer_name, customer_phone, delivery_address, 
+                        location_landmark, receiver_name, receiver_phone, status, 
+                        approval_status, current_version, salesperson_name, designer_name,
+                        created_at, delivery_date, cost_price, sale_price
+                    )
+                `).or(`product_id.eq.${productId},product_name.eq.${prod.product_name}`).order("created_at", { ascending: false });
+      if (error) {
+        console.error("[make-get-product-purchase-history] Error:", error);
+        return { totalQuantity: 0, orderCount: 0, totalRevenue: 0, history: [] };
+      }
+      const safeItems = decryptRows(items || []);
+      let totalQuantity = 0;
+      let totalRevenue = 0;
+      const distinctOrderIds = /* @__PURE__ */ new Set();
+      const history = safeItems.map((item) => {
+        const qty = Number(item.quantity) || 1;
+        totalQuantity += qty;
+        if (item.order?.id) distinctOrderIds.add(item.order.id);
+        const itemPrice = Number(item.item_sale_price) || (item.order?.sale_price ? Number(item.order.sale_price) / (Number(item.order.quantity) || 1) : 0);
+        totalRevenue += itemPrice * qty;
+        return {
+          id: item.id,
+          order_id: item.order_id,
+          order_number: item.order?.order_number || `#${item.order_id}`,
+          customer_name: item.order?.customer_name || "\u2014",
+          customer_phone: item.order?.customer_phone || "\u2014",
+          location_landmark: item.order?.location_landmark || "\u2014",
+          delivery_address: item.order?.delivery_address || "\u2014",
+          salesperson_name: item.order?.salesperson_name || "Direct / Internal",
+          designer_name: item.order?.designer_name || "\u2014",
+          status: item.order?.status || "Placed",
+          approval_status: item.order?.approval_status || "sales_approved",
+          created_at: item.created_at || item.order?.created_at,
+          delivery_date: item.order?.delivery_date,
+          spec_name: item.spec_name || "Standard Spec",
+          size_label: item.size_label || "Standard Dimensions",
+          color_name: item.color_name || "Standard Color",
+          quantity: qty,
+          item_cost_price: Number(item.item_cost_price) || 0,
+          item_sale_price: itemPrice > 0 ? itemPrice : null,
+          total_sale_price: itemPrice > 0 ? itemPrice * qty : null,
+          salesperson_note: item.salesperson_note || ""
+        };
+      });
+      return {
+        productId,
+        productName: prod.product_name,
+        productCode: prod.product_code,
+        totalQuantity,
+        orderCount: distinctOrderIds.size,
+        totalRevenue,
+        history
+      };
+    } catch (err) {
+      console.error("[make-get-product-purchase-history] Catch:", err);
+      return { totalQuantity: 0, orderCount: 0, totalRevenue: 0, history: [] };
+    }
+  });
+  import_electron12.ipcMain.handle("make-get-order-items", async (_e, orderId) => {
+    const { data: data2, error } = await supabase_default.from("make_order_items").select("*").eq("order_id", orderId).order("id");
+    if (error) throw error;
+    const decrypted = decryptRows(data2 || []);
+    const nasStorageUrl = getNasStorageUrl();
+    const itemsWithDrawings = await Promise.all(decrypted.map(async (item) => {
+      const rawPaths = Array.isArray(item.pdf_urls) ? item.pdf_urls : [];
+      if (item.technical_drawing_url && !rawPaths.includes(item.technical_drawing_url)) {
+        rawPaths.unshift(item.technical_drawing_url);
+      }
+      const drawings = await Promise.all(rawPaths.map(async (p) => {
+        if (p.startsWith("http://") || p.startsWith("https://")) {
+          return { path: p, name: import_path10.default.basename(p).replace(/^\d+_/, ""), url: p };
+        }
+        if (p.startsWith("make-order-files/")) {
+          const url = nasStorageUrl ? `${nasStorageUrl.replace(/\/$/, "")}/files/${p}` : "";
+          return { path: p, name: import_path10.default.basename(p).replace(/^\d+_/, ""), url };
+        } else {
+          const { data: sData } = await supabase_default.storage.from("make-order-files").createSignedUrl(p, 3600);
+          return { path: p, name: import_path10.default.basename(p).replace(/^\d+_/, ""), url: sData?.signedUrl || "" };
+        }
+      }));
+      return {
+        ...item,
+        drawings: drawings.filter((d) => d.url)
+      };
+    }));
+    return itemsWithDrawings;
+  });
+  import_electron12.ipcMain.handle("make-designer-save-specs-and-pricing", async (_e, {
+    orderId,
+    costPrice,
+    salePrice,
+    items,
+    updatedBy,
+    userRole,
+    modificationReason
+  }) => {
+    const { data: current, error: fetchErr } = await supabase_default.from("make_orders").select("*").eq("id", orderId).single();
+    if (fetchErr || !current) return { error: "Order not found" };
+    let calcCostPrice = 0;
+    let calcSalePrice = 0;
+    let hasItemCost = false;
+    let hasItemSale = false;
+    if (Array.isArray(items) && items.length > 0) {
+      for (const item of items) {
+        const itemQty = Number(item.quantity) || 1;
+        const itemCost = Number(item.item_cost_price) || 0;
+        calcCostPrice += itemCost * itemQty;
+        if (itemCost > 0) hasItemCost = true;
+        const hasSale = item.item_sale_price !== void 0 && item.item_sale_price !== null && item.item_sale_price !== "";
+        if (hasSale) {
+          calcSalePrice += (Number(item.item_sale_price) || 0) * itemQty;
+          hasItemSale = true;
+        }
+        if (item.id) {
+          await supabase_default.from("make_order_items").update({
+            quantity: itemQty,
+            item_cost_price: itemCost,
+            item_sale_price: hasSale ? Number(item.item_sale_price) : null,
+            spec_name: item.spec_name || "",
+            size_label: item.size_label || "",
+            color_name: item.color_name || "",
+            salesperson_note: item.salesperson_note || null,
+            designer_notes: item.designer_notes || null,
+            technical_drawing_url: item.technical_drawing_url || null
+          }).eq("id", item.id);
+        }
+      }
+    }
+    const finalCostPrice = hasItemCost ? calcCostPrice : Number(costPrice) || 0;
+    const finalSalePrice = hasItemSale ? calcSalePrice : salePrice ? Number(salePrice) : null;
+    if (finalCostPrice <= 0) {
+      return { error: "Cost price is required for each product and total must be greater than 0." };
+    }
+    const isReModification = current.approved_version !== null && (current.approval_status === "sales_approved" || current.status === "Placed");
+    const nextVersion = isReModification ? (current.current_version || 1) + 1 : current.current_version || 1;
+    if (isReModification) {
+      const { data: currentItems } = await supabase_default.from("make_order_items").select("*").eq("order_id", orderId);
+      const snapshot = {
+        order: current,
+        items: currentItems || []
+      };
+      await supabase_default.from("make_order_versions").insert({
+        order_id: orderId,
+        version_number: current.current_version || 1,
+        snapshot,
+        created_by: updatedBy,
+        user_role: userRole || "Designer",
+        change_reason: modificationReason || "Designer modified individual product specifications/pricing"
+      });
+      await supabase_default.from("make_order_alteration_log").insert({
+        order_id: orderId,
+        altered_by: updatedBy,
+        user_role: userRole || "Designer",
+        field_name: "pricing_and_specs",
+        old_value: `v${current.current_version}: Cost \u09F3${current.cost_price || 0}, Sale \u09F3${current.sale_price || 0}`,
+        new_value: `v${nextVersion}: Cost \u09F3${finalCostPrice}, Sale \u09F3${finalSalePrice || 0}`,
+        reason: modificationReason || "Designer adjusted individual product specifications/pricing"
+      });
+    }
+    const { error: updErr } = await supabase_default.from("make_orders").update({
+      cost_price: finalCostPrice,
+      sale_price: finalSalePrice,
+      current_version: nextVersion,
+      approved_version: isReModification ? null : current.approved_version,
+      approval_status: isReModification ? "modification_pending_approval" : "awaiting_sales_approval",
+      status: isReModification ? "Modification Pending Approval" : "Awaiting Salesperson Approval",
+      rejection_reason: null,
+      updated_at: (/* @__PURE__ */ new Date()).toISOString()
+    }).eq("id", orderId);
+    if (updErr) throw updErr;
+    await supabase_default.from("make_order_updates").insert({
+      order_id: orderId,
+      status: isReModification ? "Modification Pending Approval" : "Awaiting Salesperson Approval",
+      note: `Cost price set to \u09F3${finalCostPrice.toLocaleString()}${finalSalePrice ? ` | Sale price: \u09F3${finalSalePrice.toLocaleString()}` : ""}${isReModification ? ` (v${nextVersion} requires re-approval)` : ""}`,
+      updated_by: updatedBy
+    });
+    if (current.salesman_id) {
+      await supabase_default.from("notifications").insert({
+        title: isReModification ? "Order Modified \u2014 Re-approval Required" : "Order Ready for Approval",
+        message: `Order #${current.order_number || current.id} (${current.furniture_name || "Custom Order"}) requires your review and approval.`,
+        sender_id: null,
+        recipient_id: current.salesman_id,
+        action_path: "/make/track",
+        action_label: "Review Order"
+      });
+    }
+    return { success: true, version: nextVersion, totalCostPrice: finalCostPrice, totalSalePrice: finalSalePrice };
+  });
+  import_electron12.ipcMain.handle("make-get-order-versions", async (_e, orderId) => {
+    const { data: data2, error } = await supabase_default.from("make_order_versions").select("*").eq("order_id", orderId).order("version_number", { ascending: false });
+    if (error) throw error;
+    return decryptRows(data2 || []);
+  });
+  import_electron12.ipcMain.handle("make-get-version-diff", async (_e, { orderId, fromVersion, toVersion }) => {
+    const { data: vList, error } = await supabase_default.from("make_order_versions").select("*").eq("order_id", orderId).in("version_number", [fromVersion, toVersion]);
+    if (error) throw error;
+    const fromSnap = vList?.find((v) => v.version_number === fromVersion)?.snapshot || null;
+    let toSnap = vList?.find((v) => v.version_number === toVersion)?.snapshot || null;
+    if (!toSnap) {
+      const { data: curOrder } = await supabase_default.from("make_orders").select("*").eq("id", orderId).single();
+      const { data: curItems } = await supabase_default.from("make_order_items").select("*").eq("order_id", orderId);
+      toSnap = { order: curOrder, items: curItems || [] };
+    }
+    return { from: fromSnap, to: toSnap };
+  });
+  import_electron12.ipcMain.handle("make-update-production-stage", async (_e, {
+    orderId,
+    stage,
+    note,
+    photoPath,
+    photoBase64,
+    photoUrl,
+    updatedBy,
+    userRole,
+    userId
+  }) => {
+    try {
+      let finalPhotoUrl = photoUrl || null;
+      if (photoPath && import_fs10.default.existsSync(photoPath)) {
+        const nasStorageUrl = getNasStorageUrl();
+        const fileName = import_path10.default.basename(photoPath);
+        const fileBuffer = import_fs10.default.readFileSync(photoPath);
+        const ext = import_path10.default.extname(photoPath).toLowerCase();
+        const mimeType = ext === ".png" ? "image/png" : ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" : ext === ".webp" ? "image/webp" : "application/octet-stream";
+        const storagePath = `stage-updates/${orderId}/${Date.now()}_${fileName}`;
+        if (nasStorageUrl) {
+          const formData = new FormData();
+          formData.append("file", new Blob([new Uint8Array(fileBuffer)], { type: mimeType }), import_path10.default.basename(storagePath));
+          const cfHeaders = nasStorageUrl.startsWith("https://") ? getCfAccessHeaders() : {};
+          const response = await fetch(`${nasStorageUrl.replace(/\/$/, "")}/upload`, {
+            method: "POST",
+            body: formData,
+            headers: {
+              "x-subfolder": `make-order-files/${orderId}/stages`,
+              ...cfHeaders
+            }
+          });
+          const data2 = await response.json();
+          if (data2.success && data2.file_url) {
+            finalPhotoUrl = data2.file_url;
+          } else if (data2.success && data2.url) {
+            finalPhotoUrl = data2.url;
+          } else {
+            finalPhotoUrl = `${nasStorageUrl.replace(/\/$/, "")}/files/${import_path10.default.basename(storagePath)}`;
+          }
+        } else {
+          const { error: uploadErr } = await supabase_default.storage.from("make-order-files").upload(storagePath, fileBuffer, { contentType: mimeType, upsert: false });
+          if (!uploadErr) {
+            const { data: publicUrlData } = supabase_default.storage.from("make-order-files").getPublicUrl(storagePath);
+            finalPhotoUrl = publicUrlData?.publicUrl || storagePath;
+          }
+        }
+      } else if (!finalPhotoUrl && photoBase64) {
+        try {
+          const matches = photoBase64.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+          if (matches && matches.length === 3) {
+            const mimeType = matches[1];
+            const ext = mimeType.split("/")[1] || "jpg";
+            const fileBuffer = Buffer.from(matches[2], "base64");
+            const fileName = `stage_${Date.now()}.${ext}`;
+            const storagePath = `stage-updates/${orderId}/${Date.now()}_${fileName}`;
+            const nasStorageUrl = getNasStorageUrl();
+            if (nasStorageUrl) {
+              const formData = new FormData();
+              formData.append("file", new Blob([new Uint8Array(fileBuffer)], { type: mimeType }), import_path10.default.basename(storagePath));
+              const cfHeaders = nasStorageUrl.startsWith("https://") ? getCfAccessHeaders() : {};
+              const response = await fetch(`${nasStorageUrl.replace(/\/$/, "")}/upload`, {
+                method: "POST",
+                body: formData,
+                headers: {
+                  "x-subfolder": `make-order-files/${orderId}/stages`,
+                  ...cfHeaders
+                }
+              });
+              const data2 = await response.json();
+              if (data2.success && data2.file_url) {
+                finalPhotoUrl = data2.file_url;
+              } else if (data2.success && data2.url) {
+                finalPhotoUrl = data2.url;
+              } else {
+                finalPhotoUrl = `${nasStorageUrl.replace(/\/$/, "")}/files/${import_path10.default.basename(storagePath)}`;
+              }
+            } else {
+              const { error: uploadErr } = await supabase_default.storage.from("make-order-files").upload(storagePath, fileBuffer, { contentType: mimeType, upsert: false });
+              if (!uploadErr) {
+                const { data: publicUrlData } = supabase_default.storage.from("make-order-files").getPublicUrl(storagePath);
+                finalPhotoUrl = publicUrlData?.publicUrl || storagePath;
+              }
+            }
+          }
+        } catch (b64Err) {
+          console.error("[make-update-production-stage] Base64 upload failed:", b64Err);
+        }
+      }
+      const { data: curOrder } = await supabase_default.from("make_orders").select("*").eq("id", orderId).maybeSingle();
+      const roleLabel = userRole || "Factory Manager";
+      const actorName = updatedBy || "Factory Manager";
+      const updateRow = {
+        order_id: orderId,
+        status: stage,
+        stage,
+        note: note || "",
+        photo_url: finalPhotoUrl,
+        photo_urls: finalPhotoUrl ? [finalPhotoUrl] : [],
+        updated_by: `${actorName} (${roleLabel})`
+      };
+      await supabase_default.from("make_order_updates").insert(updateRow);
+      const orderUpdates = {
+        status: stage,
+        updated_at: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      if (finalPhotoUrl) {
+        orderUpdates.current_stage_photo = finalPhotoUrl;
+      }
+      if (userId) {
+        orderUpdates.factory_manager_id = userId;
+      }
+      orderUpdates.factory_manager_name = actorName;
+      const { error: updErr } = await supabase_default.from("make_orders").update(orderUpdates).eq("id", orderId);
+      if (updErr) throw updErr;
+      const furnitureTitle = curOrder?.furniture_name || `Order #${orderId}`;
+      const notifTitle = `Stage Update: ${furnitureTitle} \u2192 ${stage}`;
+      const notifMsg = `${actorName} advanced order #${curOrder?.order_number || orderId} to "${stage}".${note ? ` Note: ${note}` : ""}${finalPhotoUrl ? " [Photo Attached]" : ""}`;
+      const recipients = [];
+      if (curOrder?.salesman_id) recipients.push(curOrder.salesman_id);
+      const notifRows = (recipients.length > 0 ? recipients : [null]).map((rid) => ({
+        title: notifTitle,
+        message: notifMsg,
+        recipient_id: rid,
+        sender_id: userId || null,
+        action_path: "/make/track",
+        action_label: "View Order",
+        metadata: {
+          order_id: orderId,
+          stage,
+          photo_url: finalPhotoUrl
+        }
+      }));
+      await supabase_default.from("notifications").insert(notifRows);
+      return {
+        success: true,
+        stage,
+        photo_url: finalPhotoUrl
+      };
+    } catch (err) {
+      console.error("[make-update-production-stage] Error:", err);
+      return { success: false, error: err.message };
+    }
+  });
+  import_electron12.ipcMain.handle("make-get-dashboard-stats", async () => {
     const { data: allOrders } = await supabase_default.from("make_orders").select("status, priority, created_at, furniture_name, designer_name, id").order("created_at", { ascending: false });
     const orders = allOrders || [];
     const counts = {};
@@ -112726,7 +113709,7 @@ function registerHandlers() {
       pendingDelivery: orders.filter((o) => o.status === "Ready for Dispatch").sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
     };
   });
-  import_electron11.ipcMain.handle("check-license-cloud", async () => {
+  import_electron12.ipcMain.handle("check-license-cloud", async () => {
     const localResult = isLicensed();
     if (localResult.valid) return { valid: true, source: "local", machineId: localResult.machineId };
     const { data: data2 } = await supabase_default.from("app_license").select("license_key").limit(1).maybeSingle();
@@ -112738,7 +113721,7 @@ function registerHandlers() {
     }
     return { valid: isValid, source: "cloud", machineId: localResult.machineId };
   });
-  import_electron11.ipcMain.handle("activate-license-cloud", async (_e, { key }) => {
+  import_electron12.ipcMain.handle("activate-license-cloud", async (_e, { key }) => {
     const machineId = getMachineId2();
     const isValid = validateLicense(machineId, key);
     if (!isValid) return { success: false, error: "Invalid license key for this machine" };
@@ -112747,19 +113730,19 @@ function registerHandlers() {
       // enforce single row
       license_key: key.replace(/[\s-]/g, "").toUpperCase(),
       activated_by: machineId,
-      app_version: import_electron11.app.getVersion(),
+      app_version: import_electron12.app.getVersion(),
       activated_at: (/* @__PURE__ */ new Date()).toISOString()
     }, { onConflict: "id" });
     if (error) return { success: false, error: error.message };
     saveLicense(key);
     return { success: true };
   });
-  import_electron11.ipcMain.handle("hrm-get-employees", async () => {
+  import_electron12.ipcMain.handle("hrm-get-employees", async () => {
     const { data: data2, error } = await supabase_default.from("hrm_employees").select("*").order("name");
     if (error) throw error;
     return decryptRows(data2 || []);
   });
-  import_electron11.ipcMain.handle("hrm-upsert-employee", async (_e, emp) => {
+  import_electron12.ipcMain.handle("hrm-upsert-employee", async (_e, emp) => {
     if (emp.id) {
       const { error } = await supabase_default.from("hrm_employees").update(emp).eq("id", emp.id);
       if (error) throw error;
@@ -112770,24 +113753,24 @@ function registerHandlers() {
       return { success: true, id: data2.id };
     }
   });
-  import_electron11.ipcMain.handle("get-bill-exchange-count", async (_e, billId) => {
+  import_electron12.ipcMain.handle("get-bill-exchange-count", async (_e, billId) => {
     const { count, error } = await supabase_default.from("exchange_orders").select("*", { count: "exact", head: true }).eq("original_bill_id", billId);
     if (error) throw error;
     return count || 0;
   });
-  import_electron11.ipcMain.handle("hrm-delete-employee", async (_e, id) => {
+  import_electron12.ipcMain.handle("hrm-delete-employee", async (_e, id) => {
     const { error } = await supabase_default.from("hrm_employees").delete().eq("id", id);
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("hrm-get-attendance", async (_e, { date }) => {
+  import_electron12.ipcMain.handle("hrm-get-attendance", async (_e, { date }) => {
     let q = supabase_default.from("hrm_attendance").select("*, employee:employee_id(name)");
     if (date) q = q.eq("date", date);
     const { data: data2, error } = await q.order("date", { ascending: false });
     if (error) throw error;
     return decryptRows(data2 || []);
   });
-  import_electron11.ipcMain.handle("hrm-mark-attendance", async (_e, att) => {
+  import_electron12.ipcMain.handle("hrm-mark-attendance", async (_e, att) => {
     const { error } = await supabase_default.from("hrm_attendance").upsert({
       employee_id: att.employee_id,
       date: att.date,
@@ -112798,22 +113781,22 @@ function registerHandlers() {
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("hrm-get-leaves", async () => {
+  import_electron12.ipcMain.handle("hrm-get-leaves", async () => {
     const { data: data2, error } = await supabase_default.from("hrm_leaves").select("*, employee:employee_id(name)").order("created_at", { ascending: false });
     if (error) throw error;
     return decryptRows(data2 || []);
   });
-  import_electron11.ipcMain.handle("hrm-request-leave", async (_e, leave) => {
+  import_electron12.ipcMain.handle("hrm-request-leave", async (_e, leave) => {
     const { data: data2, error } = await supabase_default.from("hrm_leaves").insert(leave).select("id").single();
     if (error) throw error;
     return { success: true, id: data2.id };
   });
-  import_electron11.ipcMain.handle("hrm-update-leave-status", async (_e, { id, status }) => {
+  import_electron12.ipcMain.handle("hrm-update-leave-status", async (_e, { id, status }) => {
     const { error } = await supabase_default.from("hrm_leaves").update({ status }).eq("id", id);
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("hrm-get-payroll", async (_e, { month, year }) => {
+  import_electron12.ipcMain.handle("hrm-get-payroll", async (_e, { month, year }) => {
     let q = supabase_default.from("hrm_payroll").select("*, employee:employee_id(name)");
     if (month) q = q.eq("month", month);
     if (year) q = q.eq("year", year);
@@ -112821,7 +113804,7 @@ function registerHandlers() {
     if (error) throw error;
     return decryptRows(data2 || []);
   });
-  import_electron11.ipcMain.handle("hrm-generate-payroll", async (_e, pr) => {
+  import_electron12.ipcMain.handle("hrm-generate-payroll", async (_e, pr) => {
     const net = (parseFloat(pr.basic_salary) || 0) + (parseFloat(pr.bonus) || 0) - (parseFloat(pr.deductions) || 0);
     const { error } = await supabase_default.from("hrm_payroll").upsert({
       employee_id: pr.employee_id,
@@ -112837,19 +113820,46 @@ function registerHandlers() {
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("hrm-mark-payroll-paid", async (_e, id) => {
+  import_electron12.ipcMain.handle("hrm-mark-payroll-paid", async (_e, id) => {
     const { error } = await supabase_default.from("hrm_payroll").update({ status: "Paid", payment_date: (/* @__PURE__ */ new Date()).toISOString().split("T")[0] }).eq("id", id);
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("crm-get-customers", async () => {
+  import_electron12.ipcMain.handle("hrm-get-holidays", async () => {
+    const { data: data2, error } = await supabase_default.from("hrm_holidays").select("*").order("holiday_date", { ascending: true });
+    if (error) throw error;
+    return data2 || [];
+  });
+  import_electron12.ipcMain.handle("hrm-upsert-holiday", async (_e, item) => {
+    const payload = {
+      holiday_date: item.holiday_date,
+      holiday_name: item.holiday_name,
+      holiday_type: item.holiday_type || "Public",
+      updated_at: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    if (item.id) {
+      const { error } = await supabase_default.from("hrm_holidays").update(payload).eq("id", item.id);
+      if (error) throw error;
+      return { success: true };
+    } else {
+      const { error } = await supabase_default.from("hrm_holidays").upsert(payload, { onConflict: "holiday_date" });
+      if (error) throw error;
+      return { success: true };
+    }
+  });
+  import_electron12.ipcMain.handle("hrm-delete-holiday", async (_e, id) => {
+    const { error } = await supabase_default.from("hrm_holidays").delete().eq("id", id);
+    if (error) throw error;
+    return { success: true };
+  });
+  import_electron12.ipcMain.handle("crm-get-customers", async () => {
     const cached = get2("billing_customers");
     if (cached) return cached;
     const { data: data2, error } = await supabase_default.from("billing_customers").select("*").order("name");
     if (error) throw error;
     return decryptRows(data2 || []);
   });
-  import_electron11.ipcMain.handle("crm-upsert-customer", async (_e, cust) => {
+  import_electron12.ipcMain.handle("crm-upsert-customer", async (_e, cust) => {
     const payload = encryptObject(cust);
     if (payload.id) {
       const { error } = await supabase_default.from("billing_customers").update(payload).eq("id", payload.id);
@@ -112861,17 +113871,17 @@ function registerHandlers() {
       return { success: true, id: data2.id };
     }
   });
-  import_electron11.ipcMain.handle("crm-get-tracking-logs", async (_e, { customerId }) => {
+  import_electron12.ipcMain.handle("crm-get-tracking-logs", async (_e, { customerId }) => {
     const { data: data2, error } = await supabase_default.from("crm_tracking").select("*, user:user_id(full_name)").eq("customer_id", customerId).order("created_at", { ascending: false });
     if (error) throw error;
     return decryptRows(data2 || []);
   });
-  import_electron11.ipcMain.handle("crm-add-tracking-log", async (_e, log) => {
+  import_electron12.ipcMain.handle("crm-add-tracking-log", async (_e, log) => {
     const { data: data2, error } = await supabase_default.from("crm_tracking").insert(log).select("id").single();
     if (error) throw error;
     return { success: true, id: data2.id };
   });
-  import_electron11.ipcMain.handle("create-quotation", async (_e, payload) => {
+  import_electron12.ipcMain.handle("create-quotation", async (_e, payload) => {
     const {
       quoteDate,
       validUntil,
@@ -112935,24 +113945,24 @@ function registerHandlers() {
     }
     return { id: quot.id, quoteNumber: quot.quote_number };
   });
-  import_electron11.ipcMain.handle("get-quotations", async () => {
+  import_electron12.ipcMain.handle("get-quotations", async () => {
     const { data: data2, error } = await supabase_default.from("quotations").select("id,quote_number,quote_date,valid_until,customer_name,company_name,grand_total,status").order("created_at", { ascending: false });
     if (error) throw error;
     return decryptRows(data2 || []);
   });
-  import_electron11.ipcMain.handle("get-quotation", async (_e, id) => {
+  import_electron12.ipcMain.handle("get-quotation", async (_e, id) => {
     const { data: quot, error } = await supabase_default.from("quotations").select("*").eq("id", id).single();
     if (error) throw error;
     const { data: items } = await supabase_default.from("quotation_items").select("*").eq("quotation_id", id).order("sl_no");
     const decrypted = decryptObject(quot);
     return { ...decrypted, items: items || [] };
   });
-  import_electron11.ipcMain.handle("delete-quotation", async (_e, id) => {
+  import_electron12.ipcMain.handle("delete-quotation", async (_e, id) => {
     const { error } = await supabase_default.from("quotations").delete().eq("id", id);
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("get-customer-ledger-list", async (_e, opts) => {
+  import_electron12.ipcMain.handle("get-customer-ledger-list", async (_e, opts) => {
     const isAdmin = opts?.isSuperadmin === true;
     const seeAll = isAdmin || opts?.canSeeAllCustomers === true;
     const caller = (opts?.callerUsername || "").trim();
@@ -112978,7 +113988,7 @@ function registerHandlers() {
     if (error) throw error;
     return decryptRows(customers || []);
   });
-  import_electron11.ipcMain.handle("delete-billing-customer", async (_e, id) => {
+  import_electron12.ipcMain.handle("delete-billing-customer", async (_e, id) => {
     await supabase_default.from("bills").update({ customer_id: null }).eq("customer_id", id);
     await supabase_default.from("quotations").update({ customer_id: null }).eq("customer_id", id);
     await supabase_default.from("exchange_orders").update({ customer_id: null }).eq("customer_id", id);
@@ -112986,10 +113996,10 @@ function registerHandlers() {
     await supabase_default.from("customer_addresses").delete().eq("customer_id", id);
     const { error } = await supabase_default.from("billing_customers").delete().eq("id", id);
     if (error) throw error;
-    import_electron11.BrowserWindow.getAllWindows().forEach((win) => win.webContents.send("data-updated", "billing_customers"));
+    import_electron12.BrowserWindow.getAllWindows().forEach((win) => win.webContents.send("data-updated", "billing_customers"));
     return { success: true };
   });
-  import_electron11.ipcMain.handle("get-customer-ledger-detail", async (_e, id) => {
+  import_electron12.ipcMain.handle("get-customer-ledger-detail", async (_e, id) => {
     const { data: cust } = await supabase_default.from("billing_customers").select("*").eq("id", id).single();
     if (!cust) return null;
     const { data: addresses } = await supabase_default.from("customer_addresses").select("*").eq("customer_id", id).order("created_at", { ascending: false });
@@ -113006,17 +114016,17 @@ function registerHandlers() {
       exchanges: decryptRows(exchanges || [])
     };
   });
-  import_electron11.ipcMain.handle("add-customer-payment", async (_e, payment) => {
+  import_electron12.ipcMain.handle("add-customer-payment", async (_e, payment) => {
     const { error } = await supabase_default.from("customer_payments").insert(payment);
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("add-customer-address", async (_e, address) => {
+  import_electron12.ipcMain.handle("add-customer-address", async (_e, address) => {
     const { error } = await supabase_default.from("customer_addresses").insert(address);
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("create-exchange-order", async (_e, exchangeData) => {
+  import_electron12.ipcMain.handle("create-exchange-order", async (_e, exchangeData) => {
     const { customer_id, original_bill_id, returned_items, new_items, total_return_value, total_new_value, difference_amount } = exchangeData;
     const { data: order, error } = await supabase_default.from("exchange_orders").insert({
       customer_id,
@@ -113056,7 +114066,7 @@ function registerHandlers() {
     }
     return { success: true, exchange_number: order.exchange_number };
   });
-  import_electron11.ipcMain.handle("get-exchange-orders", async () => {
+  import_electron12.ipcMain.handle("get-exchange-orders", async () => {
     const { data: data2, error } = await supabase_default.from("exchange_orders").select("*, customer:billing_customers(name,phone), bill:bills(invoice_number)").order("created_at", { ascending: false });
     if (error) throw error;
     return (data2 || []).map((b) => ({
@@ -113066,7 +114076,7 @@ function registerHandlers() {
       original_invoice_number: decryptField(b.bill?.invoice_number) || b.bill?.invoice_number || null
     }));
   });
-  import_electron11.ipcMain.handle("get-exchange-details", async (_e, id) => {
+  import_electron12.ipcMain.handle("get-exchange-details", async (_e, id) => {
     const { data: order } = await supabase_default.from("exchange_orders").select("*, customer:billing_customers(name,phone,address), bill:bills(invoice_number, created_at)").eq("id", id).single();
     if (!order) return null;
     const { data: items } = await supabase_default.from("exchange_items").select("*").eq("exchange_id", id);
@@ -113079,7 +114089,7 @@ function registerHandlers() {
       items: items || []
     };
   });
-  import_electron11.ipcMain.handle("get-permission-levels", async () => {
+  import_electron12.ipcMain.handle("get-permission-levels", async () => {
     const { data: data2, error } = await supabase_default.from("permission_levels").select("*, approver:approver_user_id(full_name, username)").order("workflow_key", { ascending: true, nullsFirst: false }).order("workflow_step", { ascending: true, nullsFirst: false }).order("feature_name");
     if (error) throw error;
     return decryptRows(data2 || []).map((p) => ({
@@ -113087,7 +114097,7 @@ function registerHandlers() {
       approver_user_name: p.approver ? p.approver.full_name || p.approver.username : null
     }));
   });
-  import_electron11.ipcMain.handle("create-permission-level", async (_e, payload) => {
+  import_electron12.ipcMain.handle("create-permission-level", async (_e, payload) => {
     const { feature_name, feature_key, description, approver_role, approver_user_id, workflow_key, workflow_step } = payload;
     const { data: data2, error } = await supabase_default.from("permission_levels").insert({
       feature_name,
@@ -113102,57 +114112,57 @@ function registerHandlers() {
     if (error) throw error;
     return { success: true, id: data2.id };
   });
-  import_electron11.ipcMain.handle("update-permission-level", async (_e, payload) => {
+  import_electron12.ipcMain.handle("update-permission-level", async (_e, payload) => {
     const { id, ...updates } = payload;
     updates.updated_at = (/* @__PURE__ */ new Date()).toISOString();
     const { error } = await supabase_default.from("permission_levels").update(updates).eq("id", id);
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("delete-permission-level", async (_e, id) => {
+  import_electron12.ipcMain.handle("delete-permission-level", async (_e, id) => {
     const { error } = await supabase_default.from("permission_levels").delete().eq("id", id);
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("save-ai-key", (_e, key) => {
+  import_electron12.ipcMain.handle("save-ai-key", (_e, key) => {
     try {
-      const cfgPath = import_path9.default.join(import_electron11.app.getPath("userData"), "supabase-config.json");
+      const cfgPath = import_path10.default.join(import_electron12.app.getPath("userData"), "supabase-config.json");
       let cfg = {};
-      if (import_fs9.default.existsSync(cfgPath)) cfg = JSON.parse(import_fs9.default.readFileSync(cfgPath, "utf-8"));
+      if (import_fs10.default.existsSync(cfgPath)) cfg = JSON.parse(import_fs10.default.readFileSync(cfgPath, "utf-8"));
       cfg.geminiKey = key;
-      import_fs9.default.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+      import_fs10.default.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
       return { success: true };
     } catch (err) {
       return { success: false, error: err.message };
     }
   });
-  import_electron11.ipcMain.handle("get-ai-key", () => {
+  import_electron12.ipcMain.handle("get-ai-key", () => {
     try {
-      const cfgPath = import_path9.default.join(import_electron11.app.getPath("userData"), "supabase-config.json");
-      if (import_fs9.default.existsSync(cfgPath)) {
-        const cfg = JSON.parse(import_fs9.default.readFileSync(cfgPath, "utf-8"));
+      const cfgPath = import_path10.default.join(import_electron12.app.getPath("userData"), "supabase-config.json");
+      if (import_fs10.default.existsSync(cfgPath)) {
+        const cfg = JSON.parse(import_fs10.default.readFileSync(cfgPath, "utf-8"));
         return cfg.geminiKey || "";
       }
     } catch {
     }
     return "";
   });
-  import_electron11.ipcMain.handle("get-competitor-urls", async (_e, productId) => {
+  import_electron12.ipcMain.handle("get-competitor-urls", async (_e, productId) => {
     const { data: data2, error } = await supabase_default.from("product_competitor_urls").select("*").eq("product_id", productId).order("created_at", { ascending: false });
     if (error) throw error;
     return decryptRows(data2 || []);
   });
-  import_electron11.ipcMain.handle("add-competitor-url", async (_e, data2) => {
+  import_electron12.ipcMain.handle("add-competitor-url", async (_e, data2) => {
     const { error } = await supabase_default.from("product_competitor_urls").insert([data2]);
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("delete-competitor-url", async (_e, id) => {
+  import_electron12.ipcMain.handle("delete-competitor-url", async (_e, id) => {
     const { error } = await supabase_default.from("product_competitor_urls").delete().eq("id", id);
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("get-market-analysis-history", async (_e, productId) => {
+  import_electron12.ipcMain.handle("get-market-analysis-history", async (_e, productId) => {
     let q = supabase_default.from("market_analysis_history").select("*, product:products(item_name)").order("recorded_at", { ascending: false });
     if (productId) q = q.eq("product_id", productId);
     const { data: data2, error } = await q;
@@ -113162,7 +114172,7 @@ function registerHandlers() {
       product_name: row.product ? row.product.item_name : "Unknown Product"
     }));
   });
-  import_electron11.ipcMain.handle("run-auto-price-scan", async (_e, productId) => {
+  import_electron12.ipcMain.handle("run-auto-price-scan", async (_e, productId) => {
     try {
       const { data: prodData, error: prodErr } = await supabase_default.from("products").select("*").eq("id", productId).single();
       if (prodErr || !prodData) throw new Error("Could not find source product.");
@@ -113202,13 +114212,13 @@ function registerHandlers() {
       return { success: false, error: err.message };
     }
   });
-  import_electron11.ipcMain.handle("verify-bill-payment", async (_e, { paymentRef, status }) => {
+  import_electron12.ipcMain.handle("verify-bill-payment", async (_e, { paymentRef, status }) => {
     const { error } = await supabase_default.from("bills").update({ payment_status: status }).eq("payment_ref", paymentRef);
     if (error) throw error;
     return { success: true };
   });
-  import_electron11.ipcMain.handle("set-theme", (event, theme) => {
-    const win = import_electron11.BrowserWindow.fromWebContents(event.sender);
+  import_electron12.ipcMain.handle("set-theme", (event, theme) => {
+    const win = import_electron12.BrowserWindow.fromWebContents(event.sender);
     if (!win) return;
     if (process.platform === "win32" && typeof win.setTitleBarOverlay === "function") {
       try {
@@ -113221,7 +114231,7 @@ function registerHandlers() {
       }
     }
   });
-  import_electron11.ipcMain.handle("get-payment-methods", async () => {
+  import_electron12.ipcMain.handle("get-payment-methods", async () => {
     try {
       const { data: data2, error } = await supabase_default.from("payment_methods").select("*").order("name");
       if (error) {
@@ -113242,7 +114252,7 @@ function registerHandlers() {
       ];
     }
   });
-  import_electron11.ipcMain.handle("create-payment-method", async (_e, method) => {
+  import_electron12.ipcMain.handle("create-payment-method", async (_e, method) => {
     try {
       const { data: data2, error } = await supabase_default.from("payment_methods").insert({ name: method.name, provider: method.provider, type: method.type, is_active: method.is_active ?? true }).select("id").single();
       if (error) throw error;
@@ -113251,7 +114261,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron11.ipcMain.handle("delete-payment-method", async (_e, id) => {
+  import_electron12.ipcMain.handle("delete-payment-method", async (_e, id) => {
     try {
       const { error } = await supabase_default.from("payment_methods").delete().eq("id", id);
       if (error) throw error;
@@ -113260,7 +114270,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron11.ipcMain.handle("update-payment-method", async (_e, method) => {
+  import_electron12.ipcMain.handle("update-payment-method", async (_e, method) => {
     try {
       const { error } = await supabase_default.from("payment_methods").update({
         name: method.name,
@@ -113274,7 +114284,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron11.ipcMain.handle("generate-license-key", async (_e, { machineId, requestedBy }) => {
+  import_electron12.ipcMain.handle("generate-license-key", async (_e, { machineId, requestedBy }) => {
     if (!requestedBy || requestedBy !== "superadmin") {
       return { success: false, error: "Unauthorized: superadmin access required" };
     }
@@ -113289,7 +114299,7 @@ function registerHandlers() {
     const formatted = (prefix + body).match(/.{1,4}/g).join("-");
     return { success: true, key: formatted };
   });
-  import_electron11.ipcMain.handle("get-purchase-requisitions", async (_e, filters2) => {
+  import_electron12.ipcMain.handle("get-purchase-requisitions", async (_e, filters2) => {
     try {
       let query = supabase_default.from("purchase_requisitions").select("*").is("deleted_at", null).order("created_at", { ascending: false });
       if (filters2?.status) {
@@ -113341,7 +114351,7 @@ function registerHandlers() {
       return [];
     }
   });
-  import_electron11.ipcMain.handle("get-purchase-requisition-by-id", async (_e, id) => {
+  import_electron12.ipcMain.handle("get-purchase-requisition-by-id", async (_e, id) => {
     try {
       const { data: data2, error } = await supabase_default.from("purchase_requisitions").select("*").eq("id", id).single();
       if (error) throw error;
@@ -113402,12 +114412,12 @@ function registerHandlers() {
       metadata: { type: "purchase_requisition" }
     });
   }
-  import_electron11.ipcMain.handle("get-purchase-requisition-history", async (_e, requisitionId) => {
+  import_electron12.ipcMain.handle("get-purchase-requisition-history", async (_e, requisitionId) => {
     const { data: data2, error } = await supabase_default.from("purchase_requisition_status_history").select("*").eq("requisition_id", requisitionId).order("performed_at", { ascending: false });
     if (error) throw error;
     return data2 || [];
   });
-  import_electron11.ipcMain.handle("create-purchase-requisition", async (_e, input) => {
+  import_electron12.ipcMain.handle("create-purchase-requisition", async (_e, input) => {
     try {
       const userName = input?.performedByName || "desktop-user";
       const companyId = Number(input?.companyId || 1);
@@ -113488,7 +114498,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron11.ipcMain.handle("update-purchase-requisition", async (_e, id, updates) => {
+  import_electron12.ipcMain.handle("update-purchase-requisition", async (_e, id, updates) => {
     try {
       const userName = updates?.performedByName || "desktop-user";
       const { data: before2 } = await supabase_default.from("purchase_requisitions").select("*").eq("id", id).maybeSingle();
@@ -113549,7 +114559,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron11.ipcMain.handle("approve-purchase-requisition", async (_e, id, _status, notes, performedByName) => {
+  import_electron12.ipcMain.handle("approve-purchase-requisition", async (_e, id, _status, notes, performedByName) => {
     try {
       const userName = performedByName || "desktop-user";
       const approvalDate = (/* @__PURE__ */ new Date()).toISOString();
@@ -113589,7 +114599,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron11.ipcMain.handle("submit-purchase-estimates", async (_e, id, quotes, performedByName) => {
+  import_electron12.ipcMain.handle("submit-purchase-estimates", async (_e, id, quotes, performedByName) => {
     try {
       const userName = performedByName || "desktop-user";
       const db2 = supabaseAdmin || supabase_default;
@@ -113664,7 +114674,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron11.ipcMain.handle("get-purchase-requisition-quotes", async (_e, id) => {
+  import_electron12.ipcMain.handle("get-purchase-requisition-quotes", async (_e, id) => {
     const db2 = supabaseAdmin || supabase_default;
     const { data: data2, error } = await db2.from("purchase_requisition_quotes").select("*, supplier:ledgers(id,name,store_name,contact_person,contact_number), product:products(id,name)").eq("requisition_id", id).order("created_at", { ascending: true });
     if (error) throw error;
@@ -113680,12 +114690,12 @@ function registerHandlers() {
     });
     return decryptedData;
   });
-  import_electron11.ipcMain.handle("get-product-purchase-history", async (_e, productId) => {
+  import_electron12.ipcMain.handle("get-product-purchase-history", async (_e, productId) => {
     const { data: data2, error } = await supabase_default.from("purchase_bill_items").select("rate, amount, qty, purchase_bill:purchase_bills(bill_date, supplier:ledgers(name))").eq("product_id", productId).order("id", { ascending: false }).limit(5);
     if (error) throw error;
     return data2 || [];
   });
-  import_electron11.ipcMain.handle("audit-review-purchase-requisition", async (_e, id, status, notes, performedByName) => {
+  import_electron12.ipcMain.handle("audit-review-purchase-requisition", async (_e, id, status, notes, performedByName) => {
     try {
       const userName = performedByName || "desktop-user";
       const reviewedAt = (/* @__PURE__ */ new Date()).toISOString();
@@ -113722,7 +114732,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron11.ipcMain.handle("director-review-purchase-requisition", async (_e, id, status, notes, performedByName) => {
+  import_electron12.ipcMain.handle("director-review-purchase-requisition", async (_e, id, status, notes, performedByName) => {
     try {
       const userName = performedByName || "desktop-user";
       const reviewedAt = (/* @__PURE__ */ new Date()).toISOString();
@@ -113758,7 +114768,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron11.ipcMain.handle("purchase-purchase-requisition", async (_e, id, payload) => {
+  import_electron12.ipcMain.handle("purchase-purchase-requisition", async (_e, id, payload) => {
     try {
       const userName = payload?.performedByName || "desktop-user";
       const purchaseDate = (/* @__PURE__ */ new Date()).toISOString();
@@ -113828,7 +114838,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron11.ipcMain.handle("receive-purchase-requisition", async (_e, id, performedByName) => {
+  import_electron12.ipcMain.handle("receive-purchase-requisition", async (_e, id, performedByName) => {
     try {
       const userName = performedByName || "desktop-user";
       const receivedDate = (/* @__PURE__ */ new Date()).toISOString();
@@ -113857,7 +114867,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron11.ipcMain.handle("complete-purchase-requisition", async (_e, id, performedByName) => {
+  import_electron12.ipcMain.handle("complete-purchase-requisition", async (_e, id, performedByName) => {
     try {
       const userName = performedByName || "desktop-user";
       const completedDate = (/* @__PURE__ */ new Date()).toISOString();
@@ -113945,7 +114955,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron11.ipcMain.handle("delete-purchase-requisition", async (_e, id, performedByName) => {
+  import_electron12.ipcMain.handle("delete-purchase-requisition", async (_e, id, performedByName) => {
     try {
       const { data: before2 } = await supabase_default.from("purchase_requisitions").select("*").eq("id", id).maybeSingle();
       const { error } = await supabase_default.from("purchase_requisitions").update({ deleted_at: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", id).eq("status", "DRAFT");
@@ -113964,7 +114974,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron11.ipcMain.handle("get-supplier-settlements", async (_e, supplierLedgerId) => {
+  import_electron12.ipcMain.handle("get-supplier-settlements", async (_e, supplierLedgerId) => {
     let q = supabase_default.from("supplier_settlements").select("*, purchase_bill:purchase_bills(bill_number, bill_date, grand_total), supplier:ledgers(name)").is("deleted_at", null).order("settlement_date", { ascending: false });
     if (supplierLedgerId) q = q.eq("supplier_ledger_id", supplierLedgerId);
     const { data: data2, error } = await q;
@@ -113975,7 +114985,7 @@ function registerHandlers() {
       purchase_bill_number: row.purchase_bill?.bill_number || null
     }));
   });
-  import_electron11.ipcMain.handle("create-supplier-settlement", async (_e, settlement) => {
+  import_electron12.ipcMain.handle("create-supplier-settlement", async (_e, settlement) => {
     const payload = {
       supplier_ledger_id: Number(settlement.supplierLedgerId),
       purchase_bill_id: settlement.purchaseBillId ? Number(settlement.purchaseBillId) : null,
@@ -114007,12 +115017,29 @@ function registerHandlers() {
     await notifyProcurementWorkflow("Supplier settlement recorded", `Settlement posted for supplier ledger ${payload.supplier_ledger_id}.`);
     return { success: true, id: data2.id };
   });
-  import_electron11.ipcMain.handle("get-supplier-ledger-detail", async (_e, id) => {
-    const { data: supplier } = await supabase_default.from("ledgers").select("*").eq("id", id).single();
-    const { data: bills } = await supabase_default.from("purchase_bills").select("*, items:purchase_bill_items(*)").eq("supplier_ledger_id", id).order("id", { ascending: false });
-    const { data: settlements } = await supabase_default.from("supplier_settlements").select("*").eq("supplier_ledger_id", id).order("id", { ascending: false });
-    const { data: requisitions } = await supabase_default.from("purchase_requisitions").select("*").eq("supplier_ledger_id", id).order("id", { ascending: false });
-    return { supplier, bills: bills || [], settlements: settlements || [], requisitions: requisitions || [] };
+  import_electron12.ipcMain.handle("website-get-dashboard-data", async () => {
+    try {
+      const { count: billCount } = await supabase_default.from("bills").select("*", { count: "exact", head: true });
+      const { count: customerCount } = await supabase_default.from("billing_customers").select("*", { count: "exact", head: true });
+      const { count: productCount } = await supabase_default.from("products").select("*", { count: "exact", head: true });
+      const { data: recentBills } = await supabase_default.from("bills").select("id, invoice_number, grand_total, created_at").order("created_at", { ascending: false }).limit(5);
+      return {
+        stats: {
+          totalOrders: billCount || 0,
+          totalCustomers: customerCount || 0,
+          totalProducts: productCount || 0,
+          systemStatus: "ONLINE"
+        },
+        trending: recentBills || [],
+        logs: []
+      };
+    } catch (e2) {
+      return {
+        stats: { totalOrders: 0, totalCustomers: 0, totalProducts: 0, systemStatus: "DEGRADED" },
+        trending: [],
+        logs: []
+      };
+    }
   });
 }
 
@@ -114026,11 +115053,11 @@ function setupAutoUpdater() {
     console.warn("Failed to configure autoUpdater:", e2);
   }
   const broadcast = (data2) => {
-    import_electron12.BrowserWindow.getAllWindows().forEach((win) => {
+    import_electron13.BrowserWindow.getAllWindows().forEach((win) => {
       if (!win.isDestroyed()) win.webContents.send("update-status", data2);
     });
   };
-  if (import_electron12.app.isPackaged) {
+  if (import_electron13.app.isPackaged) {
     import_electron_updater2.autoUpdater.on("checking-for-update", () => broadcast({ status: "checking" }));
     import_electron_updater2.autoUpdater.on("update-not-available", () => broadcast({ status: "up-to-date" }));
     import_electron_updater2.autoUpdater.on("update-available", (info) => broadcast({ status: "available", info }));
@@ -114047,7 +115074,7 @@ function setupAutoUpdater() {
       if (!response.ok) return;
       const data2 = await response.json();
       if (data2 && data2.tag_name) {
-        const current = import_electron12.app.getVersion().replace("v", "").split(".").map(Number);
+        const current = import_electron13.app.getVersion().replace("v", "").split(".").map(Number);
         const latest = data2.tag_name.replace("v", "").split(".").map(Number);
         let isNewer = false;
         for (let i2 = 0; i2 < 3; i2++) {
@@ -114076,8 +115103,8 @@ function setupAutoUpdater() {
       console.error("Manual fallback fetch failed", err);
     }
   };
-  import_electron12.ipcMain.handle("check-for-update", async () => {
-    if (!import_electron12.app.isPackaged) {
+  import_electron13.ipcMain.handle("check-for-update", async () => {
+    if (!import_electron13.app.isPackaged) {
       return { status: "up-to-date" };
     }
     try {
@@ -114091,8 +115118,8 @@ function setupAutoUpdater() {
       return { status: "error", message: e2.message };
     }
   });
-  import_electron12.ipcMain.handle("download-update", async () => {
-    if (!import_electron12.app.isPackaged) return { status: "idle" };
+  import_electron13.ipcMain.handle("download-update", async () => {
+    if (!import_electron13.app.isPackaged) return { status: "idle" };
     try {
       await import_electron_updater2.autoUpdater.downloadUpdate();
       return { status: "downloading" };
@@ -114100,8 +115127,8 @@ function setupAutoUpdater() {
       return { status: "error", message: e2.message };
     }
   });
-  import_electron12.ipcMain.handle("install-update", async () => {
-    if (!import_electron12.app.isPackaged) return { status: "idle" };
+  import_electron13.ipcMain.handle("install-update", async () => {
+    if (!import_electron13.app.isPackaged) return { status: "idle" };
     try {
       import_electron_updater2.autoUpdater.quitAndInstall(false, true);
       return { status: "installing" };
@@ -114109,8 +115136,8 @@ function setupAutoUpdater() {
       return { status: "error", message: e2.message };
     }
   });
-  import_electron12.ipcMain.handle("get-app-version", () => import_electron12.app.getVersion());
-  if (import_electron12.app.isPackaged) {
+  import_electron13.ipcMain.handle("get-app-version", () => import_electron13.app.getVersion());
+  if (import_electron13.app.isPackaged) {
     setTimeout(() => {
       import_electron_updater2.autoUpdater.checkForUpdates().catch((e2) => {
         if (process.platform === "darwin") {
@@ -114121,17 +115148,17 @@ function setupAutoUpdater() {
   }
 }
 function createWindow() {
-  import_electron12.Menu.setApplicationMenu(null);
+  import_electron13.Menu.setApplicationMenu(null);
   const lockFilePath = getLockFilePath();
-  if (import_fs10.default.existsSync(lockFilePath)) {
+  if (import_fs11.default.existsSync(lockFilePath)) {
     let lockReason = "tampering detected";
     try {
-      const content = import_fs10.default.readFileSync(lockFilePath, "utf-8");
+      const content = import_fs11.default.readFileSync(lockFilePath, "utf-8");
       const data2 = JSON.parse(content);
       if (data2.reason) lockReason = data2.reason;
     } catch {
     }
-    const win2 = new import_electron12.BrowserWindow({
+    const win2 = new import_electron13.BrowserWindow({
       width: 600,
       height: 400,
       resizable: false,
@@ -114219,17 +115246,17 @@ function createWindow() {
     win2.show();
     return;
   }
-  const logPath = import_path10.default.join(import_electron12.app.getPath("userData"), "app.log");
+  const logPath = import_path11.default.join(import_electron13.app.getPath("userData"), "app.log");
   const log = (msg) => {
     const entry = `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
 `;
-    import_fs10.default.appendFileSync(logPath, entry);
+    import_fs11.default.appendFileSync(logPath, entry);
     console.log(msg);
   };
   log("Creating window...");
   const isMac = process.platform === "darwin";
-  const iconFile = isMac ? import_path10.default.join(__dirname, "../Logo/icon.icns") : import_path10.default.join(import_path10.default.dirname(import_path10.default.dirname(__dirname)), "icon.ico");
-  const win = new import_electron12.BrowserWindow({
+  const iconFile = isMac ? import_path11.default.join(__dirname, "../Logo/icon.icns") : import_path11.default.join(import_path11.default.dirname(import_path11.default.dirname(__dirname)), "icon.ico");
+  const win = new import_electron13.BrowserWindow({
     width: 1280,
     height: 800,
     webPreferences: {
@@ -114238,7 +115265,7 @@ function createWindow() {
       sandbox: false,
       webSecurity: true,
       allowRunningInsecureContent: false,
-      preload: import_path10.default.join(__dirname, "preload.cjs")
+      preload: import_path11.default.join(__dirname, "preload.cjs")
     },
     icon: iconFile,
     backgroundColor: "#f5f6fa",
@@ -114256,13 +115283,13 @@ function createWindow() {
       }
     }
   });
-  if (import_electron12.app.isPackaged) {
+  if (import_electron13.app.isPackaged) {
     win.webContents.on("devtools-opened", () => {
       triggerSystemLockout("DevTools opened in production");
     });
   }
-  if (import_electron12.app.isPackaged) {
-    win.loadFile(import_path10.default.join(__dirname, "../resource/index.html"));
+  if (import_electron13.app.isPackaged) {
+    win.loadFile(import_path11.default.join(__dirname, "../resource/index.html"));
   } else {
     const tryLoad = (retries = 10) => {
       win.loadURL("http://localhost:5173").catch(() => {
@@ -114271,7 +115298,7 @@ function createWindow() {
           setTimeout(() => tryLoad(retries - 1), 1e3);
         } else {
           console.error("[Main] Dev server unavailable. Falling back to resource/index.html");
-          win.loadFile(import_path10.default.join(__dirname, "../resource/index.html")).catch(console.error);
+          win.loadFile(import_path11.default.join(__dirname, "../resource/index.html")).catch(console.error);
         }
       });
     };
@@ -114279,7 +115306,7 @@ function createWindow() {
   }
   win.once("ready-to-show", () => {
     win.show();
-    if (!import_electron12.app.isPackaged) {
+    if (!import_electron13.app.isPackaged) {
       win.webContents.openDevTools();
     }
   });
@@ -114289,14 +115316,14 @@ function createWindow() {
     }
   }, 3e3);
   win.webContents.on("did-fail-load", (_, errorCode, errorDescription, validatedURL) => {
-    const lp = import_path10.default.join(import_electron12.app.getPath("userData"), "app.log");
-    import_fs10.default.appendFileSync(lp, `[${(/* @__PURE__ */ new Date()).toISOString()}] LOAD FAILED: ${errorCode} ${errorDescription} @ ${validatedURL}
+    const lp = import_path11.default.join(import_electron13.app.getPath("userData"), "app.log");
+    import_fs11.default.appendFileSync(lp, `[${(/* @__PURE__ */ new Date()).toISOString()}] LOAD FAILED: ${errorCode} ${errorDescription} @ ${validatedURL}
 `);
   });
   win.webContents.on("console-message", (_, level, message, line, sourceId) => {
     if (level >= 2) {
-      const lp = import_path10.default.join(import_electron12.app.getPath("userData"), "app.log");
-      import_fs10.default.appendFileSync(lp, `[${(/* @__PURE__ */ new Date()).toISOString()}] RENDERER[${level}]: ${message} (${sourceId}:${line})
+      const lp = import_path11.default.join(import_electron13.app.getPath("userData"), "app.log");
+      import_fs11.default.appendFileSync(lp, `[${(/* @__PURE__ */ new Date()).toISOString()}] RENDERER[${level}]: ${message} (${sourceId}:${line})
 `);
     }
   });
@@ -114327,7 +115354,7 @@ function createWindow() {
   });
   win.on("close", (e2) => {
     e2.preventDefault();
-    const choice = import_electron12.dialog.showMessageBoxSync(win, {
+    const choice = import_electron13.dialog.showMessageBoxSync(win, {
       type: "question",
       buttons: ["Yes, Close", "Cancel"],
       defaultId: 1,
@@ -114343,12 +115370,12 @@ function createWindow() {
     }
   });
 }
-import_electron12.app.disableHardwareAcceleration();
-import_electron12.app.whenReady().then(() => {
-  const logPath = import_path10.default.join(import_electron12.app.getPath("userData"), "app.log");
-  const log = (msg) => import_fs10.default.appendFileSync(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
+import_electron13.app.disableHardwareAcceleration();
+import_electron13.app.whenReady().then(() => {
+  const logPath = import_path11.default.join(import_electron13.app.getPath("userData"), "app.log");
+  const log = (msg) => import_fs11.default.appendFileSync(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
 `);
-  if (import_electron12.app.isPackaged) {
+  if (import_electron13.app.isPackaged) {
     const args = process.argv || [];
     const hasDebugArgs = args.some(
       (arg) => arg.startsWith("--inspect") || arg.startsWith("--remote-debugging-port") || arg.startsWith("--remote-debugging-pipe")
@@ -114356,7 +115383,7 @@ import_electron12.app.whenReady().then(() => {
     if (hasDebugArgs) {
       const lockFilePath2 = getLockFilePath();
       try {
-        import_fs10.default.writeFileSync(lockFilePath2, JSON.stringify({
+        import_fs11.default.writeFileSync(lockFilePath2, JSON.stringify({
           timestamp: (/* @__PURE__ */ new Date()).toISOString(),
           reason: "unauthorized debugging command-line flags"
         }, null, 2), "utf-8");
@@ -114365,7 +115392,7 @@ import_electron12.app.whenReady().then(() => {
     }
   }
   const lockFilePath = getLockFilePath();
-  if (import_fs10.default.existsSync(lockFilePath)) {
+  if (import_fs11.default.existsSync(lockFilePath)) {
     log("App starting in LOCKED mode. Aborting initialization.");
     createWindow();
     return;
@@ -114380,14 +115407,14 @@ import_electron12.app.whenReady().then(() => {
   createWindow();
   log("Window created call done");
   try {
-    const configPath = import_path10.default.join(import_electron12.app.getPath("userData"), "supabase-config.json");
-    import_electron12.session.defaultSession.webRequest.onBeforeSendHeaders(
+    const configPath = import_path11.default.join(import_electron13.app.getPath("userData"), "supabase-config.json");
+    import_electron13.session.defaultSession.webRequest.onBeforeSendHeaders(
       { urls: ["https://storage.lenas.me/*"] },
       (details, callback) => {
         let cfId = "";
         let cfSecret = "";
         try {
-          const raw = import_fs10.default.readFileSync(configPath, "utf-8");
+          const raw = import_fs11.default.readFileSync(configPath, "utf-8");
           const cfg = JSON.parse(raw);
           cfId = cfg.cfAccessClientId || "";
           cfSecret = cfg.cfAccessClientSecret || "";
@@ -114436,15 +115463,15 @@ import_electron12.app.whenReady().then(() => {
       log(`Service start error: ${e2.message}`);
     }
   })();
-  import_electron12.app.on("activate", () => {
-    if (import_electron12.BrowserWindow.getAllWindows().length === 0) {
+  import_electron13.app.on("activate", () => {
+    if (import_electron13.BrowserWindow.getAllWindows().length === 0) {
       createWindow();
     }
   });
 });
 var isQuitting = false;
 var cleanupDone = false;
-import_electron12.app.on("before-quit", async (event) => {
+import_electron13.app.on("before-quit", async (event) => {
   if (cleanupDone) {
     return;
   }
@@ -114463,11 +115490,11 @@ import_electron12.app.on("before-quit", async (event) => {
   clearEncryptionKey();
   console.log("[App] Cleanup done. Re-triggering quit.");
   cleanupDone = true;
-  import_electron12.app.quit();
+  import_electron13.app.quit();
 });
-import_electron12.app.on("window-all-closed", () => {
+import_electron13.app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
-    import_electron12.app.quit();
+    import_electron13.app.quit();
   }
 });
 /*! Bundled license information:

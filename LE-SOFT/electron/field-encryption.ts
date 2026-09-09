@@ -173,6 +173,9 @@ const SKIP_KEYS = new Set([
     'le_local_id',   // mysql sync key
 
     // ── NEW: Linkages and Search keys (PlainText for reliability) ──
+    'username',
+    'full_name',
+    'role',
     'invoice_number',
     'sku',
     'name',

@@ -92,7 +92,7 @@ export async function saveSession(user: {
         // File layout: [IV (12)] + [AUTH_TAG (16)] + [CIPHERTEXT (N)]
         const fileBuffer = Buffer.concat([iv, tag, encrypted]);
         fs.writeFileSync(vaultPath(), fileBuffer);
-        console.log('[VAULT] Session saved for:', user.username);
+        console.log('[VAULT] Session saved for:', user.username || '(anonymous)');
     } catch (err) {
         console.error('[VAULT] Failed to save session:', err);
     }

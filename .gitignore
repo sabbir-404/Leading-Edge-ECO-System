@@ -28,7 +28,13 @@ yarn-error.*
 
 # macOS
 .DS_Store
+**/.DS_Store
+._*
+**._*
 *.pem
+
+# IDE / workspace metadata
+.antigravitycli/
 
 # local env files
 .env*.local
@@ -40,3 +46,6 @@ yarn-error.*
 /ios
 /android
 Stock ss.csv
+
+# WordPress Plugin generated zips
+wordpress-plugin/**/*.zip
