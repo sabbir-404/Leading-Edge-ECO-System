@@ -92,6 +92,8 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          submodules: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -106,7 +108,12 @@ jobs:
           npm_config_arch: x64
 
       - name: Install Native Modules for Electron
-        run: npx electron-builder install-app-deps
+        shell: pwsh
+        run: |
+          if (Test-Path "node_modules/cpu-features/buildcheck.js") {
+            node node_modules/cpu-features/buildcheck.js
+          }
+          npx electron-builder install-app-deps
         env:
           npm_config_arch: x64
 
