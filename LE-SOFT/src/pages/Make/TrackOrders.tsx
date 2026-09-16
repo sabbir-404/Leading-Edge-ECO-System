@@ -8,6 +8,7 @@ import {
 import DashboardLayout from '../../components/DashboardLayout';
 import { useAutoRefresh } from '../../hooks/useAutoRefresh';
 import AlterOrder from './AlterOrder';
+import { getUserPricingPermissions } from '../../utils/permissions';
 
 const STATUSES = [
   'Draft',
@@ -146,6 +147,7 @@ interface PdfEntry { path: string; name: string; url: string; }
 interface Part { id: number; part_name: string; length: string; width: string; height: string; notes: string; sort_order: number; }
 
 const TrackOrders: React.FC = () => {
+  const pricingPerms = getUserPricingPermissions();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<number | null>(null);
@@ -209,6 +211,9 @@ const TrackOrders: React.FC = () => {
   }
 
   const hasPermission = (key: string) => {
+    if (key === 'set_make_cost_price') {
+      return pricingPerms.canViewCostPrice;
+    }
     if (userRole === 'admin' || userRole === 'superadmin' || userRole === 'manager') return true;
     return !!userPermissions[key];
   };
@@ -703,14 +708,16 @@ const TrackOrders: React.FC = () => {
                             Req. Delivery: {new Date(order.requested_delivery_date).toLocaleDateString()}
                           </span>
                         )}
-                        {order.cost_price ? (
-                          <span style={{ color: '#059669', fontWeight: 700 }}>
-                            Cost: ৳{Number(order.cost_price).toLocaleString()}
-                          </span>
-                        ) : (
-                          <span style={{ color: '#ca8a04', fontWeight: 600, fontStyle: 'italic' }}>
-                            Cost Price Needed
-                          </span>
+                        {pricingPerms.canViewCostPrice && (
+                          order.cost_price ? (
+                            <span style={{ color: '#059669', fontWeight: 700 }}>
+                              Cost: ৳{Number(order.cost_price).toLocaleString()}
+                            </span>
+                          ) : (
+                            <span style={{ color: '#ca8a04', fontWeight: 600, fontStyle: 'italic' }}>
+                              Cost Price Needed
+                            </span>
+                          )
                         )}
                         {order.sale_price && (
                           <span style={{ color: 'var(--accent-color)', fontWeight: 700 }}>
@@ -1191,9 +1198,13 @@ const TrackOrders: React.FC = () => {
                                             </div>
                                           ) : (
                                             <div style={{ display: 'flex', gap: '16px', fontSize: '0.82rem', paddingTop: '4px', color: 'var(--text-secondary)' }}>
-                                              <div>Unit Cost: <strong style={{ color: '#059669' }}>{item.item_cost_price ? `৳${Number(item.item_cost_price).toLocaleString()}` : 'Pending'}</strong></div>
+                                              {pricingPerms.canViewCostPrice && (
+                                                <div>Unit Cost: <strong style={{ color: '#059669' }}>{item.item_cost_price ? `৳${Number(item.item_cost_price).toLocaleString()}` : 'Pending'}</strong></div>
+                                              )}
                                               <div>Unit Sale: <strong style={{ color: 'var(--accent-color)' }}>{item.item_sale_price ? `৳${Number(item.item_sale_price).toLocaleString()}` : 'Pending'}</strong></div>
-                                              <div>Line Cost ({item.quantity}x): <strong style={{ color: '#059669' }}>৳{(Number(item.item_cost_price || 0) * item.quantity).toLocaleString()}</strong></div>
+                                              {pricingPerms.canViewCostPrice && (
+                                                <div>Line Cost ({item.quantity}x): <strong style={{ color: '#059669' }}>৳{(Number(item.item_cost_price || 0) * item.quantity).toLocaleString()}</strong></div>
+                                              )}
                                               {item.designer_notes && <div style={{ fontStyle: 'italic' }}>Note: {item.designer_notes}</div>}
                                             </div>
                                           )}
@@ -1710,6 +1721,27 @@ const TrackOrders: React.FC = () => {
               {(/\.(png|jpe?g|webp|gif|svg)$/i.test(pdfViewer.name) || /\.(png|jpe?g|webp|gif|svg)/i.test(pdfViewer.url)) ? (
                 <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#1e293b', overflow: 'auto', padding: '20px' }}>
                   <img src={pdfViewer.url} alt={pdfViewer.name} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: '8px', boxShadow: '0 8px 32px rgba(0,0,0,0.4)' }} />
+                </div>
+              ) : (/\.(dwg|dxf|step|stp|iges|igs|skp|stl|obj)$/i.test(pdfViewer.name) || /\.(dwg|dxf|step|stp|iges|igs|skp|stl|obj)/i.test(pdfViewer.url)) ? (
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#0f172a', padding: '40px', textAlign: 'center' }}>
+                  <div style={{ width: '72px', height: '72px', borderRadius: '16px', background: 'rgba(14,165,233,0.15)', border: '1px solid rgba(14,165,233,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#38bdf8', marginBottom: '18px' }}>
+                    <FileText size={36} />
+                  </div>
+                  <h3 style={{ margin: '0 0 8px', color: '#f8fafc', fontSize: '1.2rem', fontWeight: 800 }}>
+                    {pdfViewer.name}
+                  </h3>
+                  <span style={{ display: 'inline-block', background: 'rgba(14,165,233,0.2)', color: '#38bdf8', border: '1px solid rgba(14,165,233,0.4)', borderRadius: '20px', padding: '4px 14px', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', marginBottom: '14px' }}>
+                    CAD / 3D Model File
+                  </span>
+                  <p style={{ margin: '0 0 22px', color: '#94a3b8', fontSize: '0.86rem', maxWidth: '460px', lineHeight: 1.5 }}>
+                    This file contains engineering CAD blueprints or 3D geometry. Download the file to open and inspect in AutoCAD, Autodesk Viewer, SolidWorks, or Fusion 360.
+                  </p>
+                  <button 
+                    onClick={() => handleDownloadPdf(pdfViewer)}
+                    style={{ padding: '11px 24px', background: 'linear-gradient(135deg, #0ea5e9, #0284c7)', color: 'white', border: 'none', borderRadius: '10px', fontWeight: 700, fontSize: '0.9rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: '0 4px 16px rgba(14,165,233,0.3)' }}
+                  >
+                    <Download size={16} /> Download CAD File
+                  </button>
                 </div>
               ) : (
                 <iframe src={pdfViewer.url} title={pdfViewer.name}

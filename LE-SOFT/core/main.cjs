@@ -109721,6 +109721,10 @@ async function optimizeImageBuffer(buffer) {
     return buffer;
   }
 }
+function toPublicStorageUrl(url) {
+  if (!url) return "";
+  return url.replace(/^http:\/\/192\.168\.\d+\.\d+:8081/i, "https://storage.lenas.me").replace(/^http:\/\/100\.\d+\.\d+\.\d+:8081/i, "https://storage.lenas.me").replace(/^http:\/\/localhost:8081/i, "https://storage.lenas.me").replace(/^http:\/\/127\.0\.0\.1:8081/i, "https://storage.lenas.me");
+}
 async function uploadOptimizedImage(buffer, filenamePrefix) {
   const optimized = await optimizeImageBuffer(buffer);
   const nasStorageUrl = getNasStorageUrl();
@@ -109741,7 +109745,7 @@ async function uploadOptimizedImage(buffer, filenamePrefix) {
     if (!data2.success) {
       throw new Error(data2.error || "Failed to upload image to NAS");
     }
-    return `${nasStorageUrl.replace(/\/$/, "")}/files/product-images/${finalFilename}`;
+    return `https://storage.lenas.me/files/product-images/${finalFilename}`;
   } else {
     const formData = new FormData();
     formData.append("secret_key", HOSTINGER_UPLOAD_SECRET);
@@ -111604,6 +111608,42 @@ function registerHandlers() {
     if (error) throw error;
     return decryptRows(data2 || []);
   });
+  const publishUserToWebsite = (userPayload) => {
+    try {
+      const https2 = require("https");
+      const postData = JSON.stringify(userPayload);
+      const req = https2.request({
+        hostname: "leadingedge.com.bd",
+        port: 443,
+        path: "/wp-json/le-make/v1/publish-user",
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(postData),
+          "User-Agent": "LE-SOFT-Desktop"
+        },
+        timeout: 6e3
+      }, (res) => {
+        let body = "";
+        res.on("data", (c) => {
+          body += c;
+        });
+        res.on("end", () => {
+          console.log("[PUBLISH USER TO WEBSITE] HTTP", res.statusCode, body);
+        });
+      });
+      req.on("error", (e2) => {
+        console.warn("[PUBLISH USER TO WEBSITE] Non-blocking network notice:", e2.message);
+      });
+      req.on("timeout", () => {
+        req.destroy();
+      });
+      req.write(postData);
+      req.end();
+    } catch (err) {
+      console.warn("[PUBLISH USER TO WEBSITE] Exception:", err?.message);
+    }
+  };
   import_electron12.ipcMain.handle("create-user", async (_e, user) => {
     const { username, password, fullName, role, groupId, email, phone, requestingUserRole, requestingUserName } = user;
     const reqRole = (requestingUserRole || "").toLowerCase();
@@ -111713,6 +111753,16 @@ function registerHandlers() {
         finalUserId = insertedUser.id;
       }
     }
+    publishUserToWebsite({
+      softwareUserId: finalUserId,
+      username: cleanUsername,
+      password,
+      fullName: fullName || cleanUsername,
+      role: role || "operator",
+      email: emailToUse,
+      phone: phone || "",
+      groupId: parsedGroupId
+    });
     return { success: true, id: finalUserId };
   });
   import_electron12.ipcMain.handle("update-user", async (_e, user) => {
@@ -111780,6 +111830,16 @@ function registerHandlers() {
         console.warn("[UPDATE USER] Could not sync user to Supabase Auth/Cloud:", e2.message);
       }
     }
+    publishUserToWebsite({
+      softwareUserId: id,
+      username: username || currentUser?.username,
+      password: password && password.trim() !== "" ? password : void 0,
+      fullName,
+      role: role || currentUser?.role,
+      email,
+      phone,
+      groupId: parsedGroupId
+    });
     return { success: true };
   });
   import_electron12.ipcMain.handle("delete-user", async (_e, id) => {
@@ -112501,6 +112561,7 @@ function registerHandlers() {
       approval_status: isApproved ? "sales_approved" : "awaiting_designer"
     }).select("id, order_number").single();
     if (error) throw error;
+    let createdItems = [];
     if (Array.isArray(order.items) && order.items.length > 0) {
       const itemsPayload = order.items.map((i2) => ({
         order_id: data2.id,
@@ -112519,7 +112580,8 @@ function registerHandlers() {
         is_customized: !!i2.is_customized,
         custom_dimensions: i2.custom_dimensions || (i2.is_customized ? i2.dimensions_text : null)
       }));
-      await supabase_default.from("make_order_items").insert(itemsPayload);
+      const { data: insertedItems } = await supabase_default.from("make_order_items").insert(itemsPayload).select("id, product_name");
+      createdItems = insertedItems || [];
     }
     await supabase_default.from("make_order_updates").insert({
       order_id: data2.id,
@@ -112538,7 +112600,7 @@ function registerHandlers() {
         metadata: { type: "make_order", order_id: data2.id }
       });
     }
-    return { id: data2.id, order_number: data2.order_number };
+    return { id: data2.id, order_number: data2.order_number, items: createdItems };
   });
   import_electron12.ipcMain.handle("update-make-order-status", async (_e, { orderId, status, note, updatedBy }) => {
     await supabase_default.from("make_orders").update({ status, updated_at: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", orderId);
@@ -112950,8 +113012,11 @@ function registerHandlers() {
       const win = import_electron12.BrowserWindow.getFocusedWindow();
       if (!win) return { error: "No window" };
       const result = await import_electron12.dialog.showOpenDialog(win, {
-        title: "Select PDF Files",
-        filters: [{ name: "PDF Files", extensions: ["pdf"] }],
+        title: "Select Drawings / Blueprints / CAD Files",
+        filters: [
+          { name: "Drawings & CAD Files", extensions: ["pdf", "dwg", "dxf", "step", "stp", "iges", "igs", "skp", "stl", "obj", "png", "jpg", "jpeg", "webp"] },
+          { name: "All Files", extensions: ["*"] }
+        ],
         properties: ["openFile", "multiSelections"]
       });
       if (result.canceled || result.filePaths.length === 0) return { canceled: true };
@@ -112962,10 +113027,12 @@ function registerHandlers() {
     for (const p of filesToUpload) {
       const fileName = import_path10.default.basename(p);
       const fileBuffer = import_fs10.default.readFileSync(p);
+      const ext = import_path10.default.extname(p).toLowerCase();
+      const mimeType = ext === ".pdf" ? "application/pdf" : ext === ".png" ? "image/png" : ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" : ext === ".webp" ? "image/webp" : ext === ".dwg" ? "application/acad" : ext === ".dxf" ? "application/dxf" : ext === ".step" || ext === ".stp" ? "application/step" : ext === ".iges" || ext === ".igs" ? "model/iges" : "application/octet-stream";
       const storagePath = `${orderId}/${Date.now()}_${fileName}`;
       if (nasStorageUrl) {
         const formData = new FormData();
-        formData.append("file", new Blob([new Uint8Array(fileBuffer)], { type: "application/pdf" }), import_path10.default.basename(storagePath));
+        formData.append("file", new Blob([new Uint8Array(fileBuffer)], { type: mimeType }), import_path10.default.basename(storagePath));
         const cfHeaders = nasStorageUrl.startsWith("https://") ? getCfAccessHeaders() : {};
         const response = await fetch(`${nasStorageUrl.replace(/\/$/, "")}/upload`, {
           method: "POST",
@@ -112976,10 +113043,10 @@ function registerHandlers() {
           }
         });
         const data2 = await response.json();
-        if (!data2.success) return { error: data2.error || "Failed to upload PDF to NAS" };
+        if (!data2.success) return { error: data2.error || "Failed to upload PDF/CAD to NAS" };
         uploaded.push(`make-order-files/${storagePath}`);
       } else {
-        const { error: uploadError } = await supabase_default.storage.from("make-order-files").upload(storagePath, fileBuffer, { contentType: "application/pdf", upsert: false });
+        const { error: uploadError } = await supabase_default.storage.from("make-order-files").upload(storagePath, fileBuffer, { contentType: mimeType, upsert: false });
         if (uploadError) return { error: uploadError.message };
         uploaded.push(storagePath);
       }
@@ -112994,8 +113061,11 @@ function registerHandlers() {
     const paths = order?.pdf_urls || [];
     const nasStorageUrl = getNasStorageUrl();
     const signedUrls = await Promise.all(paths.map(async (p) => {
+      if (p.startsWith("http://") || p.startsWith("https://")) {
+        return { path: p, name: import_path10.default.basename(p).replace(/^\d+_/, ""), url: toPublicStorageUrl(p) };
+      }
       if (p.startsWith("make-order-files/")) {
-        const url = nasStorageUrl ? `${nasStorageUrl.replace(/\/$/, "")}/files/${p}` : "";
+        const url = `https://storage.lenas.me/files/${p}`;
         return { path: p, name: import_path10.default.basename(p).replace(/^\d+_/, ""), url };
       } else {
         const { data: data2 } = await supabase_default.storage.from("make-order-files").createSignedUrl(p, 3600);
@@ -113035,9 +113105,9 @@ function registerHandlers() {
       const win = import_electron12.BrowserWindow.getFocusedWindow();
       if (!win) return { error: "No window" };
       const result = await import_electron12.dialog.showOpenDialog(win, {
-        title: "Select Technical Drawing / Blueprint",
+        title: "Select Technical Drawing / Blueprint / CAD File",
         filters: [
-          { name: "Drawings & Documents", extensions: ["pdf", "png", "jpg", "jpeg", "webp", "dwg"] },
+          { name: "Drawings & CAD Files", extensions: ["pdf", "png", "jpg", "jpeg", "webp", "dwg", "dxf", "step", "stp", "iges", "igs", "skp", "stl", "obj"] },
           { name: "All Files", extensions: ["*"] }
         ],
         properties: ["openFile", "multiSelections"]
@@ -113051,7 +113121,7 @@ function registerHandlers() {
       const fileName = import_path10.default.basename(p);
       const fileBuffer = import_fs10.default.readFileSync(p);
       const ext = import_path10.default.extname(p).toLowerCase();
-      const mimeType = ext === ".pdf" ? "application/pdf" : ext === ".png" ? "image/png" : ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" : ext === ".webp" ? "image/webp" : "application/octet-stream";
+      const mimeType = ext === ".pdf" ? "application/pdf" : ext === ".png" ? "image/png" : ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" : ext === ".webp" ? "image/webp" : ext === ".dwg" ? "application/acad" : ext === ".dxf" ? "application/dxf" : ext === ".step" || ext === ".stp" ? "application/step" : ext === ".iges" || ext === ".igs" ? "model/iges" : "application/octet-stream";
       const storagePath = `${orderId}/items/${itemId}/${Date.now()}_${fileName}`;
       if (nasStorageUrl) {
         const formData = new FormData();
@@ -113412,10 +113482,10 @@ function registerHandlers() {
       }
       const drawings = await Promise.all(rawPaths.map(async (p) => {
         if (p.startsWith("http://") || p.startsWith("https://")) {
-          return { path: p, name: import_path10.default.basename(p).replace(/^\d+_/, ""), url: p };
+          return { path: p, name: import_path10.default.basename(p).replace(/^\d+_/, ""), url: toPublicStorageUrl(p) };
         }
         if (p.startsWith("make-order-files/")) {
-          const url = nasStorageUrl ? `${nasStorageUrl.replace(/\/$/, "")}/files/${p}` : "";
+          const url = `https://storage.lenas.me/files/${p}`;
           return { path: p, name: import_path10.default.basename(p).replace(/^\d+_/, ""), url };
         } else {
           const { data: sData } = await supabase_default.storage.from("make-order-files").createSignedUrl(p, 3600);
@@ -113581,11 +113651,11 @@ function registerHandlers() {
           });
           const data2 = await response.json();
           if (data2.success && data2.file_url) {
-            finalPhotoUrl = data2.file_url;
+            finalPhotoUrl = toPublicStorageUrl(data2.file_url);
           } else if (data2.success && data2.url) {
-            finalPhotoUrl = data2.url;
+            finalPhotoUrl = toPublicStorageUrl(data2.url);
           } else {
-            finalPhotoUrl = `${nasStorageUrl.replace(/\/$/, "")}/files/${import_path10.default.basename(storagePath)}`;
+            finalPhotoUrl = `https://storage.lenas.me/files/make-order-files/${orderId}/stages/${import_path10.default.basename(storagePath)}`;
           }
         } else {
           const { error: uploadErr } = await supabase_default.storage.from("make-order-files").upload(storagePath, fileBuffer, { contentType: mimeType, upsert: false });
@@ -113618,11 +113688,11 @@ function registerHandlers() {
               });
               const data2 = await response.json();
               if (data2.success && data2.file_url) {
-                finalPhotoUrl = data2.file_url;
+                finalPhotoUrl = toPublicStorageUrl(data2.file_url);
               } else if (data2.success && data2.url) {
-                finalPhotoUrl = data2.url;
+                finalPhotoUrl = toPublicStorageUrl(data2.url);
               } else {
-                finalPhotoUrl = `${nasStorageUrl.replace(/\/$/, "")}/files/${import_path10.default.basename(storagePath)}`;
+                finalPhotoUrl = `https://storage.lenas.me/files/make-order-files/${orderId}/stages/${import_path10.default.basename(storagePath)}`;
               }
             } else {
               const { error: uploadErr } = await supabase_default.storage.from("make-order-files").upload(storagePath, fileBuffer, { contentType: mimeType, upsert: false });

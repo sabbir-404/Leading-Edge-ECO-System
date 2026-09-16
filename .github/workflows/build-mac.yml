@@ -4,7 +4,13 @@ on:
   push:
     branches:
       - main-mac
+      - main-windows
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version without leading v'
+        required: true
+        default: '1.7.0'
 
 permissions:
   contents: write
@@ -20,33 +26,58 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          submodules: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          # Node 22 is required by @electron/rebuild@4 and modern supabase packages
           node-version: 22
           cache: 'npm'
           cache-dependency-path: LE-SOFT/package-lock.json
 
       - name: Install Dependencies
-        # --ignore-scripts skips the postinstall electron-rebuild.
-        # electron-builder install-app-deps (run below) handles native modules correctly.
-        run: npm install --ignore-scripts
+        run: npm ci --ignore-scripts
 
       - name: Install Native Modules for Electron
-        # This is the electron-builder recommended way to rebuild natives for the
-        # correct Electron ABI, arch, and platform.
         run: npx electron-builder install-app-deps
 
-      - name: Build & Publish macOS Release
-        # electron-builder --mac -p always:
-        #   - Builds .dmg and .zip
-        #   - Uploads both + latest-mac.yml to a GitHub Release
-        #   - latest-mac.yml is what electron-updater reads on end-user macs
-        run: npm run dist:mac:publish
+      - name: Build macOS Release
+        run: npm run dist:mac
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish macOS Release Assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ github.event.inputs.version || '' }}
+          RELEASE_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
+            tag="${GITHUB_REF_NAME}"
+          elif [[ -n "${RELEASE_VERSION:-}" ]]; then
+            tag="v${RELEASE_VERSION}"
+          else
+            pkgVersion=$(node -p "require('./package.json').version")
+            tag="v${pkgVersion}"
+          fi
+
+          title="LE-SOFT ${tag#v}"
+          notes="LE-SOFT ${tag#v} release."
+
+          if ! gh release view "$tag" --repo "$RELEASE_REPO" >/dev/null 2>&1; then
+            gh release create "$tag" --repo "$RELEASE_REPO" --target "$GITHUB_SHA" --title "$title" --notes "$notes" || true
+          fi
+
+          gh release upload "$tag" \
+            release/*.dmg \
+            release/*.zip \
+            release/latest-mac.yml \
+            --repo "$RELEASE_REPO" \
+            --clobber
+
+          gh release edit "$tag" --draft=false --repo "$RELEASE_REPO" || true
 
       - name: Upload macOS Artifacts
         uses: actions/upload-artifact@v4
@@ -56,3 +87,4 @@ jobs:
             LE-SOFT/release/*.dmg
             LE-SOFT/release/*.zip
             LE-SOFT/release/latest-mac.yml
+          if-no-files-found: warn

@@ -1650,12 +1650,14 @@
                     </div>
 
                     <!-- Cost & Sale Price inputs -->
+                    ${user.canViewCost ? `
                     <div>
                       <label class="le-make-label">Cost Price (BDT ৳)</label>
                       <input type="number" min="0" class="le-make-input" placeholder="e.g. 15000"
                         value="${escapeHtml(state.itemCostPrice)}" oninput="window.LE_MAKE.state.itemCostPrice = this.value"
                         ${!user.canEditCost ? 'disabled' : ''} />
                     </div>
+                    ` : ''}
 
                     <div>
                       <label class="le-make-label">Sale Price (BDT ৳) ${user.canEditSale ? '' : '(Designer Set)'}</label>
@@ -1700,7 +1702,7 @@
 
                         <label class="le-make-btn le-make-btn-secondary le-make-btn-sm" style="cursor: pointer; display: inline-flex; align-items: center; gap: 4px; margin: 0;">
                           📁 Browse Storage
-                          <input type="file" accept="image/*,.pdf,.dwg,.dxf" style="display: none;"
+                          <input type="file" accept="image/*,.pdf,.dwg,.dxf,.step,.stp,.iges,.igs,.skp,.stl,.obj" style="display: none;"
                             onchange="window.LE_MAKE.handleItemFileSelected(event)" ${state.itemUploadingFile ? 'disabled' : ''} />
                         </label>
                       </div>
@@ -1764,12 +1766,14 @@
                     value="${escapeHtml(state.customItemSpec)}" oninput="window.LE_MAKE.state.customItemSpec = this.value" />
                 </div>
 
+                ${user.canViewCost ? `
                 <div>
                   <label class="le-make-label">Estimated Cost Price (BDT ৳)</label>
                   <input type="number" min="0" class="le-make-input" placeholder="e.g. 25000"
                     value="${escapeHtml(state.itemCostPrice)}" oninput="window.LE_MAKE.state.itemCostPrice = this.value"
                     ${!user.canEditCost ? 'disabled' : ''} />
                 </div>
+                ` : ''}
 
                 <div>
                   <label class="le-make-label">Customer Sale Price (BDT ৳)</label>
@@ -1813,7 +1817,7 @@
 
                     <label class="le-make-btn le-make-btn-secondary le-make-btn-sm" style="cursor: pointer; display: inline-flex; align-items: center; gap: 4px; margin: 0;">
                       📁 Browse Storage
-                      <input type="file" accept="image/*,.pdf,.dwg,.dxf" style="display: none;"
+                      <input type="file" accept="image/*,.pdf,.dwg,.dxf,.step,.stp,.iges,.igs,.skp,.stl,.obj" style="display: none;"
                         onchange="window.LE_MAKE.handleItemFileSelected(event)" ${state.itemUploadingFile ? 'disabled' : ''} />
                     </label>
                   </div>
@@ -1866,7 +1870,7 @@
                     <th>Dimensions</th>
                     <th>Color</th>
                     <th style="text-align: center;">Qty</th>
-                    <th style="text-align: right;">Cost (৳)</th>
+                    ${user.canViewCost ? `<th style="text-align: right;">Cost (৳)</th>` : ''}
                     <th style="text-align: right;">Sale (৳)</th>
                     <th>Remarks</th>
                     <th>Attachment</th>
@@ -1891,7 +1895,7 @@
                         </div>
                       </td>
                       <td style="text-align: center; font-weight: 700;">${item.quantity}</td>
-                      <td style="text-align: right; font-weight: 600;">৳${Number(item.item_cost_price || 0).toLocaleString()}</td>
+                      ${user.canViewCost ? `<td style="text-align: right; font-weight: 600;">৳${Number(item.item_cost_price || 0).toLocaleString()}</td>` : ''}
                       <td style="text-align: right; font-weight: 600;">${item.item_sale_price ? `৳${Number(item.item_sale_price).toLocaleString()}` : '<span style="color:#94a3b8;font-style:italic;">Pending</span>'}</td>
                       <td style="font-size: 0.8rem; color: var(--le-text-secondary);">${escapeHtml(item.notes || '—')}</td>
                       <td>

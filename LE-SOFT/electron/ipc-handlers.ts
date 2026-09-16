@@ -66,13 +66,22 @@ async function optimizeImageBuffer(buffer: Buffer): Promise<Buffer> {
     }
 }
 
+export function toPublicStorageUrl(url: string | null | undefined): string {
+    if (!url) return '';
+    return url
+        .replace(/^http:\/\/192\.168\.\d+\.\d+:8081/i, 'https://storage.lenas.me')
+        .replace(/^http:\/\/100\.\d+\.\d+\.\d+:8081/i, 'https://storage.lenas.me')
+        .replace(/^http:\/\/localhost:8081/i, 'https://storage.lenas.me')
+        .replace(/^http:\/\/127\.0\.0\.1:8081/i, 'https://storage.lenas.me');
+}
+
 async function uploadOptimizedImage(buffer: Buffer, filenamePrefix: string): Promise<string> {
     const optimized = await optimizeImageBuffer(buffer);
     const nasStorageUrl = getNasStorageUrl();
     const finalFilename = `${filenamePrefix}_${Date.now()}.webp`;
 
     if (nasStorageUrl) {
-        // Upload to NAS Storage Server
+        // Upload to NAS Storage Server (fast via local LAN or tunnel)
         const formData = new FormData();
         formData.append('file', new Blob([new Uint8Array(optimized)], { type: 'image/webp' }), finalFilename);
 
@@ -89,7 +98,8 @@ async function uploadOptimizedImage(buffer: Buffer, filenamePrefix: string): Pro
         if (!data.success) {
             throw new Error(data.error || 'Failed to upload image to NAS');
         }
-        return `${nasStorageUrl.replace(/\/$/, '')}/files/product-images/${finalFilename}`;
+        // Always return the public universal Cloudflare tunnel URL so the image is universally accessible
+        return `https://storage.lenas.me/files/product-images/${finalFilename}`;
     } else {
         // Upload to Hostinger (fallback)
         const formData = new FormData();
@@ -2474,6 +2484,53 @@ export function registerHandlers() {
         return decryptRows(data || []);
     });
 
+    // Helper to asynchronously publish created/updated users to the WordPress website database
+    const publishUserToWebsite = (userPayload: {
+        softwareUserId?: number;
+        username: string;
+        password?: string;
+        fullName?: string;
+        role?: string;
+        email?: string;
+        phone?: string;
+        groupId?: number | null;
+    }) => {
+        try {
+            const https = require('https');
+            const postData = JSON.stringify(userPayload);
+            const req = https.request({
+                hostname: 'leadingedge.com.bd',
+                port: 443,
+                path: '/wp-json/le-make/v1/publish-user',
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Content-Length': Buffer.byteLength(postData),
+                    'User-Agent': 'LE-SOFT-Desktop'
+                },
+                timeout: 6000
+            }, (res: any) => {
+                let body = '';
+                res.on('data', (c: any) => { body += c; });
+                res.on('end', () => {
+                    console.log('[PUBLISH USER TO WEBSITE] HTTP', res.statusCode, body);
+                });
+            });
+
+            req.on('error', (e: any) => {
+                console.warn('[PUBLISH USER TO WEBSITE] Non-blocking network notice:', e.message);
+            });
+            req.on('timeout', () => {
+                req.destroy();
+            });
+
+            req.write(postData);
+            req.end();
+        } catch (err: any) {
+            console.warn('[PUBLISH USER TO WEBSITE] Exception:', err?.message);
+        }
+    };
+
     ipcMain.handle('create-user', async (_e, user) => {
         const { username, password, fullName, role, groupId, email, phone, requestingUserRole, requestingUserName } = user;
         const reqRole = (requestingUserRole || '').toLowerCase();
@@ -2611,6 +2668,18 @@ export function registerHandlers() {
             }
         }
 
+        // 4. Automatically publish newly created user to the Website database (WordPress)
+        publishUserToWebsite({
+            softwareUserId: finalUserId,
+            username: cleanUsername,
+            password: password,
+            fullName: fullName || cleanUsername,
+            role: role || 'operator',
+            email: emailToUse,
+            phone: phone || '',
+            groupId: parsedGroupId
+        });
+
         return { success: true, id: finalUserId };
     });
 
@@ -2695,6 +2764,18 @@ export function registerHandlers() {
                 console.warn("[UPDATE USER] Could not sync user to Supabase Auth/Cloud:", e.message);
             }
         }
+
+        // 3. Automatically publish updated user to the Website database (WordPress)
+        publishUserToWebsite({
+            softwareUserId: id,
+            username: username || currentUser?.username,
+            password: (password && password.trim() !== '') ? password : undefined,
+            fullName: fullName,
+            role: role || currentUser?.role,
+            email: email,
+            phone: phone,
+            groupId: parsedGroupId
+        });
 
         return { success: true };
     });
@@ -3589,6 +3670,7 @@ export function registerHandlers() {
         if (error) throw error;
 
         // Insert order items if present
+        let createdItems: any[] = [];
         if (Array.isArray(order.items) && order.items.length > 0) {
             const itemsPayload = order.items.map((i: any) => ({
                 order_id: data.id,
@@ -3607,7 +3689,8 @@ export function registerHandlers() {
                 is_customized: !!i.is_customized,
                 custom_dimensions: i.custom_dimensions || (i.is_customized ? i.dimensions_text : null)
             }));
-            await supabase.from('make_order_items').insert(itemsPayload);
+            const { data: insertedItems } = await supabase.from('make_order_items').insert(itemsPayload).select('id, product_name');
+            createdItems = insertedItems || [];
         }
 
         await supabase.from('make_order_updates').insert({ 
@@ -3630,7 +3713,7 @@ export function registerHandlers() {
             });
         }
 
-        return { id: data.id, order_number: data.order_number };
+        return { id: data.id, order_number: data.order_number, items: createdItems };
     });
 
     ipcMain.handle('update-make-order-status', async (_e, { orderId, status, note, updatedBy }) => {
@@ -4001,8 +4084,11 @@ export function registerHandlers() {
             const win = BrowserWindow.getFocusedWindow();
             if (!win) return { error: 'No window' };
             const result = await dialog.showOpenDialog(win, {
-                title: 'Select PDF Files',
-                filters: [{ name: 'PDF Files', extensions: ['pdf'] }],
+                title: 'Select Drawings / Blueprints / CAD Files',
+                filters: [
+                    { name: 'Drawings & CAD Files', extensions: ['pdf', 'dwg', 'dxf', 'step', 'stp', 'iges', 'igs', 'skp', 'stl', 'obj', 'png', 'jpg', 'jpeg', 'webp'] },
+                    { name: 'All Files', extensions: ['*'] }
+                ],
                 properties: ['openFile', 'multiSelections'],
             });
             if (result.canceled || result.filePaths.length === 0) return { canceled: true };
@@ -4015,11 +4101,21 @@ export function registerHandlers() {
         for (const p of filesToUpload) {
             const fileName = path.basename(p);
             const fileBuffer = fs.readFileSync(p);
+            const ext = path.extname(p).toLowerCase();
+            const mimeType = ext === '.pdf' ? 'application/pdf' 
+                : ext === '.png' ? 'image/png' 
+                : (ext === '.jpg' || ext === '.jpeg') ? 'image/jpeg' 
+                : ext === '.webp' ? 'image/webp' 
+                : ext === '.dwg' ? 'application/acad'
+                : ext === '.dxf' ? 'application/dxf'
+                : (ext === '.step' || ext === '.stp') ? 'application/step'
+                : (ext === '.iges' || ext === '.igs') ? 'model/iges'
+                : 'application/octet-stream';
             const storagePath = `${orderId}/${Date.now()}_${fileName}`;
             
             if (nasStorageUrl) {
                 const formData = new FormData();
-                formData.append('file', new Blob([new Uint8Array(fileBuffer)], { type: 'application/pdf' }), path.basename(storagePath));
+                formData.append('file', new Blob([new Uint8Array(fileBuffer)], { type: mimeType }), path.basename(storagePath));
                 
                 const cfHeaders = nasStorageUrl.startsWith('https://') ? getCfAccessHeaders() : {};
                 const response = await fetch(`${nasStorageUrl.replace(/\/$/, '')}/upload`, {
@@ -4031,12 +4127,12 @@ export function registerHandlers() {
                     }
                 });
                 const data = await response.json();
-                if (!data.success) return { error: data.error || 'Failed to upload PDF to NAS' };
+                if (!data.success) return { error: data.error || 'Failed to upload PDF/CAD to NAS' };
                 uploaded.push(`make-order-files/${storagePath}`);
             } else {
                 const { error: uploadError } = await supabase.storage
                     .from('make-order-files')
-                    .upload(storagePath, fileBuffer, { contentType: 'application/pdf', upsert: false });
+                    .upload(storagePath, fileBuffer, { contentType: mimeType, upsert: false });
                 if (uploadError) return { error: uploadError.message };
                 uploaded.push(storagePath);
             }
@@ -4055,10 +4151,11 @@ export function registerHandlers() {
         const nasStorageUrl = getNasStorageUrl();
 
         const signedUrls = await Promise.all(paths.map(async (p) => {
+            if (p.startsWith('http://') || p.startsWith('https://')) {
+                return { path: p, name: path.basename(p).replace(/^\d+_/, ''), url: toPublicStorageUrl(p) };
+            }
             if (p.startsWith('make-order-files/')) {
-                const url = nasStorageUrl 
-                    ? `${nasStorageUrl.replace(/\/$/, '')}/files/${p}` 
-                    : '';
+                const url = `https://storage.lenas.me/files/${p}`;
                 return { path: p, name: path.basename(p).replace(/^\d+_/, ''), url };
             } else {
                 const { data } = await supabase.storage.from('make-order-files').createSignedUrl(p, 3600);
@@ -4103,9 +4200,9 @@ export function registerHandlers() {
             const win = BrowserWindow.getFocusedWindow();
             if (!win) return { error: 'No window' };
             const result = await dialog.showOpenDialog(win, {
-                title: 'Select Technical Drawing / Blueprint',
+                title: 'Select Technical Drawing / Blueprint / CAD File',
                 filters: [
-                    { name: 'Drawings & Documents', extensions: ['pdf', 'png', 'jpg', 'jpeg', 'webp', 'dwg'] },
+                    { name: 'Drawings & CAD Files', extensions: ['pdf', 'png', 'jpg', 'jpeg', 'webp', 'dwg', 'dxf', 'step', 'stp', 'iges', 'igs', 'skp', 'stl', 'obj'] },
                     { name: 'All Files', extensions: ['*'] }
                 ],
                 properties: ['openFile', 'multiSelections'],
@@ -4125,6 +4222,10 @@ export function registerHandlers() {
                 : ext === '.png' ? 'image/png' 
                 : (ext === '.jpg' || ext === '.jpeg') ? 'image/jpeg' 
                 : ext === '.webp' ? 'image/webp' 
+                : ext === '.dwg' ? 'application/acad'
+                : ext === '.dxf' ? 'application/dxf'
+                : (ext === '.step' || ext === '.stp') ? 'application/step'
+                : (ext === '.iges' || ext === '.igs') ? 'model/iges'
                 : 'application/octet-stream';
             const storagePath = `${orderId}/items/${itemId}/${Date.now()}_${fileName}`;
 
@@ -4556,10 +4657,10 @@ export function registerHandlers() {
 
             const drawings = await Promise.all(rawPaths.map(async (p: string) => {
                 if (p.startsWith('http://') || p.startsWith('https://')) {
-                    return { path: p, name: path.basename(p).replace(/^\d+_/, ''), url: p };
+                    return { path: p, name: path.basename(p).replace(/^\d+_/, ''), url: toPublicStorageUrl(p) };
                 }
                 if (p.startsWith('make-order-files/')) {
-                    const url = nasStorageUrl ? `${nasStorageUrl.replace(/\/$/, '')}/files/${p}` : '';
+                    const url = `https://storage.lenas.me/files/${p}`;
                     return { path: p, name: path.basename(p).replace(/^\d+_/, ''), url };
                 } else {
                     const { data: sData } = await supabase.storage.from('make-order-files').createSignedUrl(p, 3600);
@@ -4752,11 +4853,11 @@ export function registerHandlers() {
                     });
                     const data = await response.json();
                     if (data.success && data.file_url) {
-                        finalPhotoUrl = data.file_url;
+                        finalPhotoUrl = toPublicStorageUrl(data.file_url);
                     } else if (data.success && data.url) {
-                        finalPhotoUrl = data.url;
+                        finalPhotoUrl = toPublicStorageUrl(data.url);
                     } else {
-                        finalPhotoUrl = `${nasStorageUrl.replace(/\/$/, '')}/files/${path.basename(storagePath)}`;
+                        finalPhotoUrl = `https://storage.lenas.me/files/make-order-files/${orderId}/stages/${path.basename(storagePath)}`;
                     }
                 } else {
                     const { error: uploadErr } = await supabase.storage
@@ -4792,11 +4893,11 @@ export function registerHandlers() {
                             });
                             const data = await response.json();
                             if (data.success && data.file_url) {
-                                finalPhotoUrl = data.file_url;
+                                finalPhotoUrl = toPublicStorageUrl(data.file_url);
                             } else if (data.success && data.url) {
-                                finalPhotoUrl = data.url;
+                                finalPhotoUrl = toPublicStorageUrl(data.url);
                             } else {
-                                finalPhotoUrl = `${nasStorageUrl.replace(/\/$/, '')}/files/${path.basename(storagePath)}`;
+                                finalPhotoUrl = `https://storage.lenas.me/files/make-order-files/${orderId}/stages/${path.basename(storagePath)}`;
                             }
                         } else {
                             const { error: uploadErr } = await supabase.storage

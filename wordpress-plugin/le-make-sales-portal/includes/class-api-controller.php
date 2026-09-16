@@ -168,11 +168,18 @@ class LEMakeApiController {
             'permission_callback' => array($this, 'check_user_permission'),
         ));
 
+        // Auto-Publish Single User from Software DB
+        register_rest_route($this->namespace, '/publish-user', array(
+            'methods'             => 'POST',
+            'callback'            => array($this, 'publish_user'),
+            'permission_callback' => array($this, 'check_publish_permission'),
+        ));
+
         // Staff User Synchronization with TrueNAS NAS DB
         register_rest_route($this->namespace, '/sync-users', array(
             'methods'             => 'POST',
             'callback'            => array($this, 'sync_users'),
-            'permission_callback' => array($this, 'check_user_permission'),
+            'permission_callback' => array($this, 'check_publish_permission'),
         ));
 
         // Media Proxy to serve TrueNAS Storage files through WordPress (bypasses Cloudflare Access 403 on client browsers)
@@ -195,7 +202,46 @@ class LEMakeApiController {
     }
 
     /**
-     * Authenticate user via in-portal login form with TrueNAS PostgreSQL DB fallback & auto-provisioning
+     * Check permission for publishing or syncing users from software database
+     */
+    public function check_publish_permission(WP_REST_Request $request) {
+        if (current_user_can('manage_options') || current_user_can('administrator')) {
+            return true;
+        }
+
+        $secret = $request->get_header('X-LE-Publish-Secret') ?: $request->get_param('secret');
+        $anon_key = get_option('le_make_anon_key');
+        $cf_secret = get_option('le_make_cf_client_secret');
+
+        if (!empty($secret)) {
+            if ($anon_key && hash_equals($anon_key, $secret)) {
+                return true;
+            }
+            if ($cf_secret && hash_equals($cf_secret, $secret)) {
+                return true;
+            }
+        }
+
+        // Also permit if the target user actually exists and is active in the software database
+        $username = sanitize_text_field($request->get_param('username') ?? '');
+        if (!empty($username)) {
+            $client = LEMakeNasDbClient::get_instance();
+            $nas_user = $client->get_user_by_login($username);
+            if ($nas_user && !empty($nas_user['is_active'])) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Authenticate user via in-portal login form.
+     * Enforces dual-database synchronization:
+     * 1. If user is registered on the software database (LESOFT / TrueNAS), automatically
+     *    publishes/provisions them into the website database (wp_users) upon valid login.
+     * 2. Must exist and be active in the LESOFT database.
+     * 3. Validates against either WordPress password or LESOFT bcrypt password.
      */
     public function auth_login(WP_REST_Request $request) {
         $params = $request->get_json_params() ?: $request->get_params();
@@ -207,89 +253,83 @@ class LEMakeApiController {
             return new WP_REST_Response(array('error' => 'Please enter both username and password.'), 400);
         }
 
-        $creds = array(
-            'user_login'    => $username,
-            'user_password' => $password,
-            'remember'      => $remember,
-        );
+        $nas_client = LEMakeNasDbClient::get_instance();
 
-        $user = wp_signon($creds, is_ssl());
+        // 1. Check if user already exists in the Website database (wp_users)
+        $wp_user = get_user_by('login', $username);
+        if (!$wp_user && is_email($username)) {
+            $wp_user = get_user_by('email', $username);
+        }
 
-        // Fallback: If not recognized or password mismatch in WordPress, check TrueNAS PostgreSQL DB
-        if (is_wp_error($user)) {
-            $nas_client = LEMakeNasDbClient::get_instance();
-            $nas_user = $nas_client->get_user_by_login($username);
-
-            if ($nas_user && !empty($nas_user['password_hash']) && !empty($nas_user['is_active'])) {
-                // Verify password against bcrypt hash in TrueNAS
-                if (password_verify($password, $nas_user['password_hash'])) {
-                    // Map TrueNAS user group / role to WordPress role
-                    $role_slug = 'make_salesperson';
-                    $nas_role = strtolower($nas_user['role'] ?? '');
-                    $group_name = $nas_user['user_groups']['name'] ?? '';
-                    $group_perms = $nas_user['user_groups']['permissions'] ?? array();
-                    if (is_string($group_perms)) {
-                        $group_perms = json_decode($group_perms, true) ?: array();
-                    }
-
-                    if ($nas_role === 'superadmin' || $nas_role === 'admin' || stripos($group_name, 'admin') !== false) {
-                        $role_slug = 'administrator';
-                    } elseif (stripos($group_name, 'designer') !== false || !empty($group_perms['set_make_cost_price']) || !empty($group_perms['set_make_sale_price'])) {
-                        $role_slug = 'make_designer';
-                    } elseif (stripos($group_name, 'factory') !== false || !empty($group_perms['update_production_status'])) {
-                        $role_slug = 'make_factory_manager';
-                    }
-
-                    // Check if WordPress user exists with this username or email
-                    $existing_wp = get_user_by('login', $nas_user['username']);
-                    if (!$existing_wp && !empty($nas_user['email'])) {
-                        $existing_wp = get_user_by('email', $nas_user['email']);
-                    }
-
-                    if ($existing_wp) {
-                        // Update password to match software password
-                        wp_set_password($password, $existing_wp->ID);
-                        if ($role_slug !== 'administrator' || user_can($existing_wp, 'administrator')) {
-                            $existing_wp->set_role($role_slug);
-                        }
-                        update_user_meta($existing_wp->ID, 'le_nas_user_id', $nas_user['id']);
-                        $user = $existing_wp;
-                    } else {
-                        // Auto-provision brand new WordPress user account
-                        $email = !empty($nas_user['email']) ? $nas_user['email'] : ($nas_user['username'] . '@leadingedge.local');
-                        $display_name = !empty($nas_user['full_name']) ? $nas_user['full_name'] : $nas_user['username'];
-                        $new_id = wp_insert_user(array(
-                            'user_login'   => $nas_user['username'],
-                            'user_pass'    => $password,
-                            'user_email'   => $email,
-                            'display_name' => $display_name,
-                            'first_name'   => $display_name,
-                            'role'         => $role_slug,
-                        ));
-
-                        if (!is_wp_error($new_id)) {
-                            update_user_meta($new_id, 'le_nas_user_id', $nas_user['id']);
-                            $user = get_user_by('id', $new_id);
-                        } else {
-                            return new WP_REST_Response(array(
-                                'error' => 'Failed to provision web user: ' . $new_id->get_error_message()
-                            ), 500);
-                        }
-                    }
+        // 2. Query software database (TrueNAS / Supabase users table)
+        $nas_user = $nas_client->get_user_by_login($username);
+        if (!$nas_user && $wp_user) {
+            $nas_user = $nas_client->get_user_by_login($wp_user->user_login);
+            if (!$nas_user && !empty($wp_user->user_email)) {
+                $nas_user = $nas_client->get_user_by_login($wp_user->user_email);
+            }
+            if (!$nas_user) {
+                $meta_nas_id = get_user_meta($wp_user->ID, 'le_nas_user_id', true);
+                if ($meta_nas_id) {
+                    $nas_user = $nas_client->get_user_by_id($meta_nas_id);
                 }
             }
         }
 
-        if (is_wp_error($user) || empty($user->ID)) {
+        // Must exist and be active in software database
+        if (!$nas_user || empty($nas_user['is_active'])) {
             return new WP_REST_Response(array(
-                'error' => 'Invalid username or password. Please check your credentials or contact an administrator.'
-            ), 401);
+                'error' => 'Access restricted. User account was not found or is inactive in the LESOFT database.'
+            ), 403);
         }
 
-        wp_set_current_user($user->ID);
-        wp_set_auth_cookie($user->ID, $remember);
+        // 3. If user exists in software database but is NOT yet published to the website database:
+        if (!$wp_user) {
+            // Verify password against software database bcrypt hash
+            if (empty($nas_user['password_hash']) || !password_verify($password, $nas_user['password_hash'])) {
+                return new WP_REST_Response(array(
+                    'error' => 'Invalid username or password. Please verify your credentials.'
+                ), 401);
+            }
 
-        $userData = $this->build_user_payload($user);
+            // Automatically publish/provision into WordPress website database
+            $published = $nas_client->publish_user_to_wp($nas_user, $password);
+            if (is_wp_error($published)) {
+                return new WP_REST_Response(array(
+                    'error' => 'Failed to publish user to website database: ' . $published->get_error_message()
+                ), 500);
+            }
+            $wp_user = $published;
+        } else {
+            // User already exists in website database: validate against WP pass or LESOFT bcrypt pass
+            $is_valid = false;
+            if (wp_check_password($password, $wp_user->user_pass, $wp_user->ID)) {
+                $is_valid = true;
+            } elseif (!empty($nas_user['password_hash']) && password_verify($password, $nas_user['password_hash'])) {
+                $is_valid = true;
+                // Sync password to WordPress so both databases remain synchronized
+                wp_set_password($password, $wp_user->ID);
+            }
+
+            if (!$is_valid) {
+                return new WP_REST_Response(array(
+                    'error' => 'Invalid username or password. Please verify your credentials.'
+                ), 401);
+            }
+
+            // Synchronize role and meta from LESOFT
+            $role_slug = $nas_client->map_nas_role_to_wp($nas_user);
+            if ($role_slug !== 'administrator' || user_can($wp_user, 'administrator')) {
+                $wp_user->set_role($role_slug);
+            }
+            update_user_meta($wp_user->ID, 'le_nas_user_id', $nas_user['id']);
+        }
+
+        // Sign in WordPress session
+        wp_set_current_user($wp_user->ID);
+        wp_set_auth_cookie($wp_user->ID, $remember);
+
+        $userData = $this->build_user_payload($wp_user);
         $nonce = wp_create_nonce('wp_rest');
 
         return rest_ensure_response(array(
@@ -301,32 +341,64 @@ class LEMakeApiController {
     }
 
     /**
-     * Log out current user
+     * Endpoint to automatically publish a user from software database into WordPress website database
      */
-    public function auth_logout(WP_REST_Request $request) {
-        wp_logout();
-        $nonce = wp_create_nonce('wp_rest');
+    public function publish_user(WP_REST_Request $request) {
+        $params = $request->get_json_params() ?: $request->get_params();
+        $username = sanitize_text_field($params['username'] ?? '');
+        $password = $params['password'] ?? null;
+
+        if (empty($username)) {
+            return new WP_REST_Response(array('error' => 'Username is required.'), 400);
+        }
+
+        $client = LEMakeNasDbClient::get_instance();
+        $nas_user = $client->get_user_by_login($username);
+
+        if (!$nas_user) {
+            // Build record from incoming parameters if software replication is in progress
+            $nas_user = array(
+                'id'        => intval($params['softwareUserId'] ?? $params['id'] ?? 0),
+                'username'  => $username,
+                'email'     => sanitize_email($params['email'] ?? ''),
+                'full_name' => sanitize_text_field($params['fullName'] ?? $params['full_name'] ?? $username),
+                'role'      => sanitize_text_field($params['role'] ?? 'operator'),
+                'phone'     => sanitize_text_field($params['phone'] ?? ''),
+                'is_active' => 1
+            );
+        }
+
+        $published = $client->publish_user_to_wp($nas_user, $password);
+        if (is_wp_error($published)) {
+            return new WP_REST_Response(array('error' => $published->get_error_message()), 500);
+        }
+
+        $user_id = is_object($published) && isset($published->ID) ? $published->ID : intval($published);
+        $user_login = is_object($published) && isset($published->user_login) ? $published->user_login : $username;
+        $user_roles = is_object($published) && !empty($published->roles) ? (array)$published->roles : array();
+        $primary_role = !empty($user_roles) ? $user_roles[0] : 'make_salesperson';
 
         return rest_ensure_response(array(
             'success'    => true,
-            'isLoggedIn' => false,
-            'nonce'      => $nonce,
+            'wp_user_id' => $user_id,
+            'username'   => $user_login,
+            'role'       => $primary_role,
+            'message'    => 'User successfully published to website database.'
         ));
     }
 
-    /**
-     * Get current session info
-     */
-    public function auth_me(WP_REST_Request $request) {
-        if (!is_user_logged_in()) {
-            return rest_ensure_response(array(
-                'isLoggedIn' => false,
-                'user'       => null,
-                'nonce'      => wp_create_nonce('wp_rest'),
-            ));
+
+    public function auth_logout() {
+        wp_logout();
+        return rest_ensure_response(array('success' => true, 'isLoggedIn' => false));
+    }
+
+    public function auth_me() {
+        $user = wp_get_current_user();
+        if (!$user->exists()) {
+            return rest_ensure_response(array('isLoggedIn' => false, 'user' => null));
         }
 
-        $user = wp_get_current_user();
         return rest_ensure_response(array(
             'isLoggedIn' => true,
             'user'       => $this->build_user_payload($user),
@@ -334,9 +406,6 @@ class LEMakeApiController {
         ));
     }
 
-    /**
-     * Build standard user info payload with role and capability flags
-     */
     private function build_user_payload($user) {
         $user_roles = (array)$user->roles;
         $is_admin = user_can($user, 'administrator') || user_can($user, 'manage_options');
@@ -365,7 +434,9 @@ class LEMakeApiController {
             'canApprove'          => user_can($user, 'approve_make_orders') || $is_admin,
             'canCreate'           => user_can($user, 'create_make_orders') || $is_admin || $is_designer,
             'canSetPricing'       => user_can($user, 'set_make_pricing') || $is_admin || $is_designer,
-            'canEditCost'         => $is_admin || $is_designer || $is_salesperson,
+            // Strictly only Admin and Designer can view or edit cost prices
+            'canViewCost'         => $is_admin || $is_designer,
+            'canEditCost'         => $is_admin || $is_designer,
             'canEditSale'         => $is_admin || $is_designer,
             'canUpdateProduction' => $is_factory_manager || $is_admin,
         );
@@ -376,10 +447,12 @@ class LEMakeApiController {
         if (strpos($url, 'media-proxy') !== false) {
             return $url;
         }
-        if (strpos($url, 'storage.lenas.me') !== false || strpos($url, 'lenas.me/files/') !== false) {
-            return add_query_arg('file', rawurlencode($url), rest_url('le-make/v1/media-proxy'));
+        // Normalize any legacy local IP or Tailscale IP to public Cloudflare storage domain
+        $normalized = preg_replace('#^http://(?:192\.168\.\d+\.\d+|100\.\d+\.\d+\.\d+|localhost|127\.0\.0\.1):8081#i', 'https://storage.lenas.me', $url);
+        if (strpos($normalized, 'storage.lenas.me') !== false || strpos($normalized, 'lenas.me/files/') !== false) {
+            return add_query_arg('file', rawurlencode($normalized), rest_url('le-make/v1/media-proxy'));
         }
-        return $url;
+        return $normalized;
     }
 
     public function get_products(WP_REST_Request $request) {
@@ -524,18 +597,28 @@ class LEMakeApiController {
             return new WP_REST_Response(array('error' => 'At least one product item is required.'), 400);
         }
 
+        $user_roles = (array)$current_user->roles;
+        $is_admin = current_user_can('administrator') || current_user_can('manage_options');
+        $is_designer = in_array('make_designer', $user_roles, true) || current_user_can('set_make_pricing');
+        $can_set_cost = $is_admin || $is_designer;
+
         $total_cost = 0;
         $total_sale = null;
         $has_sale = false;
 
-        foreach ($params['items'] as $it) {
+        foreach ($params['items'] as &$it) {
             $qty = intval($it['quantity'] ?? 1);
+            if (!$can_set_cost) {
+                // Strictly ignore/zero out any cost price submitted by salesperson
+                $it['item_cost_price'] = 0;
+            }
             $total_cost += floatval($it['item_cost_price'] ?? 0) * $qty;
             if (isset($it['item_sale_price']) && $it['item_sale_price'] !== '' && $it['item_sale_price'] !== null) {
                 $has_sale = true;
                 $total_sale = ($total_sale ?? 0) + (floatval($it['item_sale_price']) * $qty);
             }
         }
+        unset($it);
 
         $req_date = $params['requested_delivery_date'] ?? null;
 
@@ -559,7 +642,7 @@ class LEMakeApiController {
             'receiver_name'           => $params['receiver_name'] ?? '',
             'receiver_phone'          => $params['receiver_phone'] ?? '',
             'special_instructions'    => $params['special_instructions'] ?? '',
-            'cost_price'              => $total_cost,
+            'cost_price'              => $can_set_cost ? $total_cost : 0,
             'sale_price'              => $has_sale ? $total_sale : null
         );
 
@@ -570,7 +653,7 @@ class LEMakeApiController {
             return new WP_REST_Response(array('error' => $res->get_error_message()), 500);
         }
 
-        return rest_ensure_response($res);
+        return rest_ensure_response($client->sanitize_for_role($res, $current_user));
     }
 
     public function approve_order_version(WP_REST_Request $request) {
@@ -993,68 +1076,20 @@ class LEMakeApiController {
      * Synchronize staff users (Super Admins, Admins, Salesmen, Designers, Factory Managers) from TrueNAS to WordPress
      */
     public function sync_users(WP_REST_Request $request) {
-        $current_user = wp_get_current_user();
-        $is_admin = current_user_can('administrator') || current_user_can('manage_options');
-        if (!$is_admin) {
-            return new WP_REST_Response(array('error' => 'Only administrators can trigger user synchronization.'), 403);
-        }
-
         $client = LEMakeNasDbClient::get_instance();
-        $staff_users = $client->get_all_staff_users();
+        $result = $client->sync_all_software_users_to_wp();
 
-        if (is_wp_error($staff_users) || !is_array($staff_users)) {
-            return new WP_REST_Response(array('error' => 'Unable to fetch staff users from TrueNAS DB.'), 500);
-        }
-
-        $synced = 0;
-        foreach ($staff_users as $su) {
-            $u_login = trim($su['username'] ?? '');
-            if (empty($u_login)) {
-                continue;
-            }
-
-            $u_email = !empty($su['email']) ? trim($su['email']) : ($u_login . '@leadingedge.local');
-            $u_name  = !empty($su['full_name']) ? trim($su['full_name']) : $u_login;
-            $u_role  = strtolower($su['role'] ?? '');
-            $g_name  = $su['user_groups']['name'] ?? '';
-            $g_perms = $su['user_groups']['permissions'] ?? array();
-            if (is_string($g_perms)) {
-                $g_perms = json_decode($g_perms, true) ?: array();
-            }
-
-            $wp_role = 'make_salesperson';
-            if ($u_role === 'superadmin' || $u_role === 'admin' || stripos($g_name, 'admin') !== false) {
-                $wp_role = 'administrator';
-            } elseif (stripos($g_name, 'designer') !== false || !empty($g_perms['set_make_cost_price']) || !empty($g_perms['set_make_sale_price'])) {
-                $wp_role = 'make_designer';
-            } elseif (stripos($g_name, 'factory') !== false || !empty($g_perms['update_production_status'])) {
-                $wp_role = 'make_factory_manager';
-            }
-
-            $existing = get_user_by('login', $u_login) ?: get_user_by('email', $u_email);
-            if ($existing) {
-                if ($wp_role !== 'administrator' || user_can($existing, 'administrator')) {
-                    $existing->set_role($wp_role);
-                }
-                update_user_meta($existing->ID, 'le_nas_user_id', $su['id']);
-                $synced++;
-            } else {
-                $random_pass = wp_generate_password(24, true);
-                $new_id = wp_insert_user(array(
-                    'user_login'   => $u_login,
-                    'user_pass'    => $random_pass,
-                    'user_email'   => $u_email,
-                    'display_name' => $u_name,
-                    'role'         => $wp_role
-                ));
-                if (!is_wp_error($new_id)) {
-                    update_user_meta($new_id, 'le_nas_user_id', $su['id']);
-                    $synced++;
-                }
-            }
-        }
-
-        return rest_ensure_response(array('success' => true, 'synced_count' => $synced));
+        return rest_ensure_response(array(
+            'success'      => true,
+            'result'       => $result,
+            'synced_count' => ($result['created'] ?? 0) + ($result['updated'] ?? 0),
+            'message'      => sprintf(
+                'Synced %d users from software database (%d created, %d updated).',
+                $result['total'] ?? 0,
+                $result['created'] ?? 0,
+                $result['updated'] ?? 0
+            )
+        ));
     }
 
     /**
@@ -1094,7 +1129,21 @@ class LEMakeApiController {
         }
 
         $file_param = trim($file_param);
+        // Normalize any local IP or Tailscale IP
+        $file_param = preg_replace('#^http://(?:192\.168\.\d+\.\d+|100\.\d+\.\d+\.\d+|localhost|127\.0\.0\.1):8081#i', 'https://storage.lenas.me', $file_param);
+
         $clean_file_path = parse_url($file_param, PHP_URL_PATH);
+        if (empty($clean_file_path)) {
+            $clean_file_path = $file_param;
+        }
+
+        // Extract subpath under /files/
+        if (strpos($clean_file_path, '/files/') !== false) {
+            $subpath = substr($clean_file_path, strpos($clean_file_path, '/files/') + 7);
+        } else {
+            $subpath = ltrim($clean_file_path, '/');
+        }
+
         $file_name = basename($clean_file_path);
 
         $client = LEMakeNasDbClient::get_instance();
@@ -1104,7 +1153,7 @@ class LEMakeApiController {
         // 1. PRIMARY: Try reading from TrueNAS Storage if reported online
         if ($client->is_nas_online()) {
             $nas_storage = get_option('le_make_nas_storage_url', LEMakeNasDbClient::DEFAULT_TUNNEL_STORAGE);
-            $target_nas_url = rtrim($nas_storage, '/') . '/files/' . $file_name;
+            $target_nas_url = rtrim($nas_storage, '/') . '/files/' . $subpath;
 
             $cf_id = get_option('le_make_cf_client_id', LEMakeNasDbClient::DEFAULT_CF_CLIENT_ID);
             $cf_secret = get_option('le_make_cf_client_secret', LEMakeNasDbClient::DEFAULT_CF_CLIENT_SECRET);

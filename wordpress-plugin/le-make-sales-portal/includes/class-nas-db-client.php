@@ -312,7 +312,9 @@ class LEMakeNasDbClient {
     }
 
     /**
-     * Sanitizes sensitive fields for users based on role
+     * Sanitizes sensitive fields for users based on role.
+     * Strictly conceals cost price fields from Salespersons and unauthorized roles.
+     * Only Administrator and Furniture Designer can view cost prices.
      */
     public function sanitize_for_role($data, $user = null) {
         if (!$user) {
@@ -327,8 +329,49 @@ class LEMakeNasDbClient {
             return $data;
         }
 
-        // Salespeople can view cost price if entered, but sale price is managed
-        return $data;
+        // For all other roles (strictly salesperson, factory manager, etc.), scrub cost prices
+        return $this->strip_cost_fields($data);
+    }
+
+    /**
+     * Recursively scrubs all cost-related fields from data arrays/objects
+     */
+    public function strip_cost_fields($data) {
+        if (!is_array($data)) {
+            return $data;
+        }
+
+        $cost_keys = array(
+            'cost_price',
+            'item_cost_price',
+            'purchase_price',
+            'unit_cost_price',
+            'total_cost_price',
+            'estimated_cost_price'
+        );
+
+        $scrubbed = array();
+        foreach ($data as $k => $v) {
+            if (is_string($k) && in_array(strtolower($k), $cost_keys, true)) {
+                continue;
+            }
+
+            if (is_array($v)) {
+                $scrubbed[$k] = $this->strip_cost_fields($v);
+            } elseif (is_string($v) && ($k === 'order_data' || $k === 'custom_details')) {
+                // Handle JSON encoded order data inside version snapshots or offline backup
+                $decoded = json_decode($v, true);
+                if (is_array($decoded)) {
+                    $scrubbed[$k] = json_encode($this->strip_cost_fields($decoded));
+                } else {
+                    $scrubbed[$k] = $v;
+                }
+            } else {
+                $scrubbed[$k] = $v;
+            }
+        }
+
+        return $scrubbed;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1295,17 +1338,21 @@ class LEMakeNasDbClient {
             }
         }
 
-        return array(
+        return $this->sanitize_for_role(array(
             'version_from' => $v_from,
             'version_to'   => $v_to,
             'fieldChanges' => $field_changes,
             'v_from_data'  => $v_from_data,
             'v_to_data'    => $v_to_data
-        );
+        ));
     }
 
     public function get_order_versions($order_id) {
-        return $this->request('make_order_versions?order_id=eq.' . intval($order_id) . '&order=version_number.desc', 'GET');
+        $res = $this->request('make_order_versions?order_id=eq.' . intval($order_id) . '&order=version_number.desc', 'GET');
+        if (is_wp_error($res)) {
+            return $res;
+        }
+        return $this->sanitize_for_role($res);
     }
 
     /**
@@ -1318,6 +1365,24 @@ class LEMakeNasDbClient {
         }
 
         $endpoint = 'users?or=(username.eq.' . urlencode($login_clean) . ',email.eq.' . urlencode($login_clean) . ')&select=*,user_groups(*)&limit=1';
+        $res = $this->request($endpoint, 'GET');
+        if (is_wp_error($res) || empty($res) || !is_array($res)) {
+            return null;
+        }
+
+        return $res[0];
+    }
+
+    /**
+     * Query a single staff user by ID from TrueNAS / Supabase
+     */
+    public function get_user_by_id($id) {
+        $id = intval($id);
+        if ($id <= 0) {
+            return null;
+        }
+
+        $endpoint = 'users?id=eq.' . $id . '&select=*,user_groups(*)&limit=1';
         $res = $this->request($endpoint, 'GET');
         if (is_wp_error($res) || empty($res) || !is_array($res)) {
             return null;
@@ -1548,5 +1613,198 @@ class LEMakeNasDbClient {
             'file_name' => $clean_name
         );
     }
+
+    /**
+     * Resolve appropriate WordPress role from TrueNAS/LESOFT user record
+     */
+    public function map_nas_role_to_wp($nas_user) {
+        $nas_role = strtolower($nas_user['role'] ?? '');
+        $group_name = '';
+        $group_perms = array();
+
+        if (!empty($nas_user['user_groups'])) {
+            $group_name = $nas_user['user_groups']['name'] ?? '';
+            $raw_perms = $nas_user['user_groups']['permissions'] ?? array();
+            if (is_string($raw_perms)) {
+                $group_perms = json_decode($raw_perms, true) ?: array();
+            } elseif (is_array($raw_perms)) {
+                $group_perms = $raw_perms;
+            }
+        }
+
+        if ($nas_role === 'superadmin' || $nas_role === 'admin' || stripos($group_name, 'admin') !== false) {
+            return 'administrator';
+        }
+        if (stripos($group_name, 'designer') !== false || !empty($group_perms['set_make_cost_price']) || !empty($group_perms['set_make_sale_price'])) {
+            return 'make_designer';
+        }
+        if (stripos($group_name, 'factory') !== false || !empty($group_perms['update_production_status']) || !empty($group_perms['upload_production_photos'])) {
+            return 'make_factory_manager';
+        }
+        return 'make_salesperson';
+    }
+
+    /**
+     * Automatically publish a single user from the software database into WordPress website database
+     *
+     * @param array $nas_user User record from TrueNAS / Supabase users table
+     * @param string|null $plain_password Optional plain-text password to set in WordPress
+     * @return WP_User|WP_Error
+     */
+    public function publish_user_to_wp($nas_user, $plain_password = null) {
+        if (empty($nas_user) || empty($nas_user['username'])) {
+            return new WP_Error('invalid_nas_user', 'Invalid user record from software database');
+        }
+
+        $clean_username = sanitize_user($nas_user['username'], true);
+        $nas_id = intval($nas_user['id'] ?? 0);
+        $role_slug = $this->map_nas_role_to_wp($nas_user);
+
+        // Find existing WP user by le_nas_user_id meta, login, or email
+        $wp_user = null;
+        if ($nas_id > 0) {
+            $users_by_meta = get_users(array(
+                'meta_key'   => 'le_nas_user_id',
+                'meta_value' => $nas_id,
+                'number'     => 1
+            ));
+            if (!empty($users_by_meta)) {
+                $wp_user = $users_by_meta[0];
+            }
+        }
+
+        if (!$wp_user) {
+            $wp_user = get_user_by('login', $clean_username);
+        }
+
+        $email_to_use = sanitize_email($nas_user['email'] ?? '');
+        if (!$wp_user && !empty($email_to_use) && is_email($email_to_use)) {
+            $wp_user = get_user_by('email', $email_to_use);
+        }
+
+        // If email is missing or already taken by another user, generate a valid unique local email
+        if (empty($email_to_use) || !is_email($email_to_use)) {
+            $email_to_use = $clean_username . '@leadingedge.com.bd';
+        }
+
+        $display_name = !empty($nas_user['full_name']) ? sanitize_text_field($nas_user['full_name']) : $clean_username;
+
+        if ($wp_user) {
+            // Update existing WordPress user
+            $update_data = array(
+                'ID'           => $wp_user->ID,
+                'display_name' => $display_name,
+            );
+            if (!empty($plain_password)) {
+                $update_data['user_pass'] = $plain_password;
+            }
+            // Update role if not overriding an existing administrator unless NAS user is admin
+            if ($role_slug !== 'administrator' || user_can($wp_user, 'administrator')) {
+                $update_data['role'] = $role_slug;
+            }
+            wp_update_user($update_data);
+            if ($nas_id > 0) {
+                update_user_meta($wp_user->ID, 'le_nas_user_id', $nas_id);
+            }
+            if (!empty($nas_user['phone'])) {
+                update_user_meta($wp_user->ID, 'phone', sanitize_text_field($nas_user['phone']));
+            }
+            $updated_user = function_exists('get_userdata') ? get_userdata($wp_user->ID) : null;
+            if (!$updated_user && function_exists('get_user_by')) {
+                $updated_user = get_user_by('id', $wp_user->ID);
+            }
+            return $updated_user ?: $wp_user;
+        } else {
+            // Check if email is already used by an unrelated user; if so, make unique
+            if (email_exists($email_to_use)) {
+                $email_to_use = $clean_username . '.' . $nas_id . '@leadingedge.com.bd';
+            }
+
+            $password_to_set = !empty($plain_password) ? $plain_password : wp_generate_password(24, true, true);
+
+            $userdata = array(
+                'user_login'   => $clean_username,
+                'user_pass'    => $password_to_set,
+                'user_email'   => $email_to_use,
+                'display_name' => $display_name,
+                'first_name'   => $display_name,
+                'role'         => $role_slug,
+            );
+
+            $new_user_id = wp_insert_user($userdata);
+            if (is_wp_error($new_user_id)) {
+                // If login already exists error (case sensitivity fallback), try fetching it
+                $fallback = get_user_by('login', $clean_username);
+                if ($fallback) {
+                    if ($nas_id > 0) {
+                        update_user_meta($fallback->ID, 'le_nas_user_id', $nas_id);
+                    }
+                    return $fallback;
+                }
+                return $new_user_id;
+            }
+
+            if ($nas_id > 0) {
+                update_user_meta($new_user_id, 'le_nas_user_id', $nas_id);
+            }
+            if (!empty($nas_user['phone'])) {
+                update_user_meta($new_user_id, 'phone', sanitize_text_field($nas_user['phone']));
+            }
+
+            $created_user = function_exists('get_userdata') ? get_userdata($new_user_id) : null;
+            if (!$created_user && function_exists('get_user_by')) {
+                $created_user = get_user_by('id', $new_user_id);
+            }
+            if (!$created_user) {
+                $created_user = get_user_by('login', $clean_username);
+            }
+
+            return $created_user ?: new WP_Error('user_fetch_failed', 'User inserted but could not be loaded.');
+        }
+    }
+
+    /**
+     * Query all active staff users from software database and publish/sync them into WordPress wp_users
+     */
+    public function sync_all_software_users_to_wp() {
+        $staff = $this->get_all_staff_users();
+        if (empty($staff) || !is_array($staff)) {
+            return array('total' => 0, 'created' => 0, 'updated' => 0, 'errors' => array());
+        }
+
+        $created = 0;
+        $updated = 0;
+        $errors = array();
+
+        foreach ($staff as $u) {
+            if (empty($u['is_active'])) {
+                continue;
+            }
+            $clean_username = sanitize_user($u['username'] ?? '', true);
+            if (empty($clean_username)) {
+                continue;
+            }
+
+            $exists_before = get_user_by('login', $clean_username);
+            $res = $this->publish_user_to_wp($u, null);
+            if (is_wp_error($res)) {
+                $errors[] = 'User ' . $clean_username . ': ' . $res->get_error_message();
+            } else {
+                if ($exists_before) {
+                    $updated++;
+                } else {
+                    $created++;
+                }
+            }
+        }
+
+        return array(
+            'total'   => count($staff),
+            'created' => $created,
+            'updated' => $updated,
+            'errors'  => $errors,
+        );
+    }
 }
+
 

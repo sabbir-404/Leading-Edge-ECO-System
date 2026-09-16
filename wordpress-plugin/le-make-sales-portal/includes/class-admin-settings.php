@@ -106,9 +106,14 @@ class LEMakeAdminSettings {
                     <h3 style="margin: 0; font-size: 15px; font-weight: 700; color: #0f172a;">
                         👥 User Management &amp; Role Assignments
                     </h3>
-                    <a href="<?php echo esc_url(admin_url('user-new.php')); ?>" class="button button-primary" style="background: #111111; border-color: #111111; font-weight: 600;">
-                        + Add New Portal User
-                    </a>
+                    <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                        <button type="button" onclick="this.disabled=true; this.innerText='Publishing Users...'; fetch('<?php echo esc_url_raw(rest_url('le-make/v1/sync-users')); ?>', {method: 'POST', headers: {'X-WP-Nonce': '<?php echo wp_create_nonce('wp_rest'); ?>'}}).then(r => r.json()).then(d => { alert(d.message || (d.success ? 'Users published successfully.' : 'Sync failed.')); window.location.reload(); }).catch(e => { alert('Sync error: ' + e.message); this.disabled=false; this.innerText='👥 Publish Software Users to Website'; });" class="button" style="background: #0284c7; color: white; border: none; font-weight: 600;">
+                            👥 Publish Software Users to Website
+                        </button>
+                        <a href="<?php echo esc_url(admin_url('user-new.php')); ?>" class="button button-primary" style="background: #111111; border-color: #111111; font-weight: 600;">
+                            + Add New Portal User
+                        </a>
+                    </div>
                 </div>
                 <p style="font-size: 13px; color: #64748b; margin-bottom: 16px;">
                     All users are created and managed directly in standard WordPress (<strong>Users &rarr; Add New</strong>). The portal authenticates users in-page and applies their role capabilities:

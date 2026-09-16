@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Plus, AlertCircle, CheckCircle, Paperclip, X, FileText, 
   Trash2, MapPin, User, ShoppingBag, 
-  Palette, Maximize2, Tag, Shield, DollarSign, Lock
+  Palette, Maximize2, Tag, Shield, DollarSign, Lock, Box
 } from 'lucide-react';
 import DashboardLayout from '../../components/DashboardLayout';
 import { 
@@ -31,6 +31,12 @@ interface CartItem {
   item_cost_price?: number | string;
   item_sale_price?: number | string | null;
   notes?: string;
+  attachedFile?: {
+    name: string;
+    path: string;
+    type: string;
+    previewUrl?: string;
+  } | null;
 }
 
 const PlaceOrder: React.FC = () => {
@@ -64,6 +70,42 @@ const PlaceOrder: React.FC = () => {
   const [itemSalePrice, setItemSalePrice] = useState<number | string>('');
   const [itemRemarks, setItemRemarks] = useState<string>('');
 
+  // Per-item Technical Drawing / Image / PDF attachment
+  const [attachedFile, setAttachedFile] = useState<{
+    name: string;
+    path: string;
+    type: string;
+    previewUrl?: string;
+  } | null>(null);
+
+  const handleItemFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const filePath = (file as any).path || file.name;
+    const isCad = /\.(dwg|dxf|step|stp|iges|igs|skp|stl|obj)$/i.test(file.name);
+    const isImage = file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(file.name);
+    const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+    
+    let previewUrl = '';
+    if (isImage) {
+      previewUrl = URL.createObjectURL(file);
+    }
+    
+    setAttachedFile({
+      name: file.name,
+      path: filePath,
+      type: isCad ? 'cad' : (isPdf ? 'pdf' : (isImage ? 'image' : 'document')),
+      previewUrl
+    });
+  };
+
+  const handleRemoveAttachedFile = () => {
+    if (attachedFile?.previewUrl) {
+      URL.revokeObjectURL(attachedFile.previewUrl);
+    }
+    setAttachedFile(null);
+  };
+
   // Custom Size toggle & state for catalog products
   const [isCustomSize, setIsCustomSize] = useState(false);
   const [customShape, setCustomShape] = useState<'rect' | 'round'>('rect');
@@ -72,6 +114,14 @@ const PlaceOrder: React.FC = () => {
   const [customHeight, setCustomHeight] = useState('');
   const [customDiameter, setCustomDiameter] = useState('');
   const [customUnit, setCustomUnit] = useState('mm');
+
+  // Custom Specification toggle & state for catalog products
+  const [isCustomSpec, setIsCustomSpec] = useState(false);
+  const [customSpecName, setCustomSpecName] = useState('');
+
+  // Custom Color toggle & state for catalog products
+  const [isCustomColor, setIsCustomColor] = useState(false);
+  const [customColorName, setCustomColorName] = useState('');
 
   // Manual/Custom non-catalog item fallback mode
   const [isCustomItemMode, setIsCustomItemMode] = useState(false);
@@ -114,13 +164,17 @@ const PlaceOrder: React.FC = () => {
     setSelectedSpec(null);
     setSelectedSize(null);
     setSelectedColor(null);
+    setIsCustomSpec(false);
+    setCustomSpecName('');
+    setIsCustomColor(false);
+    setCustomColorName('');
     setIsCustomSize(false);
     setCustomLength('');
     setCustomWidth('');
     setCustomHeight('');
     setCustomDiameter('');
     if (prod) {
-      setItemCostPrice(prod.purchase_price || '');
+      setItemCostPrice(pricingPerms.canViewCostPrice ? (prod.purchase_price || '') : '');
       setItemSalePrice(prod.selling_price || prod.mrp || '');
     } else {
       setItemCostPrice('');
@@ -137,7 +191,7 @@ const PlaceOrder: React.FC = () => {
   };
 
   const handleAddItemToOrder = () => {
-    const costP = itemCostPrice !== '' ? Math.max(0, Number(itemCostPrice) || 0) : 0;
+    const costP = pricingPerms.canViewCostPrice && itemCostPrice !== '' ? Math.max(0, Number(itemCostPrice) || 0) : 0;
     const saleP = itemSalePrice !== '' ? Math.max(0, Number(itemSalePrice) || 0) : null;
 
     if (isCustomItemMode) {
@@ -155,7 +209,8 @@ const PlaceOrder: React.FC = () => {
         quantity: itemQuantity > 0 ? itemQuantity : 1,
         item_cost_price: costP,
         item_sale_price: saleP,
-        notes: itemRemarks
+        notes: itemRemarks,
+        attachedFile: attachedFile ? { ...attachedFile } : null
       };
       setCartItems(prev => [...prev, newItem]);
       setCustomItemName('');
@@ -164,17 +219,17 @@ const PlaceOrder: React.FC = () => {
       setItemQuantity(1);
       setItemCostPrice('');
       setItemSalePrice('');
+      setAttachedFile(null);
     } else {
       if (!selectedProduct) {
         alert('Please select a product from the catalog.');
         return;
       }
       
-      let dimText = '';
-      let isCustomized = false;
+      const isCustomized = isCustomSize || isCustomSpec || isCustomColor;
 
+      let dimText = '';
       if (isCustomSize) {
-        isCustomized = true;
         if (customShape === 'round') {
           dimText = `Ø ${customDiameter || '—'} x ${customHeight || '—'} ${customUnit} (Custom)`;
         } else {
@@ -188,32 +243,51 @@ const PlaceOrder: React.FC = () => {
         }
       }
 
+      const finalSpecName = isCustomSpec 
+        ? (customSpecName.trim() || 'Custom Specification') 
+        : (selectedSpec?.spec_name || undefined);
+
+      const finalColorName = isCustomColor 
+        ? (customColorName.trim() || 'Custom Color') 
+        : (selectedColor?.color_name || undefined);
+
       const newItem: CartItem = {
         _id: String(Date.now()),
         product_id: selectedProduct.id,
         product_code: selectedProduct.product_code,
         product_name: selectedProduct.product_name,
-        spec_id: selectedSpec?.id,
-        spec_name: selectedSpec?.spec_name,
-        spec_details: selectedSpec?.spec_details,
-        size_id: selectedSize?.id,
+        spec_id: isCustomSpec ? undefined : selectedSpec?.id,
+        spec_name: finalSpecName,
+        spec_details: isCustomSpec ? customSpecName.trim() : selectedSpec?.spec_details,
+        size_id: isCustomSize ? undefined : selectedSize?.id,
         dimensions_text: dimText,
         is_customized: isCustomized,
-        custom_dimensions: isCustomized ? dimText : undefined,
-        color_id: selectedColor?.id,
-        color_name: selectedColor?.color_name,
-        color_code: selectedColor?.color_code,
+        custom_dimensions: isCustomSize ? dimText : undefined,
+        color_id: isCustomColor ? undefined : selectedColor?.id,
+        color_name: finalColorName,
+        color_code: isCustomColor ? undefined : selectedColor?.color_code,
         quantity: itemQuantity > 0 ? itemQuantity : 1,
         item_cost_price: costP,
         item_sale_price: saleP,
-        notes: itemRemarks
+        notes: itemRemarks,
+        attachedFile: attachedFile ? { ...attachedFile } : null
       };
 
       setCartItems(prev => [...prev, newItem]);
+      setIsCustomSpec(false);
+      setCustomSpecName('');
+      setIsCustomColor(false);
+      setCustomColorName('');
+      setIsCustomSize(false);
+      setCustomLength('');
+      setCustomWidth('');
+      setCustomHeight('');
+      setCustomDiameter('');
       setItemRemarks('');
       setItemQuantity(1);
       setItemCostPrice('');
       setItemSalePrice('');
+      setAttachedFile(null);
     }
   };
 
@@ -225,7 +299,7 @@ const PlaceOrder: React.FC = () => {
   const handlePickPdfs = async () => {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = 'application/pdf';
+    input.accept = 'application/pdf,.dwg,.dxf,.step,.stp,.iges,.igs,.skp,.stl,.obj';
     input.multiple = true;
     input.onchange = (e: any) => {
       const files: FileList = e.target.files;
@@ -254,7 +328,9 @@ const PlaceOrder: React.FC = () => {
 
     try {
       const totalQty = cartItems.reduce((acc, i) => acc + i.quantity, 0);
-      const totalCostPrice = cartItems.reduce((acc, i) => acc + (Number(i.item_cost_price) || 0) * i.quantity, 0);
+      const totalCostPrice = pricingPerms.canViewCostPrice 
+        ? cartItems.reduce((acc, i) => acc + (Number(i.item_cost_price) || 0) * i.quantity, 0)
+        : 0;
       const hasAnySalePrice = cartItems.some(i => i.item_sale_price !== null && i.item_sale_price !== undefined && i.item_sale_price !== '');
       const totalSalePrice = hasAnySalePrice 
         ? cartItems.reduce((acc, i) => acc + (Number(i.item_sale_price) || 0) * i.quantity, 0)
@@ -296,7 +372,7 @@ const PlaceOrder: React.FC = () => {
           color_id: i.color_id || null,
           color_name: i.color_name || null,
           quantity: i.quantity,
-          item_cost_price: Number(i.item_cost_price) || 0,
+          item_cost_price: pricingPerms.canViewCostPrice ? (Number(i.item_cost_price) || 0) : 0,
           item_sale_price: i.item_sale_price !== null && i.item_sale_price !== undefined && i.item_sale_price !== '' ? Number(i.item_sale_price) : null,
           is_customized: !!i.is_customized,
           custom_dimensions: i.custom_dimensions || (i.is_customized ? i.dimensions_text : null),
@@ -305,6 +381,29 @@ const PlaceOrder: React.FC = () => {
       });
 
       const orderId = order?.id;
+      const createdItems = order?.items || [];
+
+      // Upload per-item drawings / PDFs if attached
+      if (orderId && Array.isArray(createdItems)) {
+        for (let idx = 0; idx < cartItems.length; idx++) {
+          const item = cartItems[idx];
+          if (item.attachedFile && item.attachedFile.path) {
+            const createdItem = createdItems[idx];
+            if (createdItem?.id) {
+              try {
+                // @ts-ignore
+                await window.electron.makeUploadItemPdf({
+                  orderId,
+                  itemId: createdItem.id,
+                  filePath: item.attachedFile.path
+                });
+              } catch (upErr) {
+                console.error('Failed to upload item drawing:', upErr);
+              }
+            }
+          }
+        }
+      }
 
       // Upload staged PDFs
       if (orderId && stagedPdfs.length > 0) {
@@ -320,6 +419,7 @@ const PlaceOrder: React.FC = () => {
       setLocationLandmark(''); setReceiverName(''); setReceiverPhone(''); setSpecialInstructions('');
       setTargetDeliveryDate(''); setRequestedDeliveryDate('');
       setStagedPdfs([]);
+      setAttachedFile(null);
       setTimeout(() => setSuccess(false), 3500);
     } catch (err: any) {
       console.error(err);
@@ -486,17 +586,45 @@ const PlaceOrder: React.FC = () => {
 
                     {/* 2. Specification Selection */}
                     <div>
-                      <label style={labelStyle}>Select Specification / Model</label>
-                      <select 
-                        value={selectedSpec?.id || ''} 
-                        onChange={e => handleSpecSelect(Number(e.target.value))} 
-                        disabled={!selectedProduct || (selectedProduct.specifications || []).length === 0}
-                        style={{ ...inputStyle, opacity: !selectedProduct ? 0.6 : 1 }}>
-                        <option value="">-- Standard / Choose Specification --</option>
-                        {(selectedProduct?.specifications || []).map((s: any) => (
-                          <option key={s.id} value={s.id}>{s.spec_code ? `[${s.spec_code}] ` : ''}{s.spec_name}</option>
-                        ))}
-                      </select>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '5px' }}>
+                        <label style={{ ...labelStyle, margin: 0 }}>Specification / Model</label>
+                        <button 
+                          type="button" 
+                          onClick={() => {
+                            const next = !isCustomSpec;
+                            setIsCustomSpec(next);
+                            if (next) setSelectedSpec(null);
+                          }}
+                          style={{ background: isCustomSpec ? 'rgba(99,102,241,0.1)' : 'rgba(249,115,22,0.1)', color: isCustomSpec ? '#4f46e5' : '#ea580c', border: `1px solid ${isCustomSpec ? 'rgba(99,102,241,0.3)' : 'rgba(249,115,22,0.3)'}`, borderRadius: '6px', padding: '2px 8px', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <Plus size={12} /> {isCustomSpec ? '← Standard Specs' : '+ Custom Spec'}
+                        </button>
+                      </div>
+
+                      {!isCustomSpec ? (
+                        <select 
+                          value={selectedSpec?.id || ''} 
+                          onChange={e => handleSpecSelect(Number(e.target.value))} 
+                          disabled={!selectedProduct || (selectedProduct.specifications || []).length === 0}
+                          style={{ ...inputStyle, opacity: !selectedProduct ? 0.6 : 1 }}>
+                          <option value="">-- Standard / Choose Specification --</option>
+                          {(selectedProduct?.specifications || []).map((s: any) => (
+                            <option key={s.id} value={s.id}>{s.spec_code ? `[${s.spec_code}] ` : ''}{s.spec_name}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <div style={{ background: 'rgba(249,115,22,0.04)', border: '1px dashed #f97316', borderRadius: '8px', padding: '8px 10px' }}>
+                          <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#ea580c', marginBottom: '4px' }}>
+                            ✨ Custom Specification / Model
+                          </div>
+                          <input 
+                            type="text" 
+                            placeholder="e.g. 6-leg executive frame, cable tray, modesty panel"
+                            value={customSpecName}
+                            onChange={e => setCustomSpecName(e.target.value)}
+                            style={{ ...inputStyle, padding: '8px 10px', fontSize: '0.85rem' }}
+                          />
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -607,44 +735,76 @@ const PlaceOrder: React.FC = () => {
 
                       {/* Color / Finish */}
                       <div>
-                        <label style={labelStyle}><Palette size={13} style={{ display: 'inline', marginRight: '4px' }} /> Color &amp; Finish</label>
-                        <select
-                          value={selectedColor?.id || ''}
-                          onChange={e => {
-                            const availableColors = (selectedProduct.colors && selectedProduct.colors.length > 0) ? selectedProduct.colors : (selectedSpec?.colors || []);
-                            const cl = availableColors.find((c: any) => c.id === Number(e.target.value)) || null;
-                            setSelectedColor(cl);
-                          }}
-                          style={inputStyle}>
-                          <option value="">-- Standard / Default Color --</option>
-                          {((selectedProduct.colors && selectedProduct.colors.length > 0) ? selectedProduct.colors : (selectedSpec?.colors || [])).map((cl: any) => (
-                            <option key={cl.id} value={cl.id}>{cl.color_name} {cl.color_code ? `(${cl.color_code})` : ''}</option>
-                          ))}
-                        </select>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '5px' }}>
+                          <label style={{ ...labelStyle, margin: 0 }}>
+                            <Palette size={13} style={{ display: 'inline', marginRight: '4px' }} /> Color &amp; Finish
+                          </label>
+                          <button 
+                            type="button" 
+                            onClick={() => {
+                              const next = !isCustomColor;
+                              setIsCustomColor(next);
+                              if (next) setSelectedColor(null);
+                            }}
+                            style={{ background: isCustomColor ? 'rgba(99,102,241,0.1)' : 'rgba(249,115,22,0.1)', color: isCustomColor ? '#4f46e5' : '#ea580c', border: `1px solid ${isCustomColor ? 'rgba(99,102,241,0.3)' : 'rgba(249,115,22,0.3)'}`, borderRadius: '6px', padding: '2px 8px', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <Plus size={12} /> {isCustomColor ? '← Standard Colors' : '+ Custom Color'}
+                          </button>
+                        </div>
+
+                        {!isCustomColor ? (
+                          <select
+                            value={selectedColor?.id || ''}
+                            onChange={e => {
+                              const availableColors = (selectedProduct.colors && selectedProduct.colors.length > 0) ? selectedProduct.colors : (selectedSpec?.colors || []);
+                              const cl = availableColors.find((c: any) => c.id === Number(e.target.value)) || null;
+                              setSelectedColor(cl);
+                            }}
+                            style={inputStyle}>
+                            <option value="">-- Standard / Default Color --</option>
+                            {((selectedProduct.colors && selectedProduct.colors.length > 0) ? selectedProduct.colors : (selectedSpec?.colors || [])).map((cl: any) => (
+                              <option key={cl.id} value={cl.id}>{cl.color_name} {cl.color_code ? `(${cl.color_code})` : ''}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <div style={{ background: 'rgba(249,115,22,0.04)', border: '1px dashed #f97316', borderRadius: '8px', padding: '8px 10px' }}>
+                            <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#ea580c', marginBottom: '4px' }}>
+                              🎨 Custom Color (Enter Color Name)
+                            </div>
+                            <input 
+                              type="text" 
+                              placeholder="e.g. Royal Navy Blue / Smoked Walnut / Matte Gold"
+                              value={customColorName}
+                              onChange={e => setCustomColorName(e.target.value)}
+                              style={{ ...inputStyle, padding: '8px 10px', fontSize: '0.85rem' }}
+                            />
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
 
                   {/* Clean, Normal Pricing Fields */}
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                    {/* Cost Price: Salesperson, Designer, Admin */}
-                    <div>
-                      <label style={labelStyle}>
-                        <DollarSign size={13} style={{ display: 'inline', marginRight: '3px' }} /> Cost Price (BDT ৳) *
-                      </label>
-                      <input 
-                        type="number" 
-                        min={0} 
-                        placeholder="e.g. 15000" 
-                        value={itemCostPrice} 
-                        onChange={e => setItemCostPrice(e.target.value)} 
-                        disabled={!pricingPerms.canEditCostPrice}
-                        style={{ ...inputStyle, opacity: !pricingPerms.canEditCostPrice ? 0.7 : 1 }} 
-                      />
-                      <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: '3px', display: 'block' }}>
-                        {pricingPerms.canEditCostPrice ? 'Entered by Salesperson / Designer' : '🔒 Read-only'}
-                      </span>
-                    </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: pricingPerms.canViewCostPrice ? '1fr 1fr' : '1fr', gap: '1rem' }}>
+                    {/* Cost Price: Strictly Designer / Admin only */}
+                    {pricingPerms.canViewCostPrice && (
+                      <div>
+                        <label style={labelStyle}>
+                          <DollarSign size={13} style={{ display: 'inline', marginRight: '3px' }} /> Cost Price (BDT ৳) *
+                        </label>
+                        <input 
+                          type="number" 
+                          min={0} 
+                          placeholder="e.g. 15000" 
+                          value={itemCostPrice} 
+                          onChange={e => setItemCostPrice(e.target.value)} 
+                          disabled={!pricingPerms.canEditCostPrice}
+                          style={{ ...inputStyle, opacity: !pricingPerms.canEditCostPrice ? 0.7 : 1 }} 
+                        />
+                        <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: '3px', display: 'block' }}>
+                          {pricingPerms.canEditCostPrice ? 'Entered by Designer / Admin' : '🔒 Read-only'}
+                        </span>
+                      </div>
+                    )}
 
                     {/* Sale Price: Designer, Admin */}
                     <div>
@@ -664,6 +824,59 @@ const PlaceOrder: React.FC = () => {
                         {pricingPerms.canEditSalePrice ? 'Entered by Designer / Admin' : '🔒 Pending designer review'}
                       </span>
                     </div>
+                  </div>
+
+                  {/* Per-Item Drawing / Image / PDF / CAD Attachment */}
+                  <div style={{ background: 'var(--input-bg)', border: '1px dashed var(--border-color)', borderRadius: '8px', padding: '10px 14px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                      <label style={{ ...labelStyle, margin: 0, display: 'flex', alignItems: 'center', gap: '5px' }}>
+                        <Paperclip size={13} /> Attach Technical Drawing / Image / PDF / CAD (Optional)
+                      </label>
+                      {attachedFile && (
+                        <button type="button" onClick={handleRemoveAttachedFile} style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                          <X size={12} /> Remove
+                        </button>
+                      )}
+                    </div>
+
+                    {!attachedFile ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                        <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '6px 12px', background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '6px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                          <Paperclip size={14} /> Choose File (Image, PDF, CAD)
+                          <input 
+                            type="file" 
+                            accept="image/*,application/pdf,.dwg,.dxf,.step,.stp,.iges,.igs,.skp,.stl,.obj" 
+                            onChange={handleItemFileSelect} 
+                            style={{ display: 'none' }} 
+                          />
+                        </label>
+                        <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary)' }}>
+                          Attach CAD files (.dwg, .dxf, .step), PDFs or photos for this item
+                        </span>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: 'var(--card-bg)', padding: '6px 12px', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                        {attachedFile.type === 'image' && attachedFile.previewUrl ? (
+                          <img src={attachedFile.previewUrl} alt="Preview" style={{ width: '36px', height: '36px', objectFit: 'cover', borderRadius: '4px' }} />
+                        ) : attachedFile.type === 'cad' ? (
+                          <div style={{ width: '36px', height: '36px', borderRadius: '4px', background: 'rgba(14,165,233,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#0284c7' }}>
+                            <Box size={18} />
+                          </div>
+                        ) : (
+                          <div style={{ width: '36px', height: '36px', borderRadius: '4px', background: 'rgba(239,68,68,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ef4444' }}>
+                            <FileText size={18} />
+                          </div>
+                        )}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {attachedFile.name}
+                          </div>
+                          <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+                            {attachedFile.type === 'cad' ? 'CAD Model / Technical Drawing' : (attachedFile.type === 'pdf' ? 'PDF Document' : 'Image Blueprint')} &bull; Ready to attach
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* Quantity & Item Remarks */}
@@ -697,25 +910,27 @@ const PlaceOrder: React.FC = () => {
                   </div>
 
                   {/* Clean, Normal Pricing Fields for Custom Item */}
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: pricingPerms.canViewCostPrice ? '1fr 1fr' : '1fr', gap: '1rem' }}>
                     {/* Cost Price */}
-                    <div>
-                      <label style={labelStyle}>
-                        <DollarSign size={13} style={{ display: 'inline', marginRight: '3px' }} /> Cost Price (BDT ৳) *
-                      </label>
-                      <input 
-                        type="number" 
-                        min={0} 
-                        placeholder="e.g. 15000" 
-                        value={itemCostPrice} 
-                        onChange={e => setItemCostPrice(e.target.value)} 
-                        disabled={!pricingPerms.canEditCostPrice}
-                        style={{ ...inputStyle, opacity: !pricingPerms.canEditCostPrice ? 0.7 : 1 }} 
-                      />
-                      <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: '3px', display: 'block' }}>
-                        {pricingPerms.canEditCostPrice ? 'Entered by Salesperson / Designer' : '🔒 Read-only'}
-                      </span>
-                    </div>
+                    {pricingPerms.canViewCostPrice && (
+                      <div>
+                        <label style={labelStyle}>
+                          <DollarSign size={13} style={{ display: 'inline', marginRight: '3px' }} /> Cost Price (BDT ৳) *
+                        </label>
+                        <input 
+                          type="number" 
+                          min={0} 
+                          placeholder="e.g. 15000" 
+                          value={itemCostPrice} 
+                          onChange={e => setItemCostPrice(e.target.value)} 
+                          disabled={!pricingPerms.canEditCostPrice}
+                          style={{ ...inputStyle, opacity: !pricingPerms.canEditCostPrice ? 0.7 : 1 }} 
+                        />
+                        <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: '3px', display: 'block' }}>
+                          {pricingPerms.canEditCostPrice ? 'Entered by Designer / Admin' : '🔒 Read-only'}
+                        </span>
+                      </div>
+                    )}
 
                     {/* Sale Price */}
                     <div>
@@ -735,6 +950,59 @@ const PlaceOrder: React.FC = () => {
                         {pricingPerms.canEditSalePrice ? 'Entered by Designer / Admin' : '🔒 Pending designer review'}
                       </span>
                     </div>
+                  </div>
+
+                  {/* Per-Item Drawing / Image / PDF / CAD Attachment for Custom Item */}
+                  <div style={{ background: 'var(--input-bg)', border: '1px dashed var(--border-color)', borderRadius: '8px', padding: '10px 14px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                      <label style={{ ...labelStyle, margin: 0, display: 'flex', alignItems: 'center', gap: '5px' }}>
+                        <Paperclip size={13} /> Attach Technical Drawing / Image / PDF / CAD (Optional)
+                      </label>
+                      {attachedFile && (
+                        <button type="button" onClick={handleRemoveAttachedFile} style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                          <X size={12} /> Remove
+                        </button>
+                      )}
+                    </div>
+
+                    {!attachedFile ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                        <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '6px 12px', background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '6px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                          <Paperclip size={14} /> Choose File (Image, PDF, CAD)
+                          <input 
+                            type="file" 
+                            accept="image/*,application/pdf,.dwg,.dxf,.step,.stp,.iges,.igs,.skp,.stl,.obj" 
+                            onChange={handleItemFileSelect} 
+                            style={{ display: 'none' }} 
+                          />
+                        </label>
+                        <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary)' }}>
+                          Attach CAD files (.dwg, .dxf, .step), PDFs or photos for this custom item
+                        </span>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: 'var(--card-bg)', padding: '6px 12px', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                        {attachedFile.type === 'image' && attachedFile.previewUrl ? (
+                          <img src={attachedFile.previewUrl} alt="Preview" style={{ width: '36px', height: '36px', objectFit: 'cover', borderRadius: '4px' }} />
+                        ) : attachedFile.type === 'cad' ? (
+                          <div style={{ width: '36px', height: '36px', borderRadius: '4px', background: 'rgba(14,165,233,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#0284c7' }}>
+                            <Box size={18} />
+                          </div>
+                        ) : (
+                          <div style={{ width: '36px', height: '36px', borderRadius: '4px', background: 'rgba(239,68,68,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ef4444' }}>
+                            <FileText size={18} />
+                          </div>
+                        )}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {attachedFile.name}
+                          </div>
+                          <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+                            {attachedFile.type === 'cad' ? 'CAD Model / Technical Drawing' : (attachedFile.type === 'pdf' ? 'PDF Document' : 'Image Blueprint')} &bull; Ready to attach
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr auto', gap: '1rem', alignItems: 'flex-end' }}>
@@ -768,9 +1036,12 @@ const PlaceOrder: React.FC = () => {
                           <th style={{ padding: '8px 12px', textAlign: 'left' }}>Dimensions</th>
                           <th style={{ padding: '8px 12px', textAlign: 'left' }}>Color</th>
                           <th style={{ padding: '8px 12px', textAlign: 'center' }}>Qty</th>
-                          <th style={{ padding: '8px 12px', textAlign: 'right', color: 'var(--text-primary)' }}>Cost Price (৳)</th>
+                          {pricingPerms.canViewCostPrice && (
+                            <th style={{ padding: '8px 12px', textAlign: 'right', color: 'var(--text-primary)' }}>Cost Price (৳)</th>
+                          )}
                           <th style={{ padding: '8px 12px', textAlign: 'right', color: 'var(--text-primary)' }}>Sale Price (৳)</th>
                           <th style={{ padding: '8px 12px', textAlign: 'left' }}>Notes</th>
+                          <th style={{ padding: '8px 12px', textAlign: 'center' }}>Attachment</th>
                           <th style={{ padding: '8px 12px', textAlign: 'center' }}></th>
                         </tr>
                       </thead>
@@ -801,9 +1072,11 @@ const PlaceOrder: React.FC = () => {
                             <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 700 }}>{item.quantity}</td>
                             
                             {/* Cost Price */}
-                            <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 600 }}>
-                              ৳{Number(item.item_cost_price || 0).toLocaleString()}
-                            </td>
+                            {pricingPerms.canViewCostPrice && (
+                              <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 600 }}>
+                                ৳{Number(item.item_cost_price || 0).toLocaleString()}
+                              </td>
+                            )}
 
                             {/* Sale Price */}
                             <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 600 }}>
@@ -817,6 +1090,18 @@ const PlaceOrder: React.FC = () => {
                             </td>
 
                             <td style={{ padding: '10px 12px', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>{item.notes || '—'}</td>
+                            
+                            {/* Attachment indicator */}
+                            <td style={{ padding: '10px 12px', textAlign: 'center' }}>
+                              {item.attachedFile ? (
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: 'rgba(99,102,241,0.08)', color: 'var(--accent-color)', padding: '2px 8px', borderRadius: '6px', fontSize: '0.75rem', fontWeight: 600 }}>
+                                  {item.attachedFile.type === 'cad' ? '📐' : (item.attachedFile.type === 'pdf' ? '📄' : '🖼️')} {item.attachedFile.name.length > 14 ? item.attachedFile.name.substring(0, 11) + '...' : item.attachedFile.name}
+                                </span>
+                              ) : (
+                                <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', fontStyle: 'italic' }}>—</span>
+                              )}
+                            </td>
+
                             <td style={{ padding: '10px 12px', textAlign: 'center' }}>
                               <button type="button" onClick={() => removeCartItem(item._id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444' }}>
                                 <Trash2 size={16} />

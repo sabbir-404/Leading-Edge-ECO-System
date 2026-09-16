@@ -3,7 +3,7 @@
  * Plugin Name: LE-SOFT MAKE — Sales & Furniture Design Portal
  * Plugin URI:  https://leadingedge.me
  * Description: Connected Sales & Design Portal for LE-SOFT MAKE module with centralized Product Database, custom dimensional sizing, version-tracked approvals, and direct TrueNAS PostgREST / Supabase integration.
- * Version:     1.6.0
+ * Version:     1.8.1
  * Author:      Leading Edge Technologies
  * Author URI:  https://leadingedge.me
  * Text Domain: le-make-sales-portal
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
     exit; // Exit if accessed directly
 }
 
-define('LE_MAKE_PLUGIN_VERSION', '1.6.0');
+define('LE_MAKE_PLUGIN_VERSION', '1.8.1');
 define('LE_MAKE_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('LE_MAKE_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -138,6 +138,8 @@ class LEMakeSalesPortalPlugin {
         $client->backfill_nas_to_supabase();
         // 4. Enforce 1GB rolling window limit on Supabase Storage
         $client->prune_supabase_storage_to_1gb();
+        // 5. Automatically publish & sync software database users to website database
+        $client->sync_all_software_users_to_wp();
     }
 
     public function register_shortcodes() {
@@ -242,7 +244,8 @@ class LEMakeSalesPortalPlugin {
                         'canApprove'          => current_user_can('approve_make_orders') || $is_admin,
                         'canCreate'           => current_user_can('create_make_orders') || $is_admin || $is_designer,
                         'canSetPricing'       => current_user_can('set_make_pricing') || $is_admin || $is_designer,
-                        'canEditCost'         => $is_admin || $is_designer || $is_salesperson,
+                        'canViewCost'         => $is_admin || $is_designer,
+                        'canEditCost'         => $is_admin || $is_designer,
                         'canEditSale'         => $is_admin || $is_designer,
                         'canUpdateProduction' => $is_factory_manager || $is_admin,
                     );

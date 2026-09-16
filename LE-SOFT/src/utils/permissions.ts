@@ -120,18 +120,31 @@ export const canModifyAllInfo = (): boolean => {
 };
 
 /**
- * True if the current user can enter/edit the Cost Price when adding/managing products:
- * Salesperson, Furniture Designer, Admin, and Superadmin can all enter the cost price.
+ * True if the current user can view the Cost Price of products/orders:
+ * Strictly only Superadmin, Admin, and Furniture Designer.
+ * Salespersons are strictly forbidden from viewing the cost price.
+ */
+export const canViewCostPrice = (): boolean => {
+    if (isSuperadmin() || isAdmin()) return true;
+    if (isSalesperson()) return false;
+    return isFurnitureDesigner() || hasPerm('set_make_cost_price');
+};
+
+/**
+ * True if the current user can enter/edit the Cost Price:
+ * Strictly Superadmin, Admin, and Furniture Designer.
+ * Salespersons cannot view or edit cost prices.
  */
 export const canEditCostPrice = (): boolean => {
     if (isSuperadmin() || isAdmin()) return true;
-    return isFurnitureDesigner() || isSalesperson() || hasPerm('set_make_cost_price');
+    if (isSalesperson()) return false;
+    return isFurnitureDesigner() || hasPerm('set_make_cost_price');
 };
 
 /**
  * True if the current user can enter/edit the Sale Price (Selling Price / Unit Price):
  * Furniture Designer, Admin, and Superadmin can enter sale price.
- * Salespersons enter cost price only (sale price is read-only or determined by designer).
+ * Salespersons cannot set sale prices directly.
  */
 export const canEditSalePrice = (): boolean => {
     if (isSuperadmin() || isAdmin()) return true;
@@ -146,6 +159,7 @@ export const getUserPricingPermissions = () => {
     const designer = isFurnitureDesigner();
     const sales = isSalesperson();
     const modifyAll = canModifyAllInfo();
+    const viewCost = canViewCostPrice();
     const editCost = canEditCostPrice();
     const editSale = canEditSalePrice();
 
@@ -162,6 +176,7 @@ export const getUserPricingPermissions = () => {
         isDesigner: designer,
         isSalesperson: sales,
         canModifyAll: modifyAll,
+        canViewCostPrice: viewCost,
         canEditCostPrice: editCost,
         canEditSalePrice: editSale,
         displayRoleName,
