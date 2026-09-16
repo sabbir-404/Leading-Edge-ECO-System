@@ -39,7 +39,11 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Install Native Modules for Electron
-        run: npx electron-builder install-app-deps
+        run: |
+          if [ -d "node_modules/cpu-features" ]; then
+            node -e "const fs=require('fs'), cp=require('child_process'); fs.writeFileSync('node_modules/cpu-features/buildcheck.gypi', cp.execSync('node buildcheck.js', {cwd: 'node_modules/cpu-features'}));"
+          fi
+          npx electron-builder install-app-deps
 
       - name: Build macOS Release
         run: npm run dist:mac
