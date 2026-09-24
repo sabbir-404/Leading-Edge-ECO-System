@@ -55,6 +55,7 @@ import Notifications from './pages/Notifications/Notifications';
 
 // Settings
 import Settings from './pages/Settings/Settings';
+import MakeTutorial from './components/tutorial/MakeTutorial';
 
 // Website Admin
 import WebsiteDashboard from './pages/Website/WebsiteDashboard';
@@ -388,6 +389,7 @@ function App() {
         {/* Network Setup (Unguarded) */}
 
       </Routes>
+      <MakeTutorial />
       </NetworkProvider>
     </ToastProvider>
     </ErrorBoundary>

@@ -4,11 +4,40 @@ import { ClipboardList, Clock, CheckCircle, Truck, Package, BarChart2, RefreshCw
 import { useAutoRefresh } from '../../hooks/useAutoRefresh';
 import DashboardLayout from '../../components/DashboardLayout';
 
-const STATUSES = ['Placed', 'In Production', 'Welding', 'Painting', 'Ready for Dispatch', 'Delivered'];
+const STATUSES = [
+  'Awaiting Pricing',
+  'Pending Approval',
+  'Placed',
+  'Work in process',
+  'Production On Going',
+  'Primary QC',
+  'Color Ongoing (oven)',
+  'QC Final',
+  'Packaging',
+  'Ready to Ship',
+  'Delivered'
+];
+
 const statusColors: Record<string, string> = {
-  'Placed': '#6b7280', 'In Production': '#3b82f6', 'Welding': '#f59e0b',
-  'Painting': '#8b5cf6', 'Ready for Dispatch': '#10b981', 'Delivered': '#059669',
+  'Awaiting Pricing': '#f59e0b',
+  'Pricing Done': '#3b82f6',
+  'Pending Approval': '#eab308',
+  'Placed': '#6b7280',
+  'In Production': '#3b82f6',
+  'Work in process': '#3b82f6',
+  'Production On Going': '#0284c7',
+  'Primary QC': '#8b5cf6',
+  'Color Ongoing': '#a855f7',
+  'Color Ongoing (oven)': '#a855f7',
+  'QC Final': '#6366f1',
+  'Packaging': '#f97316',
+  'Ready to Ship': '#10b981',
+  'Ready for Dispatch': '#10b981',
+  'Delivered': '#059669',
+  'Welding': '#f59e0b',
+  'Painting': '#8b5cf6',
 };
+
 const priorityColors: Record<string, string> = {
   'Low': '#6b7280', 'Normal': '#3b82f6', 'High': '#f59e0b', 'Urgent': '#ef4444',
 };
@@ -34,10 +63,13 @@ const MakeDashboard: React.FC = () => {
     setLoading(true);
     try {
       // @ts-ignore
-      const data = await window.electron.makeGetDashboardStats();
-      setStats(data);
-    } catch (e) { console.error(e); }
-    finally { setLoading(false); }
+      const data = await window.electron?.makeGetDashboardStats?.();
+      setStats(data || null);
+    } catch (e) { 
+      console.error('[MakeDashboard] fetchStats error:', e); 
+    } finally { 
+      setLoading(false); 
+    }
   };
 
   useEffect(() => { fetchStats(); }, []);
@@ -49,7 +81,19 @@ const MakeDashboard: React.FC = () => {
     borderRadius: '20px', background: `${color}18`, color, fontSize: '0.72rem', fontWeight: 600,
   });
 
-  const barMax = stats ? Math.max(1, ...STATUSES.map(s => stats.byStatus?.[s] || 0)) : 1;
+  const byStatus = stats?.byStatus || stats?.stageBreakdown || {};
+  const barMax = Math.max(1, ...STATUSES.map(s => byStatus[s] || 0));
+
+  const totalOrders = stats?.total ?? stats?.totalOrders ?? 0;
+  const pendingOrdersCount = stats?.pending ?? stats?.pendingApproval ?? 0;
+  const inProgressCount = stats?.inProgress ?? stats?.inProduction ?? 0;
+  const readyForDispatchCount = stats?.readyForDispatch ?? 0;
+  const deliveredCount = stats?.delivered ?? stats?.completed ?? 0;
+
+  const pendingDeliveryList: any[] = Array.isArray(stats?.pendingDelivery) ? stats.pendingDelivery : [];
+  const recentOrdersList: any[] = Array.isArray(stats?.recent) 
+    ? stats.recent 
+    : (Array.isArray(stats?.recentOrders) ? stats.recentOrders : []);
 
   return (
     <DashboardLayout title="Make Dashboard">
@@ -69,34 +113,36 @@ const MakeDashboard: React.FC = () => {
 
         {loading ? (
           <div style={{ textAlign: 'center', padding: '4rem', color: 'var(--text-secondary)' }}>Loading...</div>
-        ) : !stats ? null : (
+        ) : !stats ? (
+          <div style={{ textAlign: 'center', padding: '4rem', color: 'var(--text-secondary)' }}>No dashboard data available.</div>
+        ) : (
           <>
             {/* Stat Cards */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1rem', marginBottom: '2rem' }}>
-              <StatCard label="Total Orders" value={stats.total} icon={ClipboardList} color="#6366f1" />
-              <StatCard label="Pending Orders" value={stats.pending} icon={Clock} color="#f59e0b" />
-              <StatCard label="In Progress" value={stats.inProgress} icon={BarChart2} color="#3b82f6" />
-              <StatCard label="Ready for Dispatch" value={stats.readyForDispatch} icon={Truck} color="#10b981" />
-              <StatCard label="Delivered" value={stats.delivered} icon={CheckCircle} color="#059669" />
+            <div data-tutorial="make-dashboard" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem', marginBottom: '2rem' }}>
+              <StatCard label="Total Orders" value={totalOrders} icon={ClipboardList} color="#6366f1" />
+              <StatCard label="Pending Orders" value={pendingOrdersCount} icon={Clock} color="#f59e0b" />
+              <StatCard label="In Progress" value={inProgressCount} icon={BarChart2} color="#3b82f6" />
+              <StatCard label="Ready for Dispatch" value={readyForDispatchCount} icon={Truck} color="#10b981" />
+              <StatCard label="Delivered" value={deliveredCount} icon={CheckCircle} color="#059669" />
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '2rem' }}>
+            <div className="make-responsive-grid-2" style={{ gap: '1.5rem', marginBottom: '2rem' }}>
               {/* Orders by Status — bar chart */}
               <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '14px', padding: '1.5rem' }}>
                 <h3 style={{ margin: '0 0 1.25rem', fontSize: '0.95rem', fontWeight: 700 }}>Orders by Status</h3>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                   {STATUSES.map(s => {
-                    const count = stats.byStatus?.[s] || 0;
+                    const count = byStatus[s] || 0;
                     const pct = Math.round((count / barMax) * 100);
                     return (
                       <div key={s}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
                           <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>{s}</span>
-                          <span style={{ fontSize: '0.8rem', fontWeight: 700, color: statusColors[s] }}>{count}</span>
+                          <span style={{ fontSize: '0.8rem', fontWeight: 700, color: statusColors[s] || '#6b7280' }}>{count}</span>
                         </div>
                         <div style={{ height: '6px', borderRadius: '4px', background: 'var(--border-color)', overflow: 'hidden' }}>
                           <motion.div initial={{ width: 0 }} animate={{ width: `${pct}%` }} transition={{ delay: 0.1, duration: 0.6 }}
-                            style={{ height: '100%', borderRadius: '4px', background: statusColors[s] }} />
+                            style={{ height: '100%', borderRadius: '4px', background: statusColors[s] || '#6b7280' }} />
                         </div>
                       </div>
                     );
@@ -107,13 +153,13 @@ const MakeDashboard: React.FC = () => {
               {/* Pending Delivery list */}
               <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '14px', padding: '1.5rem' }}>
                 <h3 style={{ margin: '0 0 1.25rem', fontSize: '0.95rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <Package size={16} color="#10b981" /> Pending Delivery ({stats.pendingDelivery?.length || 0})
+                  <Package size={16} color="#10b981" /> Pending Delivery ({pendingDeliveryList.length})
                 </h3>
-                {stats.pendingDelivery?.length === 0 ? (
+                {pendingDeliveryList.length === 0 ? (
                   <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', textAlign: 'center', padding: '1rem 0', opacity: 0.6 }}>No orders ready for dispatch</p>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '260px', overflowY: 'auto' }}>
-                    {stats.pendingDelivery.map((o: any) => (
+                    {pendingDeliveryList.map((o: any) => (
                       <div key={o.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', background: 'rgba(16,185,129,0.06)', borderRadius: '8px', border: '1px solid rgba(16,185,129,0.2)' }}>
                         <div>
                           <div style={{ fontWeight: 600, fontSize: '0.875rem', color: 'var(--text-primary)' }}>{o.furniture_name}</div>
@@ -145,7 +191,7 @@ const MakeDashboard: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {stats.recent.map((o: any, i: number) => (
+                    {recentOrdersList.map((o: any, i: number) => (
                       <tr key={o.id} style={{ borderTop: '1px solid var(--border-color)', background: i % 2 === 0 ? 'transparent' : 'var(--bg-secondary)' }}>
                         <td style={{ padding: '12px 16px', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>#{o.id}</td>
                         <td style={{ padding: '12px 16px', fontWeight: 600, fontSize: '0.875rem', color: 'var(--text-primary)' }}>{o.furniture_name}</td>
@@ -157,7 +203,7 @@ const MakeDashboard: React.FC = () => {
                     ))}
                   </tbody>
                 </table>
-                {stats.recent.length === 0 && (
+                {recentOrdersList.length === 0 && (
                   <p style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)', opacity: 0.6 }}>No orders yet</p>
                 )}
               </div>

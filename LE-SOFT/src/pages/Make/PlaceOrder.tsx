@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Plus, AlertCircle, CheckCircle, Paperclip, X, FileText, 
   Trash2, MapPin, User, ShoppingBag, 
-  Palette, Maximize2, Tag, Shield, DollarSign, Lock, Box
+  Palette, Maximize2, Tag, Shield, DollarSign, Lock, Box, Search
 } from 'lucide-react';
 import DashboardLayout from '../../components/DashboardLayout';
 import { 
@@ -33,7 +33,9 @@ interface CartItem {
   notes?: string;
   attachedFile?: {
     name: string;
-    path: string;
+    path?: string;
+    base64?: string;
+    url?: string;
     type: string;
     previewUrl?: string;
   } | null;
@@ -70,10 +72,11 @@ const PlaceOrder: React.FC = () => {
   const [itemSalePrice, setItemSalePrice] = useState<number | string>('');
   const [itemRemarks, setItemRemarks] = useState<string>('');
 
-  // Per-item Technical Drawing / Image / PDF attachment
+  // Per-item Invoice Attachment / CAD Drawing
   const [attachedFile, setAttachedFile] = useState<{
     name: string;
-    path: string;
+    base64?: string;
+    url?: string;
     type: string;
     previewUrl?: string;
   } | null>(null);
@@ -81,7 +84,10 @@ const PlaceOrder: React.FC = () => {
   const handleItemFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const filePath = (file as any).path || file.name;
+    if (file.size > 15 * 1024 * 1024) {
+      alert('File size exceeds the 15 MB limit.');
+      return;
+    }
     const isCad = /\.(dwg|dxf|step|stp|iges|igs|skp|stl|obj)$/i.test(file.name);
     const isImage = file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(file.name);
     const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
@@ -90,13 +96,18 @@ const PlaceOrder: React.FC = () => {
     if (isImage) {
       previewUrl = URL.createObjectURL(file);
     }
-    
-    setAttachedFile({
-      name: file.name,
-      path: filePath,
-      type: isCad ? 'cad' : (isPdf ? 'pdf' : (isImage ? 'image' : 'document')),
-      previewUrl
-    });
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = (reader.result as string).split(',')[1] || (reader.result as string);
+      setAttachedFile({
+        name: file.name,
+        base64: base64,
+        type: isCad ? 'cad' : (isPdf ? 'pdf' : (isImage ? 'image' : 'document')),
+        previewUrl
+      });
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleRemoveAttachedFile = () => {
@@ -131,13 +142,19 @@ const PlaceOrder: React.FC = () => {
   // Multi-item Cart
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
 
+  // Search state
+  const [productSearch, setProductSearch] = useState('');
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+
+  // Invoice Attachments
+  const [invoiceAttachments, setInvoiceAttachments] = useState<{ name: string; url: string }[]>([]);
+  const [uploadingInvoice, setUploadingInvoice] = useState(false);
+
   // Submission & Feedback
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
 
-  // PDFs
-  const [stagedPdfs, setStagedPdfs] = useState<{ name: string; path: string }[]>([]);
 
   const designerName = localStorage.getItem('user_name') || 'Unknown';
 
@@ -145,21 +162,108 @@ const PlaceOrder: React.FC = () => {
     // Load Salesmen
     // @ts-ignore
     window.electron.getSalesmen().then((list: any[]) => {
-      setSalesmen(list || []);
-    });
+      setSalesmen(Array.isArray(list) ? list : []);
+    }).catch(() => setSalesmen([]));
 
     // Load Catalog Products
     // @ts-ignore
     if (window.electron.makeGetCatalogProducts) {
       // @ts-ignore
       window.electron.makeGetCatalogProducts({ activeOnly: true }).then((products: any[]) => {
-        setCatalogProducts(products || []);
-      }).catch(console.error);
+        setCatalogProducts(Array.isArray(products) ? products : []);
+      }).catch((e) => {
+        console.error(e);
+        setCatalogProducts([]);
+      });
     }
   }, []);
 
-  const handleProductSelect = (productId: number) => {
-    const prod = catalogProducts.find(p => p.id === productId) || null;
+  // Debounced product search
+  useEffect(() => {
+    if (!productSearch.trim()) {
+      setSearchResults([]);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      try {
+        if (window.electron?.makeSearchProducts) {
+          const res = await window.electron.makeSearchProducts({ query: productSearch, activeOnly: true });
+          setSearchResults(Array.isArray(res) ? res : []);
+        } else {
+          const lower = productSearch.toLowerCase();
+          const filtered = (catalogProducts || []).filter(p =>
+            p.product_name?.toLowerCase().includes(lower) ||
+            p.product_code?.toLowerCase().includes(lower) ||
+            p.description?.toLowerCase().includes(lower) ||
+            p.category?.toLowerCase().includes(lower)
+          );
+          setSearchResults(Array.isArray(filtered) ? filtered : []);
+        }
+      } catch (err) {
+        console.error('Search products failed:', err);
+        setSearchResults([]);
+      }
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [productSearch, catalogProducts]);
+
+  const handlePickDesktopInvoice = async () => {
+    setUploadingInvoice(true);
+    try {
+      if (window.electron?.makePickAndUploadInvoiceAttachment) {
+        const res = await window.electron.makePickAndUploadInvoiceAttachment();
+        if (res && res.success && res.publicUrl) {
+          setInvoiceAttachments(prev => [...prev, { name: res.fileName || 'Invoice Image', url: res.publicUrl }]);
+        } else if (res && res.error) {
+          alert('Upload failed: ' + res.error);
+        }
+      }
+    } catch (err: any) {
+      console.error(err);
+      alert('Error selecting invoice image: ' + (err.message || 'Unknown error'));
+    } finally {
+      setUploadingInvoice(false);
+    }
+  };
+
+  const handleMobileInvoiceCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 15 * 1024 * 1024) {
+      alert('File size exceeds the 15 MB limit.');
+      return;
+    }
+
+    setUploadingInvoice(true);
+    try {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const base64 = reader.result as string;
+        if (window.electron?.makeUploadInvoiceAttachmentBuffer) {
+          const res = await window.electron.makeUploadInvoiceAttachmentBuffer({
+            fileName: file.name,
+            fileBase64: base64
+          });
+          if (res && res.success && res.publicUrl) {
+            setInvoiceAttachments(prev => [...prev, { name: file.name, url: res.publicUrl }]);
+          } else if (res && res.error) {
+            alert('Upload failed: ' + res.error);
+          }
+        } else {
+          setInvoiceAttachments(prev => [...prev, { name: file.name, url: base64 }]);
+        }
+        setUploadingInvoice(false);
+      };
+      reader.readAsDataURL(file);
+    } catch (err: any) {
+      console.error(err);
+      alert('Error uploading invoice image: ' + (err.message || 'Unknown error'));
+      setUploadingInvoice(false);
+    }
+  };
+
+  const handleProductSelect = (productId: number, directProd?: any) => {
+    const prod = directProd || searchResults.find(p => p.id === productId) || catalogProducts.find(p => p.id === productId) || null;
     setSelectedProduct(prod);
     setSelectedSpec(null);
     setSelectedSize(null);
@@ -295,19 +399,41 @@ const PlaceOrder: React.FC = () => {
     setCartItems(prev => prev.filter(i => i._id !== id));
   };
 
-  // ── PDF staging ────────────────────────────────────────────────────────────
-  const handlePickPdfs = async () => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'application/pdf,.dwg,.dxf,.step,.stp,.iges,.igs,.skp,.stl,.obj';
-    input.multiple = true;
-    input.onchange = (e: any) => {
-      const files: FileList = e.target.files;
-      if (!files) return;
-      const newFiles = Array.from(files).map(f => ({ name: f.name, path: (f as any).path || f.name }));
-      setStagedPdfs(prev => [...prev, ...newFiles]);
-    };
-    input.click();
+  // ── Document & Invoice Upload ────────────────────────────────────────────
+  const handleUploadFileAttachment = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 15 * 1024 * 1024) {
+      alert('File size exceeds the 15 MB limit.');
+      return;
+    }
+
+    setUploadingInvoice(true);
+    try {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const base64 = reader.result as string;
+        if (window.electron?.makeUploadInvoiceAttachmentBuffer) {
+          const res = await window.electron.makeUploadInvoiceAttachmentBuffer({
+            fileName: file.name,
+            fileBase64: base64
+          });
+          if (res && res.success && res.publicUrl) {
+            setInvoiceAttachments(prev => [...prev, { name: file.name, url: res.publicUrl }]);
+          } else if (res && res.error) {
+            alert('Upload failed: ' + res.error);
+          }
+        } else {
+          setInvoiceAttachments(prev => [...prev, { name: file.name, url: base64 }]);
+        }
+        setUploadingInvoice(false);
+      };
+      reader.readAsDataURL(file);
+    } catch (err: any) {
+      console.error(err);
+      alert('Error uploading document: ' + (err.message || 'Unknown error'));
+      setUploadingInvoice(false);
+    }
   };
 
   // ── Submit Order ───────────────────────────────────────────────────────────
@@ -361,6 +487,7 @@ const PlaceOrder: React.FC = () => {
         special_instructions: specialInstructions.trim(),
         cost_price: totalCostPrice,
         sale_price: totalSalePrice,
+        invoice_attachments: invoiceAttachments.map(a => a.url),
         items: cartItems.map(i => ({
           product_id: i.product_id || null,
           product_name: i.product_name,
@@ -383,19 +510,19 @@ const PlaceOrder: React.FC = () => {
       const orderId = order?.id;
       const createdItems = order?.items || [];
 
-      // Upload per-item drawings / PDFs if attached
+      // Upload per-item drawings / attachments if attached via base64 buffer
       if (orderId && Array.isArray(createdItems)) {
         for (let idx = 0; idx < cartItems.length; idx++) {
           const item = cartItems[idx];
-          if (item.attachedFile && item.attachedFile.path) {
+          if (item.attachedFile && item.attachedFile.base64) {
             const createdItem = createdItems[idx];
-            if (createdItem?.id) {
+            if (createdItem?.id && window.electron?.makeUploadInvoiceAttachmentBuffer) {
               try {
-                // @ts-ignore
-                await window.electron.makeUploadItemPdf({
+                await window.electron.makeUploadInvoiceAttachmentBuffer({
+                  fileName: item.attachedFile.name,
+                  fileBase64: item.attachedFile.base64,
                   orderId,
-                  itemId: createdItem.id,
-                  filePath: item.attachedFile.path
+                  itemId: createdItem.id
                 });
               } catch (upErr) {
                 console.error('Failed to upload item drawing:', upErr);
@@ -405,20 +532,12 @@ const PlaceOrder: React.FC = () => {
         }
       }
 
-      // Upload staged PDFs
-      if (orderId && stagedPdfs.length > 0) {
-        for (const pdf of stagedPdfs) {
-          // @ts-ignore
-          await window.electron.makeUploadPdf({ orderId, filePath: pdf.path });
-        }
-      }
-
       setSuccess(true);
       setCartItems([]);
       setCustomerName(''); setCustomerPhone(''); setCustomerEmail(''); setShippingAddress('');
       setLocationLandmark(''); setReceiverName(''); setReceiverPhone(''); setSpecialInstructions('');
       setTargetDeliveryDate(''); setRequestedDeliveryDate('');
-      setStagedPdfs([]);
+      setInvoiceAttachments([]);
       setAttachedFile(null);
       setTimeout(() => setSuccess(false), 3500);
     } catch (err: any) {
@@ -521,16 +640,16 @@ const PlaceOrder: React.FC = () => {
           <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
 
             {/* ── 1. CUSTOMER & DELIVERY INFO ────────────────────────────── */}
-            <div>
+            <div data-tutorial="make-place-order">
               <p style={sectionTitle}><User size={18} color="var(--accent-color)" /> Customer &amp; Delivery Logistics</p>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+              <div className="make-responsive-grid-2" style={{ gap: '1rem' }}>
                 <div>
                   <label style={labelStyle}>Customer Name *</label>
                   <input placeholder="e.g. Acme Corp / John Doe" value={customerName} onChange={e => setCustomerName(e.target.value)} required style={inputStyle} />
                 </div>
                 <div>
-                  <label style={labelStyle}>Customer Phone *</label>
-                  <input placeholder="e.g. +880 1700 000000" value={customerPhone} onChange={e => setCustomerPhone(e.target.value)} required style={inputStyle} />
+                  <label style={labelStyle}>Customer Phone (Optional)</label>
+                  <input placeholder="e.g. +880 1700 000000" value={customerPhone} onChange={e => setCustomerPhone(e.target.value)} style={inputStyle} />
                 </div>
                 <div>
                   <label style={labelStyle}>Customer Email</label>
@@ -540,15 +659,15 @@ const PlaceOrder: React.FC = () => {
                   <label style={labelStyle}>Receiver Name (If different from customer)</label>
                   <input placeholder="e.g. Site Manager / Receptionist" value={receiverName} onChange={e => setReceiverName(e.target.value)} style={inputStyle} />
                 </div>
-                <div style={{ gridColumn: 'span 2' }}>
+                <div className="make-grid-span-2">
                   <label style={labelStyle}>Receiver Phone (If different from customer)</label>
                   <input placeholder="e.g. +880 1800 000000" value={receiverPhone} onChange={e => setReceiverPhone(e.target.value)} style={inputStyle} />
                 </div>
-                <div style={{ gridColumn: 'span 2' }}>
+                <div className="make-grid-span-2">
                   <label style={labelStyle}>Full Shipping / Delivery Address</label>
                   <textarea rows={2} placeholder="House, Road, Area, City..." value={shippingAddress} onChange={e => setShippingAddress(e.target.value)} style={{ ...inputStyle, resize: 'vertical' }} />
                 </div>
-                <div style={{ gridColumn: 'span 2' }}>
+                <div className="make-grid-span-2">
                   <label style={labelStyle}>
                     <MapPin size={13} style={{ display: 'inline', marginRight: '4px' }} /> Location Landmark
                   </label>
@@ -572,13 +691,106 @@ const PlaceOrder: React.FC = () => {
               {!isCustomItemMode ? (
                 /* Catalog Picker Mode */
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1.5fr', gap: '1rem' }}>
+                  {/* Intelligent Whole-Catalog Product Search Bar */}
+                  <div style={{ position: 'relative' }} data-tutorial="make-product-search">
+                    <label style={labelStyle}>Intelligent Product Search (Name, Model, Dimensions, Colors, Specs, Materials...)</label>
+                    <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                      <Search size={15} color="var(--text-secondary)" style={{ position: 'absolute', left: '12px', pointerEvents: 'none' }} />
+                      <input
+                        placeholder="Search anything... e.g. Executive Table, M-1025, 1200x600, Walnut, Black, Premium"
+                        value={productSearch}
+                        onChange={e => setProductSearch(e.target.value)}
+                        style={{ ...inputStyle, paddingLeft: '36px', paddingRight: productSearch ? '32px' : '14px' }}
+                      />
+                      {productSearch && (
+                        <button
+                          type="button"
+                          onClick={() => { setProductSearch(''); setSearchResults([]); }}
+                          style={{ position: 'absolute', right: '10px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}
+                        >
+                          <X size={14} />
+                        </button>
+                      )}
+                    </div>
+
+                    {(searchResults || []).length > 0 && (
+                      <div style={{
+                        position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
+                        background: 'var(--card-bg)', border: '1px solid var(--border-color)',
+                        borderRadius: '10px', boxShadow: '0 12px 32px rgba(0,0,0,0.22)',
+                        marginTop: '4px', maxHeight: '340px', overflowY: 'auto'
+                      }}>
+                        {(searchResults || []).map((item: any) => {
+                          const sizesText = (item.sizes || []).map((s: any) => s.size_label || (s.diameter ? `Ø ${s.diameter}x${s.height}` : `${s.length}x${s.width}${s.height ? `x${s.height}` : ''} ${s.unit || 'mm'}`)).slice(0, 3).join(', ');
+                          const colorsText = (item.colors || []).map((c: any) => c.color_name).slice(0, 3).join(', ');
+                          const specsText = (item.specifications || []).map((sp: any) => sp.spec_name).slice(0, 3).join(', ');
+
+                          return (
+                            <div
+                              key={item.id}
+                              onClick={() => {
+                                handleProductSelect(item.id, item);
+                                setProductSearch('');
+                                setSearchResults([]);
+                              }}
+                              style={{
+                                padding: '12px 14px', borderBottom: '1px solid var(--border-color)',
+                                cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
+                                gap: '12px', transition: 'background 0.15s ease'
+                              }}
+                              onMouseEnter={e => e.currentTarget.style.background = 'var(--hover-bg)'}
+                              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                            >
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                                  <strong style={{ fontSize: '0.92rem', color: 'var(--text-primary)' }}>{item.product_name}</strong>
+                                  {item.product_code && <span style={{ fontSize: '0.76rem', color: '#64748b', fontWeight: 600, background: 'rgba(100,116,139,0.1)', padding: '1px 6px', borderRadius: '4px' }}>[{item.product_code}]</span>}
+                                  {item.category && <span style={{ padding: '1px 6px', borderRadius: '4px', background: 'rgba(99,102,241,0.1)', color: '#4f46e5', fontSize: '0.72rem', fontWeight: 600 }}>{item.category}</span>}
+                                </div>
+
+                                {/* Matched highlight badges */}
+                                {Array.isArray(item.matchedReasons) && item.matchedReasons.length > 0 && (
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '5px' }}>
+                                    {item.matchedReasons.map((reason: string, rIdx: number) => (
+                                      <span key={rIdx} className="make-search-badge" style={{ fontSize: '0.7rem' }}>
+                                        {reason}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+
+                                {/* Available sizes, colors, specs */}
+                                <div style={{ marginTop: '6px', fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                  {sizesText && <div><strong style={{ color: 'var(--text-primary)' }}>Sizes:</strong> {sizesText}</div>}
+                                  {colorsText && <div><strong style={{ color: 'var(--text-primary)' }}>Colors:</strong> {colorsText}</div>}
+                                  {specsText && <div><strong style={{ color: 'var(--text-primary)' }}>Specifications:</strong> {specsText}</div>}
+                                  {item.description && <div style={{ fontStyle: 'italic', marginTop: '2px' }}>{item.description}</div>}
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                style={{
+                                  alignSelf: 'center', padding: '6px 14px', background: 'var(--accent-color)',
+                                  color: '#fff', border: 'none', borderRadius: '6px', fontSize: '0.8rem',
+                                  fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0
+                                }}
+                              >
+                                Select Product →
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="make-responsive-grid-2">
                     {/* 1. Product Selection */}
                     <div>
                       <label style={labelStyle}>Select Catalog Product</label>
                       <select value={selectedProduct?.id || ''} onChange={e => handleProductSelect(Number(e.target.value))} style={inputStyle}>
                         <option value="">-- Choose Product --</option>
-                        {catalogProducts.map(p => (
+                        {(catalogProducts || []).map(p => (
                           <option key={p.id} value={p.id}>{p.product_code ? `[${p.product_code}] ` : ''}{p.product_name}</option>
                         ))}
                       </select>
@@ -830,7 +1042,7 @@ const PlaceOrder: React.FC = () => {
                   <div style={{ background: 'var(--input-bg)', border: '1px dashed var(--border-color)', borderRadius: '8px', padding: '10px 14px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
                       <label style={{ ...labelStyle, margin: 0, display: 'flex', alignItems: 'center', gap: '5px' }}>
-                        <Paperclip size={13} /> Attach Technical Drawing / Image / PDF / CAD (Optional)
+                        <Paperclip size={13} /> Attach Invoice Attachment / Drawing (Optional)
                       </label>
                       {attachedFile && (
                         <button type="button" onClick={handleRemoveAttachedFile} style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}>
@@ -880,7 +1092,7 @@ const PlaceOrder: React.FC = () => {
                   </div>
 
                   {/* Quantity & Item Remarks */}
-                  <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr auto', gap: '1rem', alignItems: 'flex-end' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr auto', gap: '1rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
                     <div>
                       <label style={labelStyle}>Quantity</label>
                       <input type="number" min={1} value={itemQuantity} onChange={e => setItemQuantity(Number(e.target.value))} style={inputStyle} />
@@ -898,7 +1110,7 @@ const PlaceOrder: React.FC = () => {
               ) : (
                 /* Custom Item Input Mode */
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1.5fr', gap: '1rem' }}>
+                  <div className="make-responsive-grid-2" style={{ gap: '1rem' }}>
                     <div>
                       <label style={labelStyle}>Custom Item Name *</label>
                       <input placeholder="e.g. Custom Executive Desk Frame" value={customItemName} onChange={e => setCustomItemName(e.target.value)} style={inputStyle} />
@@ -910,7 +1122,7 @@ const PlaceOrder: React.FC = () => {
                   </div>
 
                   {/* Clean, Normal Pricing Fields for Custom Item */}
-                  <div style={{ display: 'grid', gridTemplateColumns: pricingPerms.canViewCostPrice ? '1fr 1fr' : '1fr', gap: '1rem' }}>
+                  <div className={pricingPerms.canViewCostPrice ? "make-responsive-grid-2" : ""} style={{ gap: '1rem' }}>
                     {/* Cost Price */}
                     {pricingPerms.canViewCostPrice && (
                       <div>
@@ -956,7 +1168,7 @@ const PlaceOrder: React.FC = () => {
                   <div style={{ background: 'var(--input-bg)', border: '1px dashed var(--border-color)', borderRadius: '8px', padding: '10px 14px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
                       <label style={{ ...labelStyle, margin: 0, display: 'flex', alignItems: 'center', gap: '5px' }}>
-                        <Paperclip size={13} /> Attach Technical Drawing / Image / PDF / CAD (Optional)
+                        <Paperclip size={13} /> Attach Invoice Attachment / Drawing (Optional)
                       </label>
                       {attachedFile && (
                         <button type="button" onClick={handleRemoveAttachedFile} style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}>
@@ -1046,7 +1258,7 @@ const PlaceOrder: React.FC = () => {
                         </tr>
                       </thead>
                       <tbody>
-                        {cartItems.map((item, idx) => (
+                        {(cartItems || []).map((item, idx) => (
                           <tr key={item._id || idx} style={{ borderBottom: '1px solid var(--border-color)', background: item.is_customized ? 'rgba(249,115,22,0.03)' : 'transparent' }}>
                             <td style={{ padding: '10px 12px' }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
@@ -1144,7 +1356,7 @@ const PlaceOrder: React.FC = () => {
                   <label style={labelStyle}>Assign Salesman (For Review)</label>
                   <select value={selectedSalesmanId} onChange={e => setSelectedSalesmanId(e.target.value)} style={inputStyle}>
                     <option value="">No Specific Salesman (Direct)</option>
-                    {salesmen.map(s => (
+                    {(salesmen || []).map(s => (
                       <option key={s.id} value={s.id}>{s.full_name} ({s.username})</option>
                     ))}
                   </select>
@@ -1152,20 +1364,45 @@ const PlaceOrder: React.FC = () => {
               </div>
             </div>
 
-            {/* ── 4. TECHNICAL PDF ATTACHMENTS ────────────────────────────── */}
-            <div>
-              <p style={sectionTitle}><FileText size={18} color="var(--accent-color)" /> Technical PDF Drawings</p>
-              <button type="button" onClick={handlePickPdfs}
-                style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '9px 16px', background: 'var(--input-bg)', border: '1px dashed var(--border-color)', borderRadius: '8px', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '0.875rem', fontWeight: 600 }}>
-                <Paperclip size={16} /> Attach PDF Blueprints / CAD Drawings
-              </button>
-              {stagedPdfs.length > 0 && (
+            {/* ── 4. INVOICE ATTACHMENTS ─────────────────────────────────── */}
+            <div data-tutorial="make-invoice-attachments">
+              <p style={sectionTitle}><FileText size={18} color="var(--accent-color)" /> Invoice Attachments &amp; Documents</p>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                <button type="button" onClick={handlePickDesktopInvoice} disabled={uploadingInvoice}
+                  style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '9px 16px', background: 'var(--input-bg)', border: '1px dashed var(--border-color)', borderRadius: '8px', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '0.875rem', fontWeight: 600 }}>
+                  <Paperclip size={16} /> Choose Invoice Image (Desktop File)
+                </button>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '9px 16px', background: 'rgba(99,102,241,0.08)', border: '1px dashed var(--accent-color)', borderRadius: '8px', cursor: 'pointer', color: 'var(--accent-color)', fontSize: '0.875rem', fontWeight: 600 }}>
+                  <Paperclip size={16} /> Take Photo / Camera (Mobile Web)
+                  <input
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={handleMobileInvoiceCapture}
+                    style={{ display: 'none' }}
+                  />
+                </label>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '9px 16px', background: 'var(--input-bg)', border: '1px dashed var(--border-color)', borderRadius: '8px', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '0.875rem', fontWeight: 600 }}>
+                  <Paperclip size={16} /> Attach Document / PDF
+                  <input
+                    type="file"
+                    accept="application/pdf,image/*"
+                    onChange={handleUploadFileAttachment}
+                    style={{ display: 'none' }}
+                  />
+                </label>
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                  Accepts JPG, JPEG, PNG, WEBP (Max 15 MB) &amp; PDF
+                </span>
+              </div>
+
+              {invoiceAttachments.length > 0 && (
                 <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  {stagedPdfs.map((pdf, i) => (
-                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', background: 'rgba(249,115,22,0.06)', border: '1px solid rgba(249,115,22,0.2)', borderRadius: '8px' }}>
-                      <FileText size={15} color="#f97316" />
-                      <span style={{ flex: 1, fontSize: '0.85rem', color: 'var(--text-primary)' }}>{pdf.name}</span>
-                      <button type="button" onClick={() => setStagedPdfs(prev => prev.filter((_, idx) => idx !== i))}
+                  {invoiceAttachments.map((att, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: '8px' }}>
+                      <FileText size={15} color="var(--accent-color)" />
+                      <span style={{ flex: 1, fontSize: '0.85rem', color: 'var(--text-primary)' }}>{att.name}</span>
+                      <button type="button" onClick={() => setInvoiceAttachments(prev => prev.filter((_, idx) => idx !== i))}
                         style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}>
                         <X size={14} />
                       </button>

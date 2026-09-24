@@ -27,14 +27,60 @@ const PRODUCTION_STAGES = [
   'Work in process',
   'Production On Going',
   'Primary QC',
-  'Color Ongoing',
+  'Color Ongoing (oven)',
   'QC Final',
   'Packaging',
   'Ready to Ship',
   'Delivered'
 ];
 
+const LEGACY_STAGE_INDEX_MAP: Record<string, number> = {
+  // Canonical 8 stages
+  'Work in process': 0,
+  'Production On Going': 1,
+  'Primary QC': 2,
+  'Color Ongoing (oven)': 3,
+  'QC Final': 4,
+  'Packaging': 5,
+  'Ready to Ship': 6,
+  'Delivered': 7,
+
+  // Historical variants
+  'Color Ongoing': 3,
+  'Color Ongoing (Oven)': 3,
+  'color ongoing': 3,
+  'Cutting & Woodworking': 0,
+  'Metalwork': 1,
+  'Polish & Paint': 3,
+  'Upholstery': 4,
+  'Packaging & QC': 5,
+  'Dispatch': 6
+};
+
+const getStageIndex = (stage?: string | null): number => {
+  if (!stage) return -1;
+  const trimmed = stage.trim();
+  if (trimmed in LEGACY_STAGE_INDEX_MAP) return LEGACY_STAGE_INDEX_MAP[trimmed];
+  const lower = trimmed.toLowerCase();
+  for (const [key, idx] of Object.entries(LEGACY_STAGE_INDEX_MAP)) {
+    if (key.toLowerCase() === lower) return idx;
+  }
+  return -1;
+};
+
 const statusColors: Record<string, string> = {
+  // Canonical 8 stages
+  'Work in process': '#f59e0b',
+  'Production On Going': '#3b82f6',
+  'Primary QC': '#8b5cf6',
+  'Color Ongoing (oven)': '#ec4899',
+  'Color Ongoing': '#ec4899',
+  'QC Final': '#06b6d4',
+  'Packaging': '#ea580c',
+  'Ready to Ship': '#10b981',
+  'Delivered': '#059669',
+
+  // Order lifecycle & Historical stages
   'Draft': '#6b7280',
   'Awaiting Pricing': '#ca8a04',
   'Pricing Done': '#3b82f6',
@@ -44,16 +90,14 @@ const statusColors: Record<string, string> = {
   'Welding': '#f59e0b',
   'Painting': '#a855f7',
   'Ready for Dispatch': '#10b981',
-  'Delivered': '#059669',
   'Cancelled': '#ef4444',
   'Rejected': '#dc2626',
-  'Work in process': '#f59e0b',
-  'Production On Going': '#3b82f6',
-  'Primary QC': '#8b5cf6',
-  'Color Ongoing': '#a855f7',
-  'QC Final': '#06b6d4',
-  'Packaging': '#ea580c',
-  'Ready to Ship': '#10b981'
+  'Cutting & Woodworking': '#f59e0b',
+  'Metalwork': '#3b82f6',
+  'Polish & Paint': '#8b5cf6',
+  'Upholstery': '#a855f7',
+  'Packaging & QC': '#06b6d4',
+  'Dispatch': '#10b981'
 };
 
 const approvalBadgeColors: Record<string, { bg: string; text: string; border: string; label: string }> = {
@@ -191,8 +235,8 @@ const TrackOrders: React.FC = () => {
   const [selectedStage, setSelectedStage] = useState('');
   const [stageNote, setStageNote] = useState('');
   const [stagePhotoFile, setStagePhotoFile] = useState<File | null>(null);
-  const [stagePhotoPath, setStagePhotoPath] = useState<string>('');
   const [stagePhotoPreview, setStagePhotoPreview] = useState<string | null>(null);
+  const [stagePhotoUrl, setStagePhotoUrl] = useState<string | null>(null);
   const [updatingStage, setUpdatingStage] = useState(false);
   const [approving, setApproving] = useState(false);
 
@@ -217,6 +261,9 @@ const TrackOrders: React.FC = () => {
     if (userRole === 'admin' || userRole === 'superadmin' || userRole === 'manager') return true;
     return !!userPermissions[key];
   };
+
+  const isDesigner = userRole === 'designer' || userRole === 'furniture designer' || userRole === 'make_designer';
+  const canDeleteOrder = userRole === 'admin' || userRole === 'superadmin' || isDesigner || hasPermission('delete_make_order') || hasPermission('make_delete');
 
   const fetchOrders = async () => {
     try {
@@ -280,7 +327,7 @@ const TrackOrders: React.FC = () => {
         setCostPrices(prev => ({ ...prev, [orderId]: order.cost_price ? String(order.cost_price) : '' }));
         setSalePrices(prev => ({ ...prev, [orderId]: order.sale_price ? String(order.sale_price) : '' }));
 
-        const curStageIdx = PRODUCTION_STAGES.indexOf(order.status);
+        const curStageIdx = getStageIndex(order.status);
         if (curStageIdx >= 0 && curStageIdx < PRODUCTION_STAGES.length - 1) {
           setSelectedStage(PRODUCTION_STAGES[curStageIdx + 1]);
         } else if (curStageIdx >= 0) {
@@ -290,8 +337,8 @@ const TrackOrders: React.FC = () => {
         }
         setStageNote('');
         setStagePhotoFile(null);
-        setStagePhotoPath('');
         setStagePhotoPreview(null);
+        setStagePhotoUrl(null);
       }
     } catch (e) { 
       console.error(e); 
@@ -300,24 +347,29 @@ const TrackOrders: React.FC = () => {
     }
   };
 
-  const handleSelectStagePhoto = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setStagePhotoFile(file);
-    const filePath = (file as any).path || '';
-    setStagePhotoPath(filePath);
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      setStagePhotoPreview(reader.result as string);
-    };
-    reader.readAsDataURL(file);
+  const handlePickStagePhotoNative = async (orderId: number) => {
+    try {
+      if (window.electron?.makePickAndUploadStagePhoto) {
+        const res = await window.electron.makePickAndUploadStagePhoto({ orderId });
+        if (res?.success && res.publicUrl) {
+          setStagePhotoUrl(res.publicUrl);
+          setStagePhotoPreview(res.publicUrl);
+          setStagePhotoFile(null);
+          return;
+        } else if (res?.error) {
+          alert('Photo selection failed: ' + res.error);
+          return;
+        }
+      }
+    } catch (e: any) {
+      console.error('Native photo pick error:', e);
+    }
   };
 
   const handleClearStagePhoto = () => {
     setStagePhotoFile(null);
-    setStagePhotoPath('');
     setStagePhotoPreview(null);
+    setStagePhotoUrl(null);
   };
 
   const handleUpdateProductionStage = async (orderId: number) => {
@@ -326,7 +378,7 @@ const TrackOrders: React.FC = () => {
       return;
     }
     const order = orders.find(o => o.id === orderId);
-    const curIdx = PRODUCTION_STAGES.indexOf(order?.status || '');
+    const curIdx = getStageIndex(order?.status || '');
     const targetIdx = PRODUCTION_STAGES.indexOf(selectedStage);
     if (targetIdx === -1) {
       alert('Please select a valid production stage.');
@@ -350,8 +402,8 @@ const TrackOrders: React.FC = () => {
         orderId,
         stage: selectedStage,
         note: stageNote,
-        photoPath: stagePhotoPath || undefined,
-        photoBase64: stagePhotoPreview || undefined,
+        photoUrl: stagePhotoUrl || undefined,
+        photoBase64: stagePhotoPreview?.startsWith('data:') ? stagePhotoPreview : undefined,
         updatedBy: userName,
         userRole: userRole,
         userId: numericUserId
@@ -362,8 +414,8 @@ const TrackOrders: React.FC = () => {
       }
       setStageNote('');
       setStagePhotoFile(null);
-      setStagePhotoPath('');
       setStagePhotoPreview(null);
+      setStagePhotoUrl(null);
       await fetchOrders();
       // @ts-ignore
       const data = await window.electron.getMakeOrderUpdates(orderId);
@@ -504,14 +556,22 @@ const TrackOrders: React.FC = () => {
     finally { setApproving(false); }
   };
 
-  const handleDelete = async (id: number) => {
-    if (!confirm('Delete this order permanently?')) return;
+  const handleDelete = async (id: number | string) => {
+    if (!confirm('Are you sure you want to delete this custom furniture order? If linked to an active bill, it will be marked Cancelled to protect financial records.')) return;
     try {
       // @ts-ignore
-      await window.electron.deleteMakeOrder(id);
-      fetchOrders();
+      const res = await (window.electron.makeDeleteOrder ? window.electron.makeDeleteOrder(id) : window.electron.deleteMakeOrder(id));
+      if (res && res.cancelled) {
+        alert(res.message || `Order is linked to active bill #${res.reference_bill_no}. It has been marked Cancelled to preserve financial records.`);
+      } else if (res && res.success) {
+        alert('Order deleted successfully.');
+      }
+      await fetchOrders();
       if (expandedId === id) setExpandedId(null);
-    } catch (e) { console.error(e); }
+    } catch (e: any) {
+      console.error(e);
+      alert('Error deleting order: ' + (e?.message || 'Permission denied or database error'));
+    }
   };
 
   const handleUploadPdf = async (orderId: number) => {
@@ -608,7 +668,7 @@ const TrackOrders: React.FC = () => {
       <div style={{ padding: '1.5rem', maxWidth: '1150px', margin: '0 auto' }}>
         
         {/* Header & Filter Bar */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.5rem' }}>
+        <div data-tutorial="make-track-orders" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.25rem' }}>
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
             {['All', ...STATUSES].map(s => (
               <button key={s} onClick={() => setStatusFilter(s)} style={{
@@ -624,6 +684,32 @@ const TrackOrders: React.FC = () => {
           <button onClick={fetchOrders} style={{ ...smallBtn(), padding: '8px 14px' }}>
             <RefreshCw size={15} /> Refresh Orders
           </button>
+        </div>
+
+        {/* Canonical 8-Stage Production Flow Stepper */}
+        <div data-tutorial="make-production-stages" style={{
+          background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '12px',
+          padding: '12px 16px', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '8px', overflowX: 'auto'
+        }}>
+          <div style={{ fontSize: '0.78rem', fontWeight: 800, color: 'var(--accent-color)', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '5px' }}>
+            <Layers size={14} /> Production Stages:
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: 1, minWidth: 'max-content' }}>
+            {PRODUCTION_STAGES.map((stg, sIdx) => (
+              <React.Fragment key={stg}>
+                <span style={{
+                  padding: '3px 8px', borderRadius: '14px', fontSize: '0.72rem', fontWeight: 600,
+                  background: `${statusColors[stg] || '#6b7280'}18`, color: statusColors[stg] || '#6b7280',
+                  border: `1px solid ${statusColors[stg] || '#6b7280'}33`
+                }}>
+                  {sIdx + 1}. {stg}
+                </span>
+                {sIdx < PRODUCTION_STAGES.length - 1 && (
+                  <span style={{ color: 'var(--text-secondary)', fontSize: '0.7rem' }}>→</span>
+                )}
+              </React.Fragment>
+            ))}
+          </div>
         </div>
 
         {loading ? (
@@ -745,8 +831,8 @@ const TrackOrders: React.FC = () => {
                         </button>
                       )}
 
-                      {userRole === 'admin' && (
-                        <button onClick={() => handleDelete(order.id)} style={smallBtn('#ef4444')}>
+                      {canDeleteOrder && (
+                        <button onClick={() => handleDelete(order.id)} style={smallBtn('#ef4444')} title="Delete or Cancel Order">
                           <Trash2 size={14} />
                         </button>
                       )}
@@ -1007,7 +1093,7 @@ const TrackOrders: React.FC = () => {
                                 ) : (
                                   /* Multi-Item Catalog Products List */
                                   <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                                    {orderItems.map((item, idx) => {
+                                    {(orderItems || []).map((item, idx) => {
                                       const itemCostVal = itemCostPrices[item.id] !== undefined
                                         ? itemCostPrices[item.id]
                                         : (item.item_cost_price !== undefined && item.item_cost_price !== null && item.item_cost_price > 0 ? String(item.item_cost_price) : (item.unit_cost_price ? String(item.unit_cost_price) : ''));
@@ -1133,7 +1219,7 @@ const TrackOrders: React.FC = () => {
 
                                           {/* Individual Product Pricing & Designer Notes */}
                                           {hasPermission('set_make_cost_price') ? (
-                                            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.2fr 1.5fr 2fr', gap: '12px', alignItems: 'flex-end', paddingTop: '2px' }}>
+                                            <div className="make-responsive-grid-4" style={{ gap: '12px', alignItems: 'flex-end', paddingTop: '2px' }}>
                                               <div>
                                                 <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 700, color: '#dc2626', marginBottom: '4px', textTransform: 'uppercase' }}>
                                                   * Unit Cost Price (৳) [Required]
@@ -1318,9 +1404,9 @@ const TrackOrders: React.FC = () => {
                                 </div>
                               )}
                               <div style={{ position: 'relative', paddingLeft: '20px' }}>
-                                {updates.map((upd, i) => (
-                                  <div key={upd.id} style={{ position: 'relative', paddingBottom: i < updates.length - 1 ? '16px' : '0' }}>
-                                    {i < updates.length - 1 && <div style={{ position: 'absolute', left: '-14px', top: '18px', width: '2px', height: 'calc(100%)', background: 'var(--border-color)' }} />}
+                                {(updates || []).map((upd, i) => (
+                                  <div key={upd.id} style={{ position: 'relative', paddingBottom: i < (updates || []).length - 1 ? '16px' : '0' }}>
+                                    {i < (updates || []).length - 1 && <div style={{ position: 'absolute', left: '-14px', top: '18px', width: '2px', height: 'calc(100%)', background: 'var(--border-color)' }} />}
                                     <div style={{ position: 'absolute', left: '-18px', top: '4px', width: '10px', height: '10px', borderRadius: '50%', background: statusColors[upd.status] || '#6b7280', border: '2px solid var(--card-bg)' }} />
                                     <div>
                                       <span style={{ fontWeight: 600, fontSize: '0.85rem', color: statusColors[upd.status] || 'var(--text-primary)' }}>{upd.status}</span>
@@ -1393,7 +1479,7 @@ const TrackOrders: React.FC = () => {
                                             onChange={(e) => setSelectedStage(e.target.value)}
                                             style={{ width: '100%', padding: '10px 14px', background: 'var(--input-bg)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', fontSize: '0.9rem', appearance: 'none', outline: 'none' }}>
                                             {PRODUCTION_STAGES.map((s, idx) => {
-                                              const curIdx = PRODUCTION_STAGES.indexOf(order.status);
+                                              const curIdx = getStageIndex(order.status);
                                               const isPast = curIdx >= 0 && idx < curIdx;
                                               const isCurrent = idx === curIdx;
                                               const isNext = (curIdx === -1 && idx === 0) || (idx === curIdx + 1);
@@ -1417,24 +1503,19 @@ const TrackOrders: React.FC = () => {
                                         <label style={{ fontSize: '0.76rem', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '4px', display: 'block' }}>
                                           Stage Photo (Stored PC Image)
                                         </label>
-                                        <input 
-                                          type="file" 
-                                          id={`stage-photo-${order.id}`} 
-                                          accept="image/*" 
-                                          onChange={handleSelectStagePhoto} 
-                                          style={{ display: 'none' }} 
-                                        />
                                         {!stagePhotoPreview ? (
-                                          <label 
-                                            htmlFor={`stage-photo-${order.id}`}
+                                          <button 
+                                            type="button"
+                                            onClick={() => handlePickStagePhotoNative(order.id)}
                                             style={{ 
+                                              width: '100%',
                                               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
                                               padding: '10px 14px', border: '1px dashed var(--accent-color)', borderRadius: '8px',
                                               background: 'rgba(99,102,241,0.05)', color: 'var(--accent-color)', cursor: 'pointer',
                                               fontSize: '0.84rem', fontWeight: 600, transition: 'all 0.2s'
                                             }}>
-                                            <Upload size={15} /> Select Stored Image from PC
-                                          </label>
+                                            <Upload size={15} /> Select Stage Photo via Secure File Picker
+                                          </button>
                                         ) : (
                                           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 12px', background: 'var(--input-bg)', border: '1px solid var(--border-color)', borderRadius: '8px' }}>
                                             <img 
@@ -1507,7 +1588,7 @@ const TrackOrders: React.FC = () => {
                                     </tr>
                                   </thead>
                                   <tbody>
-                                    {parts.map((p, i) => (
+                                    {(parts || []).map((p, i) => (
                                       <tr key={p.id} style={{ borderTop: '1px solid var(--border-color)', background: i % 2 === 0 ? 'transparent' : 'rgba(0,0,0,0.02)' }}>
                                         <td style={{ padding: '9px 12px', fontWeight: 600, color: 'var(--text-primary)' }}>{p.part_name}</td>
                                         <td style={{ padding: '9px 12px', color: 'var(--text-secondary)' }}>{p.length || '—'}</td>
@@ -1526,18 +1607,18 @@ const TrackOrders: React.FC = () => {
                           <div style={{ marginTop: '20px', borderTop: '1px solid var(--border-color)', paddingTop: '16px' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                               <h4 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                <FileText size={15} /> Technical PDF Drawings &amp; Blueprints ({pdfs.length})
+                                <FileText size={15} /> Technical PDF Drawings &amp; Blueprints ({(pdfs || []).length})
                               </h4>
                               <button onClick={() => handleUploadPdf(order.id)} disabled={pdfLoading}
                                 style={{ ...smallBtn(), display: 'flex', alignItems: 'center', gap: '5px' }}>
                                 {pdfLoading ? 'Uploading...' : '+ Attach PDF'}
                               </button>
                             </div>
-                            {pdfs.length === 0 ? (
+                            {(!pdfs || pdfs.length === 0) ? (
                               <p style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', opacity: 0.6 }}>No technical PDFs attached.</p>
                             ) : (
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                                {pdfs.map(pdf => (
+                                {(pdfs || []).map(pdf => (
                                   <div key={pdf.path} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '9px 12px', background: 'rgba(249,115,22,0.05)', border: '1px solid rgba(249,115,22,0.18)', borderRadius: '8px' }}>
                                     <FileText size={15} color="#f97316" />
                                     <span style={{ flex: 1, fontSize: '0.85rem', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pdf.name}</span>
@@ -1599,7 +1680,7 @@ const TrackOrders: React.FC = () => {
                   value={selectedVersionFrom || ''}
                   onChange={e => handleCompareVersions(Number(e.target.value), selectedVersionTo || 1)}
                   style={{ padding: '6px 12px', borderRadius: '6px', border: '1px solid var(--border-color)', background: 'var(--card-bg)', color: 'var(--text-primary)', fontSize: '0.85rem', fontWeight: 600 }}>
-                  {orderVersions.map(v => (
+                  {(orderVersions || []).map(v => (
                     <option key={`from-${v.version_number}`} value={v.version_number}>
                       v{v.version_number} ({new Date(v.created_at).toLocaleDateString()})
                     </option>
@@ -1612,7 +1693,7 @@ const TrackOrders: React.FC = () => {
                   value={selectedVersionTo || ''}
                   onChange={e => handleCompareVersions(selectedVersionFrom || 1, Number(e.target.value))}
                   style={{ padding: '6px 12px', borderRadius: '6px', border: '1px solid var(--border-color)', background: 'var(--card-bg)', color: 'var(--text-primary)', fontSize: '0.85rem', fontWeight: 600 }}>
-                  {orderVersions.map(v => (
+                  {(orderVersions || []).map(v => (
                     <option key={`to-${v.version_number}`} value={v.version_number}>
                       v{v.version_number} ({new Date(v.created_at).toLocaleDateString()})
                     </option>
@@ -1640,7 +1721,7 @@ const TrackOrders: React.FC = () => {
                           </tr>
                         </thead>
                         <tbody>
-                          {versionDiff.fieldChanges.map((ch: any, idx: number) => (
+                          {(versionDiff.fieldChanges || []).map((ch: any, idx: number) => (
                             <tr key={idx} style={{ borderTop: '1px solid var(--border-color)' }}>
                               <td style={{ padding: '8px 12px', fontWeight: 600, textTransform: 'capitalize' }}>{ch.field.replace(/_/g, ' ')}</td>
                               <td style={{ padding: '8px 12px', background: 'rgba(239,68,68,0.06)', color: '#dc2626' }}>{String(ch.old_value ?? '—')}</td>
@@ -1653,11 +1734,11 @@ const TrackOrders: React.FC = () => {
                   )}
 
                   {/* Items Diff */}
-                  {versionDiff.itemChanges && versionDiff.itemChanges.length > 0 && (
+                  {versionDiff.itemChanges && (versionDiff.itemChanges || []).length > 0 && (
                     <div style={{ marginTop: '12px' }}>
                       <h4 style={{ margin: '0 0 8px', fontSize: '0.9rem', fontWeight: 700 }}>Item Specification Changes</h4>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                        {versionDiff.itemChanges.map((itCh: any, idx: number) => (
+                        {(versionDiff.itemChanges || []).map((itCh: any, idx: number) => (
                           <div key={idx} style={{ padding: '10px 14px', background: 'var(--bg-secondary)', borderRadius: '8px', border: '1px solid var(--border-color)', fontSize: '0.85rem' }}>
                             <div style={{ fontWeight: 700, marginBottom: '4px' }}>{itCh.item_name}</div>
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', fontSize: '0.8rem' }}>
@@ -1678,7 +1759,7 @@ const TrackOrders: React.FC = () => {
                   <div style={{ marginTop: '16px', borderTop: '1px solid var(--border-color)', paddingTop: '16px' }}>
                     <h4 style={{ margin: '0 0 10px', fontSize: '0.9rem', fontWeight: 700 }}>Snapshot History Log</h4>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '200px', overflowY: 'auto' }}>
-                      {orderVersions.map(v => (
+                      {(orderVersions || []).map(v => (
                         <div key={v.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: 'var(--input-bg)', borderRadius: '8px', fontSize: '0.82rem' }}>
                           <div>
                             <span style={{ fontWeight: 700, color: 'var(--accent-color)' }}>v{v.version_number}</span> — {v.modification_reason || 'Version snapshot'}

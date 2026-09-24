@@ -241,6 +241,7 @@ export function decryptObject(obj: Record<string, any>): Record<string, any> {
 
 /** Decrypt an array of rows */
 export function decryptRows(rows: Record<string, any>[]): Record<string, any>[] {
+    if (!rows || !Array.isArray(rows)) return [];
     return rows.map(decryptObject);
 }
 
@@ -249,6 +250,7 @@ export function decryptRows(rows: Record<string, any>[]): Record<string, any>[] 
  * Processes the array in chunks to prevent freezing the Node.js Event Loop.
  */
 export async function decryptRowsAsync(rows: Record<string, any>[], chunkSize: number = 200): Promise<Record<string, any>[]> {
+    if (!rows || !Array.isArray(rows)) return [];
     const result: Record<string, any>[] = [];
     for (let i = 0; i < rows.length; i += chunkSize) {
         const chunk = rows.slice(i, i + chunkSize);
@@ -263,10 +265,12 @@ export async function decryptRowsAsync(rows: Record<string, any>[], chunkSize: n
  * Non-blocking Encrypt for large datasets. 
  */
 export async function encryptRowsAsync(rows: Record<string, any>[], chunkSize: number = 200): Promise<Record<string, any>[]> {
+    if (!rows || !Array.isArray(rows)) return [];
     const result: Record<string, any>[] = [];
     for (let i = 0; i < rows.length; i += chunkSize) {
         const chunk = rows.slice(i, i + chunkSize);
         result.push(...chunk.map(encryptObject));
+        // Yield the CPU back to the event loop so the UI and IPC don't hang
         await new Promise(resolve => setImmediate(resolve));
     }
     return result;

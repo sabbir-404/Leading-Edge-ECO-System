@@ -1076,3 +1076,102 @@
         padding: 16px;
     }
 }
+
+/* ═══════════════════════════════════════
+   Reusable Responsive Utilities for Half-Screen (800px, 900px, 1000px)
+   ═══════════════════════════════════════ */
+.make-responsive-grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+}
+
+.make-responsive-grid-3 {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 1rem;
+}
+
+.make-responsive-grid-4 {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+}
+
+@media (max-width: 1024px) {
+    .make-responsive-grid-4 {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media (max-width: 900px) {
+    .make-responsive-grid-3 {
+        grid-template-columns: 1fr 1fr;
+    }
+    .make-card-flex {
+        flex-direction: column !important;
+        align-items: stretch !important;
+    }
+}
+
+@media (max-width: 800px) {
+    .make-responsive-grid-2,
+    .make-responsive-grid-3,
+    .make-responsive-grid-4 {
+        grid-template-columns: 1fr !important;
+    }
+    .make-table-container {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+}
+
+.make-modal-container {
+    width: 100%;
+    max-width: 680px;
+    max-height: 90vh;
+    overflow-y: auto;
+    border-radius: 12px;
+    box-sizing: border-box;
+}
+
+@media (max-width: 900px) {
+    .make-modal-container {
+        max-width: 95vw;
+        padding: 1rem !important;
+    }
+}
+
+.make-search-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    background: rgba(16, 185, 129, 0.12);
+    color: #059669;
+    border: 1px solid rgba(16, 185, 129, 0.25);
+}
+
+.make-attr-chip {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    background: rgba(99, 102, 241, 0.08);
+    color: #4f46e5;
+    border: 1px solid rgba(99, 102, 241, 0.2);
+}
+
+.make-grid-span-2 {
+    grid-column: span 2;
+}
+
+@media (max-width: 800px) {
+    .make-grid-span-2 {
+        grid-column: span 1 !important;
+    }
+}
+

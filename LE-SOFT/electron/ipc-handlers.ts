@@ -28,6 +28,8 @@ import { saveSession, loadSession, clearSession } from './session-vault';
 import { autoUpdater } from 'electron-updater';
 import { LocalEntityCache } from './local-cache';
 import { BackgroundSyncEngine } from './sync-engine';
+import { SessionManager } from './session-manager';
+import { registerMakeHandlers } from './ipc/handlers/make';
 
 const BCRYPT_ROUNDS = 12;
 const HOSTINGER_UPLOAD_URL = 'https://leadingedge.com.bd/api/upload_image.php';
@@ -415,6 +417,9 @@ export function registerHandlers() {
         // If we can't patch, fall back to normal behavior — registration
         // may throw if called twice, which will be handled by caller.
     }
+
+    // Register Fortified MAKE Module Handlers
+    registerMakeHandlers();
 
     // ═══ DATABASE HEALTH ═════════════════════════════════════════════════════
     ipcMain.handle('ping-supabase', async () => {
@@ -2223,12 +2228,24 @@ export function registerHandlers() {
 
         if (!custRes.data) return null;
         const cust = custRes.data;
+        const decryptedPhone = decryptField(cust.phone) || cust.phone;
+
+        let makeQuery = supabase.from('make_orders')
+            .select('*, items:make_order_items(*)')
+            .order('created_at', { ascending: false });
+
+        if (decryptedPhone) {
+            makeQuery = makeQuery.or(`customer_id.eq.${customerId},customer_phone.eq.${decryptedPhone},customer_phone.eq.${cust.phone}`);
+        } else {
+            makeQuery = makeQuery.eq('customer_id', customerId);
+        }
+        const { data: makeOrders } = await makeQuery;
 
         return {
             customer: {
                 ...cust,
                 name: decryptField(cust.name) || cust.name,
-                phone: decryptField(cust.phone) || cust.phone,
+                phone: decryptedPhone,
                 email: decryptField(cust.email) || cust.email,
                 address: decryptField(cust.address) || cust.address,
             },
@@ -2237,6 +2254,7 @@ export function registerHandlers() {
             addresses: (addressesRes.data || []).map((a: any) => decryptObject(a)),
             exchanges: (exchangesRes.data || []).map((e: any) => decryptObject(e)),
             quotations: (quotationsRes.data || []).map((q: any) => decryptObject(q)),
+            make_orders: decryptRows(makeOrders || []),
         };
     });
 
@@ -2933,6 +2951,7 @@ export function registerHandlers() {
 
             resetLoginAttempts(username);
             await saveSession(row);
+            SessionManager.setSession(safeUser);
             return { success: true, user: safeUser, licenseWarning, offlineMode: false };
         }
 
@@ -2945,6 +2964,7 @@ export function registerHandlers() {
             const vaultRes = await loadSession({ username, password });
             if (vaultRes) {
                 resetLoginAttempts(username);
+                SessionManager.setSession(vaultRes.user);
                 return { success: true, user: vaultRes.user, offlineMode: true };
             }
         }
@@ -3004,6 +3024,7 @@ export function registerHandlers() {
 
                     resetLoginAttempts(username);
                     await saveSession(localRow);
+                    SessionManager.setSession(safeUser);
                     return { success: true, user: safeUser, licenseWarning, offlineMode: false };
                 }
             }
@@ -3019,6 +3040,7 @@ export function registerHandlers() {
         try {
             await supabase.auth.signOut();
             clearSession();
+            SessionManager.clearSession();
             return { success: true };
         } catch (e) {
             return { success: false, error: String(e) };
@@ -3503,40 +3525,7 @@ export function registerHandlers() {
         return decryptRows(data || []);
     });
 
-    ipcMain.handle('approve-make-order', async (_e, { orderId, approvedBy }) => {
-        const { error } = await supabase.from('make_orders').update({ 
-            status: 'Placed', 
-            is_approved: true,
-            updated_at: new Date().toISOString()
-        }).eq('id', orderId);
-        if (error) throw error;
-        
-        await supabase.from('make_order_updates').insert({ 
-            order_id: orderId, 
-            status: 'Placed', 
-            note: 'Order approved and placed', 
-            updated_by: approvedBy 
-        });
-
-        // Notify the creator (designer)
-        const { data: order } = await supabase.from('make_orders').select('designer_name, furniture_name').eq('id', orderId).single();
-        if (order) {
-           const { data: designer } = await supabase.from('users').select('id').eq('full_name', order.designer_name).maybeSingle();
-           if (designer) {
-               await supabase.from('notifications').insert({
-                   title: 'Order Approved',
-                   message: `The order for "${order.furniture_name}" has been approved.`,
-                   sender_id: null,
-                   recipient_id: designer.id,
-                   action_path: '/make/track',
-                   action_label: 'Open MAKE orders',
-                   metadata: { type: 'make_order', order_id: orderId },
-               });
-           }
-        }
-
-        return { success: true };
-    });
+    // Note: approve-make-order is registered by registerMakeHandlers()
 
     ipcMain.handle('set-make-order-price', async (_e, { orderId, customPrice, updatedBy }) => {
         const { error: updateErr } = await supabase.from('make_orders').update({ 
@@ -3637,84 +3626,7 @@ export function registerHandlers() {
         return { success: true };
     });
 
-    ipcMain.handle('create-make-order', async (_e, order) => {
-        const initialStatus = order.salesman_id ? 'Pending Approval' : 'Placed';
-        const isApproved = !order.salesman_id;
-        const orderNumber = order.order_number || `LE-ORD-${Date.now().toString(36).toUpperCase()}`;
-
-        const { data, error } = await supabase.from('make_orders').insert({ 
-            furniture_name: order.furniture_name, 
-            description: order.description || '', 
-            quantity: order.quantity || 1, 
-            designer_name: order.designer_name || 'Designer', 
-            status: initialStatus, 
-            priority: order.priority || 'Normal',
-            delivery_date: order.delivery_date || order.target_delivery_date || null,
-            target_delivery_date: order.target_delivery_date || order.delivery_date || null,
-            requested_delivery_date: order.requested_delivery_date || null,
-            salesman_id: order.salesman_id || null,
-            is_approved: isApproved,
-            order_number: orderNumber,
-            customer_name: order.customer_name || null,
-            customer_phone: order.customer_phone || null,
-            customer_email: order.customer_email || null,
-            delivery_address: order.shipping_address || order.delivery_address || null,
-            location_landmark: order.location_landmark || null,
-            receiver_name: order.receiver_name || null,
-            receiver_phone: order.receiver_phone || null,
-            cost_price: order.cost_price ? parseFloat(order.cost_price) : 0.00,
-            sale_price: order.sale_price ? parseFloat(order.sale_price) : null,
-            salesperson_name: order.salesperson_name || null,
-            approval_status: isApproved ? 'sales_approved' : 'awaiting_designer'
-        }).select('id, order_number').single();
-        if (error) throw error;
-
-        // Insert order items if present
-        let createdItems: any[] = [];
-        if (Array.isArray(order.items) && order.items.length > 0) {
-            const itemsPayload = order.items.map((i: any) => ({
-                order_id: data.id,
-                product_id: i.product_id || null,
-                spec_id: i.spec_id || null,
-                size_id: i.size_id || null,
-                color_id: i.color_id || null,
-                product_name: i.product_name || order.furniture_name,
-                spec_name: i.spec_name || null,
-                size_label: i.dimensions_text || i.size_label || null,
-                color_name: i.color_name || null,
-                quantity: i.quantity || 1,
-                salesperson_note: i.designer_notes || i.salesperson_note || null,
-                item_cost_price: i.item_cost_price ? parseFloat(i.item_cost_price) : 0.00,
-                item_sale_price: i.item_sale_price ? parseFloat(i.item_sale_price) : null,
-                is_customized: !!i.is_customized,
-                custom_dimensions: i.custom_dimensions || (i.is_customized ? i.dimensions_text : null)
-            }));
-            const { data: insertedItems } = await supabase.from('make_order_items').insert(itemsPayload).select('id, product_name');
-            createdItems = insertedItems || [];
-        }
-
-        await supabase.from('make_order_updates').insert({ 
-            order_id: data.id, 
-            status: initialStatus, 
-            note: order.salesman_id ? 'Order created, awaiting salesman approval' : 'Order placed', 
-            updated_by: order.designer_name || 'System'
-        });
-
-        // Notify salesman if assigned
-        if (order.salesman_id) {
-            await supabase.from('notifications').insert({
-                title: 'New Order for Approval',
-                message: `You have been assigned to approve the order for "${order.furniture_name}" by ${order.designer_name || 'Designer'}.`,
-                sender_id: null,
-                recipient_id: order.salesman_id,
-                action_path: '/make/track',
-                action_label: 'Review order',
-                metadata: { type: 'make_order', order_id: data.id },
-            });
-        }
-
-        return { id: data.id, order_number: data.order_number, items: createdItems };
-    });
+    // Note: create-make-order is registered by registerMakeHandlers()
 
     ipcMain.handle('update-make-order-status', async (_e, { orderId, status, note, updatedBy }) => {
         await supabase.from('make_orders').update({ status, updated_at: new Date().toISOString() }).eq('id', orderId);
@@ -3727,46 +3639,11 @@ export function registerHandlers() {
         return decryptRows(data || []);
     });
 
-    ipcMain.handle('delete-make-order', async (_e, id) => {
-        await supabase.from('make_order_updates').delete().eq('order_id', id);
-        await supabase.from('make_orders').delete().eq('id', id);
-        return { success: true };
-    });
+    // Note: delete-make-order and make-get-order-items are registered by registerMakeHandlers()
 
     ipcMain.handle('get-make-furniture-names', async () => {
         const { data } = await supabase.from('make_orders').select('furniture_name').order('furniture_name');
         return [...new Set((data || []).map((r: any) => r.furniture_name))];
-    });
-
-    ipcMain.handle('make-get-order-items', async (_e, orderId: number) => {
-        try {
-            const { data, error } = await supabase.from('make_order_items').select('*').eq('order_id', orderId).order('id');
-            if (error) {
-                console.warn('[MAKE] get-order-items error:', error.message);
-                return [];
-            }
-            return (data || []).map((i: any) => ({
-                id: i.id,
-                order_id: i.order_id,
-                product_id: i.product_id,
-                product_name: i.product_name,
-                spec_id: i.spec_id,
-                spec_name: i.spec_name,
-                size_id: i.size_id,
-                color_id: i.color_id,
-                color_name: i.color_name,
-                quantity: i.quantity,
-                dimensions_text: i.size_label || i.custom_dimensions || i.dimensions_text,
-                unit_cost_price: i.item_cost_price,
-                unit_sale_price: i.item_sale_price,
-                is_customized: !!i.is_customized,
-                custom_dimensions: i.custom_dimensions,
-                designer_notes: i.salesperson_note
-            }));
-        } catch (e: any) {
-            console.warn('[MAKE] get-order-items exception:', e.message);
-            return [];
-        }
     });
 
     // ═══ PRINTERS ═════════════════════════════════════════════════════════
@@ -4070,941 +3947,7 @@ export function registerHandlers() {
         return '127.0.0.1';
     });
 
-
-    // ═══ MAKE ORDER — PDF ATTACHMENTS ══════════════════════════════════════
-
-    ipcMain.handle('make-upload-pdf', async (_e, { orderId, filePath }: { orderId: number, filePath?: string }) => {
-        let filesToUpload: string[] = [];
-
-        if (filePath) {
-            // Direct upload if filePath is provided (staged files)
-            filesToUpload = [filePath];
-        } else {
-            // Open dialog if filePath is not provided
-            const win = BrowserWindow.getFocusedWindow();
-            if (!win) return { error: 'No window' };
-            const result = await dialog.showOpenDialog(win, {
-                title: 'Select Drawings / Blueprints / CAD Files',
-                filters: [
-                    { name: 'Drawings & CAD Files', extensions: ['pdf', 'dwg', 'dxf', 'step', 'stp', 'iges', 'igs', 'skp', 'stl', 'obj', 'png', 'jpg', 'jpeg', 'webp'] },
-                    { name: 'All Files', extensions: ['*'] }
-                ],
-                properties: ['openFile', 'multiSelections'],
-            });
-            if (result.canceled || result.filePaths.length === 0) return { canceled: true };
-            filesToUpload = result.filePaths;
-        }
-
-        const uploaded: string[] = [];
-        const nasStorageUrl = getNasStorageUrl();
-
-        for (const p of filesToUpload) {
-            const fileName = path.basename(p);
-            const fileBuffer = fs.readFileSync(p);
-            const ext = path.extname(p).toLowerCase();
-            const mimeType = ext === '.pdf' ? 'application/pdf' 
-                : ext === '.png' ? 'image/png' 
-                : (ext === '.jpg' || ext === '.jpeg') ? 'image/jpeg' 
-                : ext === '.webp' ? 'image/webp' 
-                : ext === '.dwg' ? 'application/acad'
-                : ext === '.dxf' ? 'application/dxf'
-                : (ext === '.step' || ext === '.stp') ? 'application/step'
-                : (ext === '.iges' || ext === '.igs') ? 'model/iges'
-                : 'application/octet-stream';
-            const storagePath = `${orderId}/${Date.now()}_${fileName}`;
-            
-            if (nasStorageUrl) {
-                const formData = new FormData();
-                formData.append('file', new Blob([new Uint8Array(fileBuffer)], { type: mimeType }), path.basename(storagePath));
-                
-                const cfHeaders = nasStorageUrl.startsWith('https://') ? getCfAccessHeaders() : {};
-                const response = await fetch(`${nasStorageUrl.replace(/\/$/, '')}/upload`, {
-                    method: 'POST',
-                    body: formData,
-                    headers: {
-                        'x-subfolder': `make-order-files/${orderId}`,
-                        ...cfHeaders
-                    }
-                });
-                const data = await response.json();
-                if (!data.success) return { error: data.error || 'Failed to upload PDF/CAD to NAS' };
-                uploaded.push(`make-order-files/${storagePath}`);
-            } else {
-                const { error: uploadError } = await supabase.storage
-                    .from('make-order-files')
-                    .upload(storagePath, fileBuffer, { contentType: mimeType, upsert: false });
-                if (uploadError) return { error: uploadError.message };
-                uploaded.push(storagePath);
-            }
-        }
-
-        // Append paths to make_orders.pdf_urls
-        const { data: order } = await supabase.from('make_orders').select('pdf_urls').eq('id', orderId).maybeSingle();
-        const existing: string[] = order?.pdf_urls || [];
-        await supabase.from('make_orders').update({ pdf_urls: [...existing, ...uploaded] }).eq('id', orderId);
-        return { success: true, paths: uploaded };
-    });
-
-    ipcMain.handle('make-get-pdf-urls', async (_e, orderId: number) => {
-        const { data: order } = await supabase.from('make_orders').select('pdf_urls').eq('id', orderId).maybeSingle();
-        const paths: string[] = order?.pdf_urls || [];
-        const nasStorageUrl = getNasStorageUrl();
-
-        const signedUrls = await Promise.all(paths.map(async (p) => {
-            if (p.startsWith('http://') || p.startsWith('https://')) {
-                return { path: p, name: path.basename(p).replace(/^\d+_/, ''), url: toPublicStorageUrl(p) };
-            }
-            if (p.startsWith('make-order-files/')) {
-                const url = `https://storage.lenas.me/files/${p}`;
-                return { path: p, name: path.basename(p).replace(/^\d+_/, ''), url };
-            } else {
-                const { data } = await supabase.storage.from('make-order-files').createSignedUrl(p, 3600);
-                return { path: p, name: path.basename(p).replace(/^\d+_/, ''), url: data?.signedUrl || '' };
-            }
-        }));
-        return signedUrls.filter(u => u.url);
-    });
-
-    ipcMain.handle('make-delete-pdf', async (_e, { orderId, storagePath }: { orderId: number; storagePath: string }) => {
-        const nasStorageUrl = getNasStorageUrl();
-        if (storagePath.startsWith('make-order-files/')) {
-            if (nasStorageUrl) {
-                try {
-                    const cfHeaders = nasStorageUrl.startsWith('https://') ? getCfAccessHeaders() : {};
-                    await fetch(`${nasStorageUrl.replace(/\/$/, '')}/delete`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', ...cfHeaders },
-                        body: JSON.stringify({ filePath: storagePath })
-                    });
-                } catch (err) {
-                    console.error('Failed to delete file from NAS:', err);
-                }
-            }
-        } else {
-            await supabase.storage.from('make-order-files').remove([storagePath]);
-        }
-        const { data: order } = await supabase.from('make_orders').select('pdf_urls').eq('id', orderId).maybeSingle();
-        const remaining = (order?.pdf_urls || []).filter((p: string) => p !== storagePath);
-        await supabase.from('make_orders').update({ pdf_urls: remaining }).eq('id', orderId);
-        return { success: true };
-    });
-
-    // ═══ MAKE ORDER ITEM — INDIVIDUAL TECHNICAL DRAWINGS ════════════════════
-
-    ipcMain.handle('make-upload-item-pdf', async (_e, { orderId, itemId, filePath }: { orderId: number; itemId: number; filePath?: string }) => {
-        let filesToUpload: string[] = [];
-
-        if (filePath) {
-            filesToUpload = [filePath];
-        } else {
-            const win = BrowserWindow.getFocusedWindow();
-            if (!win) return { error: 'No window' };
-            const result = await dialog.showOpenDialog(win, {
-                title: 'Select Technical Drawing / Blueprint / CAD File',
-                filters: [
-                    { name: 'Drawings & CAD Files', extensions: ['pdf', 'png', 'jpg', 'jpeg', 'webp', 'dwg', 'dxf', 'step', 'stp', 'iges', 'igs', 'skp', 'stl', 'obj'] },
-                    { name: 'All Files', extensions: ['*'] }
-                ],
-                properties: ['openFile', 'multiSelections'],
-            });
-            if (result.canceled || result.filePaths.length === 0) return { canceled: true };
-            filesToUpload = result.filePaths;
-        }
-
-        const uploaded: string[] = [];
-        const nasStorageUrl = getNasStorageUrl();
-
-        for (const p of filesToUpload) {
-            const fileName = path.basename(p);
-            const fileBuffer = fs.readFileSync(p);
-            const ext = path.extname(p).toLowerCase();
-            const mimeType = ext === '.pdf' ? 'application/pdf' 
-                : ext === '.png' ? 'image/png' 
-                : (ext === '.jpg' || ext === '.jpeg') ? 'image/jpeg' 
-                : ext === '.webp' ? 'image/webp' 
-                : ext === '.dwg' ? 'application/acad'
-                : ext === '.dxf' ? 'application/dxf'
-                : (ext === '.step' || ext === '.stp') ? 'application/step'
-                : (ext === '.iges' || ext === '.igs') ? 'model/iges'
-                : 'application/octet-stream';
-            const storagePath = `${orderId}/items/${itemId}/${Date.now()}_${fileName}`;
-
-            if (nasStorageUrl) {
-                const formData = new FormData();
-                formData.append('file', new Blob([new Uint8Array(fileBuffer)], { type: mimeType }), path.basename(storagePath));
-
-                const cfHeaders = nasStorageUrl.startsWith('https://') ? getCfAccessHeaders() : {};
-                const response = await fetch(`${nasStorageUrl.replace(/\/$/, '')}/upload`, {
-                    method: 'POST',
-                    body: formData,
-                    headers: {
-                        'x-subfolder': `make-order-files/${orderId}/items/${itemId}`,
-                        ...cfHeaders
-                    }
-                });
-                const data = await response.json();
-                if (!data.success) return { error: data.error || 'Failed to upload technical drawing to NAS' };
-                uploaded.push(`make-order-files/${storagePath}`);
-            } else {
-                const { error: uploadError } = await supabase.storage
-                    .from('make-order-files')
-                    .upload(storagePath, fileBuffer, { contentType: mimeType, upsert: false });
-                if (uploadError) return { error: uploadError.message };
-                uploaded.push(storagePath);
-            }
-        }
-
-        // Update item pdf_urls and technical_drawing_url
-        const { data: item } = await supabase.from('make_order_items').select('pdf_urls, technical_drawing_url').eq('id', itemId).maybeSingle();
-        const existing: string[] = Array.isArray(item?.pdf_urls) ? item.pdf_urls : [];
-        const combined = [...existing, ...uploaded];
-        const latestUrl = uploaded[uploaded.length - 1];
-
-        await supabase.from('make_order_items').update({
-            pdf_urls: combined,
-            technical_drawing_url: latestUrl
-        }).eq('id', itemId);
-
-        return { success: true, paths: uploaded, allPaths: combined };
-    });
-
-    ipcMain.handle('make-delete-item-pdf', async (_e, { itemId, storagePath }: { itemId: number; storagePath: string }) => {
-        const nasStorageUrl = getNasStorageUrl();
-        if (storagePath.startsWith('make-order-files/')) {
-            if (nasStorageUrl) {
-                try {
-                    const cfHeaders = nasStorageUrl.startsWith('https://') ? getCfAccessHeaders() : {};
-                    await fetch(`${nasStorageUrl.replace(/\/$/, '')}/delete`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', ...cfHeaders },
-                        body: JSON.stringify({ filePath: storagePath })
-                    });
-                } catch (err) {
-                    console.error('Failed to delete file from NAS:', err);
-                }
-            }
-        } else {
-            await supabase.storage.from('make-order-files').remove([storagePath]);
-        }
-
-        const { data: item } = await supabase.from('make_order_items').select('pdf_urls, technical_drawing_url').eq('id', itemId).maybeSingle();
-        const existing: string[] = Array.isArray(item?.pdf_urls) ? item.pdf_urls : [];
-        const remaining = existing.filter((p: string) => p !== storagePath);
-        const newTechUrl = item?.technical_drawing_url === storagePath
-            ? (remaining.length > 0 ? remaining[remaining.length - 1] : null)
-            : item?.technical_drawing_url;
-
-        await supabase.from('make_order_items').update({
-            pdf_urls: remaining,
-            technical_drawing_url: newTechUrl
-        }).eq('id', itemId);
-
-        return { success: true };
-    });
-
-    ipcMain.handle('make-download-pdf', async (_e, { url, fileName }: { url: string; fileName: string }) => {
-        try {
-            const https = await import('https');
-            const http = await import('http');
-            const tmpPath = path.join(app.getPath('temp'), fileName);
-            const nasStorageUrl = getNasStorageUrl();
-            const cfHeaders = (nasStorageUrl && url.startsWith(nasStorageUrl)) ? getCfAccessHeaders() : {};
-
-            await new Promise<void>((resolve, reject) => {
-                const file = fs.createWriteStream(tmpPath);
-                const protocol = url.startsWith('https') ? https : http;
-                const parsedUrl = new URL(url);
-                const options = {
-                    hostname: parsedUrl.hostname,
-                    port: parsedUrl.port || (url.startsWith('https') ? 443 : 80),
-                    path: parsedUrl.pathname + parsedUrl.search,
-                    headers: { ...cfHeaders }
-                };
-                (protocol as any).get(options, (res: any) => { 
-                    res.pipe(file); 
-                    file.on('finish', () => { file.close(); resolve(); }); 
-                }).on('error', reject);
-            });
-            const { shell } = await import('electron');
-            await shell.openPath(tmpPath);
-            return { success: true, path: tmpPath };
-        } catch (e: any) {
-            return { error: e.message };
-        }
-    });
-
-    // ═══ MAKE ORDER — PARTS / DIMENSIONS ════════════════════════════════════
-
-    ipcMain.handle('make-get-order-parts', async (_e, orderId: number) => {
-        const { data } = await supabase.from('make_order_parts')
-            .select('*').eq('order_id', orderId).order('sort_order').order('id');
-        return decryptRows(data || []);
-    });
-
-    ipcMain.handle('make-upsert-part', async (_e, part: {
-        id?: number; order_id: number; part_name: string;
-        length?: string; width?: string; height?: string; notes?: string; sort_order?: number;
-    }) => {
-        if (part.id) {
-            const { data, error } = await supabase.from('make_order_parts')
-                .update({ part_name: part.part_name, length: part.length, width: part.width, height: part.height, notes: part.notes, sort_order: part.sort_order })
-                .eq('id', part.id).select().maybeSingle();
-            if (error) return { error: error.message };
-            return decryptObject(data);
-        } else {
-            const { data, error } = await supabase.from('make_order_parts')
-                .insert({ order_id: part.order_id, part_name: part.part_name, length: part.length || '', width: part.width || '', height: part.height || '', notes: part.notes || '', sort_order: part.sort_order || 0 })
-                .select().maybeSingle();
-            if (error) return { error: error.message };
-            return decryptObject(data);
-        }
-    });
-
-    ipcMain.handle('make-delete-part', async (_e, partId: number) => {
-        const { error } = await supabase.from('make_order_parts').delete().eq('id', partId);
-        return error ? { error: error.message } : { success: true };
-    });
-
-    // ═══ MAKE ORDER — ROLE-BASED ALTERATION + LOG ═══════════════════════════
-
-    const ALTERABLE_BY_DESIGNER = ['Placed', 'Awaiting Pricing', 'Pricing Done']; // only these stages: designer can alter
-    const ALTERABLE_FIELDS = ['furniture_name', 'description', 'quantity', 'priority', 'delivery_date'];
-
-    ipcMain.handle('make-alter-order', async (_e, {
-        orderId, changes, alteredBy, userRole
-    }: { orderId: number; changes: Record<string, any>; alteredBy: string; userRole: string }) => {
-        // Fetch current order
-        const { data: current, error: fetchErr } = await supabase
-            .from('make_orders').select('*').eq('id', orderId).maybeSingle();
-        if (fetchErr || !current) return { error: 'Order not found' };
-
-        // Enforce stage restriction
-        const isAdmin = userRole === 'admin';
-        if (!isAdmin && !ALTERABLE_BY_DESIGNER.includes(current.status)) {
-            return { error: `Order is in "${current.status}" stage. Only admins can alter it at this point.` };
-        }
-
-        // Filter to only allowed fields (non-admins restricted to ALTERABLE_FIELDS)
-        const filteredChanges: Record<string, any> = {};
-        for (const [field, newVal] of Object.entries(changes)) {
-            if (isAdmin || ALTERABLE_FIELDS.includes(field)) {
-                if (current[field] !== newVal) filteredChanges[field] = newVal;
-            }
-        }
-        if (Object.keys(filteredChanges).length === 0) return { success: true, message: 'No changes detected' };
-
-        // Write alteration log
-        const logRows = Object.entries(filteredChanges).map(([field, newVal]) => ({
-            order_id: orderId,
-            altered_by: alteredBy,
-            user_role: userRole,
-            field_name: field,
-            old_value: String(current[field] ?? ''),
-            new_value: String(newVal ?? ''),
-        }));
-        await supabase.from('make_order_alteration_log').insert(logRows);
-
-        // Apply changes
-        const { error: updateErr } = await supabase
-            .from('make_orders').update(filteredChanges).eq('id', orderId);
-        if (updateErr) return { error: updateErr.message };
-
-        return { success: true, changed: Object.keys(filteredChanges) };
-    });
-
-    ipcMain.handle('make-get-alteration-log', async (_e, orderId: number) => {
-        const { data } = await supabase.from('make_order_alteration_log')
-            .select('*').eq('order_id', orderId).order('altered_at', { ascending: false });
-        return decryptRows(data || []);
-    });
-
-    // ═══ MAKE CUSTOMIZED PRODUCT CATALOG ══════════════════════════════════
-    ipcMain.handle('make-get-catalog-products', async (_e, { search, activeOnly }: any = {}) => {
-        let q = supabase.from('make_products').select('*, specifications:make_product_specifications(*), sizes:make_product_sizes(*), colors:make_product_colors(*), images:make_product_images(*)').order('created_at', { ascending: false });
-        if (activeOnly) q = q.eq('is_active', true);
-        if (search) q = q.or(`product_name.ilike.%${search}%,product_code.ilike.%${search}%`);
-        const { data, error } = await q;
-        if (error) throw error;
-        const products = decryptRows(data || []);
-
-        // Also aggregate purchased counts from make_order_items
-        try {
-            const { data: orderItems } = await supabase.from('make_order_items').select('product_id, product_name, quantity');
-            if (orderItems && orderItems.length > 0) {
-                const countMap: Record<number, number> = {};
-                const nameCountMap: Record<string, number> = {};
-                for (const it of orderItems) {
-                    const qty = Number(it.quantity) || 1;
-                    if (it.product_id) countMap[it.product_id] = (countMap[it.product_id] || 0) + qty;
-                    if (it.product_name) nameCountMap[it.product_name] = (nameCountMap[it.product_name] || 0) + qty;
-                }
-                for (const p of products) {
-                    p.purchased_count = countMap[p.id] || nameCountMap[p.product_name] || 0;
-                }
-            }
-        } catch (e) {
-            console.warn('[make-get-catalog-products] Could not aggregate order counts:', e);
-        }
-
-        return products;
-    });
-
-    ipcMain.handle('make-save-catalog-product', async (_e, product: any) => {
-        if (product.id) {
-            const { data, error } = await supabase.from('make_products').update({
-                product_code: product.product_code,
-                product_name: product.product_name,
-                description: product.description,
-                main_image: product.main_image,
-                is_active: product.is_active !== undefined ? product.is_active : true,
-                updated_at: new Date().toISOString()
-            }).eq('id', product.id).select().single();
-            if (error) throw error;
-            return data;
-        } else {
-            const { data, error } = await supabase.from('make_products').insert({
-                product_code: product.product_code,
-                product_name: product.product_name,
-                description: product.description,
-                main_image: product.main_image,
-                is_active: product.is_active !== undefined ? product.is_active : true,
-                created_by: product.created_by || 'Admin'
-            }).select().single();
-            if (error) throw error;
-            return data;
-        }
-    });
-
-    ipcMain.handle('make-delete-catalog-product', async (_e, id: number) => {
-        const { error } = await supabase.from('make_products').delete().eq('id', id);
-        if (error) throw error;
-        return { success: true };
-    });
-
-    ipcMain.handle('make-save-spec', async (_e, spec: any) => {
-        if (spec.id) {
-            const { data, error } = await supabase.from('make_product_specifications').update({
-                spec_code: spec.spec_code,
-                spec_name: spec.spec_name,
-                spec_details: spec.spec_details,
-                is_active: spec.is_active !== undefined ? spec.is_active : true
-            }).eq('id', spec.id).select().single();
-            if (error) throw error;
-            return data;
-        } else {
-            const { data, error } = await supabase.from('make_product_specifications').insert({
-                product_id: spec.product_id,
-                spec_code: spec.spec_code,
-                spec_name: spec.spec_name,
-                spec_details: spec.spec_details,
-                is_active: spec.is_active !== undefined ? spec.is_active : true
-            }).select().single();
-            if (error) throw error;
-            return data;
-        }
-    });
-
-    ipcMain.handle('make-delete-spec', async (_e, id: number) => {
-        const { error } = await supabase.from('make_product_specifications').delete().eq('id', id);
-        if (error) throw error;
-        return { success: true };
-    });
-
-    ipcMain.handle('make-save-size', async (_e, size: any) => {
-        const payload = {
-            product_id: size.product_id,
-            spec_id: size.spec_id || null,
-            size_label: size.size_label || null,
-            length: size.length ? parseFloat(size.length) : null,
-            width: size.width ? parseFloat(size.width) : null,
-            height: size.height ? parseFloat(size.height) : null,
-            diameter: size.diameter ? parseFloat(size.diameter) : null,
-            unit: size.unit || 'mm',
-            is_active: size.is_active !== undefined ? size.is_active : true
-        };
-        if (size.id) {
-            const { data, error } = await supabase.from('make_product_sizes').update(payload).eq('id', size.id).select().single();
-            if (error) throw error;
-            return data;
-        } else {
-            const { data, error } = await supabase.from('make_product_sizes').insert(payload).select().single();
-            if (error) throw error;
-            return data;
-        }
-    });
-
-    ipcMain.handle('make-delete-size', async (_e, id: number) => {
-        const { error } = await supabase.from('make_product_sizes').delete().eq('id', id);
-        if (error) throw error;
-        return { success: true };
-    });
-
-    ipcMain.handle('make-save-color', async (_e, color: any) => {
-        const payload = {
-            product_id: color.product_id,
-            spec_id: color.spec_id || null,
-            color_name: color.color_name,
-            color_code: color.color_code || null,
-            image_url: color.image_url || null,
-            is_active: color.is_active !== undefined ? color.is_active : true
-        };
-        if (color.id) {
-            const { data, error } = await supabase.from('make_product_colors').update(payload).eq('id', color.id).select().single();
-            if (error) throw error;
-            return data;
-        } else {
-            const { data, error } = await supabase.from('make_product_colors').insert(payload).select().single();
-            if (error) throw error;
-            return data;
-        }
-    });
-
-    ipcMain.handle('make-delete-color', async (_e, id: number) => {
-        const { error } = await supabase.from('make_product_colors').delete().eq('id', id);
-        if (error) throw error;
-        return { success: true };
-    });
-
-    ipcMain.handle('make-get-product-purchase-history', async (_e, productId: number) => {
-        try {
-            const { data: prod } = await supabase.from('make_products').select('id, product_name, product_code').eq('id', productId).single();
-            if (!prod) return { totalQuantity: 0, orderCount: 0, totalRevenue: 0, history: [] };
-
-            const { data: items, error } = await supabase
-                .from('make_order_items')
-                .select(`
-                    *,
-                    order:make_orders(
-                        id, order_number, customer_name, customer_phone, delivery_address, 
-                        location_landmark, receiver_name, receiver_phone, status, 
-                        approval_status, current_version, salesperson_name, designer_name,
-                        created_at, delivery_date, cost_price, sale_price
-                    )
-                `)
-                .or(`product_id.eq.${productId},product_name.eq.${prod.product_name}`)
-                .order('created_at', { ascending: false });
-
-            if (error) {
-                console.error('[make-get-product-purchase-history] Error:', error);
-                return { totalQuantity: 0, orderCount: 0, totalRevenue: 0, history: [] };
-            }
-
-            const safeItems = decryptRows(items || []);
-            let totalQuantity = 0;
-            let totalRevenue = 0;
-            const distinctOrderIds = new Set<number>();
-
-            const history = safeItems.map((item: any) => {
-                const qty = Number(item.quantity) || 1;
-                totalQuantity += qty;
-                if (item.order?.id) distinctOrderIds.add(item.order.id);
-                const itemPrice = Number(item.item_sale_price) || (item.order?.sale_price ? (Number(item.order.sale_price) / (Number(item.order.quantity) || 1)) : 0);
-                totalRevenue += (itemPrice * qty);
-
-                return {
-                    id: item.id,
-                    order_id: item.order_id,
-                    order_number: item.order?.order_number || `#${item.order_id}`,
-                    customer_name: item.order?.customer_name || '—',
-                    customer_phone: item.order?.customer_phone || '—',
-                    location_landmark: item.order?.location_landmark || '—',
-                    delivery_address: item.order?.delivery_address || '—',
-                    salesperson_name: item.order?.salesperson_name || 'Direct / Internal',
-                    designer_name: item.order?.designer_name || '—',
-                    status: item.order?.status || 'Placed',
-                    approval_status: item.order?.approval_status || 'sales_approved',
-                    created_at: item.created_at || item.order?.created_at,
-                    delivery_date: item.order?.delivery_date,
-                    spec_name: item.spec_name || 'Standard Spec',
-                    size_label: item.size_label || 'Standard Dimensions',
-                    color_name: item.color_name || 'Standard Color',
-                    quantity: qty,
-                    item_cost_price: Number(item.item_cost_price) || 0,
-                    item_sale_price: itemPrice > 0 ? itemPrice : null,
-                    total_sale_price: itemPrice > 0 ? (itemPrice * qty) : null,
-                    salesperson_note: item.salesperson_note || ''
-                };
-            });
-
-            return {
-                productId,
-                productName: prod.product_name,
-                productCode: prod.product_code,
-                totalQuantity,
-                orderCount: distinctOrderIds.size,
-                totalRevenue,
-                history
-            };
-        } catch (err: any) {
-            console.error('[make-get-product-purchase-history] Catch:', err);
-            return { totalQuantity: 0, orderCount: 0, totalRevenue: 0, history: [] };
-        }
-    });
-
-    // ═══ MAKE ORDER ITEMS & DESIGNER PRICING ════════════════════════════════
-    ipcMain.handle('make-get-order-items', async (_e, orderId: number) => {
-        const { data, error } = await supabase.from('make_order_items').select('*').eq('order_id', orderId).order('id');
-        if (error) throw error;
-        const decrypted = decryptRows(data || []);
-        const nasStorageUrl = getNasStorageUrl();
-
-        // Expand drawing URLs for each item
-        const itemsWithDrawings = await Promise.all(decrypted.map(async (item: any) => {
-            const rawPaths: string[] = Array.isArray(item.pdf_urls) ? item.pdf_urls : [];
-            if (item.technical_drawing_url && !rawPaths.includes(item.technical_drawing_url)) {
-                rawPaths.unshift(item.technical_drawing_url);
-            }
-
-            const drawings = await Promise.all(rawPaths.map(async (p: string) => {
-                if (p.startsWith('http://') || p.startsWith('https://')) {
-                    return { path: p, name: path.basename(p).replace(/^\d+_/, ''), url: toPublicStorageUrl(p) };
-                }
-                if (p.startsWith('make-order-files/')) {
-                    const url = `https://storage.lenas.me/files/${p}`;
-                    return { path: p, name: path.basename(p).replace(/^\d+_/, ''), url };
-                } else {
-                    const { data: sData } = await supabase.storage.from('make-order-files').createSignedUrl(p, 3600);
-                    return { path: p, name: path.basename(p).replace(/^\d+_/, ''), url: sData?.signedUrl || '' };
-                }
-            }));
-
-            return {
-                ...item,
-                drawings: drawings.filter(d => d.url)
-            };
-        }));
-
-        return itemsWithDrawings;
-    });
-
-    ipcMain.handle('make-designer-save-specs-and-pricing', async (_e, {
-        orderId, costPrice, salePrice, items, updatedBy, userRole, modificationReason
-    }: any) => {
-        const { data: current, error: fetchErr } = await supabase.from('make_orders').select('*').eq('id', orderId).single();
-        if (fetchErr || !current) return { error: 'Order not found' };
-
-        let calcCostPrice = 0;
-        let calcSalePrice = 0;
-        let hasItemCost = false;
-        let hasItemSale = false;
-
-        // Update items if provided
-        if (Array.isArray(items) && items.length > 0) {
-            for (const item of items) {
-                const itemQty = Number(item.quantity) || 1;
-                const itemCost = Number(item.item_cost_price) || 0;
-                calcCostPrice += itemCost * itemQty;
-                if (itemCost > 0) hasItemCost = true;
-
-                const hasSale = item.item_sale_price !== undefined && item.item_sale_price !== null && item.item_sale_price !== '';
-                if (hasSale) {
-                    calcSalePrice += (Number(item.item_sale_price) || 0) * itemQty;
-                    hasItemSale = true;
-                }
-
-                if (item.id) {
-                    await supabase.from('make_order_items').update({
-                        quantity: itemQty,
-                        item_cost_price: itemCost,
-                        item_sale_price: hasSale ? Number(item.item_sale_price) : null,
-                        spec_name: item.spec_name || '',
-                        size_label: item.size_label || '',
-                        color_name: item.color_name || '',
-                        salesperson_note: item.salesperson_note || null,
-                        designer_notes: item.designer_notes || null,
-                        technical_drawing_url: item.technical_drawing_url || null
-                    }).eq('id', item.id);
-                }
-            }
-        }
-
-        const finalCostPrice = hasItemCost ? calcCostPrice : (Number(costPrice) || 0);
-        const finalSalePrice = hasItemSale ? calcSalePrice : (salePrice ? Number(salePrice) : null);
-
-        if (finalCostPrice <= 0) {
-            return { error: 'Cost price is required for each product and total must be greater than 0.' };
-        }
-
-        const isReModification = current.approved_version !== null && (current.approval_status === 'sales_approved' || current.status === 'Placed');
-        const nextVersion = isReModification ? (current.current_version || 1) + 1 : (current.current_version || 1);
-
-        // Snapshot previous version if modifying an already-approved order
-        if (isReModification) {
-            const { data: currentItems } = await supabase.from('make_order_items').select('*').eq('order_id', orderId);
-            const snapshot = {
-                order: current,
-                items: currentItems || []
-            };
-            await supabase.from('make_order_versions').insert({
-                order_id: orderId,
-                version_number: current.current_version || 1,
-                snapshot,
-                created_by: updatedBy,
-                user_role: userRole || 'Designer',
-                change_reason: modificationReason || 'Designer modified individual product specifications/pricing'
-            });
-
-            await supabase.from('make_order_alteration_log').insert({
-                order_id: orderId,
-                altered_by: updatedBy,
-                user_role: userRole || 'Designer',
-                field_name: 'pricing_and_specs',
-                old_value: `v${current.current_version}: Cost ৳${current.cost_price || 0}, Sale ৳${current.sale_price || 0}`,
-                new_value: `v${nextVersion}: Cost ৳${finalCostPrice}, Sale ৳${finalSalePrice || 0}`,
-                reason: modificationReason || 'Designer adjusted individual product specifications/pricing'
-            });
-        }
-
-        // Apply order updates
-        const { error: updErr } = await supabase.from('make_orders').update({
-            cost_price: finalCostPrice,
-            sale_price: finalSalePrice,
-            current_version: nextVersion,
-            approved_version: isReModification ? null : current.approved_version,
-            approval_status: isReModification ? 'modification_pending_approval' : 'awaiting_sales_approval',
-            status: isReModification ? 'Modification Pending Approval' : 'Awaiting Salesperson Approval',
-            rejection_reason: null,
-            updated_at: new Date().toISOString()
-        }).eq('id', orderId);
-
-        if (updErr) throw updErr;
-
-        await supabase.from('make_order_updates').insert({
-            order_id: orderId,
-            status: isReModification ? 'Modification Pending Approval' : 'Awaiting Salesperson Approval',
-            note: `Cost price set to ৳${finalCostPrice.toLocaleString()}${finalSalePrice ? ` | Sale price: ৳${finalSalePrice.toLocaleString()}` : ''}${isReModification ? ` (v${nextVersion} requires re-approval)` : ''}`,
-            updated_by: updatedBy
-        });
-
-        // Notify salesperson
-        if (current.salesman_id) {
-            await supabase.from('notifications').insert({
-                title: isReModification ? 'Order Modified — Re-approval Required' : 'Order Ready for Approval',
-                message: `Order #${current.order_number || current.id} (${current.furniture_name || 'Custom Order'}) requires your review and approval.`,
-                sender_id: null,
-                recipient_id: current.salesman_id,
-                action_path: '/make/track',
-                action_label: 'Review Order'
-            });
-        }
-
-        return { success: true, version: nextVersion, totalCostPrice: finalCostPrice, totalSalePrice: finalSalePrice };
-    });
-
-    ipcMain.handle('make-get-order-versions', async (_e, orderId: number) => {
-        const { data, error } = await supabase.from('make_order_versions').select('*').eq('order_id', orderId).order('version_number', { ascending: false });
-        if (error) throw error;
-        return decryptRows(data || []);
-    });
-
-    ipcMain.handle('make-get-version-diff', async (_e, { orderId, fromVersion, toVersion }: any) => {
-        const { data: vList, error } = await supabase.from('make_order_versions').select('*').eq('order_id', orderId).in('version_number', [fromVersion, toVersion]);
-        if (error) throw error;
-        const fromSnap = vList?.find(v => v.version_number === fromVersion)?.snapshot || null;
-        let toSnap = vList?.find(v => v.version_number === toVersion)?.snapshot || null;
-        if (!toSnap) {
-            // Current live order is toVersion
-            const { data: curOrder } = await supabase.from('make_orders').select('*').eq('id', orderId).single();
-            const { data: curItems } = await supabase.from('make_order_items').select('*').eq('order_id', orderId);
-            toSnap = { order: curOrder, items: curItems || [] };
-        }
-        return { from: fromSnap, to: toSnap };
-    });
-
-    ipcMain.handle('make-update-production-stage', async (_e, {
-        orderId, stage, note, photoPath, photoBase64, photoUrl, updatedBy, userRole, userId
-    }: {
-        orderId: number;
-        stage: string;
-        note?: string;
-        photoPath?: string;
-        photoBase64?: string;
-        photoUrl?: string;
-        updatedBy?: string;
-        userRole?: string;
-        userId?: number;
-    }) => {
-        try {
-            let finalPhotoUrl = photoUrl || null;
-
-            // 1. If a local file path is provided (from PC file picker), upload to TrueNAS Storage or Supabase
-            if (photoPath && fs.existsSync(photoPath)) {
-                const nasStorageUrl = getNasStorageUrl();
-                const fileName = path.basename(photoPath);
-                const fileBuffer = fs.readFileSync(photoPath);
-                const ext = path.extname(photoPath).toLowerCase();
-                const mimeType = ext === '.png' ? 'image/png' 
-                    : (ext === '.jpg' || ext === '.jpeg') ? 'image/jpeg' 
-                    : ext === '.webp' ? 'image/webp' 
-                    : 'application/octet-stream';
-                const storagePath = `stage-updates/${orderId}/${Date.now()}_${fileName}`;
-
-                if (nasStorageUrl) {
-                    const formData = new FormData();
-                    formData.append('file', new Blob([new Uint8Array(fileBuffer)], { type: mimeType }), path.basename(storagePath));
-                    const cfHeaders = nasStorageUrl.startsWith('https://') ? getCfAccessHeaders() : {};
-                    const response = await fetch(`${nasStorageUrl.replace(/\/$/, '')}/upload`, {
-                        method: 'POST',
-                        body: formData,
-                        headers: {
-                            'x-subfolder': `make-order-files/${orderId}/stages`,
-                            ...cfHeaders
-                        }
-                    });
-                    const data = await response.json();
-                    if (data.success && data.file_url) {
-                        finalPhotoUrl = toPublicStorageUrl(data.file_url);
-                    } else if (data.success && data.url) {
-                        finalPhotoUrl = toPublicStorageUrl(data.url);
-                    } else {
-                        finalPhotoUrl = `https://storage.lenas.me/files/make-order-files/${orderId}/stages/${path.basename(storagePath)}`;
-                    }
-                } else {
-                    const { error: uploadErr } = await supabase.storage
-                        .from('make-order-files')
-                        .upload(storagePath, fileBuffer, { contentType: mimeType, upsert: false });
-                    if (!uploadErr) {
-                        const { data: publicUrlData } = supabase.storage.from('make-order-files').getPublicUrl(storagePath);
-                        finalPhotoUrl = publicUrlData?.publicUrl || storagePath;
-                    }
-                }
-            } else if (!finalPhotoUrl && photoBase64) {
-                try {
-                    const matches = photoBase64.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
-                    if (matches && matches.length === 3) {
-                        const mimeType = matches[1];
-                        const ext = mimeType.split('/')[1] || 'jpg';
-                        const fileBuffer = Buffer.from(matches[2], 'base64');
-                        const fileName = `stage_${Date.now()}.${ext}`;
-                        const storagePath = `stage-updates/${orderId}/${Date.now()}_${fileName}`;
-                        const nasStorageUrl = getNasStorageUrl();
-
-                        if (nasStorageUrl) {
-                            const formData = new FormData();
-                            formData.append('file', new Blob([new Uint8Array(fileBuffer)], { type: mimeType }), path.basename(storagePath));
-                            const cfHeaders = nasStorageUrl.startsWith('https://') ? getCfAccessHeaders() : {};
-                            const response = await fetch(`${nasStorageUrl.replace(/\/$/, '')}/upload`, {
-                                method: 'POST',
-                                body: formData,
-                                headers: {
-                                    'x-subfolder': `make-order-files/${orderId}/stages`,
-                                    ...cfHeaders
-                                }
-                            });
-                            const data = await response.json();
-                            if (data.success && data.file_url) {
-                                finalPhotoUrl = toPublicStorageUrl(data.file_url);
-                            } else if (data.success && data.url) {
-                                finalPhotoUrl = toPublicStorageUrl(data.url);
-                            } else {
-                                finalPhotoUrl = `https://storage.lenas.me/files/make-order-files/${orderId}/stages/${path.basename(storagePath)}`;
-                            }
-                        } else {
-                            const { error: uploadErr } = await supabase.storage
-                                .from('make-order-files')
-                                .upload(storagePath, fileBuffer, { contentType: mimeType, upsert: false });
-                            if (!uploadErr) {
-                                const { data: publicUrlData } = supabase.storage.from('make-order-files').getPublicUrl(storagePath);
-                                finalPhotoUrl = publicUrlData?.publicUrl || storagePath;
-                            }
-                        }
-                    }
-                } catch (b64Err) {
-                    console.error('[make-update-production-stage] Base64 upload failed:', b64Err);
-                }
-            }
-
-            // 2. Fetch current order info to retrieve salesman & designer
-            const { data: curOrder } = await supabase.from('make_orders').select('*').eq('id', orderId).maybeSingle();
-
-            const roleLabel = userRole || 'Factory Manager';
-            const actorName = updatedBy || 'Factory Manager';
-
-            // 3. Record stage update in make_order_updates
-            const updateRow: any = {
-                order_id: orderId,
-                status: stage,
-                stage: stage,
-                note: note || '',
-                photo_url: finalPhotoUrl,
-                photo_urls: finalPhotoUrl ? [finalPhotoUrl] : [],
-                updated_by: `${actorName} (${roleLabel})`
-            };
-            await supabase.from('make_order_updates').insert(updateRow);
-
-            // 4. Update make_orders table
-            const orderUpdates: any = {
-                status: stage,
-                updated_at: new Date().toISOString()
-            };
-            if (finalPhotoUrl) {
-                orderUpdates.current_stage_photo = finalPhotoUrl;
-            }
-            if (userId) {
-                orderUpdates.factory_manager_id = userId;
-            }
-            orderUpdates.factory_manager_name = actorName;
-
-            const { error: updErr } = await supabase.from('make_orders').update(orderUpdates).eq('id', orderId);
-            if (updErr) throw updErr;
-
-            // 5. Send Real-Time Notifications to Salesman and Admins
-            const furnitureTitle = curOrder?.furniture_name || `Order #${orderId}`;
-            const notifTitle = `Stage Update: ${furnitureTitle} → ${stage}`;
-            const notifMsg = `${actorName} advanced order #${curOrder?.order_number || orderId} to "${stage}".${note ? ` Note: ${note}` : ''}${finalPhotoUrl ? ' [Photo Attached]' : ''}`;
-
-            const recipients: (number | null)[] = [];
-            if (curOrder?.salesman_id) recipients.push(curOrder.salesman_id);
-
-            const notifRows = (recipients.length > 0 ? recipients : [null]).map(rid => ({
-                title: notifTitle,
-                message: notifMsg,
-                recipient_id: rid,
-                sender_id: userId || null,
-                action_path: '/make/track',
-                action_label: 'View Order',
-                metadata: {
-                    order_id: orderId,
-                    stage: stage,
-                    photo_url: finalPhotoUrl
-                }
-            }));
-            await supabase.from('notifications').insert(notifRows);
-
-            return {
-                success: true,
-                stage,
-                photo_url: finalPhotoUrl
-            };
-        } catch (err: any) {
-            console.error('[make-update-production-stage] Error:', err);
-            return { success: false, error: err.message };
-        }
-    });
-
-    // ═══ MAKE DASHBOARD STATS ════════════════════════════════════════════════
-
-    ipcMain.handle('make-get-dashboard-stats', async () => {
-        const { data: allOrders } = await supabase.from('make_orders')
-            .select('status, priority, created_at, furniture_name, designer_name, id')
-            .order('created_at', { ascending: false });
-
-        const orders = allOrders || [];
-        const counts: Record<string, number> = {};
-        for (const o of orders) { counts[o.status] = (counts[o.status] || 0) + 1; }
-
-        return {
-            total: orders.length,
-            pending: (counts['Placed'] || 0) + (counts['In Production'] || 0),
-            inProgress: (counts['Welding'] || 0) + (counts['Painting'] || 0),
-            readyForDispatch: counts['Ready for Dispatch'] || 0,
-            delivered: counts['Delivered'] || 0,
-            byStatus: counts,
-            recent: orders.slice(0, 10),
-            pendingDelivery: orders.filter(o => o.status === 'Ready for Dispatch')
-                .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()),
-        };
-    });
+    // Note: MAKE module handlers are registered by registerMakeHandlers()
 
     // ═══ CLOUD LICENSE ════════════════════════════════════════════════════════
 
@@ -5386,19 +4329,34 @@ export function registerHandlers() {
         const { data: cust } = await supabase.from('billing_customers').select('*').eq('id', id).single();
         if (!cust) return null;
         
-        const { data: addresses } = await supabase.from('customer_addresses').select('*').eq('customer_id', id).order('created_at', { ascending: false });
-        const { data: payments } = await supabase.from('customer_payments').select('*').eq('customer_id', id).order('created_at', { ascending: false });
-        const { data: bills } = await supabase.from('bills').select('*').eq('customer_id', id).order('created_at', { ascending: false });
-        const { data: quotations } = await supabase.from('quotations').select('*').eq('customer_id', id).order('created_at', { ascending: false });
-        const { data: exchanges } = await supabase.from('exchange_orders').select('*').eq('customer_id', id).order('created_at', { ascending: false });
+        const decryptedPhone = decryptField(cust.phone) || cust.phone;
+        let makeQuery = supabase.from('make_orders')
+            .select('*, items:make_order_items(*)')
+            .order('created_at', { ascending: false });
+
+        if (decryptedPhone) {
+            makeQuery = makeQuery.or(`customer_id.eq.${id},customer_phone.eq.${decryptedPhone},customer_phone.eq.${cust.phone}`);
+        } else {
+            makeQuery = makeQuery.eq('customer_id', id);
+        }
+
+        const [addressesRes, paymentsRes, billsRes, quotationsRes, exchangesRes, makeOrdersRes] = await Promise.all([
+            supabase.from('customer_addresses').select('*').eq('customer_id', id).order('created_at', { ascending: false }),
+            supabase.from('customer_payments').select('*').eq('customer_id', id).order('created_at', { ascending: false }),
+            supabase.from('bills').select('*').eq('customer_id', id).order('created_at', { ascending: false }),
+            supabase.from('quotations').select('*').eq('customer_id', id).order('created_at', { ascending: false }),
+            supabase.from('exchange_orders').select('*').eq('customer_id', id).order('created_at', { ascending: false }),
+            makeQuery
+        ]);
 
         return { 
             customer: decryptObject(cust), 
-            addresses: decryptRows(addresses || []), 
-            payments: decryptRows(payments || []), 
-            bills: decryptRows(bills || []), 
-            quotations: decryptRows(quotations || []),
-            exchanges: decryptRows(exchanges || [])
+            addresses: decryptRows(addressesRes.data || []), 
+            payments: decryptRows(paymentsRes.data || []), 
+            bills: decryptRows(billsRes.data || []), 
+            quotations: decryptRows(quotationsRes.data || []),
+            exchanges: decryptRows(exchangesRes.data || []),
+            make_orders: decryptRows(makeOrdersRes.data || [])
         };
     });
 

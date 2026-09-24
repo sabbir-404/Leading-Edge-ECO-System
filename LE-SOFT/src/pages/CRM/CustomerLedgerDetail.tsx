@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeftRight, FileCheck, Phone, Mail, Plus, MapPin, CreditCard, FileText, Trash2 } from 'lucide-react';
+import { ArrowLeftRight, FileCheck, Phone, Mail, Plus, MapPin, CreditCard, FileText, Trash2, Hammer, ExternalLink } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAutoRefresh } from '../../hooks/useAutoRefresh';
 import DashboardLayout from '../../components/DashboardLayout';
@@ -13,6 +13,7 @@ interface LedgerData {
     bills: any[];
     quotations: any[];
     exchanges: any[];
+    make_orders?: any[];
 }
 
 const CustomerLedgerDetail: React.FC = () => {
@@ -109,13 +110,13 @@ const CustomerLedgerDetail: React.FC = () => {
             <div className="masters-container" style={{ height: 'calc(100vh - 80px)', display: 'flex', flexDirection: 'column', gap: '1rem', padding: '0 1rem' }}>
                 
                 {/* Header Profile */}
-                <div style={{ background: 'var(--card-bg)', borderRadius: '12px', border: '1px solid var(--border-color)', padding: '1.5rem', display: 'flex', gap: '2rem', alignItems: 'center', flexShrink: 0 }}>
-                    <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: '#e0e7ff', color: '#4f46e5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.5rem', fontWeight: 700 }}>
+                <div className="make-card-flex" style={{ background: 'var(--card-bg)', borderRadius: '12px', border: '1px solid var(--border-color)', padding: '1.5rem', display: 'flex', gap: '2rem', alignItems: 'center', flexShrink: 0 }}>
+                    <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: '#e0e7ff', color: '#4f46e5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.5rem', fontWeight: 700, flexShrink: 0 }}>
                         {(data.customer.name || '?').charAt(0)}
                     </div>
-                    <div style={{ flex: 1 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
                         <h1 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '0.25rem' }}>{data.customer.name}</h1>
-                        <div style={{ display: 'flex', gap: '1.5rem', color: '#666', fontSize: '0.9rem' }}>
+                        <div style={{ display: 'flex', gap: '1.5rem', color: '#666', fontSize: '0.9rem', flexWrap: 'wrap' }}>
                             <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}><Phone size={14} /> {data.customer.phone || 'N/A'}</span>
                             {data.customer.email && <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}><Mail size={14} /> {data.customer.email}</span>}
                         </div>
@@ -139,9 +140,10 @@ const CustomerLedgerDetail: React.FC = () => {
                 </div>
 
                 {/* Tabs */}
-                <div style={{ display: 'flex', gap: '0.5rem', borderBottom: '2px solid var(--border-color)', paddingBottom: '0.5rem', flexShrink: 0 }}>
+                <div style={{ display: 'flex', gap: '0.5rem', borderBottom: '2px solid var(--border-color)', paddingBottom: '0.5rem', flexShrink: 0, flexWrap: 'wrap' }}>
                     {[
                         { id: 'bills', label: 'Invoices', icon: <FileText size={16} />, count: data.bills.length },
+                        { id: 'make', label: 'Custom Furniture (MAKE)', icon: <Hammer size={16} />, count: (data.make_orders || []).length },
                         { id: 'payments', label: 'Payments', icon: <CreditCard size={16} />, count: data.payments.length },
                         { id: 'exchanges', label: 'Returns & Exchanges', icon: <ArrowLeftRight size={16} />, count: data.exchanges.length },
                         { id: 'quotations', label: 'Quotations', icon: <FileCheck size={16} />, count: data.quotations.length },
@@ -286,6 +288,93 @@ const CustomerLedgerDetail: React.FC = () => {
                                 ))}
                             </tbody>
                         </table>
+                    )}
+
+                    {activeTab === 'make' && (
+                        <div>
+                            {(data.make_orders || []).length === 0 ? (
+                                <div style={{ padding: '3rem', textAlign: 'center', color: '#94a3b8' }}>
+                                    No custom furniture orders found for this customer.
+                                </div>
+                            ) : (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                                    {(data.make_orders || []).map((order: any) => (
+                                        <div key={order.id} style={{ border: '1px solid var(--border-color)', borderRadius: '10px', padding: '1.25rem', background: 'var(--card-bg)' }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                                                <div>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                                        <span style={{ fontWeight: 800, fontSize: '1rem', color: 'var(--text-primary)' }}>
+                                                            {order.order_number || `#${order.id}`}
+                                                        </span>
+                                                        <span style={{ padding: '2px 8px', borderRadius: '6px', fontSize: '0.75rem', fontWeight: 700, background: 'rgba(249,115,22,0.1)', color: '#ea580c', border: '1px solid rgba(249,115,22,0.2)' }}>
+                                                            {order.status || 'Placed'}
+                                                        </span>
+                                                        {order.reference_bill_no && (
+                                                            <span style={{ padding: '2px 8px', borderRadius: '6px', fontSize: '0.75rem', fontWeight: 600, background: 'rgba(59,130,246,0.1)', color: '#2563eb' }}>
+                                                                Bill #{order.reference_bill_no}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <h3 style={{ margin: '0.35rem 0 0', fontSize: '1.05rem', fontWeight: 700 }}>
+                                                        {order.furniture_name}
+                                                    </h3>
+                                                    <div style={{ fontSize: '0.8rem', color: '#64748b', marginTop: '0.2rem' }}>
+                                                        Ordered: {new Date(order.created_at).toLocaleDateString()} {order.delivery_date ? `• Delivery: ${new Date(order.delivery_date).toLocaleDateString()}` : ''}
+                                                    </div>
+                                                </div>
+                                                <div style={{ textAlign: 'right' }}>
+                                                    <div style={{ fontSize: '1.15rem', fontWeight: 800, color: 'var(--accent-color)' }}>
+                                                        {order.sale_price ? `৳${Number(order.sale_price).toLocaleString()}` : '—'}
+                                                    </div>
+                                                    <button
+                                                        onClick={() => navigate('/make/track')}
+                                                        style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', marginTop: '0.3rem', background: 'none', border: 'none', color: 'var(--accent-color)', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}
+                                                    >
+                                                        Track Order <ExternalLink size={13} />
+                                                    </button>
+                                                </div>
+                                            </div>
+
+                                            {/* Items breakdown */}
+                                            {Array.isArray(order.items) && order.items.length > 0 && (
+                                                <div style={{ marginTop: '0.5rem', background: '#f8fafc', borderRadius: '8px', padding: '0.75rem', border: '1px solid #e2e8f0' }}>
+                                                    <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', marginBottom: '0.4rem' }}>
+                                                        Items &amp; Specifications ({order.items.length})
+                                                    </div>
+                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                                                        {order.items.map((it: any, idx: number) => (
+                                                            <div key={it.id || idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.82rem' }}>
+                                                                <div>
+                                                                    <strong>{it.product_name}</strong> (x{it.quantity || 1})
+                                                                    {it.dimensions_text && <span style={{ color: '#64748b', marginLeft: '0.5rem' }}>[{it.dimensions_text}]</span>}
+                                                                    {it.spec_name && <span style={{ color: '#64748b', marginLeft: '0.5rem' }}>{it.spec_name}</span>}
+                                                                    {it.color_name && <span style={{ color: '#64748b', marginLeft: '0.5rem' }}>Color: {it.color_name}</span>}
+                                                                </div>
+                                                                {it.item_sale_price && (
+                                                                    <span style={{ fontWeight: 600 }}>৳{Number(it.item_sale_price).toLocaleString()}</span>
+                                                                )}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {/* Invoice attachments */}
+                                            {Array.isArray(order.invoice_attachment_urls) && order.invoice_attachment_urls.length > 0 && (
+                                                <div style={{ marginTop: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                                    <span style={{ fontSize: '0.75rem', fontWeight: 600, color: '#64748b' }}>Invoice Attachments:</span>
+                                                    {order.invoice_attachment_urls.map((url: string, uIdx: number) => (
+                                                        <a key={uIdx} href={url} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.78rem', color: 'var(--accent-color)', display: 'inline-flex', alignItems: 'center', gap: '0.2rem', textDecoration: 'underline' }}>
+                                                            Attachment #{uIdx + 1}
+                                                        </a>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
                     )}
                     
                     {/* Render Quotations and Addresses tab similarly */}

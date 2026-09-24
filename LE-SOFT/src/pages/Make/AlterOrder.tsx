@@ -50,7 +50,7 @@ const AlterOrder: React.FC<Props> = ({ order, onClose, onSaved }) => {
 
   useEffect(() => {
     // @ts-ignore
-    window.electron.makeGetAlterationLog(order.id).then(setLog).catch(() => {});
+    window.electron.makeGetAlterationLog(order.id).then((data: any) => setLog(Array.isArray(data) ? data : [])).catch(() => setLog([]));
   }, [order.id]);
 
   const handleSave = async () => {
@@ -68,7 +68,7 @@ const AlterOrder: React.FC<Props> = ({ order, onClose, onSaved }) => {
       else {
         setResult({ type: 'success', msg: res?.message || 'Order updated successfully' });
         // @ts-ignore
-        window.electron.makeGetAlterationLog(order.id).then(setLog).catch(() => {});
+        window.electron.makeGetAlterationLog(order.id).then((data: any) => setLog(Array.isArray(data) ? data : [])).catch(() => setLog([]));
         setTimeout(() => { onSaved(); onClose(); }, 1200);
       }
     } catch { setResult({ type: 'error', msg: 'Failed to save changes' }); }
@@ -86,6 +86,7 @@ const AlterOrder: React.FC<Props> = ({ order, onClose, onSaved }) => {
     <div style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)' }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
+        className="make-modal-container"
         style={{ background: 'var(--card-bg)', borderRadius: '16px', padding: '2rem', width: '100%', maxWidth: '540px', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 24px 64px rgba(0,0,0,0.2)' }}>
 
         {/* Header */}
@@ -163,7 +164,7 @@ const AlterOrder: React.FC<Props> = ({ order, onClose, onSaved }) => {
         <div>
           <button onClick={() => setShowLog(prev => !prev)}
             style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'none', border: 'none', cursor: 'pointer', padding: '6px 0', fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
-            <History size={15} /> Alteration History ({log.length})
+            <History size={15} /> Alteration History ({(log || []).length})
             <ChevronDown size={14} style={{ transform: showLog ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
           </button>
 
@@ -171,11 +172,11 @@ const AlterOrder: React.FC<Props> = ({ order, onClose, onSaved }) => {
             {showLog && (
               <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
                 style={{ overflow: 'hidden', marginTop: '8px' }}>
-                {log.length === 0 ? (
+                {(log || []).length === 0 ? (
                   <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', padding: '8px 0', opacity: 0.6 }}>No alteration history yet</p>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '220px', overflowY: 'auto' }}>
-                    {log.map(entry => (
+                    {(log || []).map(entry => (
                       <div key={entry.id} style={{ background: 'var(--bg-secondary)', borderRadius: '8px', padding: '10px 12px', fontSize: '0.82rem' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
                           <span style={{ fontWeight: 600, color: 'var(--text-primary)', textTransform: 'capitalize' }}>{entry.field_name.replace(/_/g, ' ')}</span>

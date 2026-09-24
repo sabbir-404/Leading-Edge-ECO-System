@@ -44,6 +44,8 @@ interface Product {
   id?: number;
   product_code: string;
   product_name: string;
+  category_id?: number | null;
+  category?: string | null;
   description?: string;
   main_image?: string;
   is_active: boolean;
@@ -101,9 +103,27 @@ const MakeProductCatalog: React.FC = () => {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [historySearch, setHistorySearch] = useState('');
 
+  // Top view toggle: products or global attributes
+  const [catalogMainView, setCatalogMainView] = useState<'products' | 'attributes'>('products');
+  const [globalAttributes, setGlobalAttributes] = useState<{ categories: any[]; specs: any[]; sizes: any[]; colors: any[] }>({ categories: [], specs: [], sizes: [], colors: [] });
+  const [attrTab, setAttrTab] = useState<'categories' | 'sizes' | 'colors' | 'specs'>('categories');
+
+  // Product modal attribute selections
+  const [selectedSpecIds, setSelectedSpecIds] = useState<(number | string)[]>([]);
+  const [selectedSizeIds, setSelectedSizeIds] = useState<(number | string)[]>([]);
+  const [selectedColorIds, setSelectedColorIds] = useState<(number | string)[]>([]);
+
+  // Inline attribute creation state
+  const [inlineNewAttrType, setInlineNewAttrType] = useState<'category' | 'spec' | 'size' | 'color' | null>(null);
+  const [inlineAttrName, setInlineAttrName] = useState('');
+  const [inlineAttrExtra, setInlineAttrExtra] = useState('');
+
   // Modals
   const [showProductModal, setShowProductModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Partial<Product>>({ is_active: true });
+
+  const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const [editingCategory, setEditingCategory] = useState<any>({ is_active: true });
 
   const [showSpecModal, setShowSpecModal] = useState(false);
   const [editingSpec, setEditingSpec] = useState<Partial<Spec>>({ is_active: true });
@@ -169,8 +189,27 @@ const MakeProductCatalog: React.FC = () => {
     }
   };
 
+  const fetchGlobalAttributes = async () => {
+    try {
+      if (window.electron?.makeGetGlobalAttributes) {
+        const res = await window.electron.makeGetGlobalAttributes();
+        if (res) {
+          setGlobalAttributes({
+            categories: Array.isArray(res.categories) ? res.categories : [],
+            specs: Array.isArray(res.specs) ? res.specs : [],
+            sizes: Array.isArray(res.sizes) ? res.sizes : [],
+            colors: Array.isArray(res.colors) ? res.colors : [],
+          });
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load global attributes:', err);
+    }
+  };
+
   useEffect(() => {
     fetchCatalog();
+    fetchGlobalAttributes();
   }, [search]);
 
   useEffect(() => {
@@ -186,6 +225,109 @@ const MakeProductCatalog: React.FC = () => {
     setTimeout(() => setMsg(null), 3500);
   };
 
+  const handleOpenNewProduct = () => {
+    setEditingProduct({ is_active: true, category_id: null, category: null });
+    setSelectedSpecIds([]);
+    setSelectedSizeIds([]);
+    setSelectedColorIds([]);
+    setShowProductModal(true);
+  };
+
+  const handleOpenEditProduct = (prod: Product) => {
+    setEditingProduct(prod);
+    setSelectedSpecIds((prod.specifications || []).map((s: any) => s.id));
+    setSelectedSizeIds((prod.sizes || []).map((s: any) => s.id));
+    setSelectedColorIds((prod.colors || []).map((c: any) => c.id));
+    setShowProductModal(true);
+  };
+
+  const handleCreateInlineAttribute = async () => {
+    if (!inlineAttrName.trim() || !inlineNewAttrType) return;
+    try {
+      const payload: any = { type: inlineNewAttrType };
+      if (inlineNewAttrType === 'category') {
+        payload.name = inlineAttrName.trim();
+        payload.code = inlineAttrExtra.trim() || undefined;
+      } else if (inlineNewAttrType === 'spec') {
+        payload.spec_name = inlineAttrName.trim();
+        payload.spec_details = inlineAttrExtra.trim() || undefined;
+      } else if (inlineNewAttrType === 'size') {
+        payload.size_label = inlineAttrName.trim();
+        payload.unit = inlineAttrExtra.trim() || 'mm';
+      } else if (inlineNewAttrType === 'color') {
+        payload.color_name = inlineAttrName.trim();
+        payload.color_code = inlineAttrExtra.trim() || undefined;
+      }
+
+      if (window.electron?.makeSaveGlobalAttribute) {
+        const created = await window.electron.makeSaveGlobalAttribute(payload);
+        await fetchGlobalAttributes();
+        const attrId = created?.attribute?.id ?? created?.id;
+        if (attrId) {
+          if (inlineNewAttrType === 'category') {
+            setEditingProduct(prev => ({
+              ...prev,
+              category_id: attrId,
+              category: inlineAttrName.trim()
+            }));
+          }
+          if (inlineNewAttrType === 'spec') setSelectedSpecIds(prev => [...prev, attrId]);
+          if (inlineNewAttrType === 'size') setSelectedSizeIds(prev => [...prev, attrId]);
+          if (inlineNewAttrType === 'color') setSelectedColorIds(prev => [...prev, attrId]);
+        }
+      }
+      setInlineNewAttrType(null);
+      setInlineAttrName('');
+      setInlineAttrExtra('');
+    } catch (err: any) {
+      alert('Failed to create attribute: ' + (err.message || 'Permission denied'));
+    }
+  };
+
+  // Category Actions
+  const handleSaveCategory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingCategory.name?.trim()) {
+      showFeedback('error', 'Category name is required.');
+      return;
+    }
+    try {
+      // @ts-ignore
+      await window.electron.makeSaveGlobalAttribute({
+        type: 'category',
+        id: editingCategory.id,
+        name: editingCategory.name.trim(),
+        code: editingCategory.code?.trim() || null,
+        description: editingCategory.description?.trim() || null,
+        is_active: editingCategory.is_active !== undefined ? editingCategory.is_active : true
+      });
+      setShowCategoryModal(false);
+      showFeedback('success', editingCategory.id ? 'Category updated.' : 'Category created.');
+      await fetchGlobalAttributes();
+      await fetchCatalog();
+    } catch (err: any) {
+      showFeedback('error', err.message || 'Failed to save category');
+    }
+  };
+
+  const handleDeleteCategory = async (cat: any) => {
+    if (!window.confirm(`Delete category "${cat.name}"?`)) return;
+    try {
+      // @ts-ignore
+      const res = await window.electron.makeDeleteCategory(cat.id);
+      if (res && res.error) {
+        showFeedback('error', res.error);
+        alert(res.error);
+      } else {
+        showFeedback('success', `Category "${cat.name}" deleted.`);
+        await fetchGlobalAttributes();
+        await fetchCatalog();
+      }
+    } catch (err: any) {
+      showFeedback('error', err.message || 'Failed to delete category');
+    }
+  };
+
   // Product Actions
   const handleSaveProduct = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -196,9 +338,18 @@ const MakeProductCatalog: React.FC = () => {
     try {
       // @ts-ignore
       const saved = await window.electron.makeSaveCatalogProduct(editingProduct);
+      if (saved && saved.id && window.electron?.makeAssignProductAttributes) {
+        await window.electron.makeAssignProductAttributes({
+          productId: saved.id,
+          specIds: selectedSpecIds,
+          sizeIds: selectedSizeIds,
+          colorIds: selectedColorIds
+        });
+      }
       setShowProductModal(false);
       showFeedback('success', 'Product saved successfully.');
       await fetchCatalog();
+      await fetchGlobalAttributes();
       if (saved) setSelectedProduct(saved);
     } catch (err: any) {
       showFeedback('error', err.message || 'Failed to save product');
@@ -223,13 +374,27 @@ const MakeProductCatalog: React.FC = () => {
   // Specification Actions
   const handleSaveSpec = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingSpec.spec_name || !selectedProduct?.id) {
+    if (!editingSpec.spec_name) {
       showFeedback('error', 'Specification name is required.');
       return;
     }
     try {
-      // @ts-ignore
-      await window.electron.makeSaveSpec({ ...editingSpec, product_id: selectedProduct.id });
+      if (selectedProduct?.id && catalogMainView === 'products') {
+        // @ts-ignore
+        await window.electron.makeSaveSpec({ ...editingSpec, product_id: selectedProduct.id });
+      } else {
+        // @ts-ignore
+        await window.electron.makeSaveGlobalAttribute({
+          type: 'spec',
+          id: editingSpec.id,
+          spec_name: editingSpec.spec_name,
+          spec_code: editingSpec.spec_code,
+          spec_details: editingSpec.spec_details,
+          image_url: editingSpec.image_url,
+          is_active: editingSpec.is_active
+        });
+        await fetchGlobalAttributes();
+      }
       setShowSpecModal(false);
       showFeedback('success', 'Specification saved.');
       fetchCatalog();
@@ -243,8 +408,9 @@ const MakeProductCatalog: React.FC = () => {
     try {
       // @ts-ignore
       await window.electron.makeDeleteSpec(id);
-      showFeedback('success', 'Specification removed.');
+      showFeedback('success', 'Specification deleted.');
       fetchCatalog();
+      await fetchGlobalAttributes();
     } catch (err: any) {
       showFeedback('error', err.message);
     }
@@ -253,13 +419,25 @@ const MakeProductCatalog: React.FC = () => {
   // Size Actions
   const handleSaveSize = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedProduct?.id) {
-      showFeedback('error', 'Please select a product first.');
-      return;
-    }
     try {
-      // @ts-ignore
-      await window.electron.makeSaveSize({ ...editingSize, product_id: selectedProduct.id });
+      if (selectedProduct?.id && catalogMainView === 'products') {
+        // @ts-ignore
+        await window.electron.makeSaveSize({ ...editingSize, product_id: selectedProduct.id });
+      } else {
+        // @ts-ignore
+        await window.electron.makeSaveGlobalAttribute({
+          type: 'size',
+          id: editingSize.id,
+          size_label: editingSize.size_label,
+          length: editingSize.length,
+          width: editingSize.width,
+          height: editingSize.height,
+          diameter: editingSize.diameter,
+          unit: editingSize.unit || 'mm',
+          is_active: editingSize.is_active
+        });
+        await fetchGlobalAttributes();
+      }
       setShowSizeModal(false);
       showFeedback('success', 'Dimensions saved.');
       fetchCatalog();
@@ -275,6 +453,7 @@ const MakeProductCatalog: React.FC = () => {
       await window.electron.makeDeleteSize(id);
       showFeedback('success', 'Size deleted.');
       fetchCatalog();
+      await fetchGlobalAttributes();
     } catch (err: any) {
       showFeedback('error', err.message);
     }
@@ -283,13 +462,26 @@ const MakeProductCatalog: React.FC = () => {
   // Color Actions
   const handleSaveColor = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedProduct?.id || !editingColor.color_name) {
+    if (!editingColor.color_name) {
       showFeedback('error', 'Color name is required.');
       return;
     }
     try {
-      // @ts-ignore
-      await window.electron.makeSaveColor({ ...editingColor, product_id: selectedProduct.id });
+      if (selectedProduct?.id && catalogMainView === 'products') {
+        // @ts-ignore
+        await window.electron.makeSaveColor({ ...editingColor, product_id: selectedProduct.id });
+      } else {
+        // @ts-ignore
+        await window.electron.makeSaveGlobalAttribute({
+          type: 'color',
+          id: editingColor.id,
+          color_name: editingColor.color_name,
+          color_code: editingColor.color_code,
+          image_url: editingColor.image_url,
+          is_active: editingColor.is_active
+        });
+        await fetchGlobalAttributes();
+      }
       setShowColorModal(false);
       showFeedback('success', 'Color finish saved.');
       fetchCatalog();
@@ -305,6 +497,7 @@ const MakeProductCatalog: React.FC = () => {
       await window.electron.makeDeleteColor(id);
       showFeedback('success', 'Color removed.');
       fetchCatalog();
+      await fetchGlobalAttributes();
     } catch (err: any) {
       showFeedback('error', err.message);
     }
@@ -340,16 +533,42 @@ const MakeProductCatalog: React.FC = () => {
           </div>
           <div style={{ display: 'flex', gap: '10px' }}>
             <button 
-              onClick={() => { fetchCatalog(); if (selectedProduct?.id) fetchProductHistory(selectedProduct.id); }}
+              onClick={() => { fetchCatalog(); fetchGlobalAttributes(); if (selectedProduct?.id) fetchProductHistory(selectedProduct.id); }}
               style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '8px', cursor: 'pointer', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
               <RefreshCw size={15} /> Refresh
             </button>
             <button 
-              onClick={() => { setEditingProduct({ is_active: true }); setShowProductModal(true); }}
+              onClick={handleOpenNewProduct}
               style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', background: '#3b82f6', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem', boxShadow: '0 4px 12px rgba(59,130,246,0.25)' }}>
               <Plus size={16} /> New Product
             </button>
           </div>
+        </div>
+
+        {/* Top View Selector: Products Catalog vs Global Attributes */}
+        <div data-tutorial="make-product-catalog" style={{ display: 'flex', gap: '8px', marginBottom: '1.5rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem' }}>
+          <button
+            onClick={() => setCatalogMainView('products')}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px',
+              borderRadius: '8px', border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: '0.9rem',
+              background: catalogMainView === 'products' ? '#3b82f6' : 'var(--bg-secondary)',
+              color: catalogMainView === 'products' ? '#fff' : 'var(--text-secondary)'
+            }}
+          >
+            <Package size={16} /> Products Catalog ({products.length})
+          </button>
+          <button
+            onClick={() => { setCatalogMainView('attributes'); fetchGlobalAttributes(); }}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px',
+              borderRadius: '8px', border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: '0.9rem',
+              background: catalogMainView === 'attributes' ? '#3b82f6' : 'var(--bg-secondary)',
+              color: catalogMainView === 'attributes' ? '#fff' : 'var(--text-secondary)'
+            }}
+          >
+            <Layers size={16} /> Global Attributes Library ({((globalAttributes?.categories?.length || 0) + (globalAttributes?.specs?.length || 0) + (globalAttributes?.sizes?.length || 0) + (globalAttributes?.colors?.length || 0))})
+          </button>
         </div>
 
         {/* Feedback Alert */}
@@ -369,7 +588,8 @@ const MakeProductCatalog: React.FC = () => {
         </AnimatePresence>
 
         {/* Main 2-Panel Layout */}
-        <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: '1.5rem', alignItems: 'start' }}>
+        {catalogMainView === 'products' ? (
+          <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: '1.5rem', alignItems: 'start' }}>
           
           {/* Left Panel: Products List */}
           <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '14px', padding: '1.25rem', height: 'calc(100vh - 200px)', display: 'flex', flexDirection: 'column' }}>
@@ -494,7 +714,7 @@ const MakeProductCatalog: React.FC = () => {
                         <HistoryIcon size={14} /> Purchase History ({historyData?.totalQuantity || selectedProduct.purchased_count || 0})
                       </button>
                       <button 
-                        onClick={() => { setEditingProduct(selectedProduct); setShowProductModal(true); }}
+                        onClick={() => handleOpenEditProduct(selectedProduct)}
                         style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 12px', background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '8px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)' }}>
                         <Edit2 size={13} /> Edit Product
                       </button>
@@ -862,11 +1082,225 @@ const MakeProductCatalog: React.FC = () => {
           </div>
 
         </div>
+        ) : (
+          /* Global Attributes Management Library */
+          <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '14px', padding: '1.5rem', minHeight: 'calc(100vh - 200px)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '10px' }}>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <button
+                  onClick={() => setAttrTab('categories')}
+                  style={{
+                    padding: '8px 16px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: '0.85rem',
+                    background: attrTab === 'categories' ? '#10b981' : 'var(--bg-secondary)',
+                    color: attrTab === 'categories' ? '#fff' : 'var(--text-secondary)'
+                  }}
+                >
+                  Categories ({globalAttributes?.categories?.length || 0})
+                </button>
+                <button
+                  onClick={() => setAttrTab('sizes')}
+                  style={{
+                    padding: '8px 16px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: '0.85rem',
+                    background: attrTab === 'sizes' ? '#3b82f6' : 'var(--bg-secondary)',
+                    color: attrTab === 'sizes' ? '#fff' : 'var(--text-secondary)'
+                  }}
+                >
+                  Sizes ({globalAttributes?.sizes?.length || 0})
+                </button>
+                <button
+                  onClick={() => setAttrTab('colors')}
+                  style={{
+                    padding: '8px 16px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: '0.85rem',
+                    background: attrTab === 'colors' ? '#ec4899' : 'var(--bg-secondary)',
+                    color: attrTab === 'colors' ? '#fff' : 'var(--text-secondary)'
+                  }}
+                >
+                  Colors ({globalAttributes?.colors?.length || 0})
+                </button>
+                <button
+                  onClick={() => setAttrTab('specs')}
+                  style={{
+                    padding: '8px 16px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: '0.85rem',
+                    background: attrTab === 'specs' ? '#8b5cf6' : 'var(--bg-secondary)',
+                    color: attrTab === 'specs' ? '#fff' : 'var(--text-secondary)'
+                  }}
+                >
+                  Specifications ({globalAttributes?.specs?.length || 0})
+                </button>
+              </div>
+
+              <button
+                onClick={() => {
+                  if (attrTab === 'categories') {
+                    setEditingCategory({ is_active: true });
+                    setShowCategoryModal(true);
+                  } else if (attrTab === 'specs') {
+                    setEditingSpec({ is_active: true });
+                    setShowSpecModal(true);
+                  } else if (attrTab === 'sizes') {
+                    setEditingSize({ unit: 'mm', is_active: true });
+                    setShowSizeModal(true);
+                  } else {
+                    setEditingColor({ is_active: true });
+                    setShowColorModal(true);
+                  }
+                }}
+                style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', background: '#3b82f6', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 700, fontSize: '0.85rem' }}
+              >
+                <Plus size={15} /> Add Global {attrTab === 'categories' ? 'Category' : attrTab === 'sizes' ? 'Size' : attrTab === 'colors' ? 'Color' : 'Specification'}
+              </button>
+            </div>
+
+            {attrTab === 'categories' && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem' }}>
+                {(!globalAttributes?.categories || globalAttributes.categories.length === 0) ? (
+                  <div style={{ color: 'var(--text-secondary)', padding: '2rem', textAlign: 'center', gridColumn: '1 / -1' }}>No global categories defined yet. Click &quot;Add Global Category&quot; above to create one.</div>
+                ) : (
+                  (globalAttributes.categories || []).map((cat: any) => (
+                    <div key={cat.id} style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '14px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                      <div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                          <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#10b981', background: 'rgba(16,185,129,0.1)', padding: '2px 6px', borderRadius: '4px' }}>
+                            {cat.code || 'CAT'}
+                          </span>
+                          <span style={{ fontSize: '0.68rem', fontWeight: 600, color: cat.is_active ? '#10b981' : '#94a3b8' }}>
+                            {cat.is_active ? '● Active' : '○ Inactive'}
+                          </span>
+                        </div>
+                        <h4 style={{ margin: '8px 0 2px', fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)' }}>{cat.name}</h4>
+                        {cat.description && <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{cat.description}</p>}
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px', borderTop: '1px solid var(--border-color)', paddingTop: '8px' }}>
+                        <button
+                          type="button"
+                          onClick={() => { setEditingCategory(cat); setShowCategoryModal(true); }}
+                          style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.78rem' }}
+                        >
+                          <Edit2 size={13} /> Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteCategory(cat)}
+                          style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.78rem' }}
+                        >
+                          <Trash2 size={13} /> Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+
+            {attrTab === 'specs' && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem' }}>
+                {(!globalAttributes?.specs || globalAttributes.specs.length === 0) ? (
+                  <div style={{ color: 'var(--text-secondary)', padding: '2rem', textAlign: 'center', gridColumn: '1 / -1' }}>No global specifications defined yet. Click &quot;Add Global Specification&quot; above to create one.</div>
+                ) : (
+                  (globalAttributes.specs || []).map((s: any) => (
+                    <div key={s.id} style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '14px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div>
+                          {s.spec_code && <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#8b5cf6', background: 'rgba(139,92,246,0.1)', padding: '2px 6px', borderRadius: '4px' }}>{s.spec_code}</span>}
+                          <h4 style={{ margin: '6px 0 2px', fontSize: '0.92rem', fontWeight: 700 }}>{s.spec_name}</h4>
+                          {s.spec_details && <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--text-secondary)' }}>{s.spec_details}</p>}
+                        </div>
+                        <button
+                          onClick={async () => {
+                            if (confirm(`Delete global spec "${s.spec_name}"?`)) {
+                              // @ts-ignore
+                              await window.electron.makeDeleteSpec(s.id);
+                              fetchGlobalAttributes();
+                            }
+                          }}
+                          style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px' }}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+
+            {attrTab === 'sizes' && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem' }}>
+                {(!globalAttributes?.sizes || globalAttributes.sizes.length === 0) ? (
+                  <div style={{ color: 'var(--text-secondary)', padding: '2rem', textAlign: 'center', gridColumn: '1 / -1' }}>No global sizes defined yet. Click &quot;Add Global Size&quot; above to create one.</div>
+                ) : (
+                  (globalAttributes.sizes || []).map((sz: any) => (
+                    <div key={sz.id} style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '14px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div>
+                          <h4 style={{ margin: '0 0 4px', fontSize: '0.92rem', fontWeight: 700 }}>{sz.size_label || 'Standard Dimension'}</h4>
+                          <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                            L: {sz.length || '-'} × W: {sz.width || '-'} × H: {sz.height || '-'} {sz.unit}
+                          </p>
+                        </div>
+                        <button
+                          onClick={async () => {
+                            if (confirm('Delete global size?')) {
+                              // @ts-ignore
+                              await window.electron.makeDeleteSize(sz.id);
+                              fetchGlobalAttributes();
+                            }
+                          }}
+                          style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px' }}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+
+            {attrTab === 'colors' && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem' }}>
+                {(!globalAttributes?.colors || globalAttributes.colors.length === 0) ? (
+                  <div style={{ color: 'var(--text-secondary)', padding: '2rem', textAlign: 'center', gridColumn: '1 / -1' }}>No global colors defined yet. Click &quot;Add Global Color&quot; above to create one.</div>
+                ) : (
+                  (globalAttributes.colors || []).map((c: any) => (
+                    <div key={c.id} style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '14px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          {c.color_code ? (
+                            <div style={{ width: '28px', height: '28px', borderRadius: '6px', background: c.color_code, border: '1px solid rgba(0,0,0,0.2)' }} />
+                          ) : (
+                            <Palette size={24} color="var(--text-secondary)" />
+                          )}
+                          <div>
+                            <h4 style={{ margin: 0, fontSize: '0.92rem', fontWeight: 700 }}>{c.color_name}</h4>
+                            {c.color_code && <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', fontFamily: 'monospace' }}>{c.color_code}</span>}
+                          </div>
+                        </div>
+                        <button
+                          onClick={async () => {
+                            if (confirm(`Delete global color "${c.color_name}"?`)) {
+                              // @ts-ignore
+                              await window.electron.makeDeleteColor(c.id);
+                              fetchGlobalAttributes();
+                            }
+                          }}
+                          style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px' }}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Modal: Create/Edit Product */}
         {showProductModal && (
           <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
-            <div style={{ background: 'var(--card-bg)', borderRadius: '16px', width: '100%', maxWidth: '480px', padding: '1.5rem', boxShadow: '0 20px 50px rgba(0,0,0,0.3)', border: '1px solid var(--border-color)' }}>
+            <div className="make-modal-container" style={{ background: 'var(--card-bg)', borderRadius: '16px', width: '100%', maxWidth: '560px', maxHeight: '90vh', overflowY: 'auto', padding: '1.5rem', boxShadow: '0 20px 50px rgba(0,0,0,0.3)', border: '1px solid var(--border-color)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
                 <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 800 }}>{editingProduct.id ? 'Edit Product' : 'New Product'}</h3>
                 <button onClick={() => setShowProductModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}><X size={18} /></button>
@@ -887,6 +1321,57 @@ const MakeProductCatalog: React.FC = () => {
                   <textarea rows={3} placeholder="General design notes, material overview..." value={editingProduct.description || ''} onChange={(e) => setEditingProduct({ ...editingProduct, description: e.target.value })}
                     style={{ width: '100%', padding: '9px 12px', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', boxSizing: 'border-box', resize: 'vertical' }} />
                 </div>
+
+                {/* Category Selection with Dropdown and Inline Add */}
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                    <label style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)' }}>
+                      CATEGORY
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => { setInlineNewAttrType('category'); setInlineAttrName(''); setInlineAttrExtra(''); }}
+                      style={{ background: 'none', border: 'none', color: '#10b981', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}
+                    >
+                      <Plus size={12} /> Add New Category
+                    </button>
+                  </div>
+
+                  {inlineNewAttrType === 'category' && (
+                    <div style={{ background: 'rgba(16,185,129,0.06)', border: '1px dashed #10b981', borderRadius: '8px', padding: '8px', marginBottom: '8px', display: 'flex', gap: '6px', alignItems: 'center' }}>
+                      <input
+                        placeholder="Category Name (e.g. Table, Sofa, Chair)..."
+                        value={inlineAttrName}
+                        onChange={e => setInlineAttrName(e.target.value)}
+                        style={{ flex: 1, padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', fontSize: '0.8rem' }}
+                        autoFocus
+                      />
+                      <button type="button" onClick={handleCreateInlineAttribute} style={{ background: '#10b981', color: '#fff', border: 'none', borderRadius: '4px', padding: '4px 10px', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer' }}>Add</button>
+                      <button type="button" onClick={() => setInlineNewAttrType(null)} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}><X size={14} /></button>
+                    </div>
+                  )}
+
+                  <select
+                    value={editingProduct.category_id || (editingProduct.category ? (globalAttributes.categories || []).find(c => c.name.toLowerCase() === (editingProduct.category || '').toLowerCase())?.id : '') || ''}
+                    onChange={e => {
+                      const selectedId = e.target.value ? Number(e.target.value) : null;
+                      const selectedCat = (globalAttributes.categories || []).find(c => c.id === selectedId);
+                      setEditingProduct(prev => ({
+                        ...prev,
+                        category_id: selectedId,
+                        category: selectedCat ? selectedCat.name : null
+                      }));
+                    }}
+                    style={{ width: '100%', padding: '9px 12px', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', boxSizing: 'border-box' }}
+                  >
+                    <option value="">Select Category...</option>
+                    {(globalAttributes.categories || []).map((cat: any) => (
+                      <option key={cat.id} value={cat.id}>
+                        {cat.name} {cat.code ? `[${cat.code}]` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
                 <div>
                   <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '4px' }}>PRODUCT MAIN IMAGE (STORED ON NAS)</label>
                   <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
@@ -904,9 +1389,223 @@ const MakeProductCatalog: React.FC = () => {
                     </div>
                   )}
                 </div>
+
+                {/* Attributes Assignment with Checkboxes and Inline Add */}
+                <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                  
+                  {/* Specifications */}
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                      <label style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)' }}>
+                        ASSIGN SPECIFICATIONS ({selectedSpecIds.length} selected)
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => { setInlineNewAttrType('spec'); setInlineAttrName(''); setInlineAttrExtra(''); }}
+                        style={{ background: 'none', border: 'none', color: '#8b5cf6', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}
+                      >
+                        <Plus size={12} /> Add New Spec
+                      </button>
+                    </div>
+
+                    {inlineNewAttrType === 'spec' && (
+                      <div style={{ background: 'rgba(139,92,246,0.06)', border: '1px dashed #8b5cf6', borderRadius: '8px', padding: '8px', marginBottom: '8px', display: 'flex', gap: '6px', alignItems: 'center' }}>
+                        <input
+                          placeholder="Spec Name..."
+                          value={inlineAttrName}
+                          onChange={e => setInlineAttrName(e.target.value)}
+                          style={{ flex: 1, padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', fontSize: '0.8rem' }}
+                        />
+                        <button type="button" onClick={handleCreateInlineAttribute} style={{ background: '#8b5cf6', color: '#fff', border: 'none', borderRadius: '4px', padding: '4px 10px', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer' }}>Add</button>
+                        <button type="button" onClick={() => setInlineNewAttrType(null)} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}><X size={14} /></button>
+                      </div>
+                    )}
+
+                    <div style={{ maxHeight: '110px', overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '6px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      {(!globalAttributes?.specs || globalAttributes.specs.length === 0) ? (
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>No global specs found</span>
+                      ) : (
+                        (globalAttributes.specs || []).map((s: any) => (
+                          <label key={s.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', cursor: 'pointer' }}>
+                            <input
+                              type="checkbox"
+                              checked={selectedSpecIds.includes(s.id)}
+                              onChange={e => {
+                                if (e.target.checked) setSelectedSpecIds(prev => [...prev, s.id]);
+                                else setSelectedSpecIds(prev => prev.filter(id => id !== s.id));
+                              }}
+                            />
+                            <span>{s.spec_name} {s.spec_code ? `[${s.spec_code}]` : ''}</span>
+                          </label>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Sizes */}
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                      <label style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)' }}>
+                        ASSIGN SIZES ({selectedSizeIds.length} selected)
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => { setInlineNewAttrType('size'); setInlineAttrName(''); setInlineAttrExtra('mm'); }}
+                        style={{ background: 'none', border: 'none', color: '#3b82f6', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}
+                      >
+                        <Plus size={12} /> Add New Size
+                      </button>
+                    </div>
+
+                    {inlineNewAttrType === 'size' && (
+                      <div style={{ background: 'rgba(59,130,246,0.06)', border: '1px dashed #3b82f6', borderRadius: '8px', padding: '8px', marginBottom: '8px', display: 'flex', gap: '6px', alignItems: 'center' }}>
+                        <input
+                          placeholder="Size Label (e.g. King, 120x60cm)..."
+                          value={inlineAttrName}
+                          onChange={e => setInlineAttrName(e.target.value)}
+                          style={{ flex: 1, padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', fontSize: '0.8rem' }}
+                        />
+                        <button type="button" onClick={handleCreateInlineAttribute} style={{ background: '#3b82f6', color: '#fff', border: 'none', borderRadius: '4px', padding: '4px 10px', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer' }}>Add</button>
+                        <button type="button" onClick={() => setInlineNewAttrType(null)} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}><X size={14} /></button>
+                      </div>
+                    )}
+
+                    <div style={{ maxHeight: '110px', overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '6px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      {(!globalAttributes?.sizes || globalAttributes.sizes.length === 0) ? (
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>No global sizes found</span>
+                      ) : (
+                        (globalAttributes.sizes || []).map((sz: any) => (
+                          <label key={sz.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', cursor: 'pointer' }}>
+                            <input
+                              type="checkbox"
+                              checked={selectedSizeIds.includes(sz.id)}
+                              onChange={e => {
+                                if (e.target.checked) setSelectedSizeIds(prev => [...prev, sz.id]);
+                                else setSelectedSizeIds(prev => prev.filter(id => id !== sz.id));
+                              }}
+                            />
+                            <span>{sz.size_label || `${sz.length || ''}x${sz.width || ''}x${sz.height || ''} ${sz.unit || ''}`}</span>
+                          </label>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Colors */}
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                      <label style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)' }}>
+                        ASSIGN COLORS ({selectedColorIds.length} selected)
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => { setInlineNewAttrType('color'); setInlineAttrName(''); setInlineAttrExtra('#000000'); }}
+                        style={{ background: 'none', border: 'none', color: '#ec4899', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}
+                      >
+                        <Plus size={12} /> Add New Color
+                      </button>
+                    </div>
+
+                    {inlineNewAttrType === 'color' && (
+                      <div style={{ background: 'rgba(236,72,153,0.06)', border: '1px dashed #ec4899', borderRadius: '8px', padding: '8px', marginBottom: '8px', display: 'flex', gap: '6px', alignItems: 'center' }}>
+                        <input
+                          placeholder="Color Name..."
+                          value={inlineAttrName}
+                          onChange={e => setInlineAttrName(e.target.value)}
+                          style={{ flex: 1, padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', fontSize: '0.8rem' }}
+                        />
+                        <button type="button" onClick={handleCreateInlineAttribute} style={{ background: '#ec4899', color: '#fff', border: 'none', borderRadius: '4px', padding: '4px 10px', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer' }}>Add</button>
+                        <button type="button" onClick={() => setInlineNewAttrType(null)} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}><X size={14} /></button>
+                      </div>
+                    )}
+
+                    <div style={{ maxHeight: '110px', overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '6px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      {(!globalAttributes?.colors || globalAttributes.colors.length === 0) ? (
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>No global colors found</span>
+                      ) : (
+                        (globalAttributes.colors || []).map((c: any) => (
+                          <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', cursor: 'pointer' }}>
+                            <input
+                              type="checkbox"
+                              checked={selectedColorIds.includes(c.id)}
+                              onChange={e => {
+                                if (e.target.checked) setSelectedColorIds(prev => [...prev, c.id]);
+                                else setSelectedColorIds(prev => prev.filter(id => id !== c.id));
+                              }}
+                            />
+                            {c.color_code && (
+                              <span style={{ width: '12px', height: '12px', borderRadius: '50%', background: c.color_code, border: '1px solid #ccc', display: 'inline-block' }} />
+                            )}
+                            <span>{c.color_name}</span>
+                          </label>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                </div>
+
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '0.5rem' }}>
                   <button type="button" onClick={() => setShowProductModal(false)} style={{ padding: '8px 16px', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', cursor: 'pointer' }}>Cancel</button>
                   <button type="submit" style={{ padding: '8px 18px', background: '#3b82f6', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600 }}>Save Product</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* Modal: Create/Edit Category */}
+        {showCategoryModal && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
+            <div style={{ background: 'var(--card-bg)', borderRadius: '16px', width: '100%', maxWidth: '450px', padding: '1.5rem', boxShadow: '0 20px 50px rgba(0,0,0,0.3)', border: '1px solid var(--border-color)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+                <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 800 }}>{editingCategory.id ? 'Edit Category' : 'New Category'}</h3>
+                <button onClick={() => setShowCategoryModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}><X size={18} /></button>
+              </div>
+              <form onSubmit={handleSaveCategory} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '4px' }}>CATEGORY NAME *</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Executive Desks, Conference Tables, Ergonomic Chairs"
+                    value={editingCategory.name || ''}
+                    onChange={(e) => setEditingCategory({ ...editingCategory, name: e.target.value })}
+                    required
+                    style={{ width: '100%', padding: '9px 12px', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', boxSizing: 'border-box' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '4px' }}>CATEGORY CODE (OPTIONAL)</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. CAT-DESK, CAT-CONF"
+                    value={editingCategory.code || ''}
+                    onChange={(e) => setEditingCategory({ ...editingCategory, code: e.target.value.toUpperCase() })}
+                    style={{ width: '100%', padding: '9px 12px', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', boxSizing: 'border-box' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '4px' }}>DESCRIPTION (OPTIONAL)</label>
+                  <textarea
+                    rows={3}
+                    placeholder="Details about this product category..."
+                    value={editingCategory.description || ''}
+                    onChange={(e) => setEditingCategory({ ...editingCategory, description: e.target.value })}
+                    style={{ width: '100%', padding: '9px 12px', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', boxSizing: 'border-box', resize: 'vertical' }}
+                  />
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <input
+                    type="checkbox"
+                    id="cat_is_active"
+                    checked={editingCategory.is_active !== false}
+                    onChange={(e) => setEditingCategory({ ...editingCategory, is_active: e.target.checked })}
+                  />
+                  <label htmlFor="cat_is_active" style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)', cursor: 'pointer' }}>Active in Catalog</label>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '0.5rem' }}>
+                  <button type="button" onClick={() => setShowCategoryModal(false)} style={{ padding: '8px 16px', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', cursor: 'pointer' }}>Cancel</button>
+                  <button type="submit" style={{ padding: '8px 18px', background: '#3b82f6', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600 }}>Save Category</button>
                 </div>
               </form>
             </div>

@@ -11,7 +11,7 @@ import { ENCRYPTED_URL, ENCRYPTED_ANON_KEY } from './credentials';
 // macOS:   ~/Library/Application Support/le-soft/supabase-config.json
 // Windows: %APPDATA%\le-soft\supabase-config.json
 // ─────────────────────────────────────────────────────────────────────────────
-const CONFIG_PATH = path.join(app.getPath('userData'), 'supabase-config.json');
+const CONFIG_PATH = path.join(app?.getPath ? app.getPath('userData') : (process.env.APPDATA || process.cwd()), 'supabase-config.json');
 
 interface SupabaseConfig {
     url: string;
@@ -254,14 +254,16 @@ function recreateNasClient(url: string) {
             const method = (init?.method || 'GET').toUpperCase();
             const contentTypeHeader: Record<string, string> = ['POST', 'PATCH', 'PUT'].includes(method)
                 ? { 'Content-Type': 'application/json' } : {};
-            // Merge CF-Access headers with any headers already on the request
+            const headers = new Headers(init?.headers);
+            for (const [k, v] of Object.entries(cfHeaders)) {
+                headers.set(k, v);
+            }
+            if (['POST', 'PATCH', 'PUT'].includes(method) && !headers.has('Content-Type')) {
+                headers.set('Content-Type', 'application/json');
+            }
             const mergedInit: RequestInit = {
                 ...init,
-                headers: {
-                    ...(init?.headers as Record<string, string> || {}),
-                    ...cfHeaders,
-                    ...contentTypeHeader,
-                }
+                headers
             };
             return fetch(reqUrl, mergedInit);
         };

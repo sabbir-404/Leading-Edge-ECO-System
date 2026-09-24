@@ -1,0 +1,315 @@
+/* MAKE Tutorial Styling */
+
+.make-tutorial-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 99990;
+  pointer-events: auto;
+  transition: opacity 0.25s ease-in-out;
+}
+
+.make-tutorial-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.75);
+  backdrop-filter: blur(3px);
+  z-index: 99991;
+  pointer-events: auto;
+}
+
+/* Spotlight Highlight Box */
+.make-tutorial-spotlight {
+  position: absolute;
+  border-radius: 12px;
+  box-shadow: 0 0 0 9999px rgba(15, 23, 42, 0.75), 0 0 30px rgba(249, 115, 22, 0.45);
+  border: 2px solid #f97316;
+  z-index: 99992;
+  pointer-events: none;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  animation: make-spotlight-pulse 2.5s infinite ease-in-out;
+}
+
+@keyframes make-spotlight-pulse {
+  0%, 100% {
+    border-color: #f97316;
+    box-shadow: 0 0 0 9999px rgba(15, 23, 42, 0.75), 0 0 20px rgba(249, 115, 22, 0.35);
+  }
+  50% {
+    border-color: #fb923c;
+    box-shadow: 0 0 0 9999px rgba(15, 23, 42, 0.75), 0 0 35px rgba(249, 115, 22, 0.6);
+  }
+}
+
+/* Tooltip Popover Card */
+.make-tutorial-card {
+  position: absolute;
+  z-index: 99995;
+  width: 440px;
+  max-width: calc(100vw - 32px);
+  background: #1e293b;
+  color: #f8fafc;
+  border: 1px solid rgba(249, 115, 22, 0.35);
+  border-radius: 16px;
+  box-shadow: 0 25px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.08);
+  padding: 20px 22px;
+  box-sizing: border-box;
+  animation: make-card-appear 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes make-card-appear {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Centered Fallback / Welcome Modal */
+.make-tutorial-modal-center {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 99996;
+  width: 500px;
+  max-width: calc(100vw - 40px);
+  background: #1e293b;
+  color: #f8fafc;
+  border: 1px solid rgba(249, 115, 22, 0.4);
+  border-radius: 18px;
+  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.1);
+  padding: 26px 28px;
+  box-sizing: border-box;
+}
+
+.make-tutorial-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.make-tutorial-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: rgba(249, 115, 22, 0.15);
+  color: #f97316;
+  border: 1px solid rgba(249, 115, 22, 0.35);
+  border-radius: 20px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.make-tutorial-close-btn {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+
+.make-tutorial-close-btn:hover {
+  color: #f8fafc;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.make-tutorial-title {
+  margin: 6px 0 8px 0;
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: #f8fafc;
+  line-height: 1.3;
+}
+
+.make-tutorial-desc {
+  margin: 0 0 12px 0;
+  font-size: 0.88rem;
+  color: #cbd5e1;
+  line-height: 1.5;
+}
+
+.make-tutorial-details {
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  font-size: 0.82rem;
+  color: #94a3b8;
+  line-height: 1.45;
+}
+
+.make-tutorial-tips {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  border-radius: 10px;
+  padding: 8px 12px;
+  margin-bottom: 18px;
+  font-size: 0.78rem;
+  color: #93c5fd;
+  line-height: 1.4;
+}
+
+/* Footer & Controls */
+.make-tutorial-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 14px;
+}
+
+.make-tutorial-dots {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.make-tutorial-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+  transition: all 0.2s ease;
+}
+
+.make-tutorial-dot.active {
+  background: #f97316;
+  width: 18px;
+  border-radius: 8px;
+}
+
+.make-tutorial-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.make-tutorial-btn {
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 0.84rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.15s ease;
+  border: none;
+}
+
+.make-tutorial-btn-secondary {
+  background: rgba(255, 255, 255, 0.08);
+  color: #cbd5e1;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.make-tutorial-btn-secondary:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.14);
+  color: #f8fafc;
+}
+
+.make-tutorial-btn-secondary:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.make-tutorial-btn-primary {
+  background: linear-gradient(135deg, #f97316, #ea580c);
+  color: #ffffff;
+  box-shadow: 0 4px 14px rgba(249, 115, 22, 0.35);
+}
+
+.make-tutorial-btn-primary:hover {
+  background: linear-gradient(135deg, #fb923c, #f97316);
+  box-shadow: 0 6px 18px rgba(249, 115, 22, 0.45);
+  transform: translateY(-1px);
+}
+
+.make-tutorial-btn-ghost {
+  background: transparent;
+  color: #94a3b8;
+  font-size: 0.8rem;
+  padding: 6px 10px;
+}
+
+.make-tutorial-btn-ghost:hover {
+  color: #f8fafc;
+  text-decoration: underline;
+}
+
+/* Navigating loading indicator */
+.make-tutorial-navigating {
+  position: fixed;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 99999;
+  background: rgba(15, 23, 42, 0.9);
+  color: #f8fafc;
+  padding: 10px 20px;
+  border-radius: 30px;
+  border: 1px solid rgba(249, 115, 22, 0.4);
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  animation: make-card-appear 0.2s ease;
+}
+
+.make-tutorial-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(249, 115, 22, 0.3);
+  border-top-color: #f97316;
+  border-radius: 50%;
+  animation: make-spin 0.8s linear infinite;
+}
+
+@keyframes make-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 900px) {
+  .make-tutorial-card {
+    width: 380px;
+    padding: 16px 18px;
+  }
+  .make-tutorial-title {
+    font-size: 1rem;
+  }
+  .make-tutorial-desc {
+    font-size: 0.82rem;
+  }
+  .make-tutorial-details {
+    font-size: 0.78rem;
+  }
+  .make-tutorial-tip {
+    font-size: 0.75rem;
+    padding: 8px 10px;
+  }
+  .make-tutorial-modal-center {
+    width: 420px;
+    padding: 20px 22px;
+  }
+}
+

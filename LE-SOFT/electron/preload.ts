@@ -262,46 +262,61 @@ contextBridge.exposeInMainWorld('electron', {
     createMakeOrder: (order: any) => ipcRenderer.invoke('create-make-order', order),
     updateMakeOrderStatus: (data: any) => ipcRenderer.invoke('update-make-order-status', data),
     getMakeOrderUpdates: (orderId: number) => ipcRenderer.invoke('get-make-order-updates', orderId),
-    deleteMakeOrder: (id: number) => ipcRenderer.invoke('delete-make-order', id),
+    deleteMakeOrder: (id: number | string) => ipcRenderer.invoke('delete-make-order', id),
+    makeDeleteOrder: (orderId: number | string) => ipcRenderer.invoke('make-delete-order', orderId),
     getMakeFurnitureNames: () => ipcRenderer.invoke('get-make-furniture-names'),
-    // Make — PDF Attachments
+    // Make — PDF Attachments & Invoice Attachments
     makeUploadPdf: (data: any) => ipcRenderer.invoke('make-upload-pdf', data),
-    makeGetPdfUrls: (orderId: number) => ipcRenderer.invoke('make-get-pdf-urls', orderId),
+    makeGetPdfUrls: (orderId: number | string) => ipcRenderer.invoke('make-get-pdf-urls', orderId),
     makeDeletePdf: (data: any) => ipcRenderer.invoke('make-delete-pdf', data),
     makeDownloadPdf: (data: any) => ipcRenderer.invoke('make-download-pdf', data),
     makeUploadItemPdf: (data: any) => ipcRenderer.invoke('make-upload-item-pdf', data),
     makeDeleteItemPdf: (data: any) => ipcRenderer.invoke('make-delete-item-pdf', data),
+    makePickAndUploadDrawing: (data: { orderId: number | string; itemId?: number | string }) => ipcRenderer.invoke('make-pick-and-upload-drawing', data),
+    makePickAndUploadStagePhoto: (data: { orderId: number | string }) => ipcRenderer.invoke('make-pick-and-upload-stage-photo', data),
+    makePickAndUploadInvoiceAttachment: (data?: { orderId?: number | string }) => ipcRenderer.invoke('make-pick-and-upload-invoice-attachment', data),
+    makeUploadInvoiceAttachmentBuffer: (data: { fileName: string; fileBase64: string; orderId?: number | string; itemId?: number | string }) => ipcRenderer.invoke('make-upload-invoice-attachment-buffer', data),
     // Make — Parts / Dimensions
-    makeGetOrderParts: (orderId: number) => ipcRenderer.invoke('make-get-order-parts', orderId),
+    makeGetOrderParts: (orderId: number | string) => ipcRenderer.invoke('make-get-order-parts', orderId),
     makeUpsertPart: (part: any) => ipcRenderer.invoke('make-upsert-part', part),
-    makeDeletePart: (partId: number) => ipcRenderer.invoke('make-delete-part', partId),
+    makeDeletePart: (partId: number | string) => ipcRenderer.invoke('make-delete-part', partId),
     // Make — Alteration
     makeAlterOrder: (data: any) => ipcRenderer.invoke('make-alter-order', data),
-    makeGetAlterationLog: (orderId: number) => ipcRenderer.invoke('make-get-alteration-log', orderId),
+    makeGetAlterationLog: (orderId: number | string) => ipcRenderer.invoke('make-get-alteration-log', orderId),
     getSalesmen: () => ipcRenderer.invoke('get-salesmen'),
-    approveMakeOrder: (data: { orderId: number, approvedBy: string }) => ipcRenderer.invoke('approve-make-order', data),
-    setMakeOrderPrice: (data: { orderId: number, customPrice: number, updatedBy: string }) => ipcRenderer.invoke('set-make-order-price', data),
-    markCustomizationPaid: (data: { orderId: number, updatedBy: string }) => ipcRenderer.invoke('mark-customization-paid', data),
+    approveMakeOrder: (data: { orderId: number | string, approvedBy?: string, notes?: string, override?: any }) => ipcRenderer.invoke('approve-make-order', data),
+    setMakeOrderPrice: (data: { orderId: number | string, customPrice: number, updatedBy: string }) => ipcRenderer.invoke('set-make-order-price', data),
+    markCustomizationPaid: (data: { orderId: number | string, updatedBy: string }) => ipcRenderer.invoke('mark-customization-paid', data),
     // Make — Dashboard
     makeGetDashboardStats: () => ipcRenderer.invoke('make-get-dashboard-stats'),
 
-    // Make — Customized Product Catalog
+    // Make — Customized Product Catalog & Global Attributes
     makeGetCatalogProducts: (params?: any) => ipcRenderer.invoke('make-get-catalog-products', params),
+    makeSearchProducts: (params?: { query?: string; category?: string; activeOnly?: boolean }) => ipcRenderer.invoke('make-search-products', params),
     makeSaveCatalogProduct: (product: any) => ipcRenderer.invoke('make-save-catalog-product', product),
-    makeDeleteCatalogProduct: (id: number) => ipcRenderer.invoke('make-delete-catalog-product', id),
+    makeDeleteCatalogProduct: (id: number | string) => ipcRenderer.invoke('make-delete-catalog-product', id),
     makeSaveSpec: (spec: any) => ipcRenderer.invoke('make-save-spec', spec),
-    makeDeleteSpec: (id: number) => ipcRenderer.invoke('make-delete-spec', id),
+    makeDeleteSpec: (id: number | string) => ipcRenderer.invoke('make-delete-spec', id),
     makeSaveSize: (size: any) => ipcRenderer.invoke('make-save-size', size),
-    makeDeleteSize: (id: number) => ipcRenderer.invoke('make-delete-size', id),
+    makeDeleteSize: (id: number | string) => ipcRenderer.invoke('make-delete-size', id),
     makeSaveColor: (color: any) => ipcRenderer.invoke('make-save-color', color),
-    makeDeleteColor: (id: number) => ipcRenderer.invoke('make-delete-color', id),
-    makeGetProductPurchaseHistory: (productId: number) => ipcRenderer.invoke('make-get-product-purchase-history', productId),
+    makeDeleteColor: (id: number | string) => ipcRenderer.invoke('make-delete-color', id),
+    makeDeleteCategory: (id: number | string) => ipcRenderer.invoke('make-delete-category', id),
+    makeGetGlobalAttributes: () => ipcRenderer.invoke('make-get-global-attributes'),
+    makeSaveGlobalAttribute: (data: any) => ipcRenderer.invoke('make-save-global-attribute', data),
+    makeAssignProductAttributes: (data: any) => ipcRenderer.invoke('make-assign-product-attributes', data),
+    makeGetProductPurchaseHistory: (productId: number | string) => ipcRenderer.invoke('make-get-product-purchase-history', productId),
 
     // Make — Multi-Item Orders, Pricing & Versioning
-    makeGetOrderItems: (orderId: number) => ipcRenderer.invoke('make-get-order-items', orderId),
+    makeGetOrderItems: (orderId: number | string) => ipcRenderer.invoke('make-get-order-items', orderId),
     makeDesignerSaveSpecsAndPricing: (data: any) => ipcRenderer.invoke('make-designer-save-specs-and-pricing', data),
-    makeGetOrderVersions: (orderId: number) => ipcRenderer.invoke('make-get-order-versions', orderId),
-    makeGetVersionDiff: (data: any) => ipcRenderer.invoke('make-get-version-diff', data),
+    makeGetOrderVersions: (orderId: number | string) => ipcRenderer.invoke('make-get-order-versions', orderId),
+    makeGetVersionDiff: (orderIdOrData: any, fromVersion?: number, toVersion?: number) => {
+        const payload = (typeof orderIdOrData === 'object' && orderIdOrData !== null)
+            ? orderIdOrData
+            : { orderId: orderIdOrData, fromVersion, toVersion };
+        return ipcRenderer.invoke('make-get-version-diff', payload);
+    },
     makeUpdateProductionStage: (data: any) => ipcRenderer.invoke('make-update-production-stage', data),
     // License — Cloud
     checkLicenseCloud: () => ipcRenderer.invoke('check-license-cloud'),

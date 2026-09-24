@@ -62,7 +62,7 @@ const CustomerLedgerList: React.FC = () => {
         <DashboardLayout title="Customer Ledger">
             <div className="masters-container" style={{ display: 'flex', flexDirection: 'column' }}>
                 {/* Header */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                <div data-tutorial="make-customer-ledger" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
                     <div>
                         <h1 style={{ fontSize: '1.5rem', fontWeight: 700 }}>Customer Ledger</h1>
                         <p style={{ opacity: 0.6 }}>View customer financial history and balances</p>

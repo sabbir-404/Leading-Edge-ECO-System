@@ -229,14 +229,19 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   updateMakeOrderStatus: (data) => import_electron.ipcRenderer.invoke("update-make-order-status", data),
   getMakeOrderUpdates: (orderId) => import_electron.ipcRenderer.invoke("get-make-order-updates", orderId),
   deleteMakeOrder: (id) => import_electron.ipcRenderer.invoke("delete-make-order", id),
+  makeDeleteOrder: (orderId) => import_electron.ipcRenderer.invoke("make-delete-order", orderId),
   getMakeFurnitureNames: () => import_electron.ipcRenderer.invoke("get-make-furniture-names"),
-  // Make — PDF Attachments
+  // Make — PDF Attachments & Invoice Attachments
   makeUploadPdf: (data) => import_electron.ipcRenderer.invoke("make-upload-pdf", data),
   makeGetPdfUrls: (orderId) => import_electron.ipcRenderer.invoke("make-get-pdf-urls", orderId),
   makeDeletePdf: (data) => import_electron.ipcRenderer.invoke("make-delete-pdf", data),
   makeDownloadPdf: (data) => import_electron.ipcRenderer.invoke("make-download-pdf", data),
   makeUploadItemPdf: (data) => import_electron.ipcRenderer.invoke("make-upload-item-pdf", data),
   makeDeleteItemPdf: (data) => import_electron.ipcRenderer.invoke("make-delete-item-pdf", data),
+  makePickAndUploadDrawing: (data) => import_electron.ipcRenderer.invoke("make-pick-and-upload-drawing", data),
+  makePickAndUploadStagePhoto: (data) => import_electron.ipcRenderer.invoke("make-pick-and-upload-stage-photo", data),
+  makePickAndUploadInvoiceAttachment: (data) => import_electron.ipcRenderer.invoke("make-pick-and-upload-invoice-attachment", data),
+  makeUploadInvoiceAttachmentBuffer: (data) => import_electron.ipcRenderer.invoke("make-upload-invoice-attachment-buffer", data),
   // Make — Parts / Dimensions
   makeGetOrderParts: (orderId) => import_electron.ipcRenderer.invoke("make-get-order-parts", orderId),
   makeUpsertPart: (part) => import_electron.ipcRenderer.invoke("make-upsert-part", part),
@@ -250,8 +255,9 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   markCustomizationPaid: (data) => import_electron.ipcRenderer.invoke("mark-customization-paid", data),
   // Make — Dashboard
   makeGetDashboardStats: () => import_electron.ipcRenderer.invoke("make-get-dashboard-stats"),
-  // Make — Customized Product Catalog
+  // Make — Customized Product Catalog & Global Attributes
   makeGetCatalogProducts: (params) => import_electron.ipcRenderer.invoke("make-get-catalog-products", params),
+  makeSearchProducts: (params) => import_electron.ipcRenderer.invoke("make-search-products", params),
   makeSaveCatalogProduct: (product) => import_electron.ipcRenderer.invoke("make-save-catalog-product", product),
   makeDeleteCatalogProduct: (id) => import_electron.ipcRenderer.invoke("make-delete-catalog-product", id),
   makeSaveSpec: (spec) => import_electron.ipcRenderer.invoke("make-save-spec", spec),
@@ -260,12 +266,19 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   makeDeleteSize: (id) => import_electron.ipcRenderer.invoke("make-delete-size", id),
   makeSaveColor: (color) => import_electron.ipcRenderer.invoke("make-save-color", color),
   makeDeleteColor: (id) => import_electron.ipcRenderer.invoke("make-delete-color", id),
+  makeDeleteCategory: (id) => import_electron.ipcRenderer.invoke("make-delete-category", id),
+  makeGetGlobalAttributes: () => import_electron.ipcRenderer.invoke("make-get-global-attributes"),
+  makeSaveGlobalAttribute: (data) => import_electron.ipcRenderer.invoke("make-save-global-attribute", data),
+  makeAssignProductAttributes: (data) => import_electron.ipcRenderer.invoke("make-assign-product-attributes", data),
   makeGetProductPurchaseHistory: (productId) => import_electron.ipcRenderer.invoke("make-get-product-purchase-history", productId),
   // Make — Multi-Item Orders, Pricing & Versioning
   makeGetOrderItems: (orderId) => import_electron.ipcRenderer.invoke("make-get-order-items", orderId),
   makeDesignerSaveSpecsAndPricing: (data) => import_electron.ipcRenderer.invoke("make-designer-save-specs-and-pricing", data),
   makeGetOrderVersions: (orderId) => import_electron.ipcRenderer.invoke("make-get-order-versions", orderId),
-  makeGetVersionDiff: (data) => import_electron.ipcRenderer.invoke("make-get-version-diff", data),
+  makeGetVersionDiff: (orderIdOrData, fromVersion, toVersion) => {
+    const payload = typeof orderIdOrData === "object" && orderIdOrData !== null ? orderIdOrData : { orderId: orderIdOrData, fromVersion, toVersion };
+    return import_electron.ipcRenderer.invoke("make-get-version-diff", payload);
+  },
   makeUpdateProductionStage: (data) => import_electron.ipcRenderer.invoke("make-update-production-stage", data),
   // License — Cloud
   checkLicenseCloud: () => import_electron.ipcRenderer.invoke("check-license-cloud"),

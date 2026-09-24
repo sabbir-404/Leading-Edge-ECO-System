@@ -3,7 +3,8 @@ import React, { useState, useEffect } from 'react';
 import {
     Save, Download, RefreshCw, CheckCircle, AlertTriangle, User, Lock,
     Eye, EyeOff, DollarSign, Barcode, Printer, Database, Settings as SettingsIcon,
-    Server, Sun, Moon, AtSign, Info, Clock, Key, Copy, CheckCheck, MonitorPlay
+    Server, Sun, Moon, AtSign, Info, Clock, Key, Copy, CheckCheck, MonitorPlay,
+    Compass, RotateCcw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTheme } from '../../context/ThemeContext';
@@ -11,6 +12,7 @@ import DashboardLayout from '../../components/DashboardLayout';
 import { useToast } from '../../context/ToastContext';
 import { PRINT_PAGE_SIZE_OPTIONS, getPrintPageSize, getPrintPageSizeKey } from '../../utils/printPageSize';
 import { isSuperadmin } from '../../utils/permissions';
+import { requestTutorialReplay } from '../../components/tutorial/tutorialState';
 import '../Accounting/Masters/Masters.css';
 
 type SettingsTab = 'profile' | 'system_hardware' | 'payment_methods' | 'database_api' | 'policy' | 'about' | 'license_generator' | 'versions';
@@ -752,6 +754,46 @@ const Settings: React.FC = () => {
                                                 {t === 'light' ? '☀️ Light Mode' : '🌙 Dark Mode'}
                                             </button>
                                         ))}
+                                    </div>
+                                </div>
+
+                                {/* MAKE Interactive Tutorial Replay Card */}
+                                <div style={card}>
+                                    <div style={cardHeader}>
+                                        <div style={iconBox('#f97316', 'rgba(249,115,22,0.12)')}><Compass size={20} /></div>
+                                        <div>
+                                            <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>MAKE Module Interactive Tutorial</h2>
+                                            <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-secondary)' }}>Review the 8-step guided walkthrough covering Dashboard, Catalog, Search, Orders, Attachments, Production Stages, and Ledger</p>
+                                        </div>
+                                    </div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+                                        <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
+                                            Need a refresher on how the MAKE manufacturing pipeline operates? Replaying will restart the guided interactive walkthrough from the MAKE Dashboard.
+                                        </p>
+                                        <div>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    requestTutorialReplay();
+                                                    showToast('MAKE Tutorial replay scheduled! Reloading application...', 'info');
+                                                    setTimeout(() => {
+                                                        window.location.hash = '#/make/dashboard';
+                                                        window.location.reload();
+                                                    }, 800);
+                                                }}
+                                                style={{
+                                                    ...btn('#f97316'),
+                                                    padding: '9px 18px',
+                                                    display: 'inline-flex',
+                                                    alignItems: 'center',
+                                                    gap: '8px',
+                                                    fontWeight: 700,
+                                                    fontSize: '0.88rem'
+                                                }}
+                                            >
+                                                <RotateCcw size={16} /> Replay MAKE Tutorial
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                             </>
