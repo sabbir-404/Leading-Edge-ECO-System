@@ -39,9 +39,6 @@ const readline = require('readline');
 // ─── Must match generate-license.cjs ─────────────────────────────────────────
 // This is the master secret used to generate all license keys.
 // Only you (the developer) should have this.
-const GENERATION_SECRET = 'LE-SOFT-MASTER-KEY-2026-Pr0duct10n-S3cret!@#';
-
-// Salt used specifically for credential encryption (different from license salt)
 const CREDENTIAL_SALT = 'LE-SOFT-CREDENTIAL-ENCRYPT-SALT-v1-2026';
 
 // ─── Key derivation ───────────────────────────────────────────────────────────
@@ -77,6 +74,17 @@ async function main() {
     console.log('  LE-SOFT Credential Encryptor — Developer Tool');
     console.log('═══════════════════════════════════════════════════════════\n');
 
+    let generationSecret = process.env.LE_GENERATION_SECRET;
+    if (!generationSecret) {
+        generationSecret = await ask('Enter Master Generation Secret: ');
+    }
+
+    if (!generationSecret || generationSecret.trim().length === 0) {
+        console.error('\n❌ Master generation secret is required.');
+        rl.close();
+        process.exit(1);
+    }
+
     const url     = await ask('Enter Supabase Project URL:  ');
     const anonKey = await ask('Enter Supabase Anon Key:     ');
     rl.close();
@@ -86,7 +94,7 @@ async function main() {
         process.exit(1);
     }
 
-    const key = deriveKey(GENERATION_SECRET, CREDENTIAL_SALT);
+    const key = deriveKey(generationSecret.trim(), CREDENTIAL_SALT);
 
     const encryptedUrl  = encrypt(url.trim(), key);
     const encryptedAnon = encrypt(anonKey.trim(), key);

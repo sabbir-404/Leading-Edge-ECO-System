@@ -35,3 +35,4 @@ resource/assets/.manuscript-profile/
 .manuscript-profile/
 .user-guide-light-profile/
 scratch/
+trivy-report.json

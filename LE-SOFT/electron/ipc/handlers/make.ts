@@ -495,19 +495,25 @@ export function registerMakeHandlers(): void {
         if (error) throw error;
         const products = decryptRows(data || []);
 
-        // Aggregate purchased counts from make_order_items
+        // Aggregate purchased counts from make_order_items for returned products only
         try {
-            const { data: orderItems } = await supabase.from('make_order_items').select('product_id, product_name, quantity');
-            if (orderItems && orderItems.length > 0) {
-                const countMap: Record<number, number> = {};
-                const nameCountMap: Record<string, number> = {};
-                for (const it of orderItems) {
-                    const qty = Number(it.quantity) || 1;
-                    if (it.product_id) countMap[it.product_id] = (countMap[it.product_id] || 0) + qty;
-                    if (it.product_name) nameCountMap[it.product_name] = (nameCountMap[it.product_name] || 0) + qty;
-                }
-                for (const p of products) {
-                    p.purchased_count = countMap[p.id] || nameCountMap[p.product_name] || 0;
+            const productIds = products.map((p: any) => p.id).filter(Boolean);
+            if (productIds.length > 0) {
+                const { data: orderItems } = await supabase
+                    .from('make_order_items')
+                    .select('product_id, product_name, quantity')
+                    .in('product_id', productIds);
+                if (orderItems && orderItems.length > 0) {
+                    const countMap: Record<number, number> = {};
+                    const nameCountMap: Record<string, number> = {};
+                    for (const it of orderItems) {
+                        const qty = Number(it.quantity) || 1;
+                        if (it.product_id) countMap[it.product_id] = (countMap[it.product_id] || 0) + qty;
+                        if (it.product_name) nameCountMap[it.product_name] = (nameCountMap[it.product_name] || 0) + qty;
+                    }
+                    for (const p of products) {
+                        p.purchased_count = countMap[p.id] || nameCountMap[p.product_name] || 0;
+                    }
                 }
             }
         } catch (e) {
@@ -544,7 +550,8 @@ export function registerMakeHandlers(): void {
             }
         }
 
-        const db = supabaseAdmin || supabase;
+        const db = supabase;
+        let savedData: any = null;
         if (product.id) {
             const { data, error } = await db.from('make_products').update({
                 product_code: product.product_code,
@@ -557,7 +564,7 @@ export function registerMakeHandlers(): void {
                 updated_at: new Date().toISOString()
             }).eq('id', product.id).select().single();
             if (error) throw error;
-            return data;
+            savedData = data;
         } else {
             const { data, error } = await db.from('make_products').insert({
                 product_code: product.product_code,
@@ -570,8 +577,14 @@ export function registerMakeHandlers(): void {
                 created_by: session.fullName || session.username
             }).select().single();
             if (error) throw error;
-            return data;
+            savedData = data;
         }
+
+        MakeSearchService.invalidateCache();
+        if (supabaseAdmin && savedData) {
+            supabaseAdmin.from('make_products').upsert(savedData).catch((e: any) => console.warn('[SYNC] Cloud product sync:', e.message));
+        }
+        return savedData;
     });
 
     ipcMain.handle('make-delete-catalog-product', async (_e, id: number) => {
@@ -579,9 +592,13 @@ export function registerMakeHandlers(): void {
         if (!canManageCatalog(session)) {
             throw new Error('Forbidden: Catalog modification requires Administrator or Manager privileges.');
         }
-        const db = supabaseAdmin || supabase;
+        const db = supabase;
         const { error } = await db.from('make_products').delete().eq('id', id);
         if (error) throw error;
+        MakeSearchService.invalidateCache();
+        if (supabaseAdmin) {
+            supabaseAdmin.from('make_products').delete().eq('id', id).catch((e: any) => console.warn('[SYNC] Cloud product delete sync:', e.message));
+        }
         return { success: true };
     });
 
@@ -601,6 +618,10 @@ export function registerMakeHandlers(): void {
                 is_active: spec.is_active !== undefined ? spec.is_active : true
             }).eq('id', spec.id).select().single();
             if (error) throw error;
+            MakeSearchService.invalidateCache();
+            if (supabaseAdmin && data) {
+                supabaseAdmin.from('make_product_specifications').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud spec sync:', e.message));
+            }
             return data;
         } else {
             const { data, error } = await supabase.from('make_product_specifications').insert({
@@ -611,6 +632,10 @@ export function registerMakeHandlers(): void {
                 is_active: spec.is_active !== undefined ? spec.is_active : true
             }).select().single();
             if (error) throw error;
+            MakeSearchService.invalidateCache();
+            if (supabaseAdmin && data) {
+                supabaseAdmin.from('make_product_specifications').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud spec sync:', e.message));
+            }
             return data;
         }
     });
@@ -622,6 +647,10 @@ export function registerMakeHandlers(): void {
         }
         const { error } = await supabase.from('make_product_specifications').delete().eq('id', id);
         if (error) throw error;
+        MakeSearchService.invalidateCache();
+        if (supabaseAdmin) {
+            supabaseAdmin.from('make_product_specifications').delete().eq('id', id).catch((e: any) => console.warn('[SYNC] Cloud spec delete sync:', e.message));
+        }
         return { success: true };
     });
 
@@ -648,10 +677,18 @@ export function registerMakeHandlers(): void {
         if (size.id) {
             const { data, error } = await supabase.from('make_product_sizes').update(payload).eq('id', size.id).select().single();
             if (error) throw error;
+            MakeSearchService.invalidateCache();
+            if (supabaseAdmin && data) {
+                supabaseAdmin.from('make_product_sizes').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud size sync:', e.message));
+            }
             return data;
         } else {
             const { data, error } = await supabase.from('make_product_sizes').insert(payload).select().single();
             if (error) throw error;
+            MakeSearchService.invalidateCache();
+            if (supabaseAdmin && data) {
+                supabaseAdmin.from('make_product_sizes').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud size sync:', e.message));
+            }
             return data;
         }
     });
@@ -663,6 +700,10 @@ export function registerMakeHandlers(): void {
         }
         const { error } = await supabase.from('make_product_sizes').delete().eq('id', id);
         if (error) throw error;
+        MakeSearchService.invalidateCache();
+        if (supabaseAdmin) {
+            supabaseAdmin.from('make_product_sizes').delete().eq('id', id).catch((e: any) => console.warn('[SYNC] Cloud size delete sync:', e.message));
+        }
         return { success: true };
     });
 
@@ -686,10 +727,18 @@ export function registerMakeHandlers(): void {
         if (color.id) {
             const { data, error } = await supabase.from('make_product_colors').update(payload).eq('id', color.id).select().single();
             if (error) throw error;
+            MakeSearchService.invalidateCache();
+            if (supabaseAdmin && data) {
+                supabaseAdmin.from('make_product_colors').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud color sync:', e.message));
+            }
             return data;
         } else {
             const { data, error } = await supabase.from('make_product_colors').insert(payload).select().single();
             if (error) throw error;
+            MakeSearchService.invalidateCache();
+            if (supabaseAdmin && data) {
+                supabaseAdmin.from('make_product_colors').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud color sync:', e.message));
+            }
             return data;
         }
     });
@@ -701,6 +750,10 @@ export function registerMakeHandlers(): void {
         }
         const { error } = await supabase.from('make_product_colors').delete().eq('id', id);
         if (error) throw error;
+        MakeSearchService.invalidateCache();
+        if (supabaseAdmin) {
+            supabaseAdmin.from('make_product_colors').delete().eq('id', id).catch((e: any) => console.warn('[SYNC] Cloud color delete sync:', e.message));
+        }
         return { success: true };
     });
 
@@ -923,14 +976,17 @@ export function registerMakeHandlers(): void {
             }
 
             const parsed = GlobalAttributeSchema.parse(rawPayload);
+            const db = supabase; // Operational MAKE Master (NAS)
 
-            const db = supabaseAdmin || supabase;
             if (parsed.type === 'category') {
-                const categoryName = (parsed.name || parsed.category_name || '').trim();
+                const categoryName = (parsed.category_name || parsed.name || '').trim();
+                if (!categoryName) {
+                    return { success: false, error: 'Category name is required.' };
+                }
                 const payload: any = {
                     name: categoryName,
-                    code: parsed.code || null,
-                    description: parsed.description || parsed.details || null,
+                    code: parsed.code || parsed.spec_code || null,
+                    description: parsed.description || parsed.details || parsed.spec_details || null,
                     is_active: parsed.is_active !== undefined ? parsed.is_active : true
                 };
                 if (parsed.id) {
@@ -938,33 +994,55 @@ export function registerMakeHandlers(): void {
                     if (error) throw error;
                     // Auto-sync products that point to this category ID to ensure single source of truth
                     await db.from('make_products').update({ category: categoryName }).eq('category_id', parsed.id);
+                    MakeSearchService.invalidateCache();
+                    if (supabaseAdmin && data) {
+                        supabaseAdmin.from('make_product_categories').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud category sync:', e.message));
+                    }
                     return { success: true, attribute: data };
                 } else {
                     const { data, error } = await db.from('make_product_categories').insert(payload).select().single();
                     if (error) throw error;
+                    MakeSearchService.invalidateCache();
+                    if (supabaseAdmin && data) {
+                        supabaseAdmin.from('make_product_categories').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud category sync:', e.message));
+                    }
                     return { success: true, attribute: data };
                 }
             } else if (parsed.type === 'spec') {
+                const specName = (parsed.spec_name || parsed.name || '').trim();
+                if (!specName) {
+                    return { success: false, error: 'Specification name is required.' };
+                }
                 const payload: any = {
                     product_id: null,
-                    spec_name: parsed.name,
-                    spec_code: parsed.code || null,
-                    spec_details: parsed.details || null,
+                    spec_name: specName,
+                    spec_code: parsed.spec_code || parsed.code || null,
+                    spec_details: parsed.spec_details || parsed.details || null,
+                    image_url: parsed.image_url || null,
                     is_active: parsed.is_active !== undefined ? parsed.is_active : true
                 };
                 if (parsed.id) {
-                    const { data, error } = await supabase.from('make_product_specifications').update(payload).eq('id', parsed.id).select().single();
+                    const { data, error } = await db.from('make_product_specifications').update(payload).eq('id', parsed.id).select().single();
                     if (error) throw error;
+                    MakeSearchService.invalidateCache();
+                    if (supabaseAdmin && data) {
+                        supabaseAdmin.from('make_product_specifications').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud spec sync:', e.message));
+                    }
                     return { success: true, attribute: data };
                 } else {
-                    const { data, error } = await supabase.from('make_product_specifications').insert(payload).select().single();
+                    const { data, error } = await db.from('make_product_specifications').insert(payload).select().single();
                     if (error) throw error;
+                    MakeSearchService.invalidateCache();
+                    if (supabaseAdmin && data) {
+                        supabaseAdmin.from('make_product_specifications').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud spec sync:', e.message));
+                    }
                     return { success: true, attribute: data };
                 }
             } else if (parsed.type === 'size') {
+                const sizeLabel = (parsed.size_label || parsed.name || '').trim();
                 const payload: any = {
                     product_id: null,
-                    size_label: parsed.name,
+                    size_label: sizeLabel || null,
                     length: parsed.length ? parseFloat(String(parsed.length)) : null,
                     width: parsed.width ? parseFloat(String(parsed.width)) : null,
                     height: parsed.height ? parseFloat(String(parsed.height)) : null,
@@ -973,29 +1051,49 @@ export function registerMakeHandlers(): void {
                     is_active: parsed.is_active !== undefined ? parsed.is_active : true
                 };
                 if (parsed.id) {
-                    const { data, error } = await supabase.from('make_product_sizes').update(payload).eq('id', parsed.id).select().single();
+                    const { data, error } = await db.from('make_product_sizes').update(payload).eq('id', parsed.id).select().single();
                     if (error) throw error;
+                    MakeSearchService.invalidateCache();
+                    if (supabaseAdmin && data) {
+                        supabaseAdmin.from('make_product_sizes').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud size sync:', e.message));
+                    }
                     return { success: true, attribute: data };
                 } else {
-                    const { data, error } = await supabase.from('make_product_sizes').insert(payload).select().single();
+                    const { data, error } = await db.from('make_product_sizes').insert(payload).select().single();
                     if (error) throw error;
+                    MakeSearchService.invalidateCache();
+                    if (supabaseAdmin && data) {
+                        supabaseAdmin.from('make_product_sizes').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud size sync:', e.message));
+                    }
                     return { success: true, attribute: data };
                 }
             } else if (parsed.type === 'color') {
+                const colorName = (parsed.color_name || parsed.name || '').trim();
+                if (!colorName) {
+                    return { success: false, error: 'Color name is required.' };
+                }
                 const payload: any = {
                     product_id: null,
-                    color_name: parsed.name,
+                    color_name: colorName,
                     color_code: parsed.color_code || parsed.code || null,
                     image_url: parsed.image_url || null,
                     is_active: parsed.is_active !== undefined ? parsed.is_active : true
                 };
                 if (parsed.id) {
-                    const { data, error } = await supabase.from('make_product_colors').update(payload).eq('id', parsed.id).select().single();
+                    const { data, error } = await db.from('make_product_colors').update(payload).eq('id', parsed.id).select().single();
                     if (error) throw error;
+                    MakeSearchService.invalidateCache();
+                    if (supabaseAdmin && data) {
+                        supabaseAdmin.from('make_product_colors').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud color sync:', e.message));
+                    }
                     return { success: true, attribute: data };
                 } else {
-                    const { data, error } = await supabase.from('make_product_colors').insert(payload).select().single();
+                    const { data, error } = await db.from('make_product_colors').insert(payload).select().single();
                     if (error) throw error;
+                    MakeSearchService.invalidateCache();
+                    if (supabaseAdmin && data) {
+                        supabaseAdmin.from('make_product_colors').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud color sync:', e.message));
+                    }
                     return { success: true, attribute: data };
                 }
             }
@@ -1038,10 +1136,14 @@ export function registerMakeHandlers(): void {
                 };
             }
 
-            // 3. Safe to delete
-            const db = supabaseAdmin || supabase;
+            // 3. Safe to delete from operational master (NAS)
+            const db = supabase;
             const { error: delErr } = await db.from('make_product_categories').delete().eq('id', catId);
             if (delErr) throw delErr;
+            MakeSearchService.invalidateCache();
+            if (supabaseAdmin) {
+                supabaseAdmin.from('make_product_categories').delete().eq('id', catId).catch((e: any) => console.warn('[SYNC] Cloud category delete sync:', e.message));
+            }
 
             return { success: true };
         } catch (err: any) {

@@ -9,11 +9,11 @@ const { Pool } = pg;
 
 // Connection Pool to TrueNAS PostgreSQL using the public Tailscale address
 const pool = new Pool({
-  host: '100.88.85.6',
-  port: 5432,
-  user: 'admin',
-  password: 'Brown@8099',
-  database: 'lesoft',
+  host: process.env.PGHOST || '100.88.85.6',
+  port: Number(process.env.PGPORT) || 5432,
+  user: process.env.PGUSER || 'admin',
+  password: process.env.PGPASSWORD || '',
+  database: process.env.PGDATABASE || 'lesoft',
   max: 10 // Safe concurrency
 });
 

@@ -261,6 +261,25 @@ const MakeProductCatalog: React.FC = () => {
 
       if (window.electron?.makeSaveGlobalAttribute) {
         const created = await window.electron.makeSaveGlobalAttribute(payload);
+        if (created && created.error) {
+          alert('Failed to create attribute: ' + created.error);
+          return;
+        }
+        const savedAttr = created?.attribute;
+        if (savedAttr) {
+          setGlobalAttributes(prev => {
+            if (inlineNewAttrType === 'category') {
+              return { ...prev, categories: [...prev.categories, savedAttr].sort((a, b) => a.name.localeCompare(b.name)) };
+            } else if (inlineNewAttrType === 'spec') {
+              return { ...prev, specs: [...prev.specs, savedAttr].sort((a, b) => a.spec_name.localeCompare(b.spec_name)) };
+            } else if (inlineNewAttrType === 'size') {
+              return { ...prev, sizes: [...prev.sizes, savedAttr] };
+            } else if (inlineNewAttrType === 'color') {
+              return { ...prev, colors: [...prev.colors, savedAttr].sort((a, b) => a.color_name.localeCompare(b.color_name)) };
+            }
+            return prev;
+          });
+        }
         await fetchGlobalAttributes();
         const attrId = created?.attribute?.id ?? created?.id;
         if (attrId) {
@@ -293,7 +312,7 @@ const MakeProductCatalog: React.FC = () => {
     }
     try {
       // @ts-ignore
-      await window.electron.makeSaveGlobalAttribute({
+      const res = await window.electron.makeSaveGlobalAttribute({
         type: 'category',
         id: editingCategory.id,
         name: editingCategory.name.trim(),
@@ -301,10 +320,26 @@ const MakeProductCatalog: React.FC = () => {
         description: editingCategory.description?.trim() || null,
         is_active: editingCategory.is_active !== undefined ? editingCategory.is_active : true
       });
+      if (res && res.error) {
+        showFeedback('error', res.error);
+        return;
+      }
+      const savedCat = res?.attribute;
+      if (savedCat) {
+        setGlobalAttributes(prev => {
+          const exists = prev.categories.some(c => c.id === savedCat.id);
+          const next = exists
+            ? prev.categories.map(c => c.id === savedCat.id ? savedCat : c)
+            : [...prev.categories, savedCat];
+          return { ...prev, categories: next.sort((a, b) => a.name.localeCompare(b.name)) };
+        });
+      }
       setShowCategoryModal(false);
       showFeedback('success', editingCategory.id ? 'Category updated.' : 'Category created.');
       await fetchGlobalAttributes();
-      await fetchCatalog();
+      if (catalogMainView === 'products') {
+        await fetchCatalog();
+      }
     } catch (err: any) {
       showFeedback('error', err.message || 'Failed to save category');
     }
@@ -319,9 +354,15 @@ const MakeProductCatalog: React.FC = () => {
         showFeedback('error', res.error);
         alert(res.error);
       } else {
+        setGlobalAttributes(prev => ({
+          ...prev,
+          categories: prev.categories.filter(c => c.id !== cat.id)
+        }));
         showFeedback('success', `Category "${cat.name}" deleted.`);
         await fetchGlobalAttributes();
-        await fetchCatalog();
+        if (catalogMainView === 'products') {
+          await fetchCatalog();
+        }
       }
     } catch (err: any) {
       showFeedback('error', err.message || 'Failed to delete category');
@@ -374,7 +415,7 @@ const MakeProductCatalog: React.FC = () => {
   // Specification Actions
   const handleSaveSpec = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingSpec.spec_name) {
+    if (!editingSpec.spec_name?.trim()) {
       showFeedback('error', 'Specification name is required.');
       return;
     }
@@ -382,37 +423,60 @@ const MakeProductCatalog: React.FC = () => {
       if (selectedProduct?.id && catalogMainView === 'products') {
         // @ts-ignore
         await window.electron.makeSaveSpec({ ...editingSpec, product_id: selectedProduct.id });
+        if (catalogMainView === 'products') fetchCatalog();
       } else {
         // @ts-ignore
-        await window.electron.makeSaveGlobalAttribute({
+        const res = await window.electron.makeSaveGlobalAttribute({
           type: 'spec',
           id: editingSpec.id,
-          spec_name: editingSpec.spec_name,
-          spec_code: editingSpec.spec_code,
-          spec_details: editingSpec.spec_details,
-          image_url: editingSpec.image_url,
-          is_active: editingSpec.is_active
+          spec_name: editingSpec.spec_name.trim(),
+          spec_code: editingSpec.spec_code?.trim() || null,
+          spec_details: editingSpec.spec_details?.trim() || null,
+          image_url: editingSpec.image_url || null,
+          is_active: editingSpec.is_active !== undefined ? editingSpec.is_active : true
         });
+        if (res && res.error) {
+          showFeedback('error', res.error);
+          return;
+        }
+        const savedSpec = res?.attribute;
+        if (savedSpec) {
+          setGlobalAttributes(prev => {
+            const exists = prev.specs.some(s => s.id === savedSpec.id);
+            const next = exists
+              ? prev.specs.map(s => s.id === savedSpec.id ? savedSpec : s)
+              : [...prev.specs, savedSpec];
+            return { ...prev, specs: next.sort((a, b) => (a.spec_name || '').localeCompare(b.spec_name || '')) };
+          });
+        }
         await fetchGlobalAttributes();
       }
       setShowSpecModal(false);
-      showFeedback('success', 'Specification saved.');
-      fetchCatalog();
+      showFeedback('success', editingSpec.id ? 'Specification updated.' : 'Specification saved.');
+      if (catalogMainView === 'products') fetchCatalog();
     } catch (err: any) {
-      showFeedback('error', err.message);
+      showFeedback('error', err.message || 'Failed to save specification');
     }
   };
 
-  const handleDeleteSpec = async (id: number) => {
-    if (!window.confirm('Delete this specification?')) return;
+  const handleDeleteSpec = async (id: number, name?: string) => {
+    if (!window.confirm(`Delete specification ${name ? `"${name}"` : ''}?`)) return;
     try {
       // @ts-ignore
-      await window.electron.makeDeleteSpec(id);
+      const res = await window.electron.makeDeleteSpec(id);
+      if (res && res.error) {
+        showFeedback('error', res.error);
+        return;
+      }
+      setGlobalAttributes(prev => ({
+        ...prev,
+        specs: prev.specs.filter(s => s.id !== id)
+      }));
       showFeedback('success', 'Specification deleted.');
-      fetchCatalog();
+      if (catalogMainView === 'products') fetchCatalog();
       await fetchGlobalAttributes();
     } catch (err: any) {
-      showFeedback('error', err.message);
+      showFeedback('error', err.message || 'Failed to delete specification');
     }
   };
 
@@ -423,46 +487,69 @@ const MakeProductCatalog: React.FC = () => {
       if (selectedProduct?.id && catalogMainView === 'products') {
         // @ts-ignore
         await window.electron.makeSaveSize({ ...editingSize, product_id: selectedProduct.id });
+        if (catalogMainView === 'products') fetchCatalog();
       } else {
         // @ts-ignore
-        await window.electron.makeSaveGlobalAttribute({
+        const res = await window.electron.makeSaveGlobalAttribute({
           type: 'size',
           id: editingSize.id,
-          size_label: editingSize.size_label,
+          size_label: editingSize.size_label?.trim() || null,
           length: editingSize.length,
           width: editingSize.width,
           height: editingSize.height,
           diameter: editingSize.diameter,
           unit: editingSize.unit || 'mm',
-          is_active: editingSize.is_active
+          is_active: editingSize.is_active !== undefined ? editingSize.is_active : true
         });
+        if (res && res.error) {
+          showFeedback('error', res.error);
+          return;
+        }
+        const savedSize = res?.attribute;
+        if (savedSize) {
+          setGlobalAttributes(prev => {
+            const exists = prev.sizes.some(s => s.id === savedSize.id);
+            const next = exists
+              ? prev.sizes.map(s => s.id === savedSize.id ? savedSize : s)
+              : [...prev.sizes, savedSize];
+            return { ...prev, sizes: next };
+          });
+        }
         await fetchGlobalAttributes();
       }
       setShowSizeModal(false);
-      showFeedback('success', 'Dimensions saved.');
-      fetchCatalog();
+      showFeedback('success', editingSize.id ? 'Dimensions updated.' : 'Dimensions saved.');
+      if (catalogMainView === 'products') fetchCatalog();
     } catch (err: any) {
-      showFeedback('error', err.message);
+      showFeedback('error', err.message || 'Failed to save dimensions');
     }
   };
 
-  const handleDeleteSize = async (id: number) => {
-    if (!window.confirm('Delete this size?')) return;
+  const handleDeleteSize = async (id: number, label?: string) => {
+    if (!window.confirm(`Delete size ${label ? `"${label}"` : ''}?`)) return;
     try {
       // @ts-ignore
-      await window.electron.makeDeleteSize(id);
+      const res = await window.electron.makeDeleteSize(id);
+      if (res && res.error) {
+        showFeedback('error', res.error);
+        return;
+      }
+      setGlobalAttributes(prev => ({
+        ...prev,
+        sizes: prev.sizes.filter(s => s.id !== id)
+      }));
       showFeedback('success', 'Size deleted.');
-      fetchCatalog();
+      if (catalogMainView === 'products') fetchCatalog();
       await fetchGlobalAttributes();
     } catch (err: any) {
-      showFeedback('error', err.message);
+      showFeedback('error', err.message || 'Failed to delete size');
     }
   };
 
   // Color Actions
   const handleSaveColor = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingColor.color_name) {
+    if (!editingColor.color_name?.trim()) {
       showFeedback('error', 'Color name is required.');
       return;
     }
@@ -470,36 +557,59 @@ const MakeProductCatalog: React.FC = () => {
       if (selectedProduct?.id && catalogMainView === 'products') {
         // @ts-ignore
         await window.electron.makeSaveColor({ ...editingColor, product_id: selectedProduct.id });
+        if (catalogMainView === 'products') fetchCatalog();
       } else {
         // @ts-ignore
-        await window.electron.makeSaveGlobalAttribute({
+        const res = await window.electron.makeSaveGlobalAttribute({
           type: 'color',
           id: editingColor.id,
-          color_name: editingColor.color_name,
-          color_code: editingColor.color_code,
-          image_url: editingColor.image_url,
-          is_active: editingColor.is_active
+          color_name: editingColor.color_name.trim(),
+          color_code: editingColor.color_code?.trim() || null,
+          image_url: editingColor.image_url || null,
+          is_active: editingColor.is_active !== undefined ? editingColor.is_active : true
         });
+        if (res && res.error) {
+          showFeedback('error', res.error);
+          return;
+        }
+        const savedColor = res?.attribute;
+        if (savedColor) {
+          setGlobalAttributes(prev => {
+            const exists = prev.colors.some(c => c.id === savedColor.id);
+            const next = exists
+              ? prev.colors.map(c => c.id === savedColor.id ? savedColor : c)
+              : [...prev.colors, savedColor];
+            return { ...prev, colors: next.sort((a, b) => (a.color_name || '').localeCompare(b.color_name || '')) };
+          });
+        }
         await fetchGlobalAttributes();
       }
       setShowColorModal(false);
-      showFeedback('success', 'Color finish saved.');
-      fetchCatalog();
+      showFeedback('success', editingColor.id ? 'Color finish updated.' : 'Color finish saved.');
+      if (catalogMainView === 'products') fetchCatalog();
     } catch (err: any) {
-      showFeedback('error', err.message);
+      showFeedback('error', err.message || 'Failed to save color finish');
     }
   };
 
-  const handleDeleteColor = async (id: number) => {
-    if (!window.confirm('Delete this color?')) return;
+  const handleDeleteColor = async (id: number, name?: string) => {
+    if (!window.confirm(`Delete color ${name ? `"${name}"` : ''}?`)) return;
     try {
       // @ts-ignore
-      await window.electron.makeDeleteColor(id);
+      const res = await window.electron.makeDeleteColor(id);
+      if (res && res.error) {
+        showFeedback('error', res.error);
+        return;
+      }
+      setGlobalAttributes(prev => ({
+        ...prev,
+        colors: prev.colors.filter(c => c.id !== id)
+      }));
       showFeedback('success', 'Color removed.');
-      fetchCatalog();
+      if (catalogMainView === 'products') fetchCatalog();
       await fetchGlobalAttributes();
     } catch (err: any) {
-      showFeedback('error', err.message);
+      showFeedback('error', err.message || 'Failed to delete color');
     }
   };
 
@@ -1198,24 +1308,26 @@ const MakeProductCatalog: React.FC = () => {
                   <div style={{ color: 'var(--text-secondary)', padding: '2rem', textAlign: 'center', gridColumn: '1 / -1' }}>No global specifications defined yet. Click &quot;Add Global Specification&quot; above to create one.</div>
                 ) : (
                   (globalAttributes.specs || []).map((s: any) => (
-                    <div key={s.id} style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '14px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                        <div>
-                          {s.spec_code && <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#8b5cf6', background: 'rgba(139,92,246,0.1)', padding: '2px 6px', borderRadius: '4px' }}>{s.spec_code}</span>}
-                          <h4 style={{ margin: '6px 0 2px', fontSize: '0.92rem', fontWeight: 700 }}>{s.spec_name}</h4>
-                          {s.spec_details && <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--text-secondary)' }}>{s.spec_details}</p>}
-                        </div>
+                    <div key={s.id} style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '14px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                      <div>
+                        {s.spec_code && <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#8b5cf6', background: 'rgba(139,92,246,0.1)', padding: '2px 6px', borderRadius: '4px' }}>{s.spec_code}</span>}
+                        <h4 style={{ margin: '6px 0 2px', fontSize: '0.92rem', fontWeight: 700 }}>{s.spec_name}</h4>
+                        {s.spec_details && <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--text-secondary)' }}>{s.spec_details}</p>}
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px', borderTop: '1px solid var(--border-color)', paddingTop: '8px' }}>
                         <button
-                          onClick={async () => {
-                            if (confirm(`Delete global spec "${s.spec_name}"?`)) {
-                              // @ts-ignore
-                              await window.electron.makeDeleteSpec(s.id);
-                              fetchGlobalAttributes();
-                            }
-                          }}
-                          style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px' }}
+                          type="button"
+                          onClick={() => { setEditingSpec(s); setShowSpecModal(true); }}
+                          style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.78rem' }}
                         >
-                          <Trash2 size={14} />
+                          <Edit2 size={13} /> Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteSpec(s.id, s.spec_name)}
+                          style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.78rem' }}
+                        >
+                          <Trash2 size={13} /> Delete
                         </button>
                       </div>
                     </div>
@@ -1230,25 +1342,27 @@ const MakeProductCatalog: React.FC = () => {
                   <div style={{ color: 'var(--text-secondary)', padding: '2rem', textAlign: 'center', gridColumn: '1 / -1' }}>No global sizes defined yet. Click &quot;Add Global Size&quot; above to create one.</div>
                 ) : (
                   (globalAttributes.sizes || []).map((sz: any) => (
-                    <div key={sz.id} style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '14px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                        <div>
-                          <h4 style={{ margin: '0 0 4px', fontSize: '0.92rem', fontWeight: 700 }}>{sz.size_label || 'Standard Dimension'}</h4>
-                          <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                            L: {sz.length || '-'} × W: {sz.width || '-'} × H: {sz.height || '-'} {sz.unit}
-                          </p>
-                        </div>
+                    <div key={sz.id} style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '14px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                      <div>
+                        <h4 style={{ margin: '0 0 4px', fontSize: '0.92rem', fontWeight: 700 }}>{sz.size_label || 'Standard Dimension'}</h4>
+                        <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                          L: {sz.length || '-'} × W: {sz.width || '-'} × H: {sz.height || '-'} {sz.unit}
+                        </p>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px', borderTop: '1px solid var(--border-color)', paddingTop: '8px' }}>
                         <button
-                          onClick={async () => {
-                            if (confirm('Delete global size?')) {
-                              // @ts-ignore
-                              await window.electron.makeDeleteSize(sz.id);
-                              fetchGlobalAttributes();
-                            }
-                          }}
-                          style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px' }}
+                          type="button"
+                          onClick={() => { setEditingSize(sz); setShowSizeModal(true); }}
+                          style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.78rem' }}
                         >
-                          <Trash2 size={14} />
+                          <Edit2 size={13} /> Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteSize(sz.id, sz.size_label)}
+                          style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.78rem' }}
+                        >
+                          <Trash2 size={13} /> Delete
                         </button>
                       </div>
                     </div>
@@ -1263,7 +1377,7 @@ const MakeProductCatalog: React.FC = () => {
                   <div style={{ color: 'var(--text-secondary)', padding: '2rem', textAlign: 'center', gridColumn: '1 / -1' }}>No global colors defined yet. Click &quot;Add Global Color&quot; above to create one.</div>
                 ) : (
                   (globalAttributes.colors || []).map((c: any) => (
-                    <div key={c.id} style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '14px' }}>
+                    <div key={c.id} style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '14px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                           {c.color_code ? (
@@ -1276,17 +1390,21 @@ const MakeProductCatalog: React.FC = () => {
                             {c.color_code && <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', fontFamily: 'monospace' }}>{c.color_code}</span>}
                           </div>
                         </div>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px', borderTop: '1px solid var(--border-color)', paddingTop: '8px' }}>
                         <button
-                          onClick={async () => {
-                            if (confirm(`Delete global color "${c.color_name}"?`)) {
-                              // @ts-ignore
-                              await window.electron.makeDeleteColor(c.id);
-                              fetchGlobalAttributes();
-                            }
-                          }}
-                          style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px' }}
+                          type="button"
+                          onClick={() => { setEditingColor(c); setShowColorModal(true); }}
+                          style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.78rem' }}
                         >
-                          <Trash2 size={14} />
+                          <Edit2 size={13} /> Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteColor(c.id, c.color_name)}
+                          style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.78rem' }}
+                        >
+                          <Trash2 size={13} /> Delete
                         </button>
                       </div>
                     </div>

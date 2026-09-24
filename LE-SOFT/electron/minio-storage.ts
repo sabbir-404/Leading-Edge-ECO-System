@@ -19,12 +19,12 @@ export interface MinioConfig {
 
 export class MinioStorageAdapter {
     private static defaultConfig: MinioConfig = {
-        endpoint: '100.88.85.6',
-        port: 8081,
-        useSSL: false,
-        accessKey: 'truenas_admin',
-        secretKey: 'Brown@8099',
-        bucketName: 'lesoft-media',
+        endpoint: process.env.MINIO_ENDPOINT || '100.88.85.6',
+        port: Number(process.env.MINIO_PORT) || 8081,
+        useSSL: process.env.MINIO_USE_SSL === 'true',
+        accessKey: process.env.MINIO_ACCESS_KEY || '',
+        secretKey: process.env.MINIO_SECRET_KEY || '',
+        bucketName: process.env.MINIO_BUCKET || 'lesoft-media',
     };
 
     /**

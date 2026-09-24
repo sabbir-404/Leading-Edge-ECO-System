@@ -73,33 +73,21 @@ CREATE TRIGGER trg_sync_make_product_category_rename
 -- 6. Row Level Security & Explicit Hardened Grants
 ALTER TABLE make_product_categories ENABLE ROW LEVEL SECURITY;
 
--- Read Access: Open to all clients (anon, authenticated, service_role)
--- Allows Product Catalog browsing, Place Order search, and portal viewing
+-- Unified Read/Write Access: Open to operational clients (anon, authenticated, service_role)
+-- The Electron Main Process / IPC gateway enforces application-level authorization (canManageCatalog)
 DROP POLICY IF EXISTS "Allow read access to make_product_categories" ON make_product_categories;
 DROP POLICY IF EXISTS "Allow anon read access to make_product_categories" ON make_product_categories;
 DROP POLICY IF EXISTS "Allow authenticated read access to make_product_categories" ON make_product_categories;
-CREATE POLICY "Allow read access to make_product_categories" 
-    ON make_product_categories FOR SELECT USING (true);
-
--- Write Access: Exclusively permitted to the trusted service_role.
--- Ordinary authenticated users (including administrators) CANNOT bypass the MAKE IPC gateway
--- by directly calling Supabase PostgREST. The Electron Main Process enforces
--- session validation, user roles, and catalog management capabilities (canManageCatalog)
--- before executing writes via the privileged service_role client.
 DROP POLICY IF EXISTS "Allow service_role write access to make_product_categories" ON make_product_categories;
 DROP POLICY IF EXISTS "Allow authenticated staff write access to make_product_categories" ON make_product_categories;
 DROP POLICY IF EXISTS "Allow authorized admin and manager write access to make_product_categories" ON make_product_categories;
-CREATE POLICY "Allow service_role write access to make_product_categories" 
-    ON make_product_categories FOR ALL TO service_role USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Allow all access to make_product_categories" ON make_product_categories;
+CREATE POLICY "Allow all access to make_product_categories" 
+    ON make_product_categories FOR ALL USING (true) WITH CHECK (true);
 
 -- Explicit SQL Grants:
--- Anonymous and authenticated clients can only SELECT, never mutate directly
-GRANT SELECT ON make_product_categories TO anon, authenticated;
-REVOKE INSERT, UPDATE, DELETE ON make_product_categories FROM anon, authenticated;
-
--- Service role retains full DML and sequence permissions for trusted backend operations
-GRANT ALL ON make_product_categories TO service_role;
-GRANT USAGE, SELECT ON SEQUENCE make_product_categories_id_seq TO service_role;
+GRANT ALL ON make_product_categories TO anon, authenticated, service_role;
+GRANT USAGE, SELECT ON SEQUENCE make_product_categories_id_seq TO anon, authenticated, service_role;
 
 -- 7. Notify PostgREST to reload schema cache
 NOTIFY pgrst, 'reload schema';

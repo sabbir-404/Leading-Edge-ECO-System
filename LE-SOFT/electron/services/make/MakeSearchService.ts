@@ -74,6 +74,19 @@ export class MakeSearchService {
         return dims ? `${dims} ${size.unit || 'mm'}` : (size.size_label || '');
     }
 
+    private static cache: {
+        timestamp: number;
+        products: any[];
+        specIdsByProd: Map<string, any[]>;
+        sizeIdsByProd: Map<string, any[]>;
+        colorIdsByProd: Map<string, any[]>;
+        allCatsMap: Map<string, string>;
+    } | null = null;
+
+    public static invalidateCache(): void {
+        this.cache = null;
+    }
+
     /**
      * Searches the entire MAKE catalog using the multi-entity intelligent search engine.
      */
@@ -125,65 +138,89 @@ export class MakeSearchService {
             }));
         }
 
-        // 1. Fetch catalog products and their attributes (both direct and junction links)
-        const [productsRes, specLinksRes, sizeLinksRes, colorLinksRes, allSpecsRes, allSizesRes, allColorsRes, allCatsRes] = await Promise.all([
-            supabase.from('make_products').select(`
-                *,
-                specifications:make_product_specifications(*),
-                sizes:make_product_sizes(*),
-                colors:make_product_colors(*),
-                images:make_product_images(*)
-            `),
-            supabase.from('make_product_specification_links').select('*'),
-            supabase.from('make_product_size_links').select('*'),
-            supabase.from('make_product_color_links').select('*'),
-            supabase.from('make_product_specifications').select('*'),
-            supabase.from('make_product_sizes').select('*'),
-            supabase.from('make_product_colors').select('*'),
-            supabase.from('make_product_categories').select('*')
-        ]);
+        // Check in-memory cache (30 second TTL)
+        let products: any[];
+        let specIdsByProd: Map<string, any[]>;
+        let sizeIdsByProd: Map<string, any[]>;
+        let colorIdsByProd: Map<string, any[]>;
+        let allCatsMap: Map<string, string>;
 
-        const products = decryptRows(productsRes.data || []);
-        const specLinks = specLinksRes.data || [];
-        const sizeLinks = sizeLinksRes.data || [];
-        const colorLinks = colorLinksRes.data || [];
-        const allSpecsMap = new Map((allSpecsRes.data || []).map((s: any) => [String(s.id), s]));
-        const allSizesMap = new Map((allSizesRes.data || []).map((s: any) => [String(s.id), s]));
-        const allColorsMap = new Map((allColorsRes.data || []).map((c: any) => [String(c.id), c]));
-        const allCatsMap = new Map((allCatsRes.data || []).map((c: any) => [String(c.id), c.name]));
+        if (this.cache && (Date.now() - this.cache.timestamp < 30_000)) {
+            products = this.cache.products;
+            specIdsByProd = this.cache.specIdsByProd;
+            sizeIdsByProd = this.cache.sizeIdsByProd;
+            colorIdsByProd = this.cache.colorIdsByProd;
+            allCatsMap = this.cache.allCatsMap;
+        } else {
+            // Fetch catalog products and their attributes (both direct and junction links)
+            const [productsRes, specLinksRes, sizeLinksRes, colorLinksRes, allSpecsRes, allSizesRes, allColorsRes, allCatsRes] = await Promise.all([
+                supabase.from('make_products').select(`
+                    *,
+                    specifications:make_product_specifications(*),
+                    sizes:make_product_sizes(*),
+                    colors:make_product_colors(*),
+                    images:make_product_images(*)
+                `),
+                supabase.from('make_product_specification_links').select('*'),
+                supabase.from('make_product_size_links').select('*'),
+                supabase.from('make_product_color_links').select('*'),
+                supabase.from('make_product_specifications').select('*'),
+                supabase.from('make_product_sizes').select('*'),
+                supabase.from('make_product_colors').select('*'),
+                supabase.from('make_product_categories').select('*')
+            ]);
 
-        // Group junction links by productId
-        const specIdsByProd = new Map<string, any[]>();
-        for (const link of specLinks) {
-            const pId = String(link.product_id);
-            const spec = allSpecsMap.get(String(link.spec_id));
-            if (spec) {
-                const list = specIdsByProd.get(pId) || [];
-                list.push(spec);
-                specIdsByProd.set(pId, list);
+            products = decryptRows(productsRes.data || []);
+            const specLinks = specLinksRes.data || [];
+            const sizeLinks = sizeLinksRes.data || [];
+            const colorLinks = colorLinksRes.data || [];
+            const allSpecsMap = new Map((allSpecsRes.data || []).map((s: any) => [String(s.id), s]));
+            const allSizesMap = new Map((allSizesRes.data || []).map((s: any) => [String(s.id), s]));
+            const allColorsMap = new Map((allColorsRes.data || []).map((c: any) => [String(c.id), c]));
+            allCatsMap = new Map((allCatsRes.data || []).map((c: any) => [String(c.id), c.name]));
+
+            // Group junction links by productId
+            specIdsByProd = new Map<string, any[]>();
+            for (const link of specLinks) {
+                const pId = String(link.product_id);
+                const spec = allSpecsMap.get(String(link.spec_id));
+                if (spec) {
+                    const list = specIdsByProd.get(pId) || [];
+                    list.push(spec);
+                    specIdsByProd.set(pId, list);
+                }
             }
-        }
 
-        const sizeIdsByProd = new Map<string, any[]>();
-        for (const link of sizeLinks) {
-            const pId = String(link.product_id);
-            const size = allSizesMap.get(String(link.size_id));
-            if (size) {
-                const list = sizeIdsByProd.get(pId) || [];
-                list.push(size);
-                sizeIdsByProd.set(pId, list);
+            sizeIdsByProd = new Map<string, any[]>();
+            for (const link of sizeLinks) {
+                const pId = String(link.product_id);
+                const size = allSizesMap.get(String(link.size_id));
+                if (size) {
+                    const list = sizeIdsByProd.get(pId) || [];
+                    list.push(size);
+                    sizeIdsByProd.set(pId, list);
+                }
             }
-        }
 
-        const colorIdsByProd = new Map<string, any[]>();
-        for (const link of colorLinks) {
-            const pId = String(link.product_id);
-            const color = allColorsMap.get(String(link.color_id));
-            if (color) {
-                const list = colorIdsByProd.get(pId) || [];
-                list.push(color);
-                colorIdsByProd.set(pId, list);
+            colorIdsByProd = new Map<string, any[]>();
+            for (const link of colorLinks) {
+                const pId = String(link.product_id);
+                const color = allColorsMap.get(String(link.color_id));
+                if (color) {
+                    const list = colorIdsByProd.get(pId) || [];
+                    list.push(color);
+                    colorIdsByProd.set(pId, list);
+                }
             }
+
+            this.cache = {
+                timestamp: Date.now(),
+                products,
+                specIdsByProd,
+                sizeIdsByProd,
+                colorIdsByProd,
+                allCatsMap
+            };
         }
 
         // Tokenize query: e.g. "black executive table" -> ['black', 'executive', 'table']

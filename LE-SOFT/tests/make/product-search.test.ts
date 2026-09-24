@@ -86,6 +86,7 @@ describe('MAKE V1.1 — Intelligent Whole-Catalog Product Search Engine', () => 
 
     beforeEach(() => {
         vi.clearAllMocks();
+        MakeSearchService.invalidateCache();
 
         (supabase.from as any).mockImplementation((table: string) => {
             if (table === 'make_products') {
@@ -262,6 +263,7 @@ describe('MAKE V1.1 — Intelligent Whole-Catalog Product Search Engine', () => 
                 { id: 88, name: 'Executive Presidential', code: 'CAT-PRES' }
             ];
 
+            MakeSearchService.invalidateCache();
             (supabase.from as any).mockImplementation((table: string) => {
                 if (table === 'make_products') {
                     return {
@@ -289,6 +291,7 @@ describe('MAKE V1.1 — Intelligent Whole-Catalog Product Search Engine', () => 
 
         it('searches across Category combined with dimensions and colors ("Office Furniture Walnut 1200")', async () => {
             // Restore default mock
+            MakeSearchService.invalidateCache();
             (supabase.from as any).mockImplementation((table: string) => {
                 if (table === 'make_products') {
                     return {

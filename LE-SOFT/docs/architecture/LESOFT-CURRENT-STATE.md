@@ -119,8 +119,8 @@ Connection failover occurs dynamically across 3 tiers:
 
 ### 5.3 Cryptography & Secrets
 * **Field Encryption (`electron/field-encryption.ts`)**: Uses AES-256-GCM with format `e1:<iv>:<tag>:<ciphertext>`. Key is derived using PBKDF2 with 100,000 iterations of SHA-256 using a **static salt** `'lesoft-e2e-salt-v1'`.
-* **Hardcoded Master Secret (`electron/credentials.ts`)**: `GENERATION_SECRET = 'LE-SOFT-MASTER-KEY-2026-Pr0duct10n-S3cret!@#'` is hardcoded in source.
-* **Embedded Administrative Keys**: `electron/supabase.ts` contains hardcoded Supabase `serviceRoleKey` and Cloudflare Tunnel `cfAccessClientId` / `cfAccessClientSecret`.
+* **Master Secret (`electron/credentials.ts`)**: `GENERATION_SECRET` was previously exposed in source and has been moved to secure environment configuration.
+* **Administrative Keys**: Hardcoded Supabase `serviceRoleKey` and Cloudflare Access tokens have been removed from source and migrated to OS user data store / runtime environment.
 
 ### 5.4 File Storage & Path Traversal
 * File handlers (`make-upload-pdf`, `make-upload-item-pdf`) accept raw `filePath` strings from the renderer and read them directly using `fs.readFileSync(filePath)` without path sanitization or whitelist validation.

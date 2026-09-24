@@ -16,14 +16,19 @@ const crypto = require('crypto');
 // ═══════════════════════════════════════════════
 //  THIS IS THE GENERATION SECRET — KEEP IT SAFE!
 //  This must NEVER be shipped with the application.
-//  Change this to your own unique secret string.
+//  Set via environment variable LE_GENERATION_SECRET.
 // ═══════════════════════════════════════════════
-const GENERATION_SECRET = 'LE-SOFT-MASTER-KEY-2026-Pr0duct10n-S3cret!@#';
+const GENERATION_SECRET = process.env.LE_GENERATION_SECRET || '';
 
 // This must match VERIFICATION_SALT in license-manager.ts
 const VERIFICATION_SALT = 'LE-SOFT-2026-VERIFY-SALT-xK9mQ2';
 
-function generateLicenseKey(machineId) {
+function generateLicenseKey(machineId, secret = GENERATION_SECRET) {
+    if (!secret) {
+        console.error('❌ Missing LE_GENERATION_SECRET environment variable.');
+        console.error('Set it with: export LE_GENERATION_SECRET="..." or $env:LE_GENERATION_SECRET="..."');
+        process.exit(1);
+    }
     if (!machineId || !machineId.startsWith('LE-')) {
         console.error('❌ Invalid Machine ID. Must start with "LE-"');
         console.error('Usage: node tools/generate-license.cjs <MachineID>');

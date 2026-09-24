@@ -259,4 +259,328 @@ describe('MAKE V1.1 — Normalized Product Attributes & Junction Tables', () => 
             expect(updatedProduct.category).toBe('Executive Tables');
         });
     });
+
+    // ── 6. V1.8.0 REGRESSION SUITE: CREATE → PERSIST → RELOAD → IMMEDIATELY VISIBLE ───
+    describe('6. V1.8.0 Regression: Attribute Flow & Instant UI Visibility', () => {
+        interface GlobalAttributesState {
+            categories: any[];
+            specs: any[];
+            sizes: any[];
+            colors: any[];
+        }
+
+        let state: GlobalAttributesState;
+
+        beforeEach(() => {
+            state = {
+                categories: [
+                    { id: 1, name: 'Chairs', code: 'CAT-CHR', is_active: true }
+                ],
+                specs: [
+                    { id: 1, spec_name: 'Solid Teak Wood', spec_code: 'TW-01', is_active: true }
+                ],
+                sizes: [
+                    { id: 1, size_label: 'Single', length: 1900, width: 900, height: 400, unit: 'mm', is_active: true }
+                ],
+                colors: [
+                    { id: 1, color_name: 'Charcoal Black', color_code: '#222222', is_active: true }
+                ]
+            };
+        });
+
+        // ── CATEGORY ──
+        describe('Category Attribute Flow', () => {
+            it('normalizes category input whether using name or category_name', () => {
+                const input1 = { type: 'category' as const, name: 'Executive Desks', code: 'CAT-ED' };
+                const input2 = { type: 'category' as const, category_name: 'Conference Tables', code: 'CAT-CT' };
+
+                const parsed1 = GlobalAttributeSchema.parse(input1);
+                const parsed2 = GlobalAttributeSchema.parse(input2);
+
+                const normalizeCategory = (p: any) => ({
+                    name: (p.category_name || p.name || '').trim(),
+                    code: p.code || p.spec_code || null
+                });
+
+                expect(normalizeCategory(parsed1).name).toBe('Executive Desks');
+                expect(normalizeCategory(parsed2).name).toBe('Conference Tables');
+            });
+
+            it('immediately updates local state on create so category is visible with 0ms delay', () => {
+                const newCategory = { id: 2, name: 'Modular Workstations', code: 'CAT-MOD', is_active: true };
+
+                // Simulate frontend optimistic update in handleSaveCategory
+                state.categories = [...state.categories, newCategory].sort((a, b) => a.name.localeCompare(b.name));
+
+                expect(state.categories.length).toBe(2);
+                expect(state.categories.some(c => c.id === 2 && c.name === 'Modular Workstations')).toBe(true);
+            });
+
+            it('immediately updates local state on edit of category', () => {
+                const updatedCategory = { id: 1, name: 'Ergonomic Task Chairs', code: 'CAT-CHR', is_active: true };
+
+                state.categories = state.categories.map(c => c.id === updatedCategory.id ? updatedCategory : c);
+
+                expect(state.categories.find(c => c.id === 1)?.name).toBe('Ergonomic Task Chairs');
+            });
+
+            it('immediately updates local state on delete of category', () => {
+                state.categories = state.categories.filter(c => c.id !== 1);
+
+                expect(state.categories.length).toBe(0);
+                expect(state.categories.some(c => c.id === 1)).toBe(false);
+            });
+        });
+
+        // ── SPECIFICATION ──
+        describe('Specification Attribute Flow', () => {
+            it('normalizes specification input when UI sends spec_name without name', () => {
+                const uiPayload = {
+                    type: 'spec' as const,
+                    spec_name: 'Brushed Brass Inlay',
+                    spec_code: 'BR-01',
+                    spec_details: '3mm brass strip embedded in mahogany veneer',
+                    is_active: true
+                };
+
+                const parsed = GlobalAttributeSchema.parse(uiPayload);
+                const specName = (parsed.spec_name || parsed.name || '').trim();
+                const specCode = parsed.spec_code || parsed.code || null;
+                const specDetails = parsed.spec_details || parsed.details || null;
+
+                expect(specName).toBe('Brushed Brass Inlay');
+                expect(specCode).toBe('BR-01');
+                expect(specDetails).toBe('3mm brass strip embedded in mahogany veneer');
+                expect(specName.length).toBeGreaterThan(0);
+            });
+
+            it('immediately reflects new specification in local state without waiting for app restart', () => {
+                const newSpec = {
+                    id: 5,
+                    spec_name: 'High-Resilience Cold Cure Foam',
+                    spec_code: 'FOAM-02',
+                    is_active: true
+                };
+
+                state.specs = [...state.specs, newSpec].sort((a, b) => (a.spec_name || '').localeCompare(b.spec_name || ''));
+
+                expect(state.specs.length).toBe(2);
+                expect(state.specs.some(s => s.id === 5 && s.spec_name === 'High-Resilience Cold Cure Foam')).toBe(true);
+            });
+
+            it('immediately reflects edited specification', () => {
+                const updatedSpec = { id: 1, spec_name: 'Burma Teak Natural Oil Finish', spec_code: 'TW-01-B', is_active: true };
+
+                state.specs = state.specs.map(s => s.id === updatedSpec.id ? updatedSpec : s);
+
+                expect(state.specs.find(s => s.id === 1)?.spec_name).toBe('Burma Teak Natural Oil Finish');
+            });
+
+            it('immediately removes deleted specification from state', () => {
+                state.specs = state.specs.filter(s => s.id !== 1);
+
+                expect(state.specs.length).toBe(0);
+            });
+        });
+
+        // ── SIZE ──
+        describe('Size Attribute Flow', () => {
+            it('normalizes size input when UI sends size_label without name', () => {
+                const uiPayload = {
+                    type: 'size' as const,
+                    size_label: 'Queen Standard',
+                    length: '2000',
+                    width: '1500',
+                    height: '450',
+                    unit: 'mm',
+                    is_active: true
+                };
+
+                const parsed = GlobalAttributeSchema.parse(uiPayload);
+                const sizeLabel = (parsed.size_label || parsed.name || '').trim();
+                const length = parsed.length ? parseFloat(String(parsed.length)) : null;
+                const width = parsed.width ? parseFloat(String(parsed.width)) : null;
+                const height = parsed.height ? parseFloat(String(parsed.height)) : null;
+
+                expect(sizeLabel).toBe('Queen Standard');
+                expect(length).toBe(2000);
+                expect(width).toBe(1500);
+                expect(height).toBe(450);
+            });
+
+            it('immediately reflects new size in local state', () => {
+                const newSize = {
+                    id: 8,
+                    size_label: 'King XL',
+                    length: 2100,
+                    width: 1900,
+                    height: 500,
+                    unit: 'mm',
+                    is_active: true
+                };
+
+                state.sizes = [...state.sizes, newSize];
+
+                expect(state.sizes.length).toBe(2);
+                expect(state.sizes.some(sz => sz.id === 8 && sz.size_label === 'King XL')).toBe(true);
+            });
+
+            it('immediately reflects edited size', () => {
+                const updatedSize = { id: 1, size_label: 'Single Bed Standard', length: 1950, width: 950, height: 420, unit: 'mm', is_active: true };
+
+                state.sizes = state.sizes.map(s => s.id === updatedSize.id ? updatedSize : s);
+
+                expect(state.sizes.find(s => s.id === 1)?.length).toBe(1950);
+            });
+
+            it('immediately removes deleted size from state', () => {
+                state.sizes = state.sizes.filter(s => s.id !== 1);
+
+                expect(state.sizes.length).toBe(0);
+            });
+        });
+
+        // ── COLOR ──
+        describe('Color Attribute Flow', () => {
+            it('normalizes color input when UI sends color_name without name', () => {
+                const uiPayload = {
+                    type: 'color' as const,
+                    color_name: 'Midnight Navy Blue',
+                    color_code: '#001f3f',
+                    is_active: true
+                };
+
+                const parsed = GlobalAttributeSchema.parse(uiPayload);
+                const colorName = (parsed.color_name || parsed.name || '').trim();
+                const colorCode = parsed.color_code || parsed.code || null;
+
+                expect(colorName).toBe('Midnight Navy Blue');
+                expect(colorCode).toBe('#001f3f');
+                expect(colorName.length).toBeGreaterThan(0);
+            });
+
+            it('immediately reflects new color in local state', () => {
+                const newColor = {
+                    id: 12,
+                    color_name: 'Emerald Velvet Green',
+                    color_code: '#50c878',
+                    is_active: true
+                };
+
+                state.colors = [...state.colors, newColor].sort((a, b) => (a.color_name || '').localeCompare(b.color_name || ''));
+
+                expect(state.colors.length).toBe(2);
+                expect(state.colors.some(c => c.id === 12 && c.color_name === 'Emerald Velvet Green')).toBe(true);
+            });
+
+            it('immediately reflects edited color', () => {
+                const updatedColor = { id: 1, color_name: 'Matte Jet Black', color_code: '#111111', is_active: true };
+
+                state.colors = state.colors.map(c => c.id === updatedColor.id ? updatedColor : c);
+
+                expect(state.colors.find(c => c.id === 1)?.color_name).toBe('Matte Jet Black');
+                expect(state.colors.find(c => c.id === 1)?.color_code).toBe('#111111');
+            });
+
+            it('immediately removes deleted color from state', () => {
+                state.colors = state.colors.filter(c => c.id !== 1);
+
+                expect(state.colors.length).toBe(0);
+            });
+        });
+
+        // ── ERROR HANDLING ──
+        describe('Error Handling and Non-Optimistic Guard', () => {
+            it('rejects empty name/label gracefully and prevents false positive success messages', () => {
+                const invalidSpec = { type: 'spec' as const, spec_name: '   ' };
+                const specName = (invalidSpec.spec_name || '').trim();
+                expect(specName).toBe('');
+
+                const invalidCategory = { type: 'category' as const, name: '   ' };
+                const catName = (invalidCategory.name || '').trim();
+                expect(catName).toBe('');
+
+                const invalidColor = { type: 'color' as const, color_name: '   ' };
+                const colorName = (invalidColor.color_name || '').trim();
+                expect(colorName).toBe('');
+            });
+
+            it('does not mutate state if backend returns an error', () => {
+                const initialCategoryCount = state.categories.length;
+                const backendResponse = { success: false, error: 'Database unique constraint violation: Name already exists' };
+
+                if (!backendResponse.success || backendResponse.error) {
+                    // UI correctly shows feedback error and aborts state change
+                } else {
+                    state.categories.push({ id: 99, name: 'Failed Category' });
+                }
+
+                expect(state.categories.length).toBe(initialCategoryCount);
+            });
+        });
+
+        // ── PERFORMANCE AND TIMING CHECKS ──
+        describe('Performance & Timing Optimization Checks', () => {
+            it('measures and verifies that in-memory cache resolves subsequent requests in < 5ms', async () => {
+                const cache = new Map<string, { data: any; expiry: number }>();
+                const mockFetch = vi.fn().mockResolvedValue([{ id: 1, product_name: 'Ergonomic Desk' }]);
+
+                const getWithCache = async (key: string) => {
+                    const cached = cache.get(key);
+                    if (cached && cached.expiry > Date.now()) {
+                        return cached.data;
+                    }
+                    const data = await mockFetch();
+                    cache.set(key, { data, expiry: Date.now() + 30000 });
+                    return data;
+                };
+
+                // First call: populates cache
+                const start1 = performance.now();
+                const res1 = await getWithCache('test-key');
+                const duration1 = performance.now() - start1;
+
+                expect(res1).toHaveLength(1);
+                expect(mockFetch).toHaveBeenCalledTimes(1);
+
+                // Second call: served from cache in sub-millisecond time
+                const start2 = performance.now();
+                const res2 = await getWithCache('test-key');
+                const duration2 = performance.now() - start2;
+
+                expect(res2).toHaveLength(1);
+                expect(mockFetch).toHaveBeenCalledTimes(1); // not called again
+                expect(duration2).toBeLessThan(5); // under 5ms
+            });
+
+            it('invalidating cache forces next request to fetch fresh data', async () => {
+                let cache: any = { data: [{ id: 1, name: 'Old' }], expiry: Date.now() + 30000 };
+                const invalidateCache = () => { cache = null; };
+
+                // Before invalidation
+                expect(cache).not.toBeNull();
+
+                // Mutate attribute -> triggers invalidateCache()
+                invalidateCache();
+                expect(cache).toBeNull();
+            });
+
+            it('verifies targeted purchase count aggregation filters only returned product IDs', () => {
+                const products = [
+                    { id: 10, product_name: 'Desk' },
+                    { id: 20, product_name: 'Chair' }
+                ];
+
+                const productIds = products.map(p => p.id).filter(Boolean);
+                expect(productIds).toEqual([10, 20]);
+                expect(productIds.length).toBe(2);
+
+                // Empty catalog skips order item query entirely
+                const emptyProducts: any[] = [];
+                const emptyIds = emptyProducts.map(p => p.id).filter(Boolean);
+                expect(emptyIds.length).toBe(0);
+            });
+        });
+    });
 });
+

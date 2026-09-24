@@ -6,7 +6,7 @@ vi.mock('electron', () => ({
     getPath: vi.fn().mockReturnValue(process.env.APPDATA || process.cwd()),
     isPackaged: false,
     getName: vi.fn().mockReturnValue('LE-SOFT'),
-    getVersion: vi.fn().mockReturnValue('1.8.0'),
+    getVersion: vi.fn().mockReturnValue('1.8.1'),
   },
   dialog: {
     showOpenDialog: vi.fn(),

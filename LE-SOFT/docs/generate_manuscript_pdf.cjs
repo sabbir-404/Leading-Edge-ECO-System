@@ -17,8 +17,8 @@ const { buildPDF } = require('./pdf-builder.cjs');
 const { execSync } = require('child_process');
 
 // ─── Config ────────────────────────────────────────────────────────────────
-const EMAIL    = 'sabbirsuperadmin';
-const PASSWORD = 'Brown@8099';
+const EMAIL    = process.env.LE_ADMIN_EMAIL || '';
+const PASSWORD = process.env.LE_ADMIN_PASSWORD || '';
 const OUT_DIR  = path.join(__dirname, 'screenshots');
 const PDF_OUT  = path.join(__dirname, 'LE-SOFT_Manuscript.pdf');
 const ROOT     = path.join(__dirname, '..');

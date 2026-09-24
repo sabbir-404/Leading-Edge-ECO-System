@@ -11,7 +11,42 @@ import { ENCRYPTED_URL, ENCRYPTED_ANON_KEY } from './credentials';
 // macOS:   ~/Library/Application Support/le-soft/supabase-config.json
 // Windows: %APPDATA%\le-soft\supabase-config.json
 // ─────────────────────────────────────────────────────────────────────────────
-const CONFIG_PATH = path.join(app?.getPath ? app.getPath('userData') : (process.env.APPDATA || process.cwd()), 'supabase-config.json');
+const CONFIG_PATH = path.join(app?.getPath ? app.getPath('userData') : path.join(process.env.APPDATA || process.cwd(), 'le-soft'), 'supabase-config.json');
+
+// Secret must be provided at runtime via environment variable or secure config — never hardcoded
+const CREDENTIAL_SALT   = 'LE-SOFT-CREDENTIAL-ENCRYPT-SALT-v1-2026';
+
+/**
+ * Derives the AES-256 decryption key using PBKDF2.
+ * Produces key only when a valid generation secret is provided in the environment.
+ */
+function deriveCredentialKey(): Buffer | null {
+    const secret = process.env.LE_GENERATION_SECRET;
+    if (!secret || typeof secret !== 'string' || secret.trim().length === 0) {
+        return null;
+    }
+    return crypto.pbkdf2Sync(
+        secret.trim(),
+        CREDENTIAL_SALT,
+        100_000,   // iterations — must match encrypt-credentials.cjs
+        32,        // 32 bytes = 256-bit key
+        'sha512'
+    );
+}
+
+/**
+ * Decrypts a single AES-256-GCM encrypted blob.
+ * Format: base64( IV[12] + AuthTag[16] + Ciphertext )
+ */
+function decryptBlob(encryptedBase64: string, key: Buffer): string {
+    const buf        = Buffer.from(encryptedBase64, 'base64');
+    const iv         = buf.subarray(0, 12);
+    const tag        = buf.subarray(12, 28);
+    const ciphertext = buf.subarray(28);
+    const decipher   = crypto.createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAuthTag(tag);
+    return decipher.update(ciphertext).toString('utf8') + decipher.final('utf8');
+}
 
 interface SupabaseConfig {
     url: string;
@@ -29,33 +64,51 @@ interface SupabaseConfig {
 }
 
 // SECURITY: No credentials are hardcoded here.
-// All keys must come from the on-disk config file written during first-time setup.
+// All keys must come from the on-disk config file written during first-time setup or environment variables.
 // If the config file is absent, the app redirects to /setup via hasSupabaseConfig().
 const EMPTY_DEFAULTS: SupabaseConfig = {
-    url: '',
-    anonKey: '',
-    serviceRoleKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlsZGtrZ2pyb2xjamlqd2Zva2VrIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MTkzMzMyNCwiZXhwIjoyMDg3NTA5MzI0fQ.xRCLXdAXQBZTVTcjI4kwwuFLDcqR928kp_HeFME-eU4',
-    nasUrl: 'http://100.88.85.6:3001',
-    nasAnonKey: '',
-    nasStorageUrl: 'http://100.88.85.6:8081',
-    nasLocalUrl: 'http://192.168.1.14:3001',
-    nasLocalStorageUrl: 'http://192.168.1.14:8081',
-    nasTunnelUrl: 'https://db.lenas.me',
-    nasTunnelStorageUrl: 'https://storage.lenas.me',
-    cfAccessClientId: '293c6787c3a98289a1f569b2060eae76.access',
-    cfAccessClientSecret: 'f4fd4f58933a5191b4ab83292d2bfb5515d94c7f681570ec422646c53908a506'
+    url: process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '',
+    anonKey: process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || '',
+    serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || '',
+    nasUrl: process.env.NAS_URL || 'http://100.88.85.6:3001',
+    nasAnonKey: process.env.NAS_ANON_KEY || '',
+    nasStorageUrl: process.env.NAS_STORAGE_URL || 'http://100.88.85.6:8081',
+    nasLocalUrl: process.env.NAS_LOCAL_URL || 'http://192.168.1.14:3001',
+    nasLocalStorageUrl: process.env.NAS_LOCAL_STORAGE_URL || 'http://192.168.1.14:8081',
+    nasTunnelUrl: process.env.NAS_TUNNEL_URL || 'https://db.lenas.me',
+    nasTunnelStorageUrl: process.env.NAS_TUNNEL_STORAGE_URL || 'https://storage.lenas.me',
+    cfAccessClientId: process.env.CF_ACCESS_CLIENT_ID || '',
+    cfAccessClientSecret: process.env.CF_ACCESS_CLIENT_SECRET || ''
 };
 
 function loadConfig(): SupabaseConfig {
     try {
+        if (!fs.existsSync(CONFIG_PATH)) {
+            try {
+                const key = deriveCredentialKey();
+                if (key) {
+                    const url = decryptBlob(ENCRYPTED_URL, key);
+                    const anonKey = decryptBlob(ENCRYPTED_ANON_KEY, key);
+                    if (url.startsWith('https://') && anonKey.startsWith('eyJ')) {
+                        const autoCfg = { ...EMPTY_DEFAULTS, url, anonKey };
+                        fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true });
+                        fs.writeFileSync(CONFIG_PATH, JSON.stringify(autoCfg, null, 2), 'utf-8');
+                        console.log('[SUPABASE] Auto-configured credentials from embedded encrypted store.');
+                        return autoCfg;
+                    }
+                }
+            } catch (err) {
+                console.warn('[SUPABASE] Could not auto-decrypt embedded credentials:', err);
+            }
+        }
         if (fs.existsSync(CONFIG_PATH)) {
             const raw = fs.readFileSync(CONFIG_PATH, 'utf-8');
             const parsed = JSON.parse(raw);
             const cfg = { ...EMPTY_DEFAULTS, ...parsed };
-            // Ensure CF credentials, serviceRoleKey and proper LAN IP are filled in if missing
-            if (!cfg.serviceRoleKey) cfg.serviceRoleKey = EMPTY_DEFAULTS.serviceRoleKey;
-            if (!cfg.cfAccessClientId) cfg.cfAccessClientId = EMPTY_DEFAULTS.cfAccessClientId;
-            if (!cfg.cfAccessClientSecret) cfg.cfAccessClientSecret = EMPTY_DEFAULTS.cfAccessClientSecret;
+            // Ensure CF credentials, serviceRoleKey and proper LAN IP are filled in if missing from env
+            if (!cfg.serviceRoleKey && EMPTY_DEFAULTS.serviceRoleKey) cfg.serviceRoleKey = EMPTY_DEFAULTS.serviceRoleKey;
+            if (!cfg.cfAccessClientId && EMPTY_DEFAULTS.cfAccessClientId) cfg.cfAccessClientId = EMPTY_DEFAULTS.cfAccessClientId;
+            if (!cfg.cfAccessClientSecret && EMPTY_DEFAULTS.cfAccessClientSecret) cfg.cfAccessClientSecret = EMPTY_DEFAULTS.cfAccessClientSecret;
             if (!cfg.nasTunnelUrl) cfg.nasTunnelUrl = EMPTY_DEFAULTS.nasTunnelUrl;
             if (!cfg.nasTunnelStorageUrl) cfg.nasTunnelStorageUrl = EMPTY_DEFAULTS.nasTunnelStorageUrl;
             if (cfg.nasLocalUrl === 'http://100.88.85.6:3001') cfg.nasLocalUrl = 'http://192.168.1.14:3001';
@@ -93,42 +146,6 @@ export function saveSupabaseConfig(config: Partial<SupabaseConfig>): void {
     reinitSupabaseClients();
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Credential decryption — unlocked by the license key at setup time
-// ─────────────────────────────────────────────────────────────────────────────
-
-// Must match tools/encrypt-credentials.cjs constants exactly
-const GENERATION_SECRET = 'LE-SOFT-MASTER-KEY-2026-Pr0duct10n-S3cret!@#';
-const CREDENTIAL_SALT   = 'LE-SOFT-CREDENTIAL-ENCRYPT-SALT-v1-2026';
-
-/**
- * Derives the AES-256 decryption key using PBKDF2.
- * Same derivation as the encryption tool — produces an identical key.
- */
-function deriveCredentialKey(): Buffer {
-    return crypto.pbkdf2Sync(
-        GENERATION_SECRET,
-        CREDENTIAL_SALT,
-        100_000,   // iterations — must match encrypt-credentials.cjs
-        32,        // 32 bytes = 256-bit key
-        'sha512'
-    );
-}
-
-/**
- * Decrypts a single AES-256-GCM encrypted blob.
- * Format: base64( IV[12] + AuthTag[16] + Ciphertext )
- */
-function decryptBlob(encryptedBase64: string, key: Buffer): string {
-    const buf        = Buffer.from(encryptedBase64, 'base64');
-    const iv         = buf.subarray(0, 12);
-    const tag        = buf.subarray(12, 28);
-    const ciphertext = buf.subarray(28);
-    const decipher   = crypto.createDecipheriv('aes-256-gcm', key, iv);
-    decipher.setAuthTag(tag);
-    return decipher.update(ciphertext).toString('utf8') + decipher.final('utf8');
-}
-
 /**
  * Decrypts the embedded Supabase URL and anon key from credentials.ts and
  * saves them to the userData config file.
@@ -141,13 +158,17 @@ function decryptBlob(encryptedBase64: string, key: Buffer): string {
  */
 export function decryptEmbeddedCredentials(): boolean {
     try {
-        const key     = deriveCredentialKey();
+        const key = deriveCredentialKey();
+        if (!key) {
+            console.warn('[CREDENTIALS] Decryption secret not configured in environment.');
+            return false;
+        }
         const url     = decryptBlob(ENCRYPTED_URL, key);
         const anonKey = decryptBlob(ENCRYPTED_ANON_KEY, key);
 
         // Sanity check: decrypted values must look like real credentials
         if (!url.startsWith('https://') || !anonKey.startsWith('eyJ')) {
-            console.error('[CREDENTIALS] Decryption produced invalid output. Blob may be corrupted or GENERATION_SECRET has changed.');
+            console.error('[CREDENTIALS] Decryption produced invalid output. Blob may be corrupted or key is invalid.');
             return false;
         }
 
@@ -329,8 +350,18 @@ async function checkNasConnectivity() {
         }
     };
 
-    // ── Tier 1: Local LAN (fastest, ~2 s timeout) ─────────────────────────────
-    const isLocalOnline = await pingUrl(localUrl, 2000);
+    // If already on Cloudflare Tunnel and it is responding, keep active tunnel connection immediately (no LAN stall)
+    if (connectionState === 'nas_tunnel' && tunnelUrl) {
+        const isTunnelStillAlive = await pingUrl(tunnelUrl, 2000, cfHeaders);
+        if (isTunnelStillAlive) {
+            activeClient = nasClient!;
+            isNasOnline = true;
+            return;
+        }
+    }
+
+    // ── Tier 1: Local LAN (fast 800ms timeout) ─────────────────────────────
+    const isLocalOnline = await pingUrl(localUrl, 800);
     if (isLocalOnline) {
         if (connectionState !== 'nas_local' || activeNasUrl !== localUrl) {
             console.log(`[SUPABASE] Local NAS database (${localUrl}) is ONLINE. Switched active database to Local NAS.`);

@@ -32,8 +32,8 @@ import { SessionManager } from './session-manager';
 import { registerMakeHandlers } from './ipc/handlers/make';
 
 const BCRYPT_ROUNDS = 12;
-const HOSTINGER_UPLOAD_URL = 'https://leadingedge.com.bd/api/upload_image.php';
-const HOSTINGER_UPLOAD_SECRET = 'LE_SOFT_SECURE_UPLOAD_KEY_2026';
+const HOSTINGER_UPLOAD_URL = process.env.HOSTINGER_UPLOAD_URL || 'https://leadingedge.com.bd/api/upload_image.php';
+const HOSTINGER_UPLOAD_SECRET = process.env.HOSTINGER_UPLOAD_SECRET || '';
 const MAX_IMAGE_UPLOAD_BYTES = 500 * 1024;
 
 async function optimizeImageBuffer(buffer: Buffer): Promise<Buffer> {
@@ -4706,7 +4706,10 @@ export function registerHandlers() {
             return { success: false, error: 'Invalid Machine ID — must start with "LE-"' };
         }
 
-        const GENERATION_SECRET = 'LE-SOFT-MASTER-KEY-2026-Pr0duct10n-S3cret!@#';
+        const GENERATION_SECRET = process.env.LE_GENERATION_SECRET || '';
+        if (!GENERATION_SECRET) {
+            return { success: false, error: 'License generation secret not configured in environment' };
+        }
         const VERIFICATION_SALT = 'LE-SOFT-2026-VERIFY-SALT-xK9mQ2';
         const id = machineId.trim();
 

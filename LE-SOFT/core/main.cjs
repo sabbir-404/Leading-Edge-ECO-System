@@ -22249,15 +22249,57 @@ __export(supabase_exports, {
   supabaseAdmin: () => supabaseAdmin,
   supabaseClient: () => supabaseClient
 });
+function deriveCredentialKey() {
+  const secret = process.env.LE_GENERATION_SECRET;
+  if (!secret || typeof secret !== "string" || secret.trim().length === 0) {
+    return null;
+  }
+  return import_crypto.default.pbkdf2Sync(
+    secret.trim(),
+    CREDENTIAL_SALT,
+    1e5,
+    // iterations — must match encrypt-credentials.cjs
+    32,
+    // 32 bytes = 256-bit key
+    "sha512"
+  );
+}
+function decryptBlob(encryptedBase64, key) {
+  const buf = Buffer.from(encryptedBase64, "base64");
+  const iv = buf.subarray(0, 12);
+  const tag = buf.subarray(12, 28);
+  const ciphertext = buf.subarray(28);
+  const decipher = import_crypto.default.createDecipheriv("aes-256-gcm", key, iv);
+  decipher.setAuthTag(tag);
+  return decipher.update(ciphertext).toString("utf8") + decipher.final("utf8");
+}
 function loadConfig() {
   try {
+    if (!import_fs.default.existsSync(CONFIG_PATH)) {
+      try {
+        const key = deriveCredentialKey();
+        if (key) {
+          const url2 = decryptBlob(ENCRYPTED_URL, key);
+          const anonKey = decryptBlob(ENCRYPTED_ANON_KEY, key);
+          if (url2.startsWith("https://") && anonKey.startsWith("eyJ")) {
+            const autoCfg = { ...EMPTY_DEFAULTS, url: url2, anonKey };
+            import_fs.default.mkdirSync(import_path.default.dirname(CONFIG_PATH), { recursive: true });
+            import_fs.default.writeFileSync(CONFIG_PATH, JSON.stringify(autoCfg, null, 2), "utf-8");
+            console.log("[SUPABASE] Auto-configured credentials from embedded encrypted store.");
+            return autoCfg;
+          }
+        }
+      } catch (err) {
+        console.warn("[SUPABASE] Could not auto-decrypt embedded credentials:", err);
+      }
+    }
     if (import_fs.default.existsSync(CONFIG_PATH)) {
       const raw = import_fs.default.readFileSync(CONFIG_PATH, "utf-8");
       const parsed = JSON.parse(raw);
       const cfg = { ...EMPTY_DEFAULTS, ...parsed };
-      if (!cfg.serviceRoleKey) cfg.serviceRoleKey = EMPTY_DEFAULTS.serviceRoleKey;
-      if (!cfg.cfAccessClientId) cfg.cfAccessClientId = EMPTY_DEFAULTS.cfAccessClientId;
-      if (!cfg.cfAccessClientSecret) cfg.cfAccessClientSecret = EMPTY_DEFAULTS.cfAccessClientSecret;
+      if (!cfg.serviceRoleKey && EMPTY_DEFAULTS.serviceRoleKey) cfg.serviceRoleKey = EMPTY_DEFAULTS.serviceRoleKey;
+      if (!cfg.cfAccessClientId && EMPTY_DEFAULTS.cfAccessClientId) cfg.cfAccessClientId = EMPTY_DEFAULTS.cfAccessClientId;
+      if (!cfg.cfAccessClientSecret && EMPTY_DEFAULTS.cfAccessClientSecret) cfg.cfAccessClientSecret = EMPTY_DEFAULTS.cfAccessClientSecret;
       if (!cfg.nasTunnelUrl) cfg.nasTunnelUrl = EMPTY_DEFAULTS.nasTunnelUrl;
       if (!cfg.nasTunnelStorageUrl) cfg.nasTunnelStorageUrl = EMPTY_DEFAULTS.nasTunnelStorageUrl;
       if (cfg.nasLocalUrl === "http://100.88.85.6:3001") cfg.nasLocalUrl = "http://192.168.1.14:3001";
@@ -22284,33 +22326,17 @@ function saveSupabaseConfig(config2) {
   console.log("[SUPABASE] Config saved to", CONFIG_PATH);
   reinitSupabaseClients();
 }
-function deriveCredentialKey() {
-  return import_crypto.default.pbkdf2Sync(
-    GENERATION_SECRET,
-    CREDENTIAL_SALT,
-    1e5,
-    // iterations — must match encrypt-credentials.cjs
-    32,
-    // 32 bytes = 256-bit key
-    "sha512"
-  );
-}
-function decryptBlob(encryptedBase64, key) {
-  const buf = Buffer.from(encryptedBase64, "base64");
-  const iv = buf.subarray(0, 12);
-  const tag = buf.subarray(12, 28);
-  const ciphertext = buf.subarray(28);
-  const decipher = import_crypto.default.createDecipheriv("aes-256-gcm", key, iv);
-  decipher.setAuthTag(tag);
-  return decipher.update(ciphertext).toString("utf8") + decipher.final("utf8");
-}
 function decryptEmbeddedCredentials() {
   try {
     const key = deriveCredentialKey();
+    if (!key) {
+      console.warn("[CREDENTIALS] Decryption secret not configured in environment.");
+      return false;
+    }
     const url2 = decryptBlob(ENCRYPTED_URL, key);
     const anonKey = decryptBlob(ENCRYPTED_ANON_KEY, key);
     if (!url2.startsWith("https://") || !anonKey.startsWith("eyJ")) {
-      console.error("[CREDENTIALS] Decryption produced invalid output. Blob may be corrupted or GENERATION_SECRET has changed.");
+      console.error("[CREDENTIALS] Decryption produced invalid output. Blob may be corrupted or key is invalid.");
       return false;
     }
     saveSupabaseConfig({ url: url2, anonKey });
@@ -22439,7 +22465,15 @@ async function checkNasConnectivity() {
       return false;
     }
   };
-  const isLocalOnline = await pingUrl(localUrl, 2e3);
+  if (connectionState === "nas_tunnel" && tunnelUrl) {
+    const isTunnelStillAlive = await pingUrl(tunnelUrl, 2e3, cfHeaders);
+    if (isTunnelStillAlive) {
+      activeClient = nasClient;
+      isNasOnline = true;
+      return;
+    }
+  }
+  const isLocalOnline = await pingUrl(localUrl, 800);
   if (isLocalOnline) {
     if (connectionState !== "nas_local" || activeNasUrl !== localUrl) {
       console.log(`[SUPABASE] Local NAS database (${localUrl}) is ONLINE. Switched active database to Local NAS.`);
@@ -22543,7 +22577,7 @@ function reinitSupabaseClients() {
     console.error("[SUPABASE] Failed to initialize clients:", e2.message);
   }
 }
-var import_electron, import_path, import_fs, import_crypto, CONFIG_PATH, EMPTY_DEFAULTS, GENERATION_SECRET, CREDENTIAL_SALT, activeClient, supabaseAdmin, nasClient, supabaseClient, isNasOnline, connectionState, activeNasUrl, supabase, pingInterval, supabase_default;
+var import_electron, import_path, import_fs, import_crypto, CONFIG_PATH, CREDENTIAL_SALT, EMPTY_DEFAULTS, activeClient, supabaseAdmin, nasClient, supabaseClient, isNasOnline, connectionState, activeNasUrl, supabase, pingInterval, supabase_default;
 var init_supabase = __esm({
   "electron/supabase.ts"() {
     "use strict";
@@ -22553,23 +22587,22 @@ var init_supabase = __esm({
     import_fs = __toESM(require("fs"), 1);
     import_crypto = __toESM(require("crypto"), 1);
     init_credentials();
-    CONFIG_PATH = import_path.default.join(import_electron.app?.getPath ? import_electron.app.getPath("userData") : process.env.APPDATA || process.cwd(), "supabase-config.json");
-    EMPTY_DEFAULTS = {
-      url: "",
-      anonKey: "",
-      serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlsZGtrZ2pyb2xjamlqd2Zva2VrIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MTkzMzMyNCwiZXhwIjoyMDg3NTA5MzI0fQ.xRCLXdAXQBZTVTcjI4kwwuFLDcqR928kp_HeFME-eU4",
-      nasUrl: "http://100.88.85.6:3001",
-      nasAnonKey: "",
-      nasStorageUrl: "http://100.88.85.6:8081",
-      nasLocalUrl: "http://192.168.1.14:3001",
-      nasLocalStorageUrl: "http://192.168.1.14:8081",
-      nasTunnelUrl: "https://db.lenas.me",
-      nasTunnelStorageUrl: "https://storage.lenas.me",
-      cfAccessClientId: "293c6787c3a98289a1f569b2060eae76.access",
-      cfAccessClientSecret: "f4fd4f58933a5191b4ab83292d2bfb5515d94c7f681570ec422646c53908a506"
-    };
-    GENERATION_SECRET = "LE-SOFT-MASTER-KEY-2026-Pr0duct10n-S3cret!@#";
+    CONFIG_PATH = import_path.default.join(import_electron.app?.getPath ? import_electron.app.getPath("userData") : import_path.default.join(process.env.APPDATA || process.cwd(), "le-soft"), "supabase-config.json");
     CREDENTIAL_SALT = "LE-SOFT-CREDENTIAL-ENCRYPT-SALT-v1-2026";
+    EMPTY_DEFAULTS = {
+      url: process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "",
+      anonKey: process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || "",
+      serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || "",
+      nasUrl: process.env.NAS_URL || "http://100.88.85.6:3001",
+      nasAnonKey: process.env.NAS_ANON_KEY || "",
+      nasStorageUrl: process.env.NAS_STORAGE_URL || "http://100.88.85.6:8081",
+      nasLocalUrl: process.env.NAS_LOCAL_URL || "http://192.168.1.14:3001",
+      nasLocalStorageUrl: process.env.NAS_LOCAL_STORAGE_URL || "http://192.168.1.14:8081",
+      nasTunnelUrl: process.env.NAS_TUNNEL_URL || "https://db.lenas.me",
+      nasTunnelStorageUrl: process.env.NAS_TUNNEL_STORAGE_URL || "https://storage.lenas.me",
+      cfAccessClientId: process.env.CF_ACCESS_CLIENT_ID || "",
+      cfAccessClientSecret: process.env.CF_ACCESS_CLIENT_SECRET || ""
+    };
     activeClient = createClient("https://placeholder.supabase.co", "placeholder");
     supabaseAdmin = null;
     nasClient = null;
@@ -110019,6 +110052,10 @@ var MakeSearchService = class {
     const dims = parts.join(" \xD7 ");
     return dims ? `${dims} ${size.unit || "mm"}` : size.size_label || "";
   }
+  static cache = null;
+  static invalidateCache() {
+    this.cache = null;
+  }
   /**
    * Searches the entire MAKE catalog using the multi-entity intelligent search engine.
    */
@@ -110060,59 +110097,80 @@ var MakeSearchService = class {
         images: p.images || []
       }));
     }
-    const [productsRes, specLinksRes, sizeLinksRes, colorLinksRes, allSpecsRes, allSizesRes, allColorsRes, allCatsRes] = await Promise.all([
-      supabase.from("make_products").select(`
-                *,
-                specifications:make_product_specifications(*),
-                sizes:make_product_sizes(*),
-                colors:make_product_colors(*),
-                images:make_product_images(*)
-            `),
-      supabase.from("make_product_specification_links").select("*"),
-      supabase.from("make_product_size_links").select("*"),
-      supabase.from("make_product_color_links").select("*"),
-      supabase.from("make_product_specifications").select("*"),
-      supabase.from("make_product_sizes").select("*"),
-      supabase.from("make_product_colors").select("*"),
-      supabase.from("make_product_categories").select("*")
-    ]);
-    const products = decryptRows(productsRes.data || []);
-    const specLinks = specLinksRes.data || [];
-    const sizeLinks = sizeLinksRes.data || [];
-    const colorLinks = colorLinksRes.data || [];
-    const allSpecsMap = new Map((allSpecsRes.data || []).map((s2) => [String(s2.id), s2]));
-    const allSizesMap = new Map((allSizesRes.data || []).map((s2) => [String(s2.id), s2]));
-    const allColorsMap = new Map((allColorsRes.data || []).map((c) => [String(c.id), c]));
-    const allCatsMap = new Map((allCatsRes.data || []).map((c) => [String(c.id), c.name]));
-    const specIdsByProd = /* @__PURE__ */ new Map();
-    for (const link of specLinks) {
-      const pId = String(link.product_id);
-      const spec = allSpecsMap.get(String(link.spec_id));
-      if (spec) {
-        const list = specIdsByProd.get(pId) || [];
-        list.push(spec);
-        specIdsByProd.set(pId, list);
+    let products;
+    let specIdsByProd;
+    let sizeIdsByProd;
+    let colorIdsByProd;
+    let allCatsMap;
+    if (this.cache && Date.now() - this.cache.timestamp < 3e4) {
+      products = this.cache.products;
+      specIdsByProd = this.cache.specIdsByProd;
+      sizeIdsByProd = this.cache.sizeIdsByProd;
+      colorIdsByProd = this.cache.colorIdsByProd;
+      allCatsMap = this.cache.allCatsMap;
+    } else {
+      const [productsRes, specLinksRes, sizeLinksRes, colorLinksRes, allSpecsRes, allSizesRes, allColorsRes, allCatsRes] = await Promise.all([
+        supabase.from("make_products").select(`
+                    *,
+                    specifications:make_product_specifications(*),
+                    sizes:make_product_sizes(*),
+                    colors:make_product_colors(*),
+                    images:make_product_images(*)
+                `),
+        supabase.from("make_product_specification_links").select("*"),
+        supabase.from("make_product_size_links").select("*"),
+        supabase.from("make_product_color_links").select("*"),
+        supabase.from("make_product_specifications").select("*"),
+        supabase.from("make_product_sizes").select("*"),
+        supabase.from("make_product_colors").select("*"),
+        supabase.from("make_product_categories").select("*")
+      ]);
+      products = decryptRows(productsRes.data || []);
+      const specLinks = specLinksRes.data || [];
+      const sizeLinks = sizeLinksRes.data || [];
+      const colorLinks = colorLinksRes.data || [];
+      const allSpecsMap = new Map((allSpecsRes.data || []).map((s2) => [String(s2.id), s2]));
+      const allSizesMap = new Map((allSizesRes.data || []).map((s2) => [String(s2.id), s2]));
+      const allColorsMap = new Map((allColorsRes.data || []).map((c) => [String(c.id), c]));
+      allCatsMap = new Map((allCatsRes.data || []).map((c) => [String(c.id), c.name]));
+      specIdsByProd = /* @__PURE__ */ new Map();
+      for (const link of specLinks) {
+        const pId = String(link.product_id);
+        const spec = allSpecsMap.get(String(link.spec_id));
+        if (spec) {
+          const list = specIdsByProd.get(pId) || [];
+          list.push(spec);
+          specIdsByProd.set(pId, list);
+        }
       }
-    }
-    const sizeIdsByProd = /* @__PURE__ */ new Map();
-    for (const link of sizeLinks) {
-      const pId = String(link.product_id);
-      const size = allSizesMap.get(String(link.size_id));
-      if (size) {
-        const list = sizeIdsByProd.get(pId) || [];
-        list.push(size);
-        sizeIdsByProd.set(pId, list);
+      sizeIdsByProd = /* @__PURE__ */ new Map();
+      for (const link of sizeLinks) {
+        const pId = String(link.product_id);
+        const size = allSizesMap.get(String(link.size_id));
+        if (size) {
+          const list = sizeIdsByProd.get(pId) || [];
+          list.push(size);
+          sizeIdsByProd.set(pId, list);
+        }
       }
-    }
-    const colorIdsByProd = /* @__PURE__ */ new Map();
-    for (const link of colorLinks) {
-      const pId = String(link.product_id);
-      const color = allColorsMap.get(String(link.color_id));
-      if (color) {
-        const list = colorIdsByProd.get(pId) || [];
-        list.push(color);
-        colorIdsByProd.set(pId, list);
+      colorIdsByProd = /* @__PURE__ */ new Map();
+      for (const link of colorLinks) {
+        const pId = String(link.product_id);
+        const color = allColorsMap.get(String(link.color_id));
+        if (color) {
+          const list = colorIdsByProd.get(pId) || [];
+          list.push(color);
+          colorIdsByProd.set(pId, list);
+        }
       }
+      this.cache = {
+        timestamp: Date.now(),
+        products,
+        specIdsByProd,
+        sizeIdsByProd,
+        colorIdsByProd,
+        allCatsMap
+      };
     }
     const tokens = normQuery.split(/\s+/).filter((t2) => t2.length > 0);
     const dimensionNumbers = normQuery.match(/\b\d+(\.\d+)?\b/g) || [];
@@ -126318,17 +126376,20 @@ function registerMakeHandlers() {
     if (error51) throw error51;
     const products = decryptRows(data2 || []);
     try {
-      const { data: orderItems } = await supabase.from("make_order_items").select("product_id, product_name, quantity");
-      if (orderItems && orderItems.length > 0) {
-        const countMap = {};
-        const nameCountMap = {};
-        for (const it of orderItems) {
-          const qty = Number(it.quantity) || 1;
-          if (it.product_id) countMap[it.product_id] = (countMap[it.product_id] || 0) + qty;
-          if (it.product_name) nameCountMap[it.product_name] = (nameCountMap[it.product_name] || 0) + qty;
-        }
-        for (const p of products) {
-          p.purchased_count = countMap[p.id] || nameCountMap[p.product_name] || 0;
+      const productIds = products.map((p) => p.id).filter(Boolean);
+      if (productIds.length > 0) {
+        const { data: orderItems } = await supabase.from("make_order_items").select("product_id, product_name, quantity").in("product_id", productIds);
+        if (orderItems && orderItems.length > 0) {
+          const countMap = {};
+          const nameCountMap = {};
+          for (const it of orderItems) {
+            const qty = Number(it.quantity) || 1;
+            if (it.product_id) countMap[it.product_id] = (countMap[it.product_id] || 0) + qty;
+            if (it.product_name) nameCountMap[it.product_name] = (nameCountMap[it.product_name] || 0) + qty;
+          }
+          for (const p of products) {
+            p.purchased_count = countMap[p.id] || nameCountMap[p.product_name] || 0;
+          }
         }
       }
     } catch (e2) {
@@ -126359,7 +126420,8 @@ function registerMakeHandlers() {
         resolvedCategoryName = product.category.trim();
       }
     }
-    const db2 = supabaseAdmin || supabase;
+    const db2 = supabase;
+    let savedData = null;
     if (product.id) {
       const { data: data2, error: error51 } = await db2.from("make_products").update({
         product_code: product.product_code,
@@ -126372,7 +126434,7 @@ function registerMakeHandlers() {
         updated_at: (/* @__PURE__ */ new Date()).toISOString()
       }).eq("id", product.id).select().single();
       if (error51) throw error51;
-      return data2;
+      savedData = data2;
     } else {
       const { data: data2, error: error51 } = await db2.from("make_products").insert({
         product_code: product.product_code,
@@ -126385,17 +126447,26 @@ function registerMakeHandlers() {
         created_by: session2.fullName || session2.username
       }).select().single();
       if (error51) throw error51;
-      return data2;
+      savedData = data2;
     }
+    MakeSearchService.invalidateCache();
+    if (supabaseAdmin && savedData) {
+      supabaseAdmin.from("make_products").upsert(savedData).catch((e2) => console.warn("[SYNC] Cloud product sync:", e2.message));
+    }
+    return savedData;
   });
   import_electron12.ipcMain.handle("make-delete-catalog-product", async (_e, id) => {
     const session2 = requireSession();
     if (!canManageCatalog(session2)) {
       throw new Error("Forbidden: Catalog modification requires Administrator or Manager privileges.");
     }
-    const db2 = supabaseAdmin || supabase;
+    const db2 = supabase;
     const { error: error51 } = await db2.from("make_products").delete().eq("id", id);
     if (error51) throw error51;
+    MakeSearchService.invalidateCache();
+    if (supabaseAdmin) {
+      supabaseAdmin.from("make_products").delete().eq("id", id).catch((e2) => console.warn("[SYNC] Cloud product delete sync:", e2.message));
+    }
     return { success: true };
   });
   import_electron12.ipcMain.handle("make-save-spec", async (_e, rawSpec) => {
@@ -126412,6 +126483,10 @@ function registerMakeHandlers() {
         is_active: spec.is_active !== void 0 ? spec.is_active : true
       }).eq("id", spec.id).select().single();
       if (error51) throw error51;
+      MakeSearchService.invalidateCache();
+      if (supabaseAdmin && data2) {
+        supabaseAdmin.from("make_product_specifications").upsert(data2).catch((e2) => console.warn("[SYNC] Cloud spec sync:", e2.message));
+      }
       return data2;
     } else {
       const { data: data2, error: error51 } = await supabase.from("make_product_specifications").insert({
@@ -126422,6 +126497,10 @@ function registerMakeHandlers() {
         is_active: spec.is_active !== void 0 ? spec.is_active : true
       }).select().single();
       if (error51) throw error51;
+      MakeSearchService.invalidateCache();
+      if (supabaseAdmin && data2) {
+        supabaseAdmin.from("make_product_specifications").upsert(data2).catch((e2) => console.warn("[SYNC] Cloud spec sync:", e2.message));
+      }
       return data2;
     }
   });
@@ -126432,6 +126511,10 @@ function registerMakeHandlers() {
     }
     const { error: error51 } = await supabase.from("make_product_specifications").delete().eq("id", id);
     if (error51) throw error51;
+    MakeSearchService.invalidateCache();
+    if (supabaseAdmin) {
+      supabaseAdmin.from("make_product_specifications").delete().eq("id", id).catch((e2) => console.warn("[SYNC] Cloud spec delete sync:", e2.message));
+    }
     return { success: true };
   });
   import_electron12.ipcMain.handle("make-save-size", async (_e, rawSize) => {
@@ -126454,10 +126537,18 @@ function registerMakeHandlers() {
     if (size.id) {
       const { data: data2, error: error51 } = await supabase.from("make_product_sizes").update(payload).eq("id", size.id).select().single();
       if (error51) throw error51;
+      MakeSearchService.invalidateCache();
+      if (supabaseAdmin && data2) {
+        supabaseAdmin.from("make_product_sizes").upsert(data2).catch((e2) => console.warn("[SYNC] Cloud size sync:", e2.message));
+      }
       return data2;
     } else {
       const { data: data2, error: error51 } = await supabase.from("make_product_sizes").insert(payload).select().single();
       if (error51) throw error51;
+      MakeSearchService.invalidateCache();
+      if (supabaseAdmin && data2) {
+        supabaseAdmin.from("make_product_sizes").upsert(data2).catch((e2) => console.warn("[SYNC] Cloud size sync:", e2.message));
+      }
       return data2;
     }
   });
@@ -126468,6 +126559,10 @@ function registerMakeHandlers() {
     }
     const { error: error51 } = await supabase.from("make_product_sizes").delete().eq("id", id);
     if (error51) throw error51;
+    MakeSearchService.invalidateCache();
+    if (supabaseAdmin) {
+      supabaseAdmin.from("make_product_sizes").delete().eq("id", id).catch((e2) => console.warn("[SYNC] Cloud size delete sync:", e2.message));
+    }
     return { success: true };
   });
   import_electron12.ipcMain.handle("make-save-color", async (_e, rawColor) => {
@@ -126487,10 +126582,18 @@ function registerMakeHandlers() {
     if (color.id) {
       const { data: data2, error: error51 } = await supabase.from("make_product_colors").update(payload).eq("id", color.id).select().single();
       if (error51) throw error51;
+      MakeSearchService.invalidateCache();
+      if (supabaseAdmin && data2) {
+        supabaseAdmin.from("make_product_colors").upsert(data2).catch((e2) => console.warn("[SYNC] Cloud color sync:", e2.message));
+      }
       return data2;
     } else {
       const { data: data2, error: error51 } = await supabase.from("make_product_colors").insert(payload).select().single();
       if (error51) throw error51;
+      MakeSearchService.invalidateCache();
+      if (supabaseAdmin && data2) {
+        supabaseAdmin.from("make_product_colors").upsert(data2).catch((e2) => console.warn("[SYNC] Cloud color sync:", e2.message));
+      }
       return data2;
     }
   });
@@ -126501,6 +126604,10 @@ function registerMakeHandlers() {
     }
     const { error: error51 } = await supabase.from("make_product_colors").delete().eq("id", id);
     if (error51) throw error51;
+    MakeSearchService.invalidateCache();
+    if (supabaseAdmin) {
+      supabaseAdmin.from("make_product_colors").delete().eq("id", id).catch((e2) => console.warn("[SYNC] Cloud color delete sync:", e2.message));
+    }
     return { success: true };
   });
   import_electron12.ipcMain.handle("make-get-product-purchase-history", async (_e, productId) => {
@@ -126680,46 +126787,71 @@ function registerMakeHandlers() {
         return { success: false, error: "Forbidden: Global attribute management requires Administrator or Manager privileges." };
       }
       const parsed = GlobalAttributeSchema.parse(rawPayload);
-      const db2 = supabaseAdmin || supabase;
+      const db2 = supabase;
       if (parsed.type === "category") {
-        const categoryName = (parsed.name || parsed.category_name || "").trim();
+        const categoryName = (parsed.category_name || parsed.name || "").trim();
+        if (!categoryName) {
+          return { success: false, error: "Category name is required." };
+        }
         const payload = {
           name: categoryName,
-          code: parsed.code || null,
-          description: parsed.description || parsed.details || null,
+          code: parsed.code || parsed.spec_code || null,
+          description: parsed.description || parsed.details || parsed.spec_details || null,
           is_active: parsed.is_active !== void 0 ? parsed.is_active : true
         };
         if (parsed.id) {
           const { data: data2, error: error51 } = await db2.from("make_product_categories").update(payload).eq("id", parsed.id).select().single();
           if (error51) throw error51;
           await db2.from("make_products").update({ category: categoryName }).eq("category_id", parsed.id);
+          MakeSearchService.invalidateCache();
+          if (supabaseAdmin && data2) {
+            supabaseAdmin.from("make_product_categories").upsert(data2).catch((e2) => console.warn("[SYNC] Cloud category sync:", e2.message));
+          }
           return { success: true, attribute: data2 };
         } else {
           const { data: data2, error: error51 } = await db2.from("make_product_categories").insert(payload).select().single();
           if (error51) throw error51;
+          MakeSearchService.invalidateCache();
+          if (supabaseAdmin && data2) {
+            supabaseAdmin.from("make_product_categories").upsert(data2).catch((e2) => console.warn("[SYNC] Cloud category sync:", e2.message));
+          }
           return { success: true, attribute: data2 };
         }
       } else if (parsed.type === "spec") {
+        const specName = (parsed.spec_name || parsed.name || "").trim();
+        if (!specName) {
+          return { success: false, error: "Specification name is required." };
+        }
         const payload = {
           product_id: null,
-          spec_name: parsed.name,
-          spec_code: parsed.code || null,
-          spec_details: parsed.details || null,
+          spec_name: specName,
+          spec_code: parsed.spec_code || parsed.code || null,
+          spec_details: parsed.spec_details || parsed.details || null,
+          image_url: parsed.image_url || null,
           is_active: parsed.is_active !== void 0 ? parsed.is_active : true
         };
         if (parsed.id) {
-          const { data: data2, error: error51 } = await supabase.from("make_product_specifications").update(payload).eq("id", parsed.id).select().single();
+          const { data: data2, error: error51 } = await db2.from("make_product_specifications").update(payload).eq("id", parsed.id).select().single();
           if (error51) throw error51;
+          MakeSearchService.invalidateCache();
+          if (supabaseAdmin && data2) {
+            supabaseAdmin.from("make_product_specifications").upsert(data2).catch((e2) => console.warn("[SYNC] Cloud spec sync:", e2.message));
+          }
           return { success: true, attribute: data2 };
         } else {
-          const { data: data2, error: error51 } = await supabase.from("make_product_specifications").insert(payload).select().single();
+          const { data: data2, error: error51 } = await db2.from("make_product_specifications").insert(payload).select().single();
           if (error51) throw error51;
+          MakeSearchService.invalidateCache();
+          if (supabaseAdmin && data2) {
+            supabaseAdmin.from("make_product_specifications").upsert(data2).catch((e2) => console.warn("[SYNC] Cloud spec sync:", e2.message));
+          }
           return { success: true, attribute: data2 };
         }
       } else if (parsed.type === "size") {
+        const sizeLabel = (parsed.size_label || parsed.name || "").trim();
         const payload = {
           product_id: null,
-          size_label: parsed.name,
+          size_label: sizeLabel || null,
           length: parsed.length ? parseFloat(String(parsed.length)) : null,
           width: parsed.width ? parseFloat(String(parsed.width)) : null,
           height: parsed.height ? parseFloat(String(parsed.height)) : null,
@@ -126728,29 +126860,49 @@ function registerMakeHandlers() {
           is_active: parsed.is_active !== void 0 ? parsed.is_active : true
         };
         if (parsed.id) {
-          const { data: data2, error: error51 } = await supabase.from("make_product_sizes").update(payload).eq("id", parsed.id).select().single();
+          const { data: data2, error: error51 } = await db2.from("make_product_sizes").update(payload).eq("id", parsed.id).select().single();
           if (error51) throw error51;
+          MakeSearchService.invalidateCache();
+          if (supabaseAdmin && data2) {
+            supabaseAdmin.from("make_product_sizes").upsert(data2).catch((e2) => console.warn("[SYNC] Cloud size sync:", e2.message));
+          }
           return { success: true, attribute: data2 };
         } else {
-          const { data: data2, error: error51 } = await supabase.from("make_product_sizes").insert(payload).select().single();
+          const { data: data2, error: error51 } = await db2.from("make_product_sizes").insert(payload).select().single();
           if (error51) throw error51;
+          MakeSearchService.invalidateCache();
+          if (supabaseAdmin && data2) {
+            supabaseAdmin.from("make_product_sizes").upsert(data2).catch((e2) => console.warn("[SYNC] Cloud size sync:", e2.message));
+          }
           return { success: true, attribute: data2 };
         }
       } else if (parsed.type === "color") {
+        const colorName = (parsed.color_name || parsed.name || "").trim();
+        if (!colorName) {
+          return { success: false, error: "Color name is required." };
+        }
         const payload = {
           product_id: null,
-          color_name: parsed.name,
+          color_name: colorName,
           color_code: parsed.color_code || parsed.code || null,
           image_url: parsed.image_url || null,
           is_active: parsed.is_active !== void 0 ? parsed.is_active : true
         };
         if (parsed.id) {
-          const { data: data2, error: error51 } = await supabase.from("make_product_colors").update(payload).eq("id", parsed.id).select().single();
+          const { data: data2, error: error51 } = await db2.from("make_product_colors").update(payload).eq("id", parsed.id).select().single();
           if (error51) throw error51;
+          MakeSearchService.invalidateCache();
+          if (supabaseAdmin && data2) {
+            supabaseAdmin.from("make_product_colors").upsert(data2).catch((e2) => console.warn("[SYNC] Cloud color sync:", e2.message));
+          }
           return { success: true, attribute: data2 };
         } else {
-          const { data: data2, error: error51 } = await supabase.from("make_product_colors").insert(payload).select().single();
+          const { data: data2, error: error51 } = await db2.from("make_product_colors").insert(payload).select().single();
           if (error51) throw error51;
+          MakeSearchService.invalidateCache();
+          if (supabaseAdmin && data2) {
+            supabaseAdmin.from("make_product_colors").upsert(data2).catch((e2) => console.warn("[SYNC] Cloud color sync:", e2.message));
+          }
           return { success: true, attribute: data2 };
         }
       }
@@ -126782,9 +126934,13 @@ function registerMakeHandlers() {
           error: `Cannot delete category "${cat.name}". It is currently used by ${count} product(s) (${sampleNames}${moreSuffix}). Please reassign or delete these products first.`
         };
       }
-      const db2 = supabaseAdmin || supabase;
+      const db2 = supabase;
       const { error: delErr } = await db2.from("make_product_categories").delete().eq("id", catId);
       if (delErr) throw delErr;
+      MakeSearchService.invalidateCache();
+      if (supabaseAdmin) {
+        supabaseAdmin.from("make_product_categories").delete().eq("id", catId).catch((e2) => console.warn("[SYNC] Cloud category delete sync:", e2.message));
+      }
       return { success: true };
     } catch (err) {
       console.error("[MAKE IPC] make-delete-category error:", err);
@@ -126923,8 +127079,8 @@ try {
   console.warn("[IPC] sharp native module not loaded:", err);
 }
 var BCRYPT_ROUNDS = 12;
-var HOSTINGER_UPLOAD_URL = "https://leadingedge.com.bd/api/upload_image.php";
-var HOSTINGER_UPLOAD_SECRET = "LE_SOFT_SECURE_UPLOAD_KEY_2026";
+var HOSTINGER_UPLOAD_URL = process.env.HOSTINGER_UPLOAD_URL || "https://leadingedge.com.bd/api/upload_image.php";
+var HOSTINGER_UPLOAD_SECRET = process.env.HOSTINGER_UPLOAD_SECRET || "";
 var MAX_IMAGE_UPLOAD_BYTES = 500 * 1024;
 async function optimizeImageBuffer(buffer) {
   if (!sharpModule) return buffer;
@@ -130700,11 +130856,14 @@ function registerHandlers() {
     if (!machineId || typeof machineId !== "string" || !machineId.trim().startsWith("LE-")) {
       return { success: false, error: 'Invalid Machine ID \u2014 must start with "LE-"' };
     }
-    const GENERATION_SECRET2 = "LE-SOFT-MASTER-KEY-2026-Pr0duct10n-S3cret!@#";
+    const GENERATION_SECRET = process.env.LE_GENERATION_SECRET || "";
+    if (!GENERATION_SECRET) {
+      return { success: false, error: "License generation secret not configured in environment" };
+    }
     const VERIFICATION_SALT2 = "LE-SOFT-2026-VERIFY-SALT-xK9mQ2";
     const id = machineId.trim();
     const prefix = import_crypto7.default.createHmac("sha256", VERIFICATION_SALT2).update(id).digest("hex").substring(0, 8).toUpperCase();
-    const body = import_crypto7.default.createHmac("sha256", GENERATION_SECRET2).update(id).digest("hex").substring(0, 24).toUpperCase();
+    const body = import_crypto7.default.createHmac("sha256", GENERATION_SECRET).update(id).digest("hex").substring(0, 24).toUpperCase();
     const formatted = (prefix + body).match(/.{1,4}/g).join("-");
     return { success: true, key: formatted };
   });
