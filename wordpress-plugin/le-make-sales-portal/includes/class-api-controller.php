@@ -210,26 +210,27 @@ class LEMakeApiController {
         }
 
         $secret = $request->get_header('X-LE-Publish-Secret') ?: $request->get_param('secret');
-        $anon_key = get_option('le_make_anon_key');
-        $cf_secret = get_option('le_make_cf_client_secret');
-
-        if (!empty($secret)) {
-            if ($anon_key && hash_equals($anon_key, $secret)) {
-                return true;
-            }
-            if ($cf_secret && hash_equals($cf_secret, $secret)) {
-                return true;
-            }
+        if (empty($secret)) {
+            return false;
         }
 
-        // Also permit if the target user actually exists and is active in the software database
-        $username = sanitize_text_field($request->get_param('username') ?? '');
-        if (!empty($username)) {
-            $client = LEMakeNasDbClient::get_instance();
-            $nas_user = $client->get_user_by_login($username);
-            if ($nas_user && !empty($nas_user['is_active'])) {
-                return true;
-            }
+        $client = LEMakeNasDbClient::get_instance();
+        $cf_secret = $client->get_cf_secret();
+        $service_key = $client->get_service_key();
+        $anon_key = $client->get_anon_key();
+        $publish_secret = defined('LE_MAKE_PUBLISH_SECRET') ? LE_MAKE_PUBLISH_SECRET : get_option('le_make_publish_secret', '');
+
+        if (!empty($publish_secret) && hash_equals($publish_secret, $secret)) {
+            return true;
+        }
+        if (!empty($cf_secret) && hash_equals($cf_secret, $secret)) {
+            return true;
+        }
+        if (!empty($service_key) && hash_equals($service_key, $secret)) {
+            return true;
+        }
+        if (!empty($anon_key) && hash_equals($anon_key, $secret)) {
+            return true;
         }
 
         return false;

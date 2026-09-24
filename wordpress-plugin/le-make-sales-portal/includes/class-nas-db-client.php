@@ -161,6 +161,9 @@ class LEMakeNasDbClient {
         $url = $supabase_url . '/rest/v1/' . ltrim($endpoint, '/');
         
         $service_key = $this->get_service_key();
+        if (empty($service_key)) {
+            return new WP_Error('missing_supabase_key', 'Supabase credentials are not configured.');
+        }
         $req_headers = array_merge(array(
             'Accept'        => 'application/json',
             'Content-Type'  => 'application/json',
@@ -1138,6 +1141,9 @@ class LEMakeNasDbClient {
         $url = $supabase_url . '/storage/v1/object/' . $bucket . '/' . $clean_name;
 
         $service_key = $this->get_service_key();
+        if (empty($service_key)) {
+            return new WP_Error('missing_supabase_key', 'Supabase storage credentials are not configured.');
+        }
         $res = wp_remote_request($url, array(
             'method'    => 'POST',
             'timeout'   => 25,
