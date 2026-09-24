@@ -39,6 +39,7 @@ class LEMakeAdminSettings {
         register_setting('le_make_settings_group', 'le_make_cf_client_secret');
         register_setting('le_make_settings_group', 'le_make_supabase_url');
         register_setting('le_make_settings_group', 'le_make_anon_key');
+        register_setting('le_make_settings_group', 'le_make_supabase_service_key');
     }
 
     public function render_settings_page() {
@@ -163,22 +164,22 @@ class LEMakeAdminSettings {
                     <tr>
                         <th scope="row" style="font-weight: 600;">Cloudflare Tunnel URL</th>
                         <td>
-                            <input type="text" name="le_make_nas_tunnel_url" value="<?php echo esc_attr(get_option('le_make_nas_tunnel_url', LEMakeNasDbClient::DEFAULT_TUNNEL_URL)); ?>" class="regular-text" style="width: 100%; max-width: 500px;" />
+                            <input type="text" name="le_make_nas_tunnel_url" value="<?php echo esc_attr(get_option('le_make_nas_tunnel_url', LEMakeNasDbClient::DEFAULT_TUNNEL_URL)); ?>" class="regular-text" style="width: 100%; max-width: 500px;" placeholder="https://db.lenas.me" />
                             <p class="description">Public SSL tunnel connecting to the TrueNAS PostgREST container (Default: <code>https://db.lenas.me</code>).</p>
                         </td>
                     </tr>
                     <tr>
                         <th scope="row" style="font-weight: 600;">CF Service Token Client ID</th>
                         <td>
-                            <input type="text" name="le_make_cf_client_id" value="<?php echo esc_attr(get_option('le_make_cf_client_id', LEMakeNasDbClient::DEFAULT_CF_CLIENT_ID)); ?>" class="regular-text" style="width: 100%; max-width: 500px;" />
-                            <p class="description">Cloudflare Access header <code>CF-Access-Client-Id</code>.</p>
+                            <input type="text" name="le_make_cf_client_id" value="<?php echo esc_attr(get_option('le_make_cf_client_id', '')); ?>" class="regular-text" style="width: 100%; max-width: 500px;" placeholder="e.g. xxxxxxxx.access" autocomplete="off" />
+                            <p class="description">Cloudflare Access header <code>CF-Access-Client-Id</code>. Can also be defined via <code>LE_MAKE_CF_CLIENT_ID</code> constant in <code>wp-config.php</code>.</p>
                         </td>
                     </tr>
                     <tr>
                         <th scope="row" style="font-weight: 600;">CF Service Token Client Secret</th>
                         <td>
-                            <input type="password" name="le_make_cf_client_secret" value="<?php echo esc_attr(get_option('le_make_cf_client_secret', LEMakeNasDbClient::DEFAULT_CF_CLIENT_SECRET)); ?>" class="regular-text" style="width: 100%; max-width: 500px;" />
-                            <p class="description">Cloudflare Access header <code>CF-Access-Client-Secret</code>.</p>
+                            <input type="password" name="le_make_cf_client_secret" value="<?php echo esc_attr(get_option('le_make_cf_client_secret', '')); ?>" class="regular-text" style="width: 100%; max-width: 500px;" placeholder="Enter Cloudflare Access Client Secret" autocomplete="new-password" />
+                            <p class="description">Cloudflare Access header <code>CF-Access-Client-Secret</code>. Can also be defined via <code>LE_MAKE_CF_CLIENT_SECRET</code> constant in <code>wp-config.php</code>.</p>
                         </td>
                     </tr>
                 </table>
@@ -191,13 +192,22 @@ class LEMakeAdminSettings {
                     <tr>
                         <th scope="row" style="font-weight: 600;">Supabase Project URL</th>
                         <td>
-                            <input type="text" name="le_make_supabase_url" value="<?php echo esc_attr(get_option('le_make_supabase_url', LEMakeNasDbClient::DEFAULT_SUPABASE_URL)); ?>" class="regular-text" style="width: 100%; max-width: 500px;" />
+                            <input type="text" name="le_make_supabase_url" value="<?php echo esc_attr(get_option('le_make_supabase_url', LEMakeNasDbClient::DEFAULT_SUPABASE_URL)); ?>" class="regular-text" style="width: 100%; max-width: 500px;" placeholder="https://xxxxxxxx.supabase.co" />
+                            <p class="description">Supabase project URL. Can also be defined via <code>LE_MAKE_SUPABASE_URL</code> in <code>wp-config.php</code>.</p>
                         </td>
                     </tr>
                     <tr>
                         <th scope="row" style="font-weight: 600;">Anon / Public API Key</th>
                         <td>
-                            <textarea name="le_make_anon_key" rows="2" style="width: 100%; max-width: 500px; font-family: monospace; font-size: 12px;"><?php echo esc_textarea(get_option('le_make_anon_key', LEMakeNasDbClient::DEFAULT_ANON_KEY)); ?></textarea>
+                            <textarea name="le_make_anon_key" rows="2" style="width: 100%; max-width: 500px; font-family: monospace; font-size: 12px;" placeholder="eyJhbGciOi..." autocomplete="off"><?php echo esc_textarea(get_option('le_make_anon_key', '')); ?></textarea>
+                            <p class="description">Supabase public anon key. Can also be defined via <code>LE_MAKE_ANON_KEY</code> in <code>wp-config.php</code>.</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row" style="font-weight: 600;">Service Role Key (Optional)</th>
+                        <td>
+                            <input type="password" name="le_make_supabase_service_key" value="<?php echo esc_attr(get_option('le_make_supabase_service_key', '')); ?>" class="regular-text" style="width: 100%; max-width: 500px;" placeholder="Enter Supabase Service Role Key" autocomplete="new-password" />
+                            <p class="description">Supabase privileged service-role key for backend storage management. Can also be defined via <code>LE_MAKE_SUPABASE_SERVICE_KEY</code> in <code>wp-config.php</code>.</p>
                         </td>
                     </tr>
                 </table>

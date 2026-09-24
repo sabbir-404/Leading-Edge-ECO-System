@@ -29,7 +29,7 @@
     'Work in process',
     'Production On Going',
     'Primary QC',
-    'Color Ongoing',
+    'Color Ongoing (oven)',
     'QC Final',
     'Packaging',
     'Ready to Ship',
@@ -55,6 +55,46 @@
     const mm = String(d.getMonth() + 1).padStart(2, '0');
     const dd = String(d.getDate()).padStart(2, '0');
     return `${yyyy}-${mm}-${dd}`;
+  }
+
+  // ─── Comprehensive Multi-Word Product Search Helper ───────────────────────
+  function matchProductSearch(p, searchString) {
+    if (!searchString || !searchString.trim()) return true;
+    const tokens = searchString.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (!tokens.length) return true;
+
+    const parts = [
+      p.product_name || '',
+      p.product_code || '',
+      p.category || '',
+      p.category_rel?.name || '',
+      p.category_rel?.code || '',
+      p.description || ''
+    ];
+
+    if (Array.isArray(p.specifications)) {
+      p.specifications.forEach(sp => {
+        parts.push(sp.spec_name || '', sp.spec_code || '', sp.spec_details || '', sp.material || '', sp.finish || '');
+      });
+    }
+
+    if (Array.isArray(p.sizes)) {
+      p.sizes.forEach(sz => {
+        parts.push(sz.size_label || '', String(sz.length || ''), String(sz.width || ''), String(sz.height || ''), sz.unit || '');
+        if (sz.length && sz.width) {
+          parts.push(`${sz.length}x${sz.width}`, `${sz.length} x ${sz.width}`);
+        }
+      });
+    }
+
+    if (Array.isArray(p.colors)) {
+      p.colors.forEach(cl => {
+        parts.push(cl.color_name || '', cl.color_code || '', cl.finish || '');
+      });
+    }
+
+    const haystack = parts.join(' ').toLowerCase();
+    return tokens.every(token => haystack.includes(token));
   }
 
   // ─── State Management ──────────────────────────────────────────────────────
@@ -684,8 +724,8 @@
       alert('Please add at least one product to your order.');
       return;
     }
-    if (!state.customer.name.trim() || !state.customer.phone.trim()) {
-      alert('Customer Name and Customer Phone are required.');
+    if (!state.customer.name || !state.customer.name.trim()) {
+      alert('Customer Name is required.');
       return;
     }
     if (!state.customer.referenceBillNo || !state.customer.referenceBillNo.trim()) {
@@ -711,15 +751,19 @@
     }
 
     try {
+      const attachmentUrls = (state.orderAttachments || [])
+        .map(a => (typeof a === 'string' ? a : a?.url))
+        .filter(Boolean);
+
       const payload = {
         furniture_name: state.cart.length === 1 
           ? state.cart[0].product_name 
           : `${state.cart[0].product_name} (+${state.cart.length - 1} items)`,
         reference_bill_no: state.customer.referenceBillNo.trim(),
         target_delivery_days: state.customer.targetDeliveryDays ? parseInt(state.customer.targetDeliveryDays, 10) : null,
-        customer_name: state.customer.name,
-        customer_phone: state.customer.phone,
-        customer_email: state.customer.email,
+        customer_name: state.customer.name.trim(),
+        customer_phone: state.customer.phone ? state.customer.phone.trim() : null,
+        customer_email: state.customer.email ? state.customer.email.trim() : '',
         shipping_address: state.customer.address,
         location_landmark: state.customer.landmark,
         receiver_name: state.customer.receiverName,
@@ -730,7 +774,8 @@
         delivery_date: state.customer.targetDeliveryDate,
         requested_delivery_date: state.customer.requestedDeliveryDate || null,
         items: state.cart,
-        attachments: state.orderAttachments || []
+        invoice_attachment_urls: attachmentUrls,
+        attachments: attachmentUrls
       };
 
       await api('orders', 'POST', payload);
@@ -1267,6 +1312,10 @@
   }
 
   function renderCatalogView() {
+    const displayedProducts = state.catalogSearch
+      ? state.products.filter(p => matchProductSearch(p, state.catalogSearch))
+      : state.products;
+
     return `
       <div class="le-make-panel">
         <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 1.5rem;">
@@ -1276,34 +1325,42 @@
           </div>
 
           <div style="display: flex; gap: 10px; width: 100%; max-width: 320px;">
-            <input type="text" class="le-make-input" placeholder="Search products..." 
+            <input type="text" class="le-make-input" placeholder="Search by name, code, size, color, spec..." 
               value="${escapeHtml(state.catalogSearch)}" 
               oninput="window.LE_MAKE.handleCatalogSearch(this.value)" />
           </div>
         </div>
 
-        <div class="le-make-product-grid">
-          ${state.products.map(p => `
-            <div class="le-make-product-card" style="cursor: default;">
-              ${p.main_image ? `<img src="${escapeHtml(resolveMediaUrl(p.main_image))}" class="le-make-product-img" alt="${escapeHtml(p.product_name)}" />` : `<div class="le-make-product-img" style="display:flex;align-items:center;justify-content:center;color:var(--le-color-light);font-size:32px;">🪑</div>`}
-              <div class="le-make-product-code">${escapeHtml(p.product_code || 'CODE')}</div>
-              <div class="le-make-product-name">${escapeHtml(p.product_name)}</div>
-              
-              <div style="font-size: 0.78rem; color: var(--le-color-muted); margin-top: 6px;">
-                ${(p.specifications || []).length} Specifications • ${(p.sizes || []).length} Standard Sizes
-              </div>
+        ${displayedProducts.length === 0 ? `
+          <div style="text-align: center; padding: 2.5rem; background: #fafafa; border: 1px dashed var(--le-color-border); border-radius: 8px;">
+            <div style="font-size: 2rem; margin-bottom: 8px;">🔍</div>
+            <div style="font-weight: 700; color: var(--le-color-dark); margin-bottom: 4px;">No products match your search</div>
+            <div style="font-size: 0.82rem; color: var(--le-color-muted);">Try searching for model code, dimensions (e.g. 1200x1200), material, finish, or color.</div>
+          </div>
+        ` : `
+          <div class="le-make-product-grid">
+            ${displayedProducts.map(p => `
+              <div class="le-make-product-card" style="cursor: default;">
+                ${p.main_image ? `<img src="${escapeHtml(resolveMediaUrl(p.main_image))}" class="le-make-product-img" alt="${escapeHtml(p.product_name)}" />` : `<div class="le-make-product-img" style="display:flex;align-items:center;justify-content:center;color:var(--le-color-light);font-size:32px;">🪑</div>`}
+                <div class="le-make-product-code">${escapeHtml(p.product_code || 'CODE')}</div>
+                <div class="le-make-product-name">${escapeHtml(p.product_name)}</div>
+                
+                <div style="font-size: 0.78rem; color: var(--le-color-muted); margin-top: 6px;">
+                  ${(p.specifications || []).length} Specifications • ${(p.sizes || []).length} Standard Sizes
+                </div>
 
-              <div style="margin-top: 14px; display: flex; gap: 8px; width: 100%;">
-                <button class="le-make-btn le-make-btn-secondary le-make-btn-sm" style="flex: 1;" onclick="window.LE_MAKE.openHistoryModal(${JSON.stringify(p).replace(/"/g, '&quot;')})">
-                  📊 Order History
-                </button>
-                <button class="le-make-btn le-make-btn-primary le-make-btn-sm" style="flex: 1;" onclick="window.LE_MAKE.handleSelectProductAndOrder(${p.id})">
-                  ➕ Order
-                </button>
+                <div style="margin-top: 14px; display: flex; gap: 8px; width: 100%;">
+                  <button class="le-make-btn le-make-btn-secondary le-make-btn-sm" style="flex: 1;" onclick="window.LE_MAKE.openHistoryModal(${JSON.stringify(p).replace(/"/g, '&quot;')})">
+                    📊 Order History
+                  </button>
+                  <button class="le-make-btn le-make-btn-primary le-make-btn-sm" style="flex: 1;" onclick="window.LE_MAKE.handleSelectProductAndOrder(${p.id})">
+                    ➕ Order
+                  </button>
+                </div>
               </div>
-            </div>
-          `).join('')}
-        </div>
+            `).join('')}
+          </div>
+        `}
       </div>
     `;
   }
@@ -1352,9 +1409,9 @@
             </div>
 
             <div class="le-make-form-group">
-              <label class="le-make-label">Customer Phone *</label>
-              <input type="text" class="le-make-input" placeholder="e.g. +880 1700 000000"
-                value="${escapeHtml(state.customer.phone)}" oninput="window.LE_MAKE.state.customer.phone = this.value" required />
+              <label class="le-make-label">Customer Phone (Optional)</label>
+              <input type="text" class="le-make-input" placeholder="e.g. +880 1700 000000 (Optional)"
+                value="${escapeHtml(state.customer.phone)}" oninput="window.LE_MAKE.state.customer.phone = this.value" />
             </div>
 
             <div class="le-make-form-group">
@@ -1420,7 +1477,7 @@
                     <div>
                       <select class="le-make-select" onchange="if (this.value) window.LE_MAKE.handleProductCardClick(Number(this.value))">
                         <option value="">-- Choose a Catalog Product (${state.products.length} loaded) --</option>
-                        ${state.products.map(p => `
+                        ${(state.catalogSearch ? state.products.filter(p => matchProductSearch(p, state.catalogSearch)) : state.products).map(p => `
                           <option value="${p.id}" ${state.selectedProduct?.id === p.id ? 'selected' : ''}>
                             ${escapeHtml(p.product_code || 'CODE')} - ${escapeHtml(p.product_name)}
                           </option>
@@ -1455,13 +1512,8 @@
                   </div>
                 </div>
               ` : (() => {
-                const search = (state.catalogSearch || '').trim().toLowerCase();
-                const matched = search
-                  ? state.products.filter(p =>
-                      (p.product_name && p.product_name.toLowerCase().includes(search)) ||
-                      (p.product_code && p.product_code.toLowerCase().includes(search)) ||
-                      (p.description && p.description.toLowerCase().includes(search))
-                    )
+                const matched = state.catalogSearch
+                  ? state.products.filter(p => matchProductSearch(p, state.catalogSearch))
                   : state.products;
                 const displayed = matched.slice(0, 3);
 
@@ -1977,7 +2029,7 @@
         
         <!-- Filter Tabs -->
         <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 1.5rem;">
-          ${['All', 'Placed', 'Work in process', 'Production On Going', 'Primary QC', 'Color Ongoing', 'QC Final', 'Packaging', 'Ready to Ship', 'Delivered'].map(s => `
+          ${['All', 'Placed', 'Work in process', 'Production On Going', 'Primary QC', 'Color Ongoing (oven)', 'QC Final', 'Packaging', 'Ready to Ship', 'Delivered'].map(s => `
             <button class="le-make-btn ${state.statusFilter === s ? 'le-make-btn-primary' : 'le-make-btn-secondary'} le-make-btn-sm" onclick="window.LE_MAKE.setStatusFilter('${s}')">
               ${s}
             </button>
@@ -2258,26 +2310,36 @@
 
                       <div>
                         <label class="le-make-label" style="font-weight: 700; color: #0f172a;">
-                          ${isMobileDevice() ? '📷 Snap Stage Photo (Direct Camera)' : '📁 Upload Stage Photo (Stored Image)'}
+                          Stage Progress Photo (Camera or Gallery)
                         </label>
-                        <div style="display: flex; align-items: center; gap: 10px;">
-                          <label class="le-make-camera-btn">
-                            ${state.stageUpdateForm.uploading ? '⏳ Uploading...' : (isMobileDevice() ? '📷 Open Camera' : '📁 Browse Image')}
+                        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                          <label class="le-make-btn le-make-btn-secondary le-make-btn-sm" style="cursor: pointer; display: inline-flex; align-items: center; gap: 4px; margin: 0;">
+                            📷 Snap Photo
                             <input type="file" style="display: none;" 
                               accept="image/*" 
-                              ${isMobileDevice() ? 'capture="environment"' : ''} 
+                              capture="environment" 
                               onchange="window.LE_MAKE.handleStagePhotoSelected(event)" 
                               ${state.stageUpdateForm.uploading ? 'disabled' : ''} />
                           </label>
+                          <label class="le-make-btn le-make-btn-secondary le-make-btn-sm" style="cursor: pointer; display: inline-flex; align-items: center; gap: 4px; margin: 0;">
+                            📁 Browse Gallery
+                            <input type="file" style="display: none;" 
+                              accept="image/*" 
+                              onchange="window.LE_MAKE.handleStagePhotoSelected(event)" 
+                              ${state.stageUpdateForm.uploading ? 'disabled' : ''} />
+                          </label>
+                          ${state.stageUpdateForm.uploading ? `
+                            <span style="font-size: 0.78rem; color: var(--le-accent); font-weight: 600;">⏳ Uploading...</span>
+                          ` : ''}
                           ${state.stageUpdateForm.previewUrl ? `
                             <a href="${escapeHtml(state.stageUpdateForm.previewUrl)}" target="_blank" rel="noopener noreferrer">
-                              <img src="${escapeHtml(state.stageUpdateForm.previewUrl)}" class="le-make-stage-thumb" style="width: 44px; height: 44px;" alt="Preview" />
+                              <img src="${escapeHtml(state.stageUpdateForm.previewUrl)}" class="le-make-stage-thumb" style="width: 36px; height: 36px; border-radius: 4px;" alt="Preview" />
                             </a>
                             <span style="font-size: 0.75rem; color: var(--le-success); font-weight: 600;">✓ Ready</span>
                           ` : ''}
                         </div>
                         <div style="font-size: 0.72rem; color: var(--le-color-muted); margin-top: 4px;">
-                          ${isMobileDevice() ? 'Mobile detected: directly opens camera for live snap.' : 'PC detected: choose existing image from device.'}
+                          Capture directly with mobile camera or choose from device gallery (JPG, PNG, WebP).
                         </div>
                       </div>
                     </div>

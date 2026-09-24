@@ -24,14 +24,14 @@ class LEMakeNasDbClient {
     private $connection_tier = 'cloudflare_tunnel'; // 'cloudflare_tunnel', 'supabase'
     private $is_nas_online = true;
 
-    // Hardcoded production defaults matching LE-SOFT encrypted credentials
+    // Default fallback constants - NO credentials or secrets hardcoded in source
     const DEFAULT_TUNNEL_URL              = 'https://db.lenas.me';
     const DEFAULT_TUNNEL_STORAGE          = 'https://storage.lenas.me';
-    const DEFAULT_CF_CLIENT_ID            = '293c6787c3a98289a1f569b2060eae76.access';
-    const DEFAULT_CF_CLIENT_SECRET        = 'f4fd4f58933a5191b4ab83292d2bfb5515d94c7f681570ec422646c53908a506';
+    const DEFAULT_CF_CLIENT_ID            = '';
+    const DEFAULT_CF_CLIENT_SECRET        = '';
     const DEFAULT_SUPABASE_URL            = 'https://ildkkgjrolcjijwfokek.supabase.co';
-    const DEFAULT_ANON_KEY                = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlsZGtrZ2pyb2xjamlqd2Zva2VrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE5MzMzMjQsImV4cCI6MjA4NzUwOTMyNH0.Bn6c-87BOumPXyH5F469P04fQSMnI9SjNDZAwgGyTsM';
-    const DEFAULT_SERVICE_ROLE_KEY        = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlsZGtrZ2pyb2xjamlqd2Zva2VrIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MTkzMzMyNCwiZXhwIjoyMDg3NTA5MzI0fQ.xRCLXdAXQBZTVTcjI4kwwuFLDcqR928kp_HeFME-eU4';
+    const DEFAULT_ANON_KEY                = '';
+    const DEFAULT_SERVICE_ROLE_KEY        = '';
     const DEFAULT_SUPABASE_STORAGE_BUCKET = 'make-portal-files';
     const MAX_SUPABASE_STORAGE_BYTES      = 1073741824; // 1 GB (1,073,741,824 bytes)
 
@@ -104,26 +104,56 @@ class LEMakeNasDbClient {
         return $this->is_nas_online;
     }
 
-    private function get_cf_id() {
+    public function get_cf_id() {
+        if (defined('LE_MAKE_CF_CLIENT_ID') && LE_MAKE_CF_CLIENT_ID) {
+            return LE_MAKE_CF_CLIENT_ID;
+        }
+        $env = getenv('LE_MAKE_CF_CLIENT_ID');
+        if (!empty($env)) {
+            return $env;
+        }
         $id = get_option('le_make_cf_client_id');
         return !empty($id) ? $id : self::DEFAULT_CF_CLIENT_ID;
     }
 
-    private function get_cf_secret() {
+    public function get_cf_secret() {
+        if (defined('LE_MAKE_CF_CLIENT_SECRET') && LE_MAKE_CF_CLIENT_SECRET) {
+            return LE_MAKE_CF_CLIENT_SECRET;
+        }
+        $env = getenv('LE_MAKE_CF_CLIENT_SECRET');
+        if (!empty($env)) {
+            return $env;
+        }
         $secret = get_option('le_make_cf_client_secret');
         return !empty($secret) ? $secret : self::DEFAULT_CF_CLIENT_SECRET;
     }
 
     public function get_service_key() {
+        if (defined('LE_MAKE_SUPABASE_SERVICE_KEY') && LE_MAKE_SUPABASE_SERVICE_KEY) {
+            return LE_MAKE_SUPABASE_SERVICE_KEY;
+        }
+        $env = getenv('LE_MAKE_SUPABASE_SERVICE_KEY');
+        if (!empty($env)) {
+            return $env;
+        }
         $service = get_option('le_make_supabase_service_key');
         if (!empty($service)) {
             return $service;
         }
-        return self::DEFAULT_SERVICE_ROLE_KEY;
+        $anon = $this->get_anon_key();
+        return !empty($anon) ? $anon : self::DEFAULT_SERVICE_ROLE_KEY;
     }
 
-    private function get_anon_key() {
-        return $this->get_service_key();
+    public function get_anon_key() {
+        if (defined('LE_MAKE_ANON_KEY') && LE_MAKE_ANON_KEY) {
+            return LE_MAKE_ANON_KEY;
+        }
+        $env = getenv('LE_MAKE_ANON_KEY');
+        if (!empty($env)) {
+            return $env;
+        }
+        $anon = get_option('le_make_anon_key');
+        return !empty($anon) ? $anon : self::DEFAULT_ANON_KEY;
     }
 
     public function request_supabase($endpoint, $method = 'GET', $body = null, $headers = array()) {
@@ -379,58 +409,227 @@ class LEMakeNasDbClient {
     // ─────────────────────────────────────────────────────────────────────────
 
     public function get_active_products($search = '') {
-        // 1. If NAS is online, try querying make_products with related specs, sizes, colors
+        $products = array();
+
+        // 1. If NAS is online, query make_products with full category, specs, sizes, and colors relations
         if ($this->connection_tier === 'cloudflare_tunnel') {
-            $endpoint = 'make_products?is_active=eq.true&select=*,specifications:make_product_specifications(*),sizes:make_product_sizes(*),colors:make_product_colors(*),images:make_product_images(*)&order=created_at.desc';
-            if (!empty($search)) {
-                $endpoint .= '&product_name=ilike.*' . rawurlencode($search) . '*';
+            $endpoint = 'make_products?is_active=eq.true&select=*,category_rel:make_product_categories(id,name,code),specifications:make_product_specifications(*),sizes:make_product_sizes(*),colors:make_product_colors(*)&order=created_at.desc';
+            $res = $this->request($endpoint, 'GET');
+
+            if (is_wp_error($res) || !is_array($res) || empty($res)) {
+                // Fallback without category_rel embed if relation alias differs
+                $fallback_endpoint = 'make_products?is_active=eq.true&select=*,specifications:make_product_specifications(*),sizes:make_product_sizes(*),colors:make_product_colors(*)&order=created_at.desc';
+                $res = $this->request($fallback_endpoint, 'GET');
             }
 
+            if (!is_wp_error($res) && is_array($res) && !empty($res)) {
+                $products = $res;
+            }
+        }
+
+        // 2. If NAS is offline or returned empty/error, fallback to Supabase make_products
+        if (empty($products)) {
+            $endpoint = 'make_products?is_active=eq.true&select=*,category_rel:make_product_categories(id,name,code),specifications:make_product_specifications(*),sizes:make_product_sizes(*),colors:make_product_colors(*)&order=created_at.desc';
+            $res = $this->request_supabase($endpoint, 'GET');
+
+            if (is_wp_error($res) || !is_array($res) || empty($res)) {
+                $fallback_endpoint = 'make_products?is_active=eq.true&select=*,specifications:make_product_specifications(*),sizes:make_product_sizes(*),colors:make_product_colors(*)&order=created_at.desc';
+                $res = $this->request_supabase($fallback_endpoint, 'GET');
+            }
+
+            if (!is_wp_error($res) && is_array($res) && !empty($res)) {
+                $products = $res;
+            }
+        }
+
+        // 3. Fallback to base 'products' table on Supabase if make_products is empty
+        if (empty($products)) {
+            $endpoint = 'products?is_active=eq.true&select=*&order=created_at.desc&limit=50';
+            $res = $this->request($endpoint, 'GET');
+            if (!is_wp_error($res) && is_array($res)) {
+                $mapped = array();
+                foreach ($res as $row) {
+                    $mapped[] = array(
+                        'id'             => $row['id'],
+                        'product_code'   => $row['sku'] ?: $row['product_code'] ?: ('PRD-' . $row['id']),
+                        'product_name'   => $row['name'] ?: 'Furniture Item',
+                        'description'    => $row['description'] ?: '',
+                        'main_image'     => $row['image_path'] ?: '',
+                        'purchase_price' => $row['purchase_price'] ?? 0,
+                        'selling_price'  => $row['selling_price'] ?? 0,
+                        'is_active'      => true,
+                        'specifications' => array(),
+                        'sizes'          => array(),
+                        'colors'         => array(),
+                        'is_cloud_backup'=> true
+                    );
+                }
+                $products = $mapped;
+            }
+        }
+
+        // 4. Perform comprehensive multi-word matching across all attributes if search term is provided
+        if (!empty($products) && !empty(trim($search))) {
+            $products = $this->filter_products_by_search($products, $search);
+        }
+
+        return $this->sanitize_for_role($products);
+    }
+
+    /**
+     * Filters products using multi-word matching across:
+     * - name, model/code, description
+     * - category (legacy and joined make_product_categories)
+     * - specifications (spec_name, spec_code, spec_details, material, finish)
+     * - sizes (size_label, length, width, height, diameter, unit)
+     * - colors (color_name, color_code, finish)
+     */
+    public function filter_products_by_search($products, $query) {
+        $tokens = array_filter(preg_split('/\s+/', strtolower(trim($query))));
+        if (empty($tokens)) {
+            return $products;
+        }
+
+        $filtered = array();
+        foreach ($products as $p) {
+            $searchable_parts = array(
+                $p['product_name'] ?? '',
+                $p['product_code'] ?? '',
+                $p['category'] ?? '',
+                $p['category_rel']['name'] ?? '',
+                $p['category_rel']['code'] ?? '',
+                $p['description'] ?? '',
+            );
+
+            // Specifications
+            if (!empty($p['specifications']) && is_array($p['specifications'])) {
+                foreach ($p['specifications'] as $sp) {
+                    $searchable_parts[] = $sp['spec_name'] ?? '';
+                    $searchable_parts[] = $sp['spec_code'] ?? '';
+                    $searchable_parts[] = $sp['spec_details'] ?? '';
+                    $searchable_parts[] = $sp['material'] ?? '';
+                    $searchable_parts[] = $sp['finish'] ?? '';
+                }
+            }
+
+            // Sizes & Dimensions
+            if (!empty($p['sizes']) && is_array($p['sizes'])) {
+                foreach ($p['sizes'] as $sz) {
+                    $searchable_parts[] = $sz['size_label'] ?? '';
+                    $searchable_parts[] = $sz['length'] ?? '';
+                    $searchable_parts[] = $sz['width'] ?? '';
+                    $searchable_parts[] = $sz['height'] ?? '';
+                    $searchable_parts[] = $sz['diameter'] ?? '';
+                    $searchable_parts[] = $sz['unit'] ?? '';
+                    if (!empty($sz['length']) && !empty($sz['width'])) {
+                        $searchable_parts[] = $sz['length'] . 'x' . $sz['width'];
+                        $searchable_parts[] = $sz['length'] . ' x ' . $sz['width'];
+                    }
+                }
+            }
+
+            // Colors & Finishes
+            if (!empty($p['colors']) && is_array($p['colors'])) {
+                foreach ($p['colors'] as $cl) {
+                    $searchable_parts[] = $cl['color_name'] ?? '';
+                    $searchable_parts[] = $cl['color_code'] ?? '';
+                    $searchable_parts[] = $cl['finish'] ?? '';
+                }
+            }
+
+            $haystack = strtolower(implode(' ', array_filter($searchable_parts)));
+
+            // Multi-word search: all tokens must match
+            $all_matched = true;
+            foreach ($tokens as $token) {
+                if (strpos($haystack, $token) === false) {
+                    $all_matched = false;
+                    break;
+                }
+            }
+
+            if ($all_matched) {
+                $filtered[] = $p;
+            }
+        }
+
+        return $filtered;
+    }
+
+    /**
+     * Resolves an existing customer in billing_customers or creates a new one.
+     * Prevents duplicate customer records.
+     * Customer phone is optional (no fake phone generation).
+     */
+    public function resolve_or_create_customer($customer_name, $customer_phone = null, $customer_email = null, $shipping_address = null) {
+        $clean_name = sanitize_text_field($customer_name ?: '');
+        $clean_phone = !empty($customer_phone) ? sanitize_text_field($customer_phone) : null;
+        $clean_email = !empty($customer_email) ? sanitize_email($customer_email) : null;
+        $clean_address = !empty($shipping_address) ? sanitize_textarea_field($shipping_address) : null;
+
+        if (empty($clean_name)) {
+            return null;
+        }
+
+        // Normalize phone for comparison: remove all non-digits, handle +880
+        $norm_phone = '';
+        if ($clean_phone) {
+            $digits = preg_replace('/[^\d+]/', '', $clean_phone);
+            if (strpos($digits, '+880') === 0) {
+                $norm_phone = '0' . substr($digits, 4);
+            } elseif (strpos($digits, '880') === 0 && strlen($digits) >= 13) {
+                $norm_phone = '0' . substr($digits, 3);
+            } else {
+                $norm_phone = $digits;
+            }
+        }
+
+        // 1. Match by phone if phone is provided and at least 7 digits
+        if (!empty($norm_phone) && strlen($norm_phone) >= 7) {
+            $endpoint = 'billing_customers?or=(phone.eq.' . rawurlencode($norm_phone) . ',phone.eq.' . rawurlencode($clean_phone) . ')&limit=1';
             $res = $this->request($endpoint, 'GET');
             if (!is_wp_error($res) && is_array($res) && !empty($res)) {
-                return $this->sanitize_for_role($res);
+                return $res[0];
             }
         }
 
-        // 2. If NAS is offline or returned empty/error, fallback to Supabase
-        // First try make_products on Supabase
-        $endpoint = 'make_products?is_active=eq.true&select=*&order=created_at.desc';
-        if (!empty($search)) {
-            $endpoint .= '&product_name=ilike.*' . rawurlencode($search) . '*';
-        }
-        $res = $this->request($endpoint, 'GET');
-        if (!is_wp_error($res) && is_array($res) && !empty($res)) {
-            return $this->sanitize_for_role($res);
-        }
-
-        // 3. If make_products is not yet migrated on Supabase, query base 'products' table on Supabase!
-        $endpoint = 'products?is_active=eq.true&select=*&order=created_at.desc&limit=50';
-        if (!empty($search)) {
-            $endpoint .= '&name=ilike.*' . rawurlencode($search) . '*';
-        }
-        $res = $this->request($endpoint, 'GET');
-        if (!is_wp_error($res) && is_array($res)) {
-            $mapped = array();
-            foreach ($res as $row) {
-                $mapped[] = array(
-                    'id'             => $row['id'],
-                    'product_code'   => $row['sku'] ?: $row['product_code'] ?: ('PRD-' . $row['id']),
-                    'product_name'   => $row['name'] ?: 'Furniture Item',
-                    'description'    => $row['description'] ?: '',
-                    'main_image'     => $row['image_path'] ?: '',
-                    'purchase_price' => $row['purchase_price'] ?? 0,
-                    'selling_price'  => $row['selling_price'] ?? 0,
-                    'is_active'      => true,
-                    'specifications' => array(),
-                    'sizes'          => array(),
-                    'colors'         => array(),
-                    'is_cloud_backup'=> true
-                );
+        // 2. Match by email if email is provided
+        if (!empty($clean_email) && is_email($clean_email)) {
+            $endpoint = 'billing_customers?email=ilike.' . rawurlencode($clean_email) . '&limit=1';
+            $res = $this->request($endpoint, 'GET');
+            if (!is_wp_error($res) && is_array($res) && !empty($res)) {
+                return $res[0];
             }
-            return $this->sanitize_for_role($mapped);
         }
 
-        return array();
+        // 3. Match by name if no phone/email was provided or unique match
+        if (empty($norm_phone) && empty($clean_email)) {
+            $endpoint = 'billing_customers?name=ilike.' . rawurlencode($clean_name) . '&limit=2';
+            $res = $this->request($endpoint, 'GET');
+            if (!is_wp_error($res) && is_array($res) && count($res) === 1) {
+                return $res[0];
+            }
+        }
+
+        // 4. No match found -> create new customer record in billing_customers
+        $new_customer_payload = array(
+            'name'       => $clean_name,
+            'phone'      => $norm_phone ?: $clean_phone ?: null,
+            'email'      => $clean_email ?: null,
+            'address'    => $clean_address ?: null,
+            'created_at' => current_time('mysql', 1)
+        );
+
+        $create_res = $this->request('billing_customers', 'POST', $new_customer_payload);
+        if (!is_wp_error($create_res) && is_array($create_res) && !empty($create_res)) {
+            // Mirror to Supabase if primary tier was NAS
+            if ($this->connection_tier === 'cloudflare_tunnel') {
+                $this->request_supabase('billing_customers', 'POST', $new_customer_payload);
+            }
+            return $create_res[0];
+        }
+
+        return null;
     }
 
     public function get_product_purchase_history($product_id) {
@@ -589,7 +788,7 @@ class LEMakeNasDbClient {
      * If NAS is offline: writes directly to Supabase and queues for NAS synchronization.
      */
     public function create_order($order_data, $items = array()) {
-        $order_number = 'LE-ORD-' . date('Ymd') . '-' . strtoupper(wp_generate_password(4, false));
+        $order_number = 'MAKE-' . date('Y') . '-' . wp_rand(100000, 999999);
         
         $target_date = !empty($order_data['target_delivery_date']) 
             ? sanitize_text_field($order_data['target_delivery_date']) 
@@ -599,6 +798,26 @@ class LEMakeNasDbClient {
             : null;
         $ref_bill = !empty($order_data['reference_bill_no']) ? sanitize_text_field($order_data['reference_bill_no']) : null;
         $delivery_days = !empty($order_data['target_delivery_days']) ? intval($order_data['target_delivery_days']) : null;
+
+        // Resolve or create customer in billing_customers without duplicate records
+        $cust_name = sanitize_text_field($order_data['customer_name'] ?? '');
+        $cust_phone = !empty($order_data['customer_phone']) ? sanitize_text_field($order_data['customer_phone']) : null;
+        $cust_email = !empty($order_data['customer_email']) ? sanitize_email($order_data['customer_email']) : null;
+        $cust_address = !empty($order_data['shipping_address']) ? sanitize_textarea_field($order_data['shipping_address']) : null;
+
+        $resolved_customer = $this->resolve_or_create_customer($cust_name, $cust_phone, $cust_email, $cust_address);
+        $customer_id = !empty($resolved_customer['id']) ? intval($resolved_customer['id']) : (!empty($order_data['customer_id']) ? intval($order_data['customer_id']) : null);
+
+        $invoice_attachments = !empty($order_data['invoice_attachment_urls']) ? array_values(array_filter((array)$order_data['invoice_attachment_urls'])) : array();
+        $pdf_attachments = !empty($order_data['pdf_urls']) ? array_values(array_filter((array)$order_data['pdf_urls'])) : $invoice_attachments;
+
+        $salesman_id = !empty($order_data['salesman_id']) ? intval($order_data['salesman_id']) : null;
+        if ($salesman_id !== null && $this->connection_tier === 'cloudflare_tunnel') {
+            $user_check = $this->request('users?id=eq.' . $salesman_id . '&select=id&limit=1', 'GET');
+            if (is_wp_error($user_check) || empty($user_check)) {
+                $salesman_id = null;
+            }
+        }
 
         $payload = array(
             'order_number'            => $order_number,
@@ -612,22 +831,26 @@ class LEMakeNasDbClient {
             'target_delivery_date'    => $target_date,
             'requested_delivery_date' => $req_date,
             'designer_name'           => sanitize_text_field($order_data['designer_name'] ?? 'Designer Review'),
-            'salesman_id'             => !empty($order_data['salesman_id']) ? intval($order_data['salesman_id']) : null,
+            'salesman_id'             => $salesman_id,
             'salesperson_name'        => sanitize_text_field($order_data['salesperson_name'] ?? ''),
             'status'                  => 'Placed',
+            'current_stage'           => 'Work in process',
             'approval_status'         => 'awaiting_designer',
             'current_version'         => 1,
-            'customer_name'           => sanitize_text_field($order_data['customer_name']),
-            'customer_phone'          => sanitize_text_field($order_data['customer_phone']),
-            'customer_email'          => sanitize_email($order_data['customer_email'] ?? ''),
-            'shipping_address'        => sanitize_textarea_field($order_data['shipping_address'] ?? ''),
-            'delivery_address'        => sanitize_textarea_field($order_data['shipping_address'] ?? ''),
+            'customer_id'             => $customer_id,
+            'customer_name'           => $cust_name,
+            'customer_phone'          => $cust_phone,
+            'customer_email'          => $cust_email ?: '',
+            'shipping_address'        => $cust_address ?: '',
+            'delivery_address'        => $cust_address ?: '',
             'location_landmark'       => sanitize_text_field($order_data['location_landmark'] ?? ''),
             'receiver_name'           => sanitize_text_field($order_data['receiver_name'] ?? ''),
             'receiver_phone'          => sanitize_text_field($order_data['receiver_phone'] ?? ''),
             'special_instructions'    => sanitize_textarea_field($order_data['special_instructions'] ?? ''),
             'cost_price'              => floatval($order_data['cost_price'] ?? 0),
             'sale_price'              => !empty($order_data['sale_price']) ? floatval($order_data['sale_price']) : null,
+            'invoice_attachment_urls' => $invoice_attachments,
+            'pdf_urls'                => $pdf_attachments,
             'is_approved'             => true,
             'created_at'              => current_time('mysql', 1)
         );
@@ -730,6 +953,7 @@ class LEMakeNasDbClient {
             'requested_delivery_date' => $payload['requested_delivery_date'],
             'salesman_id'             => null, // Set null on Supabase to prevent user table FK mismatch
             'salesperson_name'        => $payload['salesperson_name'],
+            'customer_id'             => $payload['customer_id'] ?? null,
             'customer_name'           => $payload['customer_name'],
             'customer_phone'          => $payload['customer_phone'],
             'customer_email'          => $payload['customer_email'],
@@ -742,6 +966,9 @@ class LEMakeNasDbClient {
             'cost_price'              => $payload['cost_price'],
             'sale_price'              => $payload['sale_price'],
             'custom_price'            => $payload['sale_price'] ?? $payload['cost_price'] ?? 0,
+            'current_stage'           => 'Work in process',
+            'invoice_attachment_urls' => $payload['invoice_attachment_urls'] ?? array(),
+            'pdf_urls'                => $payload['pdf_urls'] ?? array(),
             'approval_status'         => 'awaiting_designer',
             'current_version'         => 1,
             'is_approved'             => true,
@@ -840,6 +1067,7 @@ class LEMakeNasDbClient {
             'requested_delivery_date' => $payload['requested_delivery_date'],
             'salesman_id'             => null,
             'salesperson_name'        => $payload['salesperson_name'],
+            'customer_id'             => $payload['customer_id'] ?? null,
             'customer_name'           => $payload['customer_name'],
             'customer_phone'          => $payload['customer_phone'],
             'customer_email'          => $payload['customer_email'],
@@ -852,6 +1080,9 @@ class LEMakeNasDbClient {
             'cost_price'              => $payload['cost_price'],
             'sale_price'              => $payload['sale_price'],
             'custom_price'            => $payload['sale_price'] ?? $payload['cost_price'] ?? 0,
+            'current_stage'           => $payload['current_stage'] ?? 'Work in process',
+            'invoice_attachment_urls' => $payload['invoice_attachment_urls'] ?? array(),
+            'pdf_urls'                => $payload['pdf_urls'] ?? array(),
             'approval_status'         => 'awaiting_designer',
             'current_version'         => 1,
             'is_approved'             => true,
@@ -1491,8 +1722,9 @@ class LEMakeNasDbClient {
 
         // 3. Update make_orders
         $order_update = array(
-            'status'     => $clean_stage,
-            'updated_at' => current_time('mysql', 1)
+            'status'        => $clean_stage,
+            'current_stage' => $clean_stage,
+            'updated_at'    => current_time('mysql', 1)
         );
         if ($photo_url) {
             $order_update['current_stage_photo'] = $photo_url;
@@ -1554,7 +1786,7 @@ class LEMakeNasDbClient {
 
         // 1. Fetch current order
         $order = null;
-        $order_res = $this->request('make_orders?id=eq.' . $order_id . '&select=id,furniture_name,salesman_id,pdf_urls', 'GET');
+        $order_res = $this->request('make_orders?id=eq.' . $order_id . '&select=id,furniture_name,salesman_id,pdf_urls,invoice_attachment_urls', 'GET');
         if (!is_wp_error($order_res) && !empty($order_res)) {
             $order = $order_res[0];
         }
@@ -1571,15 +1803,30 @@ class LEMakeNasDbClient {
         );
         $this->request('make_order_updates', 'POST', $update_payload);
 
-        // 3. Update pdf_urls on make_orders if applicable
+        // 3. Update invoice_attachment_urls & pdf_urls on make_orders if applicable
         if ($order) {
+            $existing_invoices = is_array($order['invoice_attachment_urls'] ?? null) ? $order['invoice_attachment_urls'] : array();
             $existing_pdfs = is_array($order['pdf_urls'] ?? null) ? $order['pdf_urls'] : array();
+            $is_image = (bool)preg_match('/\.(jpg|jpeg|png|webp)$/i', $clean_url);
+
+            $patch_order = array(
+                'updated_at' => current_time('mysql', 1)
+            );
+            $needs_update = false;
+
+            if ($is_image && !in_array($clean_url, $existing_invoices, true)) {
+                $existing_invoices[] = $clean_url;
+                $patch_order['invoice_attachment_urls'] = $existing_invoices;
+                $needs_update = true;
+            }
+
             if (!in_array($clean_url, $existing_pdfs, true)) {
                 $existing_pdfs[] = $clean_url;
-                $patch_order = array(
-                    'pdf_urls'   => $existing_pdfs,
-                    'updated_at' => current_time('mysql', 1)
-                );
+                $patch_order['pdf_urls'] = $existing_pdfs;
+                $needs_update = true;
+            }
+
+            if ($needs_update) {
                 $this->request('make_orders?id=eq.' . $order_id, 'PATCH', $patch_order);
 
                 // Mirror to Supabase

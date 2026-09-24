@@ -15,29 +15,35 @@ if ($is_logged_in) {
     $user_roles = (array)$current_user->roles;
 
     $is_admin = current_user_can('administrator') || current_user_can('manage_options');
-    $is_designer = in_array('make_designer', $user_roles, true) || current_user_can('set_make_pricing');
-    $is_salesperson = in_array('make_salesperson', $user_roles, true) || (!$is_admin && !$is_designer);
+    $is_designer = in_array('make_designer', (array)$user_roles, true) || current_user_can('set_make_pricing');
+    $is_factory_manager = in_array('make_factory_manager', (array)$user_roles, true) || in_array('factory_manager', (array)$user_roles, true) || current_user_can('update_production_status');
+    $is_salesperson = in_array('make_salesperson', (array)$user_roles, true) || (!$is_admin && !$is_designer && !$is_factory_manager);
 
     $display_role = 'Salesperson';
     if ($is_admin) {
         $display_role = 'Administrator';
     } elseif ($is_designer) {
         $display_role = 'Furniture Designer';
+    } elseif ($is_factory_manager) {
+        $display_role = 'Factory Manager';
     }
 
     $user_payload = array(
-        'id'            => $current_user->ID,
-        'name'          => $current_user->display_name ?: $current_user->user_login,
-        'email'         => $current_user->user_email,
-        'roleName'      => $display_role,
-        'isAdmin'       => $is_admin,
-        'isDesigner'    => $is_designer,
-        'isSalesperson' => $is_salesperson,
-        'canApprove'    => current_user_can('approve_make_orders') || $is_admin,
-        'canCreate'     => current_user_can('create_make_orders') || $is_admin || $is_designer,
-        'canSetPricing' => current_user_can('set_make_pricing') || $is_admin || $is_designer,
-        'canEditCost'   => $is_admin || $is_designer || $is_salesperson,
-        'canEditSale'   => $is_admin || $is_designer,
+        'id'                  => $current_user->ID,
+        'name'                => $current_user->display_name ?: $current_user->user_login,
+        'email'               => $current_user->user_email,
+        'roleName'            => $display_role,
+        'isAdmin'             => $is_admin,
+        'isDesigner'          => $is_designer,
+        'isFactoryManager'    => $is_factory_manager,
+        'isSalesperson'       => $is_salesperson,
+        'canApprove'          => current_user_can('approve_make_orders') || $is_admin,
+        'canCreate'           => current_user_can('create_make_orders') || $is_admin || $is_designer,
+        'canSetPricing'       => current_user_can('set_make_pricing') || $is_admin || $is_designer,
+        'canViewCost'         => $is_admin || $is_designer,
+        'canEditCost'         => $is_admin || $is_designer,
+        'canEditSale'         => $is_admin || $is_designer,
+        'canUpdateProduction' => $is_factory_manager || $is_admin,
     );
 }
 

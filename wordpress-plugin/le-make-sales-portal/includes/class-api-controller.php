@@ -506,6 +506,12 @@ class LEMakeApiController {
                 if (!empty($o['current_stage_photo'])) {
                     $o['current_stage_photo'] = self::format_media_url($o['current_stage_photo']);
                 }
+                if (!empty($o['invoice_attachment_urls']) && is_array($o['invoice_attachment_urls'])) {
+                    $o['invoice_attachment_urls'] = array_map(array('LEMakeApiController', 'format_media_url'), $o['invoice_attachment_urls']);
+                }
+                if (!empty($o['pdf_urls']) && is_array($o['pdf_urls'])) {
+                    $o['pdf_urls'] = array_map(array('LEMakeApiController', 'format_media_url'), $o['pdf_urls']);
+                }
                 if (!empty($o['items']) && is_array($o['items'])) {
                     foreach ($o['items'] as &$it) {
                         if (!empty($it['technical_drawing_url'])) {
@@ -537,6 +543,12 @@ class LEMakeApiController {
 
         if (!empty($order['current_stage_photo'])) {
             $order['current_stage_photo'] = self::format_media_url($order['current_stage_photo']);
+        }
+        if (!empty($order['invoice_attachment_urls']) && is_array($order['invoice_attachment_urls'])) {
+            $order['invoice_attachment_urls'] = array_map(array('LEMakeApiController', 'format_media_url'), $order['invoice_attachment_urls']);
+        }
+        if (!empty($order['pdf_urls']) && is_array($order['pdf_urls'])) {
+            $order['pdf_urls'] = array_map(array('LEMakeApiController', 'format_media_url'), $order['pdf_urls']);
         }
         if (!empty($order['items']) && is_array($order['items'])) {
             foreach ($order['items'] as &$it) {
@@ -573,8 +585,8 @@ class LEMakeApiController {
         $params = $request->get_json_params();
         $current_user = wp_get_current_user();
 
-        if (empty($params['customer_name']) || empty($params['customer_phone'])) {
-            return new WP_REST_Response(array('error' => 'Customer name and phone number are required.'), 400);
+        if (empty($params['customer_name'])) {
+            return new WP_REST_Response(array('error' => 'Customer name is required.'), 400);
         }
 
         $reference_bill_no = sanitize_text_field($params['reference_bill_no'] ?? '');
@@ -620,7 +632,8 @@ class LEMakeApiController {
         }
         unset($it);
 
-        $req_date = $params['requested_delivery_date'] ?? null;
+        $nas_user_id = get_user_meta($current_user->ID, 'le_nas_user_id', true);
+        $salesman_id = !empty($nas_user_id) ? intval($nas_user_id) : null;
 
         $order_data = array(
             'reference_bill_no'       => $reference_bill_no,
@@ -632,11 +645,11 @@ class LEMakeApiController {
             'delivery_date'           => $target_date,
             'target_delivery_date'    => $target_date,
             'requested_delivery_date' => $req_date,
-            'salesman_id'             => $current_user->ID,
+            'salesman_id'             => $salesman_id,
             'salesperson_name'        => $current_user->display_name ?: $current_user->user_login,
-            'customer_name'           => $params['customer_name'],
-            'customer_phone'          => $params['customer_phone'],
-            'customer_email'          => $params['customer_email'] ?? '',
+            'customer_name'           => sanitize_text_field($params['customer_name'] ?? ''),
+            'customer_phone'          => !empty($params['customer_phone']) ? sanitize_text_field($params['customer_phone']) : null,
+            'customer_email'          => !empty($params['customer_email']) ? sanitize_email($params['customer_email']) : null,
             'shipping_address'        => $params['shipping_address'] ?? '',
             'location_landmark'       => $params['location_landmark'] ?? '',
             'receiver_name'           => $params['receiver_name'] ?? '',
@@ -645,6 +658,20 @@ class LEMakeApiController {
             'cost_price'              => $can_set_cost ? $total_cost : 0,
             'sale_price'              => $has_sale ? $total_sale : null
         );
+
+        $attachments = array();
+        if (!empty($params['invoice_attachments']) && is_array($params['invoice_attachments'])) {
+            $attachments = array_map('sanitize_text_field', $params['invoice_attachments']);
+        } elseif (!empty($params['invoice_attachment_urls']) && is_array($params['invoice_attachment_urls'])) {
+            $attachments = array_map('sanitize_text_field', $params['invoice_attachment_urls']);
+        } elseif (!empty($params['pdf_urls']) && is_array($params['pdf_urls'])) {
+            $attachments = array_map('sanitize_text_field', $params['pdf_urls']);
+        }
+
+        if (!empty($attachments)) {
+            $order_data['invoice_attachment_urls'] = $attachments;
+            $order_data['pdf_urls'] = $attachments;
+        }
 
         $client = LEMakeNasDbClient::get_instance();
         $res = $client->create_order($order_data, $params['items']);
@@ -824,15 +851,71 @@ class LEMakeApiController {
 
     public function upload_attachment(WP_REST_Request $request) {
         $files = $request->get_file_params();
-        if (empty($files['file'])) {
-            return new WP_REST_Response(array('error' => 'No file was uploaded.'), 400);
+        if (empty($files['file']) || !empty($files['file']['error'])) {
+            return new WP_REST_Response(array('error' => 'No file was uploaded or upload encountered an error.'), 400);
         }
 
         $file = $files['file'];
         $client = LEMakeNasDbClient::get_instance();
-        $filename = sanitize_file_name($file['name']);
-        $unique_name = time() . '_' . wp_generate_password(6, false) . '_' . $filename;
-        $mime_type = $file['type'] ?: 'application/octet-stream';
+
+        // 1. File size validation (Max 20MB)
+        $max_size = 20 * 1024 * 1024;
+        if (!empty($file['size']) && $file['size'] > $max_size) {
+            return new WP_REST_Response(array('error' => 'File size exceeds maximum allowed limit of 20MB.'), 400);
+        }
+
+        // 2. Extension validation against strict whitelist
+        $orig_name = sanitize_file_name($file['name'] ?? '');
+        $ext = strtolower(pathinfo($orig_name, PATHINFO_EXTENSION));
+        $allowed_exts = array('jpg', 'jpeg', 'png', 'webp', 'pdf');
+        if (!in_array($ext, $allowed_exts, true)) {
+            return new WP_REST_Response(array('error' => 'Unsupported file format. Allowed formats: JPG, PNG, WEBP, PDF.'), 400);
+        }
+
+        // Protect against double extensions or executable token injection
+        $lower_name = strtolower($file['name'] ?? '');
+        $blocked_tokens = array('.php', '.phtml', '.php3', '.php4', '.php5', '.phps', '.phar', '.inc', '.pl', '.py', '.cgi', '.asp', '.aspx', '.sh', '.bash', '.exe', '.bat', '.cmd', '.js', '.html', '.htm', '.svg');
+        foreach ($blocked_tokens as $token) {
+            if (strpos($lower_name, $token) !== false) {
+                return new WP_REST_Response(array('error' => 'Disallowed file name or extension.'), 400);
+            }
+        }
+
+        // 3. Magic bytes / Binary header validation
+        if (!file_exists($file['tmp_name']) || !is_readable($file['tmp_name'])) {
+            return new WP_REST_Response(array('error' => 'Uploaded temporary file is inaccessible.'), 400);
+        }
+
+        $handle = @fopen($file['tmp_name'], 'rb');
+        if (!$handle) {
+            return new WP_REST_Response(array('error' => 'Unable to verify uploaded file contents.'), 400);
+        }
+        $header = fread($handle, 16);
+        fclose($handle);
+
+        $is_valid_magic = false;
+        $mime_type = 'application/octet-stream';
+
+        if (in_array($ext, array('jpg', 'jpeg'), true) && strpos($header, "\xFF\xD8\xFF") === 0) {
+            $is_valid_magic = true;
+            $mime_type = 'image/jpeg';
+        } elseif ($ext === 'png' && strpos($header, "\x89PNG\r\n\x1a\n") === 0) {
+            $is_valid_magic = true;
+            $mime_type = 'image/png';
+        } elseif ($ext === 'webp' && substr($header, 0, 4) === 'RIFF' && substr($header, 8, 4) === 'WEBP') {
+            $is_valid_magic = true;
+            $mime_type = 'image/webp';
+        } elseif ($ext === 'pdf' && strpos($header, '%PDF-') === 0) {
+            $is_valid_magic = true;
+            $mime_type = 'application/pdf';
+        }
+
+        if (!$is_valid_magic) {
+            return new WP_REST_Response(array('error' => 'File content signature does not match the file extension.'), 400);
+        }
+
+        $clean_stem = sanitize_file_name(pathinfo($orig_name, PATHINFO_FILENAME));
+        $unique_name = time() . '_' . wp_generate_password(8, false) . '_' . ($clean_stem ?: 'attachment') . '.' . $ext;
         $file_content = file_get_contents($file['tmp_name']);
 
         // Case A: If TrueNAS is online, stream to TrueNAS Storage
@@ -846,14 +929,22 @@ class LEMakeApiController {
             $body .= $file_content . "\r\n";
             $body .= "--{$boundary}--\r\n";
 
+            $headers = array(
+                'Content-Type' => 'multipart/form-data; boundary=' . $boundary,
+            );
+            $cf_id = $client->get_cf_id();
+            $cf_secret = $client->get_cf_secret();
+            if (!empty($cf_id)) {
+                $headers['CF-Access-Client-Id'] = $cf_id;
+            }
+            if (!empty($cf_secret)) {
+                $headers['CF-Access-Client-Secret'] = $cf_secret;
+            }
+
             $res = wp_remote_post(rtrim($nas_storage, '/') . '/upload', array(
                 'method'    => 'POST',
                 'timeout'   => 30,
-                'headers'   => array(
-                    'Content-Type'             => 'multipart/form-data; boundary=' . $boundary,
-                    'CF-Access-Client-Id'     => LEMakeNasDbClient::DEFAULT_CF_CLIENT_ID,
-                    'CF-Access-Client-Secret' => LEMakeNasDbClient::DEFAULT_CF_CLIENT_SECRET
-                ),
+                'headers'   => $headers,
                 'body'      => $body,
                 'sslverify' => false
             ));
@@ -975,7 +1066,7 @@ class LEMakeApiController {
             'Work in process',
             'Production On Going',
             'Primary QC',
-            'Color Ongoing',
+            'Color Ongoing (oven)',
             'QC Final',
             'Packaging',
             'Ready to Ship',
@@ -984,9 +1075,17 @@ class LEMakeApiController {
 
         $client = LEMakeNasDbClient::get_instance();
 
+        // Normalize stage and current status for oven variant compatibility
+        if ($stage === 'Color Ongoing') {
+            $stage = 'Color Ongoing (oven)';
+        }
+
         // Sequential stage verification
         $order_res = $client->request('make_orders?id=eq.' . $order_id . '&select=id,status', 'GET');
         $current_status = (!is_wp_error($order_res) && !empty($order_res)) ? ($order_res[0]['status'] ?? '') : '';
+        if ($current_status === 'Color Ongoing') {
+            $current_status = 'Color Ongoing (oven)';
+        }
 
         $current_idx = array_search($current_status, $production_stages, true);
         $target_idx = array_search($stage, $production_stages, true);
@@ -1146,6 +1245,13 @@ class LEMakeApiController {
 
         $file_name = basename($clean_file_path);
 
+        // Prevent path traversal
+        if (strpos($clean_file_path, '..') !== false || strpos($subpath, '..') !== false) {
+            status_header(400);
+            echo 'Invalid file path';
+            exit;
+        }
+
         $client = LEMakeNasDbClient::get_instance();
         $body = null;
         $content_type = null;
@@ -1155,8 +1261,8 @@ class LEMakeApiController {
             $nas_storage = get_option('le_make_nas_storage_url', LEMakeNasDbClient::DEFAULT_TUNNEL_STORAGE);
             $target_nas_url = rtrim($nas_storage, '/') . '/files/' . $subpath;
 
-            $cf_id = get_option('le_make_cf_client_id', LEMakeNasDbClient::DEFAULT_CF_CLIENT_ID);
-            $cf_secret = get_option('le_make_cf_client_secret', LEMakeNasDbClient::DEFAULT_CF_CLIENT_SECRET);
+            $cf_id = $client->get_cf_id();
+            $cf_secret = $client->get_cf_secret();
             $headers = array();
             if (!empty($cf_id)) $headers['CF-Access-Client-Id'] = trim($cf_id);
             if (!empty($cf_secret)) $headers['CF-Access-Client-Secret'] = trim($cf_secret);
