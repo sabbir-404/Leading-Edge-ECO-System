@@ -38,7 +38,7 @@ const SetupScreen: React.FC = () => {
             // Supabase URL and anon key from the encrypted blobs in the app binary.
             // The user never needs to enter the project URL or anon key manually.
             // @ts-ignore
-            const licRes = await window.electron.activateLicense(licenseKey.trim());
+            const licRes = await window.electron.activateLicense(licenseKey.replace(/\s+/g, ''));
             if (!licRes?.success) {
                 throw new Error(licRes?.error || 'Invalid License Key or activation failed');
             }

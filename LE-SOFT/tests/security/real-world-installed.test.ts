@@ -25,7 +25,7 @@ const {
     resolveGenerationSecret
 } = require('../../tools/generate-license.cjs');
 
-describe('LESOFT v1.8.2 Real-World Clean-Install & Production Validation', () => {
+describe('LESOFT v1.8.3 Real-World Clean-Install & Production Validation', () => {
     let originalEnv: NodeJS.ProcessEnv;
     let cleanUserData: string;
     let existingUserData: string;
@@ -33,7 +33,9 @@ describe('LESOFT v1.8.2 Real-World Clean-Install & Production Validation', () =>
     let canonicalGenSecret: string;
 
     const realAppData = process.env.APPDATA || 'C:\\Users\\sabbi\\AppData\\Roaming';
-    const installerPath = path.join(__dirname, '../../release/LESOFT Setup 1.8.2.exe');
+    const installerPath = fs.existsSync(path.join(__dirname, '../../release/LESOFT Setup 1.8.3.exe'))
+        ? path.join(__dirname, '../../release/LESOFT Setup 1.8.3.exe')
+        : path.join(__dirname, '../../release/LESOFT Setup 1.8.2.exe');
     const exePath = path.join(__dirname, '../../scratch/installed-app/LESOFT.exe');
 
     beforeAll(() => {

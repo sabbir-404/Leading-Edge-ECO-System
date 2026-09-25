@@ -424,8 +424,9 @@ async function main() {
         console.log('╚════════════════════════════════════════════════════════════════════╝\n');
         console.log(`  Machine ID:   ${machineId}`);
         console.log(`  Algorithm:    Ed25519 (Asymmetric Signature)`);
-        console.log(`  License Key:  ${key}\n`);
-        console.log('Send this key to the customer.');
+        console.log(`  License Key:\n\n${key}\n`);
+        console.log('──────────────────────────────────────────────────────────────────────');
+        console.log('Send the exact license string above to the customer.');
         console.log('It is cryptographically bound to this Machine ID and verifiable offline.\n');
     } catch (err) {
         console.error(`\n❌ Error: ${err.message}\n`);

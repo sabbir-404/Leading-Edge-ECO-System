@@ -4439,11 +4439,15 @@ export function registerHandlers() {
     ipcMain.handle('get-machine-id', async () => licenseManager.getMachineId());
     ipcMain.handle('check-license', async () => licenseManager.isLicensed());
     ipcMain.handle('activate-license', async (_e, key: string) => {
-        if (!key || typeof key !== 'string' || key.trim().length < 10)
+        if (!key || typeof key !== 'string')
+            return { success: false, error: 'Invalid license key format' };
+
+        const cleanKey = key.replace(/\s+/g, '');
+        if (cleanKey.length < 10)
             return { success: false, error: 'Invalid license key format' };
 
         // Step 1: Validate the license key against this machine's hardware ID
-        const result = licenseManager.saveLicense(key.trim());
+        const result = licenseManager.saveLicense(cleanKey);
         if (!result.success) return result;
 
         // Step 2: On successful activation, bootstrap public Supabase client

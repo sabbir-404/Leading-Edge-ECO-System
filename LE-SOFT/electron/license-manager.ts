@@ -50,7 +50,7 @@ export interface LicenseValidationResult {
 }
 
 function getLicenseFilePath(): string {
-    const userDataPath = app.getPath('userData');
+    const userDataPath = app?.getPath ? app.getPath('userData') : path.join(process.env.APPDATA || process.cwd(), 'le-soft');
     return path.join(userDataPath, 'license.json');
 }
 
@@ -118,7 +118,7 @@ export function verifyLicense(
         return { valid: false, error: 'Missing machine ID or license key' };
     }
 
-    const trimmed = licenseKey.trim();
+    const trimmed = licenseKey.replace(/\s+/g, '');
 
     // ── V2 Asymmetric Signature Path ──
     if (trimmed.startsWith('LE2.')) {
@@ -244,7 +244,7 @@ export function isLicensed(): { valid: boolean; machineId: string; key?: string;
  */
 export function saveLicense(key: string): { success: boolean; error?: string } {
     const machineId = getMachineId();
-    const trimmed = key.trim();
+    const trimmed = key ? key.replace(/\s+/g, '') : '';
 
     const verification = verifyLicense(machineId, trimmed);
     if (!verification.valid) {
@@ -253,16 +253,17 @@ export function saveLicense(key: string): { success: boolean; error?: string } {
 
     try {
         const licensePath = getLicenseFilePath();
+        fs.mkdirSync(path.dirname(licensePath), { recursive: true });
         const data = {
             version: 2,
             machineId,
             key: trimmed,
             activatedAt: new Date().toISOString(),
-            appVersion: app.getVersion(),
+            appVersion: app?.getVersion ? app.getVersion() : '1.8.3',
         };
         fs.writeFileSync(licensePath, JSON.stringify(data, null, 2), 'utf-8');
         return { success: true };
     } catch (e: any) {
-        return { success: false, error: 'Failed to save license file' };
+        return { success: false, error: 'Failed to save license file: ' + (e?.message || e) };
     }
 }

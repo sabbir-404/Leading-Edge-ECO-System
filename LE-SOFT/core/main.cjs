@@ -22402,7 +22402,7 @@ var init_secure_storage = __esm({
 
 // electron/license-manager.ts
 function getLicenseFilePath() {
-  const userDataPath = import_electron2.app.getPath("userData");
+  const userDataPath = import_electron2.app?.getPath ? import_electron2.app.getPath("userData") : import_path2.default.join(process.env.APPDATA || process.cwd(), "le-soft");
   return import_path2.default.join(userDataPath, "license.json");
 }
 function getMachineId() {
@@ -22435,7 +22435,7 @@ function verifyLicense(machineId, licenseKey, options) {
   if (!machineId || !licenseKey || typeof licenseKey !== "string") {
     return { valid: false, error: "Missing machine ID or license key" };
   }
-  const trimmed = licenseKey.trim();
+  const trimmed = licenseKey.replace(/\s+/g, "");
   if (trimmed.startsWith("LE2.")) {
     const parts = trimmed.split(".");
     if (parts.length !== 3 || parts[0] !== "LE2" || !parts[1] || !parts[2]) {
@@ -22515,24 +22515,25 @@ function isLicensed() {
 }
 function saveLicense(key) {
   const machineId = getMachineId();
-  const trimmed = key.trim();
+  const trimmed = key ? key.replace(/\s+/g, "") : "";
   const verification = verifyLicense(machineId, trimmed);
   if (!verification.valid) {
     return { success: false, error: verification.error || "Invalid license key for this machine" };
   }
   try {
     const licensePath = getLicenseFilePath();
+    import_fs2.default.mkdirSync(import_path2.default.dirname(licensePath), { recursive: true });
     const data2 = {
       version: 2,
       machineId,
       key: trimmed,
       activatedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      appVersion: import_electron2.app.getVersion()
+      appVersion: import_electron2.app?.getVersion ? import_electron2.app.getVersion() : "1.8.3"
     };
     import_fs2.default.writeFileSync(licensePath, JSON.stringify(data2, null, 2), "utf-8");
     return { success: true };
   } catch (e2) {
-    return { success: false, error: "Failed to save license file" };
+    return { success: false, error: "Failed to save license file: " + (e2?.message || e2) };
   }
 }
 var import_crypto2, import_os, import_fs2, import_path2, import_electron2, LICENSE_VERIFICATION_PUBLIC_KEY, VERIFICATION_SALT, MACHINE_ID_SALT;
@@ -131238,9 +131239,12 @@ function registerHandlers() {
   import_electron14.ipcMain.handle("get-machine-id", async () => getMachineId());
   import_electron14.ipcMain.handle("check-license", async () => isLicensed());
   import_electron14.ipcMain.handle("activate-license", async (_e, key) => {
-    if (!key || typeof key !== "string" || key.trim().length < 10)
+    if (!key || typeof key !== "string")
       return { success: false, error: "Invalid license key format" };
-    const result = saveLicense(key.trim());
+    const cleanKey = key.replace(/\s+/g, "");
+    if (cleanKey.length < 10)
+      return { success: false, error: "Invalid license key format" };
+    const result = saveLicense(cleanKey);
     if (!result.success) return result;
     const credResult = bootstrapPublicClientConfig();
     if (!credResult) {

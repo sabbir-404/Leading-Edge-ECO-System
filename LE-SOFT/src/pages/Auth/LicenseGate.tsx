@@ -52,7 +52,7 @@ const LicenseGate: React.FC<{ onActivated: () => void }> = ({ onActivated }) => 
                 return;
             }
             // @ts-ignore
-            const result = await window.electron.activateLicense(licenseKey.trim());
+            const result = await window.electron.activateLicense(licenseKey.replace(/\s+/g, ''));
             if (result?.success) {
                 setStatus('success');
                 setTimeout(() => onActivated(), 1500);
@@ -171,9 +171,9 @@ const LicenseGate: React.FC<{ onActivated: () => void }> = ({ onActivated }) => 
                     <input
                         type="text"
                         value={licenseKey}
-                        onChange={e => setLicenseKey(e.target.value.toUpperCase())}
+                        onChange={e => setLicenseKey(e.target.value.replace(/\s+/g, ''))}
                         onKeyDown={e => e.key === 'Enter' && handleActivate()}
-                        placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX"
+                        placeholder="LE2.eyJ2IjoyLCJtaWQiOi..."
                         style={{
                             width: '100%',
                             padding: '14px 16px',
