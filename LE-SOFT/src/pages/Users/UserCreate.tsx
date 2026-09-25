@@ -23,10 +23,9 @@ const UserCreate: React.FC = () => {
     const [error, setError] = useState('');
 
     const userRole = localStorage.getItem('user_role') || '';
-    const userName = (localStorage.getItem('user_name') || '').toLowerCase();
     let perms: any = {};
     try { perms = JSON.parse(localStorage.getItem('user_permissions') || '{}'); } catch {}
-    const isSuperAdmin = userRole.toLowerCase() === 'superadmin' || userName.includes('sabbirsuperadmin');
+    const isSuperAdmin = userRole.toLowerCase() === 'superadmin';
     const canCreateUser = isSuperAdmin || userRole === 'admin' || perms.can_create_user;
 
     useEffect(() => {

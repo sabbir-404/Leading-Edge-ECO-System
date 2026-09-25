@@ -13,8 +13,7 @@
 import { BrowserWindow, dialog, app, shell } from 'electron';
 import fs from 'fs';
 import path from 'path';
-import crypto from 'crypto';
-import { supabase } from '../../supabase';
+import { supabase, getCfAccessHeaders } from '../../supabase';
 
 export interface FileValidationResult {
     isValid: boolean;
@@ -61,17 +60,7 @@ export class MakeCadService {
      * Resolves Cloudflare Access Service Token Headers
      */
     private static getCfAccessHeaders(): Record<string, string> {
-        try {
-            const configPath = path.join(app.getPath('userData'), 'supabase-config.json');
-            if (fs.existsSync(configPath)) {
-                const cfg = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-                const headers: Record<string, string> = {};
-                if (cfg.cfAccessClientId) headers['CF-Access-Client-Id'] = cfg.cfAccessClientId;
-                if (cfg.cfAccessClientSecret) headers['CF-Access-Client-Secret'] = cfg.cfAccessClientSecret;
-                return headers;
-            }
-        } catch { }
-        return {};
+        return getCfAccessHeaders();
     }
 
     /**

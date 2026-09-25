@@ -21,8 +21,7 @@ export const isSuperadmin = (): boolean => {
     const u = getUser();
     const roleFromUser = (u.role || '').toLowerCase();
     const roleFromStorage = (localStorage.getItem('user_role') || '').toLowerCase();
-    const username = (u.username || localStorage.getItem('user_name') || '').toLowerCase();
-    return roleFromUser === 'superadmin' || roleFromStorage === 'superadmin' || username.includes('sabbirsuperadmin');
+    return roleFromUser === 'superadmin' || roleFromStorage === 'superadmin';
 };
 
 export const hasPerm = (key: string): boolean => {

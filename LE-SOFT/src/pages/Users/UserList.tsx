@@ -19,10 +19,9 @@ const UserList: React.FC = () => {
     const [usernameChecking, setUsernameChecking] = useState(false);
 
     const userRole = localStorage.getItem('user_role') || '';
-    const userName = (localStorage.getItem('user_name') || '').toLowerCase();
     let perms: any = {};
     try { perms = JSON.parse(localStorage.getItem('user_permissions') || '{}'); } catch {}
-    const isSuperAdmin = userRole.toLowerCase() === 'superadmin' || userName.includes('sabbirsuperadmin');
+    const isSuperAdmin = userRole.toLowerCase() === 'superadmin';
     const canCreateUser = isSuperAdmin || userRole === 'admin' || perms.can_create_user;
     const canEditUser = isSuperAdmin || userRole === 'admin' || perms.can_edit_user;
     const canDeleteUser = isSuperAdmin || userRole === 'admin' || perms.can_delete_user;

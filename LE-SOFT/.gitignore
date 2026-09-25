@@ -36,3 +36,14 @@ resource/assets/.manuscript-profile/
 .user-guide-light-profile/
 scratch/
 trivy-report.json
+
+# Local customer data / configuration / developer secrets
+license.json
+supabase-config.json
+.session.vault
+*.pem
+*.dpapi
+*.key
+.env
+.env.*
+!.env.example

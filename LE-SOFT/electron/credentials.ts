@@ -32,3 +32,13 @@
 // Regenerate with: node tools/encrypt-credentials.cjs
 export const ENCRYPTED_URL      = 'MfOND3IzV1VKJRtFlLbBkYsbXXqWK7uuDIdzU8/bKKmh3RHbTSPLD2EYNBeEDRURUJbwGcrAqomXCkNWbzpECDBgC9Y=';
 export const ENCRYPTED_ANON_KEY = '+Gw67afv/kPm9+BoZgDkz3diFGjvpJFe0pmPbF81/xrlU3N8q8emCb1C4sI92YjM0SNFGwUIoxpcjbmB2H+wKhHljR9fjW6zmIJhEOpQwK3yfErSdvdk3241oje3XiUaBbyi/90i7Uj9pV2SUJhDXBTvunyr0djjTlrmYwtpWlS9ocf4KuwOBg+LpmRznhfmObG1/VszM5p2Pkgx9LXk0Q9zZNa7N5/AR2zIt3MUInhSTo9hQO9zkarpjDKnVM/pz760yaaRizQ9aGQgcZl2HOo1LqPgnjeLI1iuFRlfCn3cwEDpuLddsFDt8Wc=';
+
+/**
+ * Canonical Public Client Configuration for Supabase.
+ * - These are non-secret public parameters (the anon key is designed for public client use,
+ *   protected by Supabase Row-Level Security policies).
+ * - Enables fresh customer installations to initialize without developer secrets.
+ * - Privileged secrets (service_role, Cloudflare secret) are NEVER stored here.
+ */
+export const PUBLIC_SUPABASE_URL = 'https://ildkkgjrolcjijwfokek.supabase.co';
+export const PUBLIC_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlsZGtrZ2pyb2xjamlqd2Zva2VrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE5MzMzMjQsImV4cCI6MjA4NzUwOTMyNH0.Bn6c-87BOumPXyH5F469P04fQSMnI9SjNDZAwgGyTsM';

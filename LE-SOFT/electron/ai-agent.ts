@@ -4,13 +4,16 @@ import fs from 'fs';
 import path from 'path';
 import { app } from 'electron';
 
+import { decryptStandardSecret } from './secure-storage';
+
 // Read the Gemini API key from the local config
 function getGeminiToken(): string | null {
     try {
         const cfgPath = path.join(app.getPath('userData'), 'supabase-config.json');
         if (fs.existsSync(cfgPath)) {
             const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
-            return cfg.geminiKey || null;
+            if (!cfg.geminiKey) return null;
+            return cfg.geminiKey.startsWith('enc:v1:') ? decryptStandardSecret(cfg.geminiKey) : cfg.geminiKey;
         }
     } catch (err) {
         console.error('[AI-Agent] Error reading config for Gemini Key:', err);

@@ -17,7 +17,7 @@ try {
     console.warn('[IPC] sharp native module not loaded:', err);
 }
 
-import supabase, { supabaseAdmin, nasClient, isNasOnline, decryptEmbeddedCredentials, reinitSupabaseClients, getNasStorageUrl, getCfAccessHeaders } from './supabase';
+import supabase, { supabaseAdmin, nasClient, isNasOnline, decryptEmbeddedCredentials, bootstrapPublicClientConfig, reinitSupabaseClients, getNasStorageUrl, getCfAccessHeaders, loadConfig, saveSupabaseConfig } from './supabase';
 import mysql from 'mysql2/promise';
 import * as licenseManager from './license-manager';
 import { getConnectedDevices, setBackupNode, DEVICE_ID } from './device-monitor';
@@ -25,10 +25,11 @@ import { encryptObject, encryptField, decryptRows, decryptObject, decryptField }
 import { enqueue, getQueueStats } from './write-queue';
 import * as cache from './cache-manager';
 import { saveSession, loadSession, clearSession } from './session-vault';
+import { encryptStandardSecret, decryptStandardSecret } from './secure-storage';
 import { autoUpdater } from 'electron-updater';
 import { LocalEntityCache } from './local-cache';
 import { BackgroundSyncEngine } from './sync-engine';
-import { SessionManager } from './session-manager';
+import { SessionManager, UserSession } from './session-manager';
 import { registerMakeHandlers } from './ipc/handlers/make';
 
 const BCRYPT_ROUNDS = 12;
@@ -421,6 +422,35 @@ export function registerHandlers() {
     // Register Fortified MAKE Module Handlers
     registerMakeHandlers();
 
+    /**
+     * Resolves the active authenticated session strictly from the Electron Main Process.
+     * Throws an error if no active session is present.
+     */
+    function requireSession(): UserSession {
+        const session = SessionManager.getSession();
+        if (!session) {
+            throw new Error('Unauthorized: Authentication required');
+        }
+        return session;
+    }
+
+    /**
+     * Verifies if the active session user has the superadmin role.
+     */
+    function isSessionSuperadmin(session?: UserSession | null): boolean {
+        const s = session !== undefined ? session : SessionManager.getSession();
+        return (s?.role || '').toLowerCase() === 'superadmin';
+    }
+
+    /**
+     * Verifies if the active session user is admin or superadmin.
+     */
+    function isSessionAdminOrSuper(session?: UserSession | null): boolean {
+        const s = session !== undefined ? session : SessionManager.getSession();
+        const r = (s?.role || '').toLowerCase();
+        return r === 'superadmin' || r === 'admin';
+    }
+
     // ═══ DATABASE HEALTH ═════════════════════════════════════════════════════
     ipcMain.handle('ping-supabase', async () => {
         try {
@@ -457,12 +487,17 @@ export function registerHandlers() {
     });
 
     // ═══ CHAT & PRESENCE ═════════════════════════════════════════════════════
-    ipcMain.handle('update-user-presence', async (_e, userId: number) => {
-        userPresence.set(userId, Date.now());
+    ipcMain.handle('update-user-presence', async (_e, userId?: number) => {
+        const session = requireSession();
+        const uid = Number(session.id) || Number(userId);
+        if (uid) {
+            userPresence.set(uid, Date.now());
+        }
         return { success: true };
     });
 
     ipcMain.handle('get-online-users', async () => {
+        requireSession();
         const now = Date.now();
         const onlineIds: number[] = [];
         for (const [uid, lastSeen] of userPresence.entries()) {
@@ -472,19 +507,24 @@ export function registerHandlers() {
         return onlineIds;
     });
 
-    ipcMain.handle('set-typing-status', async (_e, { senderId, receiverId, isTyping }) => {
+    ipcMain.handle('set-typing-status', async (_e, payload: any = {}) => {
+        const session = requireSession();
+        const senderId = Number(session.id);
+        const receiverId = Number(payload.receiverId);
+        const isTyping = !!payload.isTyping;
         const key = `${senderId}->${receiverId}`;
         if (isTyping) userTyping.set(key, Date.now());
         else userTyping.delete(key);
         return { success: true };
     });
 
-    ipcMain.handle('get-typing-status', async (_e, { receiverId }) => {
+    ipcMain.handle('get-typing-status', async (_e, { receiverId }: any = {}) => {
+        requireSession();
         const now = Date.now();
         const typingIds: number[] = [];
         for (const [key, lastTyping] of userTyping.entries()) {
             const [sId, rId] = key.split('->').map(Number);
-            if (rId === receiverId) {
+            if (rId === Number(receiverId)) {
                 if (now - lastTyping < 4000) typingIds.push(sId);
                 else userTyping.delete(key);
             }
@@ -492,17 +532,23 @@ export function registerHandlers() {
         return typingIds;
     });
 
-    ipcMain.handle('get-chat-messages', async (_e, { senderId, receiverId }) => {
+    ipcMain.handle('get-chat-messages', async (_e, { senderId, receiverId }: any = {}) => {
+        const session = requireSession();
+        const uid = Number(session.id);
+        const otherId = Number(senderId) === uid ? Number(receiverId) : Number(senderId);
         const { data, error } = await supabase.from('internal_messages')
             .select('*')
-            .or(`and(sender_id.eq.${senderId},receiver_id.eq.${receiverId}),and(sender_id.eq.${receiverId},receiver_id.eq.${senderId})`)
+            .or(`and(sender_id.eq.${uid},receiver_id.eq.${otherId}),and(sender_id.eq.${otherId},receiver_id.eq.${uid})`)
             .order('created_at', { ascending: true });
         if (error) throw error;
         return decryptRows(data || []);
     });
 
-    ipcMain.handle('send-chat-message', async (_e, msg) => {
-        const { senderId, receiverId, messageType, content, fileName } = msg;
+    ipcMain.handle('send-chat-message', async (_e, msg: any = {}) => {
+        const session = requireSession();
+        const senderId = Number(session.id);
+        const receiverId = Number(msg.receiverId);
+        const { messageType, content, fileName } = msg;
 
         // Encrypt message content if it's not a file path (though file paths could be encrypted too)
         const encrypted = encryptObject({ content, file_name: fileName || null });
@@ -519,7 +565,7 @@ export function registerHandlers() {
         // Autogenerate a system notification so the recipient gets alerted immediately
         await supabase.from('notifications').insert({
             title: 'New Chat Message',
-            message: messageType === 'text' ? (content.substring(0, 50) + (content.length > 50 ? '...' : '')) : 'Sent you an attachment',
+            message: messageType === 'text' ? (String(content || '').substring(0, 50) + (String(content || '').length > 50 ? '...' : '')) : 'Sent you an attachment',
             sender_id: senderId,
             recipient_id: receiverId,
             action_path: '/email',
@@ -531,41 +577,58 @@ export function registerHandlers() {
     });
 
     // ═══ INTERNAL EMAIL SYSTEM ═══════════════════════════════════════════════
-    ipcMain.handle('email-get-inbox', async (_e, userId: number) => {
-        const uid = Number(userId) || 0;
+    ipcMain.handle('email-get-inbox', async (_e, userId?: number) => {
+        const session = requireSession();
+        const uid = isSessionAdminOrSuper(session) && userId ? Number(userId) : Number(session.id);
         if (!uid) return [];
         const { data, error } = await supabase.from('system_emails').select('*, sender:sender_id(full_name, email)').eq('receiver_id', uid).eq('is_deleted_by_receiver', false).order('created_at', { ascending: false });
         if (error) throw error;
         return decryptRows(data || []);
     });
 
-    ipcMain.handle('email-get-sent', async (_e, userId: number) => {
-        const uid = Number(userId) || 0;
+    ipcMain.handle('email-get-sent', async (_e, userId?: number) => {
+        const session = requireSession();
+        const uid = isSessionAdminOrSuper(session) && userId ? Number(userId) : Number(session.id);
         if (!uid) return [];
         const { data, error } = await supabase.from('system_emails').select('*, receiver:receiver_id(full_name, email)').eq('sender_id', uid).eq('is_deleted_by_sender', false).order('created_at', { ascending: false });
         if (error) throw error;
         return decryptRows(data || []);
     });
 
-    ipcMain.handle('email-send', async (_e, emailPayload) => {
-        const { senderId, receiverId, subject, body } = emailPayload;
+    ipcMain.handle('email-send', async (_e, emailPayload: any = {}) => {
+        const session = requireSession();
+        const senderId = Number(session.id);
+        const { receiverId, subject, body } = emailPayload;
         if (!receiverId) return { success: false, error: 'Recipient is required' };
         const { error } = await supabase.from('system_emails').insert({
-            sender_id: senderId, receiver_id: receiverId, subject: subject || '(No Subject)', body: body || ''
+            sender_id: senderId, receiver_id: Number(receiverId), subject: subject || '(No Subject)', body: body || ''
         });
         if (error) throw error;
         return { success: true };
     });
 
     ipcMain.handle('email-mark-read', async (_e, emailId: number) => {
-        const { error } = await supabase.from('system_emails').update({ is_read: true }).eq('id', emailId);
+        const session = requireSession();
+        const uid = Number(session.id);
+        let query = supabase.from('system_emails').update({ is_read: true }).eq('id', emailId);
+        if (!isSessionAdminOrSuper(session)) {
+            query = query.eq('receiver_id', uid);
+        }
+        const { error } = await query;
         if (error) throw error;
         return { success: true };
     });
 
     ipcMain.handle('email-delete', async (_e, { emailId, folder }: { emailId: number, folder: 'inbox' | 'sent' }) => {
+        const session = requireSession();
+        const uid = Number(session.id);
         const field = folder === 'inbox' ? 'is_deleted_by_receiver' : 'is_deleted_by_sender';
-        const { error } = await supabase.from('system_emails').update({ [field]: true }).eq('id', emailId);
+        const userField = folder === 'inbox' ? 'receiver_id' : 'sender_id';
+        let query = supabase.from('system_emails').update({ [field]: true }).eq('id', emailId);
+        if (!isSessionAdminOrSuper(session)) {
+            query = query.eq(userField, uid);
+        }
+        const { error } = await query;
         if (error) throw error;
         return { success: true };
     });
@@ -581,6 +644,10 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('create-group', async (_e, group) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
         const { name, parent, nature } = group;
         let parentId: number | null = null;
         if (parent && parent !== 'Primary') {
@@ -589,10 +656,22 @@ export function registerHandlers() {
         }
         const { data, error } = await supabase.from('groups').insert({ name, parent_group_id: parentId, nature: nature || null, company_id: 1 }).select('id').single();
         if (error) throw error;
+        await writeAuditLog({
+            module: 'Accounts',
+            action: 'CREATE',
+            entity_type: 'group',
+            entity_id: data.id,
+            description: `Created accounting group "${name}"`,
+            performed_by: session.fullName || session.username,
+        });
         return { success: true, id: data.id };
     });
 
     ipcMain.handle('update-group', async (_e, id: number, group: any) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
         const { name, parent, nature } = group;
         let parentId: number | null = null;
         if (parent && parent !== 'Primary') {
@@ -608,12 +687,32 @@ export function registerHandlers() {
             nature: parent === 'Primary' ? nature : null
         }).eq('id', id);
         if (error) throw error;
+        await writeAuditLog({
+            module: 'Accounts',
+            action: 'UPDATE',
+            entity_type: 'group',
+            entity_id: id,
+            description: `Updated accounting group "${name}" (#${id})`,
+            performed_by: session.fullName || session.username,
+        });
         return { success: true };
     });
 
     ipcMain.handle('delete-group', async (_e, id: number) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
         const { error } = await supabase.from('groups').delete().eq('id', id);
         if (error) throw error;
+        await writeAuditLog({
+            module: 'Accounts',
+            action: 'DELETE',
+            entity_type: 'group',
+            entity_id: id,
+            description: `Deleted accounting group #${id}`,
+            performed_by: session.fullName || session.username,
+        });
         return { success: true };
     });
 
@@ -626,6 +725,10 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('create-ledger', async (_e, ledger) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
         const { name, group, openingBalance, type, mailingName, address, gstin, contactPerson, contactNumber, email, notes, paymentStatus, storeName, paymentMethod } = ledger;
         const { data: grp } = await supabase.from('groups').select('id').eq('name', group).maybeSingle();
         const { data, error } = await supabase.from('ledgers').insert({
@@ -646,12 +749,32 @@ export function registerHandlers() {
             company_id: 1,
         }).select('id').single();
         if (error) throw error;
+        await writeAuditLog({
+            module: 'Accounts',
+            action: 'CREATE',
+            entity_type: 'ledger',
+            entity_id: data.id,
+            description: `Created ledger "${name}"`,
+            performed_by: session.fullName || session.username,
+        });
         return { success: true, id: data.id };
     });
 
     ipcMain.handle('delete-ledger', async (_e, id: number) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
         const { error } = await supabase.from('ledgers').delete().eq('id', id);
         if (error) throw error;
+        await writeAuditLog({
+            module: 'Accounts',
+            action: 'DELETE',
+            entity_type: 'ledger',
+            entity_id: id,
+            description: `Deleted ledger #${id}`,
+            performed_by: session.fullName || session.username,
+        });
         return { success: true };
     });
 
@@ -664,24 +787,48 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('create-voucher', async (_e, voucher) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
         const { voucherType, voucherDate, narration, rows } = voucher;
         const { data: maxRow } = await supabase.from('vouchers').select('voucher_number').eq('voucher_type', voucherType).order('id', { ascending: false }).limit(1).maybeSingle();
         const voucherNumber = String((parseInt(maxRow?.voucher_number || '0') || 0) + 1);
-        const totalAmount = rows.reduce((s: number, r: any) => s + (Number(r.debit) || 0), 0);
+        const totalAmount = (rows || []).reduce((s: number, r: any) => s + (Number(r.debit) || 0), 0);
         const { data: vData, error: vErr } = await supabase.from('vouchers').insert({ voucher_type: voucherType, voucher_number: voucherNumber, date: voucherDate, narration, total_amount: totalAmount, company_id: 1 }).select('id').single();
         if (vErr) throw vErr;
-        for (const row of rows) {
+        for (const row of (rows || [])) {
             const { data: lRow } = await supabase.from('ledgers').select('id').eq('name', row.particulars).maybeSingle();
             const amount = row.type === 'Dr' ? Number(row.debit) : Number(row.credit);
             await supabase.from('voucher_entries').insert({ voucher_id: vData.id, ledger_id: lRow?.id || null, amount, type: row.type });
         }
+        await writeAuditLog({
+            module: 'Accounts',
+            action: 'CREATE',
+            entity_type: 'voucher',
+            entity_id: vData.id,
+            description: `Created ${voucherType} voucher #${voucherNumber} (Total: ${totalAmount})`,
+            performed_by: session.fullName || session.username,
+        });
         return { success: true, id: vData.id, voucherNumber };
     });
 
     ipcMain.handle('delete-voucher', async (_e, id: number) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
         await supabase.from('voucher_entries').delete().eq('voucher_id', id);
         const { error } = await supabase.from('vouchers').delete().eq('id', id);
         if (error) throw error;
+        await writeAuditLog({
+            module: 'Accounts',
+            action: 'DELETE',
+            entity_type: 'voucher',
+            entity_id: id,
+            description: `Deleted voucher #${id}`,
+            performed_by: session.fullName || session.username,
+        });
         return { success: true };
     });
 
@@ -740,6 +887,10 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('create-voucher-type', async (_e, payload) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
         const { data, error } = await supabase.from('voucher_types').insert({
             name: payload.name,
             description: payload.description || '',
@@ -747,22 +898,54 @@ export function registerHandlers() {
             company_id: 1
         }).select('*').single();
         if (error) throw error;
+        await writeAuditLog({
+            module: 'Accounts',
+            action: 'CREATE',
+            entity_type: 'voucher_type',
+            entity_id: data.id,
+            description: `Created voucher type "${payload.name}"`,
+            performed_by: session.fullName || session.username,
+        });
         return { success: true, data };
     });
 
     ipcMain.handle('update-voucher-type', async (_e, id, payload) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
         const { data, error } = await supabase.from('voucher_types').update({
             name: payload.name,
             description: payload.description || '',
             is_active: payload.is_active !== false
         }).eq('id', id).select('*').single();
         if (error) throw error;
+        await writeAuditLog({
+            module: 'Accounts',
+            action: 'UPDATE',
+            entity_type: 'voucher_type',
+            entity_id: id,
+            description: `Updated voucher type "${payload.name}" (#${id})`,
+            performed_by: session.fullName || session.username,
+        });
         return { success: true, data };
     });
 
     ipcMain.handle('delete-voucher-type', async (_e, id: number) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
         const { error } = await supabase.from('voucher_types').delete().eq('id', id);
         if (error) throw error;
+        await writeAuditLog({
+            module: 'Accounts',
+            action: 'DELETE',
+            entity_type: 'voucher_type',
+            entity_id: id,
+            description: `Deleted voucher type #${id}`,
+            performed_by: session.fullName || session.username,
+        });
         return { success: true };
     });
 
@@ -775,14 +958,38 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('create-unit', async (_e, unit) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
         const { data, error } = await supabase.from('units').insert({ name: unit.name, symbol: unit.symbol, precision: unit.precision || 0, company_id: 1 }).select('id').single();
         if (error) throw error;
+        await writeAuditLog({
+            module: 'Inventory',
+            action: 'CREATE',
+            entity_type: 'unit',
+            entity_id: data.id,
+            description: `Created unit "${unit.name}" (${unit.symbol})`,
+            performed_by: session.fullName || session.username,
+        });
         return { success: true, id: data.id };
     });
 
     ipcMain.handle('delete-unit', async (_e, id: number) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
         const { error } = await supabase.from('units').delete().eq('id', id);
         if (error) throw error;
+        await writeAuditLog({
+            module: 'Inventory',
+            action: 'DELETE',
+            entity_type: 'unit',
+            entity_id: id,
+            description: `Deleted unit #${id}`,
+            performed_by: session.fullName || session.username,
+        });
         return { success: true };
     });
 
@@ -815,6 +1022,10 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('create-stock-group', async (_e, group) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
         let parentId: number | null = null;
         if (group.parent && group.parent !== 'Primary') {
             const { data } = await supabase.from('stock_groups').select('id').eq('name', group.parent).maybeSingle();
@@ -822,10 +1033,22 @@ export function registerHandlers() {
         }
         const { data, error } = await supabase.from('stock_groups').insert({ name: group.name, parent_id: parentId, company_id: 1 }).select('id').single();
         if (error) throw error;
+        await writeAuditLog({
+            module: 'Inventory',
+            action: 'CREATE',
+            entity_type: 'stock_group',
+            entity_id: data.id,
+            description: `Created stock group "${group.name}"`,
+            performed_by: session.fullName || session.username,
+        });
         return { success: true, id: data.id };
     });
 
     ipcMain.handle('update-stock-group', async (_e, id: number, group: any) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
         if (group.parentId && Number(group.parentId) === Number(id)) {
             throw new Error('A stock group cannot be under itself.');
         }
@@ -838,12 +1061,32 @@ export function registerHandlers() {
             })
             .eq('id', id);
         if (error) throw error;
+        await writeAuditLog({
+            module: 'Inventory',
+            action: 'UPDATE',
+            entity_type: 'stock_group',
+            entity_id: id,
+            description: `Updated stock group "${group.name}" (#${id})`,
+            performed_by: session.fullName || session.username,
+        });
         return { success: true };
     });
 
     ipcMain.handle('delete-stock-group', async (_e, id: number) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
         const { error } = await supabase.from('stock_groups').delete().eq('id', id);
         if (error) throw error;
+        await writeAuditLog({
+            module: 'Inventory',
+            action: 'DELETE',
+            entity_type: 'stock_group',
+            entity_id: id,
+            description: `Deleted stock group #${id}`,
+            performed_by: session.fullName || session.username,
+        });
         return { success: true };
     });
 
@@ -856,18 +1099,42 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('create-stock-item', async (_e, item) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
         const { name, group, unit, openingQty, openingRate } = item;
         const { data: uRow } = await supabase.from('units').select('id').eq('name', unit).maybeSingle();
         const { data: gRow } = await supabase.from('stock_groups').select('id').eq('name', group).maybeSingle();
         const openValue = (Number(openingQty) || 0) * (Number(openingRate) || 0);
         const { data, error } = await supabase.from('stock_items').insert({ name, group_id: gRow?.id || null, unit_id: uRow?.id || null, opening_qty: openingQty || 0, opening_rate: openingRate || 0, opening_value: openValue, company_id: 1 }).select('id').single();
         if (error) throw error;
+        await writeAuditLog({
+            module: 'Inventory',
+            action: 'CREATE',
+            entity_type: 'stock_item',
+            entity_id: data.id,
+            description: `Created stock item "${name}"`,
+            performed_by: session.fullName || session.username,
+        });
         return { success: true, id: data.id };
     });
 
     ipcMain.handle('delete-stock-item', async (_e, id: number) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
         const { error } = await supabase.from('stock_items').delete().eq('id', id);
         if (error) throw error;
+        await writeAuditLog({
+            module: 'Inventory',
+            action: 'DELETE',
+            entity_type: 'stock_item',
+            entity_id: id,
+            description: `Deleted stock item #${id}`,
+            performed_by: session.fullName || session.username,
+        });
         return { success: true };
     });
 
@@ -880,8 +1147,20 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('create-company', async (_e, c) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
         const { data, error } = await supabase.from('companies').insert({ name: c.name, mailing_name: c.mailingName || c.name, address: c.address || '', country: c.country || 'Bangladesh', state: c.state || '', phone: c.phone || '', email: c.email || '', financial_year_from: c.financialYearFrom || '', books_begin_from: c.booksBeginFrom || '', base_currency_symbol: c.currencySymbol || '৳' }).select('id').single();
         if (error) throw error;
+        await writeAuditLog({
+            module: 'Company',
+            action: 'CREATE',
+            entity_type: 'company',
+            entity_id: data.id,
+            description: `Created company "${c.name}"`,
+            performed_by: session.fullName || session.username,
+        });
         return { success: true, id: data.id };
     });
 
@@ -932,7 +1211,11 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('create-godown', async (_e, g) => {
-        const { error } = await supabase.from('godowns').insert({ 
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
+        const { data, error } = await supabase.from('godowns').insert({ 
             name: g.name, 
             location: g.location || '', 
             description: g.description || '', 
@@ -940,12 +1223,24 @@ export function registerHandlers() {
             racks_per_row: Number(g.racksPerRow ?? g.racks_per_row ?? 0),
             bins_per_rack: Number(g.binsPerRack ?? g.bins_per_rack ?? 0),
             company_id: 1 
-        });
+        }).select('id').single();
         if (error) throw error;
-        return { success: true };
+        await writeAuditLog({
+            module: 'Inventory',
+            action: 'CREATE',
+            entity_type: 'godown',
+            entity_id: data?.id,
+            description: `Created godown "${g.name}"`,
+            performed_by: session.fullName || session.username,
+        });
+        return { success: true, id: data?.id };
     });
 
     ipcMain.handle('update-godown', async (_e, g) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
         const { error } = await supabase.from('godowns').update({ 
             name: g.name, 
             location: g.location || '', 
@@ -955,12 +1250,32 @@ export function registerHandlers() {
             bins_per_rack: Number(g.binsPerRack ?? g.bins_per_rack ?? 0)
         }).eq('id', g.id);
         if (error) throw error;
+        await writeAuditLog({
+            module: 'Inventory',
+            action: 'UPDATE',
+            entity_type: 'godown',
+            entity_id: g.id,
+            description: `Updated godown "${g.name}" (#${g.id})`,
+            performed_by: session.fullName || session.username,
+        });
         return { success: true };
     });
 
     ipcMain.handle('delete-godown', async (_e, id: number) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
         const { error } = await supabase.from('godowns').delete().eq('id', id);
         if (error) throw error;
+        await writeAuditLog({
+            module: 'Inventory',
+            action: 'DELETE',
+            entity_type: 'godown',
+            entity_id: id,
+            description: `Deleted godown #${id}`,
+            performed_by: session.fullName || session.username,
+        });
         return { success: true };
     });
 
@@ -1110,6 +1425,10 @@ export function registerHandlers() {
     }
 
     ipcMain.handle('create-product', async (_e, product) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
         const { name, category, purchasePrice, sellingPrice, taxRate, description, unit, stockGroup, imagePath, imageGallery, quantity, locationRow, locationRack, locationBin, originType, supplierLedgerId, importedSupplierName, importReference, importCountry, specs, attributes, lowStockThreshold, lowStockAlertEnabled } = product;
         const { data: uRow } = await supabase.from('units').select('id').eq('name', unit).maybeSingle();
         const { data: gRow } = await supabase.from('stock_groups').select('id').eq('name', stockGroup).maybeSingle();
@@ -1119,7 +1438,7 @@ export function registerHandlers() {
             .eq('origin_key', originType || 'LOCAL')
             .maybeSingle();
         if (originError) throw originError;
-        if (originRow?.requires_superadmin && product.userRole !== 'superadmin') {
+        if (originRow?.requires_superadmin && !isSessionSuperadmin(session)) {
             throw new Error(`${originRow.name} products can only be created by Super Admin.`);
         }
         const generated = await generateProductCode(product, gRow?.id || null);
@@ -1171,11 +1490,24 @@ export function registerHandlers() {
         }
         syncProductToMySQL({ localId: data.id, name, sku: generated.code, category: category || '', sellingPrice: sellingPrice || 0, description: description || '', imagePath: imagePath || '', quantity: quantity || 0 });
         await checkLowStockForProduct(data.id);
+        await writeAuditLog({
+            module: 'Inventory',
+            action: 'CREATE',
+            entity_type: 'product',
+            entity_id: data.id,
+            description: `Created product "${name}" (${generated.code})`,
+            performed_by: session.fullName || session.username,
+        });
         return { success: true, id: data.id };
     });
 
     ipcMain.handle('update-product', async (_e, product) => {
-        const { id, name, category, purchasePrice, sellingPrice, taxRate, description, unit, stockGroup, imagePath, imageGallery, quantity, locationRow, locationRack, locationBin, changedBy, originType, supplierLedgerId, importedSupplierName, importReference, importCountry, specs, attributes, lowStockThreshold, lowStockAlertEnabled } = product;
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
+        const actor = session.fullName || session.username;
+        const { id, name, category, purchasePrice, sellingPrice, taxRate, description, unit, stockGroup, imagePath, imageGallery, quantity, locationRow, locationRack, locationBin, originType, supplierLedgerId, importedSupplierName, importReference, importCountry, specs, attributes, lowStockThreshold, lowStockAlertEnabled } = product;
         const { data: uRow } = await supabase.from('units').select('id').eq('name', unit).maybeSingle();
         const { data: gRow } = await supabase.from('stock_groups').select('id').eq('name', stockGroup).maybeSingle();
         const { data: originRow, error: originError } = await supabase
@@ -1184,7 +1516,7 @@ export function registerHandlers() {
             .eq('origin_key', originType || 'LOCAL')
             .maybeSingle();
         if (originError) throw originError;
-        if (originRow?.requires_superadmin && product.userRole !== 'superadmin') {
+        if (originRow?.requires_superadmin && !isSessionSuperadmin(session)) {
             throw new Error(`${originRow.name} products can only be updated by Super Admin.`);
         }
         const { data: oldProd } = await supabase
@@ -1243,12 +1575,20 @@ export function registerHandlers() {
                 new_purchase_price: nextPurchasePrice,
                 old_selling_price: oldProd.selling_price,
                 new_selling_price: nextSellingPrice,
-                changed_by: changedBy || 'Admin'
+                changed_by: actor
             });
         }
         
         syncProductToMySQL({ localId: id, name, sku: oldProd?.sku || '', category: category || '', sellingPrice: nextSellingPrice, description: description || '', imagePath: imagePath || '', quantity: nextQuantity });
         await checkLowStockForProduct(id);
+        await writeAuditLog({
+            module: 'Inventory',
+            action: 'UPDATE',
+            entity_type: 'product',
+            entity_id: id,
+            description: `Updated product #${id} (${name})`,
+            performed_by: actor,
+        });
         return { success: true };
     });
 
@@ -1419,6 +1759,10 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('save-product-origin', async (_e, origin: any) => {
+        const session = requireSession();
+        if (!isSessionSuperadmin(session)) {
+            throw new Error('Unauthorized: Super Admin access required');
+        }
         const name = String(origin.name || '').trim();
         const originKey = String(origin.originKey || name)
             .trim()
@@ -1440,10 +1784,22 @@ export function registerHandlers() {
             : supabase.from('product_origins').insert(payload);
         const { error } = await query;
         if (error) throw error;
+        await writeAuditLog({
+            module: 'Inventory',
+            action: origin.id ? 'UPDATE' : 'CREATE',
+            entity_type: 'product_origin',
+            entity_id: origin.id || originKey,
+            description: `${origin.id ? 'Updated' : 'Created'} product origin "${name}" (${originKey})`,
+            performed_by: session.fullName || session.username,
+        });
         return { success: true };
     });
 
     ipcMain.handle('delete-product-origin', async (_e, id: number) => {
+        const session = requireSession();
+        if (!isSessionSuperadmin(session)) {
+            throw new Error('Unauthorized: Super Admin access required');
+        }
         const { data: origin } = await supabase.from('product_origins').select('origin_key').eq('id', id).maybeSingle();
         if (!origin) return { success: true };
 
@@ -1457,10 +1813,22 @@ export function registerHandlers() {
 
         const { error } = await supabase.from('product_origins').delete().eq('id', id);
         if (error) throw error;
+        await writeAuditLog({
+            module: 'Inventory',
+            action: 'DELETE',
+            entity_type: 'product_origin',
+            entity_id: id,
+            description: `Deleted product origin #${id} (${origin.origin_key})`,
+            performed_by: session.fullName || session.username,
+        });
         return { success: true };
     });
 
     ipcMain.handle('save-product-model-rule', async (_e, rule: any) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
         const payload = {
             name: rule.name,
             origin_type: rule.originType || 'LOCAL',
@@ -1479,12 +1847,32 @@ export function registerHandlers() {
             : supabase.from('product_model_rules').insert(payload);
         const { error } = await query;
         if (error) throw error;
+        await writeAuditLog({
+            module: 'Inventory',
+            action: rule.id ? 'UPDATE' : 'CREATE',
+            entity_type: 'product_model_rule',
+            entity_id: rule.id || rule.name,
+            description: `${rule.id ? 'Updated' : 'Created'} product model rule "${rule.name}"`,
+            performed_by: session.fullName || session.username,
+        });
         return { success: true };
     });
 
     ipcMain.handle('delete-product-model-rule', async (_e, id: number) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
         const { error } = await supabase.from('product_model_rules').delete().eq('id', id);
         if (error) throw error;
+        await writeAuditLog({
+            module: 'Inventory',
+            action: 'DELETE',
+            entity_type: 'product_model_rule',
+            entity_id: id,
+            description: `Deleted product model rule #${id}`,
+            performed_by: session.fullName || session.username,
+        });
         return { success: true };
     });
 
@@ -1495,6 +1883,10 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('save-product-attribute', async (_e, attribute: any) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
         const payload = {
             name: attribute.name,
             input_type: attribute.inputType || 'text',
@@ -1509,6 +1901,14 @@ export function registerHandlers() {
             : supabase.from('product_attributes').insert(payload);
         const { error } = await query;
         if (error) throw error;
+        await writeAuditLog({
+            module: 'Inventory',
+            action: attribute.id ? 'UPDATE' : 'CREATE',
+            entity_type: 'product_attribute',
+            entity_id: attribute.id || attribute.name,
+            description: `${attribute.id ? 'Updated' : 'Created'} product attribute "${attribute.name}"`,
+            performed_by: session.fullName || session.username,
+        });
         return { success: true };
     });
 
@@ -1528,9 +1928,13 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('create-damaged-goods', async (_e, payload: any) => {
-        if (payload?.userRole !== 'superadmin' && !payload?.canManageDamaged) {
+        const session = requireSession();
+        const role = (session.role || '').toLowerCase();
+        const canManage = role === 'superadmin' || role === 'admin' || !!session.permissions?.['manage_damaged_goods'] || !!session.permissions?.['canManageDamaged'];
+        if (!canManage) {
             throw new Error('You do not have permission to transfer stock to damaged goods.');
         }
+        const actorName = session.fullName || session.username;
         const productId = Number(payload.productId);
         const quantity = Number(payload.quantity);
         if (!productId || quantity <= 0) throw new Error('Product and damaged quantity are required.');
@@ -1552,7 +1956,7 @@ export function registerHandlers() {
             quantity,
             status: 'DAMAGED',
             damage_notes: payload.notes || null,
-            reported_by_name: payload.performedByName || 'desktop-user',
+            reported_by_name: actorName,
             company_id: 1,
         }).select('id').single();
         if (error) throw error;
@@ -1565,7 +1969,7 @@ export function registerHandlers() {
                 action: 'DAMAGED_GOODS_RECORDED',
                 remarks: `${quantity} damaged item(s) recorded during receipt.`,
                 newValue: { productId, quantity, notes: payload.notes || null },
-                performedByName: payload.performedByName || 'desktop-user',
+                performedByName: actorName,
             });
         }
 
@@ -1573,9 +1977,13 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('update-damaged-goods-status', async (_e, id: number, status: string, payload?: any) => {
-        if (payload?.userRole !== 'superadmin' && !payload?.canManageDamaged) {
+        const session = requireSession();
+        const role = (session.role || '').toLowerCase();
+        const canManage = role === 'superadmin' || role === 'admin' || !!session.permissions?.['manage_damaged_goods'] || !!session.permissions?.['canManageDamaged'];
+        if (!canManage) {
             throw new Error('You do not have permission to update damaged goods.');
         }
+        const actorName = session.fullName || session.username;
         const nextStatus = String(status || '').toUpperCase();
         if (!['IN_REPAIR', 'REPAIRED', 'WRITTEN_OFF'].includes(nextStatus)) throw new Error('Invalid damaged goods status.');
 
@@ -1596,7 +2004,7 @@ export function registerHandlers() {
         if (nextStatus === 'IN_REPAIR') {
             updatePayload.repair_started_at = now;
             updatePayload.repair_notes = payload?.notes || before.repair_notes || null;
-            updatePayload.repaired_by_name = payload?.performedByName || null;
+            updatePayload.repaired_by_name = actorName;
         }
 
         if (nextStatus === 'REPAIRED') {
@@ -1609,13 +2017,13 @@ export function registerHandlers() {
             await checkLowStockForProduct(before.product_id);
             updatePayload.repaired_at = now;
             updatePayload.repair_notes = payload?.notes || before.repair_notes || null;
-            updatePayload.repaired_by_name = payload?.performedByName || 'desktop-user';
+            updatePayload.repaired_by_name = actorName;
         }
 
         if (nextStatus === 'WRITTEN_OFF') {
             updatePayload.written_off_at = now;
             updatePayload.write_off_notes = payload?.notes || null;
-            updatePayload.written_off_by_name = payload?.performedByName || 'desktop-user';
+            updatePayload.written_off_by_name = actorName;
         }
 
         const { error } = await supabase.from('damaged_goods').update(updatePayload).eq('id', id);
@@ -1624,38 +2032,44 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('delete-product-attribute', async (_e, id: number) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Administrator access required.');
+        }
         const { error } = await supabase.from('product_attributes').delete().eq('id', id);
         if (error) throw error;
         return { success: true };
     });
 
-    ipcMain.handle('delete-product', async (_e, id: number, performedByName?: string, userRole?: string) => {
-        const role = userRole || 'staff';
-        if (role === 'admin' || role === 'superadmin') {
-            const { error } = await supabase
-                .from('products')
-                .update({
-                    status: 'STASHED',
-                    is_active: false,
-                    deletion_status: 'APPROVED',
-                    deletion_approved_by: performedByName || 'admin',
-                    deletion_approved_at: new Date().toISOString(),
-                    deletion_notes: 'Archived directly by administrative authority.'
-                })
-                .eq('id', id);
-            if (error) throw error;
-            return { success: true };
-        } else {
+    ipcMain.handle('delete-product', async (_e, id: number, _performedByName?: string, _userRole?: string) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
             throw new Error('Immediate stashing is restricted. Please request product deletion approval.');
         }
+        const actor = session.fullName || session.username || 'admin';
+        const { error } = await supabase
+            .from('products')
+            .update({
+                status: 'STASHED',
+                is_active: false,
+                deletion_status: 'APPROVED',
+                deletion_approved_by: actor,
+                deletion_approved_at: new Date().toISOString(),
+                deletion_notes: 'Archived directly by administrative authority.'
+            })
+            .eq('id', id);
+        if (error) throw error;
+        return { success: true };
     });
 
-    ipcMain.handle('request-product-deletion', async (_e, id: number, performedByName: string, notes: string) => {
+    ipcMain.handle('request-product-deletion', async (_e, id: number, _performedByName?: string, notes?: string) => {
+        const session = requireSession();
+        const actor = session.fullName || session.username || 'unknown-user';
         const { error } = await supabase
             .from('products')
             .update({
                 deletion_status: 'PENDING_APPROVAL',
-                deletion_requested_by: performedByName || 'unknown-user',
+                deletion_requested_by: actor,
                 deletion_requested_at: new Date().toISOString(),
                 deletion_notes: notes || ''
             })
@@ -1664,14 +2078,19 @@ export function registerHandlers() {
         return { success: true };
     });
 
-    ipcMain.handle('approve-product-deletion', async (_e, id: number, performedByName: string) => {
+    ipcMain.handle('approve-product-deletion', async (_e, id: number, _performedByName?: string) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Only administrators can approve product deletion.');
+        }
+        const actor = session.fullName || session.username || 'admin';
         const { error } = await supabase
             .from('products')
             .update({
                 status: 'STASHED',
                 is_active: false,
                 deletion_status: 'APPROVED',
-                deletion_approved_by: performedByName || 'admin',
+                deletion_approved_by: actor,
                 deletion_approved_at: new Date().toISOString()
             })
             .eq('id', id);
@@ -1680,6 +2099,10 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('reject-product-deletion', async (_e, id: number) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Only administrators can reject product deletion.');
+        }
         const { error } = await supabase
             .from('products')
             .update({
@@ -1691,6 +2114,10 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('restore-product', async (_e, id: number) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Only administrators can restore products.');
+        }
         const { error } = await supabase
             .from('products')
             .update({
@@ -1745,7 +2172,8 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('create-billing-customer', async (_e, customer) => {
-        const { name, phone, email, address } = customer;
+        requireSession();
+        const { name, phone, email, address } = customer || {};
 
         // If phone provided, try upsert by phone
         if (phone) {
@@ -1803,7 +2231,9 @@ export function registerHandlers() {
 
 
     ipcMain.handle('create-bill', async (_e, billData) => {
-        const { customer_id, billed_by, items, shipping, subtotal, discount_total, installation_charge, installation_note, grand_total, price_adjustment } = billData;
+        const session = requireSession();
+        const actor = session.fullName || session.username || 'Admin';
+        const { customer_id, items, shipping, subtotal, discount_total, installation_charge, installation_note, grand_total, price_adjustment } = billData || {};
         const now = new Date();
         const dateStr = now.getFullYear().toString() +
             String(now.getMonth() + 1).padStart(2, '0') +
@@ -1818,7 +2248,7 @@ export function registerHandlers() {
         const billRow = {
             invoice_number: invoiceNumber,
             customer_id,
-            billed_by: billed_by || 'Admin',
+            billed_by: actor,
             subtotal,
             discount_total,
             price_adjustment: price_adjustment || 0,
@@ -1886,7 +2316,7 @@ export function registerHandlers() {
                                                         furniture_name: bItem.product_name || 'Custom Furniture',
                                                         description: `Customized order linked to Invoice ${invoiceNumber}. Attributes: ${descDetails}`,
                                                         quantity: Number(bItem.quantity) || 1,
-                                                        designer_name: billed_by || 'Admin',
+                                                        designer_name: actor,
                                                         status: saleP > 0 ? 'Pricing Done' : 'Awaiting Pricing',
                                                         priority: 'Normal',
                                                         bill_id: savedBillId,
@@ -1945,7 +2375,7 @@ export function registerHandlers() {
                             ship_from_name: shipping.ship_from_name || '', 
                             ship_from_address: shipping.ship_from_address || '', 
                             shipping_charge: shipping.shipping_charge || 0, 
-                            updated_by: billed_by, 
+                            updated_by: actor, 
                             status: 'pending_payment'
                         };
                         
@@ -1967,8 +2397,8 @@ export function registerHandlers() {
                                                 bill_id: bId, 
                                                 status: 'pending_payment', 
                                                 note: 'Shipping order created', 
-                                                updated_by: billed_by, 
-                                                updated_by_role: shipping.user_role || 'cashier' 
+                                                updated_by: actor, 
+                                                updated_by_role: session.role || 'cashier' 
                                             }
                                         });
                                     }
@@ -1993,6 +2423,15 @@ export function registerHandlers() {
                     });
                 } catch { }
             },
+        });
+
+        await writeAuditLog({
+            module: 'Billing',
+            action: 'CREATE',
+            entity_type: 'bill',
+            entity_id: invoiceNumber,
+            description: `Created bill ${invoiceNumber} (Total: ${grand_total})`,
+            performed_by: actor,
         });
 
         // Return success immediately — bill is queued for background save
@@ -2035,7 +2474,13 @@ export function registerHandlers() {
         };
     });
 
-    ipcMain.handle('delete-bill', async (_e, { billId, reason, deletedBy }) => {
+    ipcMain.handle('delete-bill', async (_e, { billId, reason }: { billId: number; reason?: string; deletedBy?: string }) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
+        const actor = session.fullName || session.username;
+
         // 1. Fetch bill and items to restore stock
         const { data: bill } = await supabase.from('bills').select('*').eq('id', billId).maybeSingle();
         if (!bill) throw new Error('Bill not found');
@@ -2048,7 +2493,7 @@ export function registerHandlers() {
             field_changed: 'DELETED',
             old_value: bill.invoice_number,
             new_value: reason || 'User requested deletion',
-            changed_by: deletedBy || 'Admin'
+            changed_by: actor
         });
 
         // 3. Restore stock
@@ -2069,6 +2514,14 @@ export function registerHandlers() {
         const { error } = await supabase.from('bills').delete().eq('id', billId);
         
         if (error) throw error;
+        await writeAuditLog({
+            module: 'Billing',
+            action: 'DELETE',
+            entity_type: 'bill',
+            entity_id: billId,
+            description: `Deleted bill ${bill.invoice_number}: ${reason || 'User requested deletion'}`,
+            performed_by: actor,
+        });
         return { success: true };
     });
 
@@ -2084,7 +2537,12 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('update-bill', async (_e, billData: any) => {
-        const { bill_id, items, subtotal, discount_total, installation_charge, installation_note, grand_total, changed_by } = billData;
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session) && !session.permissions?.['alter_bill']) {
+            throw new Error('Unauthorized: Admin access or alter_bill permission required');
+        }
+        const actor = session.fullName || session.username || 'Admin';
+        const { bill_id, items, subtotal, discount_total, installation_charge, installation_note, grand_total } = billData || {};
         const { data: oldBill } = await supabase.from('bills').select('*').eq('id', bill_id).maybeSingle();
         if (!oldBill) return { success: false, error: 'Bill not found' };
         
@@ -2092,8 +2550,8 @@ export function registerHandlers() {
         
         // Audit
         const auditRows: any[] = [];
-        if (Math.abs(oldBill.subtotal - subtotal) > 0.01) auditRows.push({ bill_id, field_changed: 'subtotal', old_value: String(oldBill.subtotal), new_value: String(subtotal), changed_by });
-        if (Math.abs(oldBill.grand_total - grand_total) > 0.01) auditRows.push({ bill_id, field_changed: 'grand_total', old_value: String(oldBill.grand_total), new_value: String(grand_total), changed_by });
+        if (Math.abs(oldBill.subtotal - subtotal) > 0.01) auditRows.push({ bill_id, field_changed: 'subtotal', old_value: String(oldBill.subtotal), new_value: String(subtotal), changed_by: actor });
+        if (Math.abs(oldBill.grand_total - grand_total) > 0.01) auditRows.push({ bill_id, field_changed: 'grand_total', old_value: String(oldBill.grand_total), new_value: String(grand_total), changed_by: actor });
         
         // Restore old stock properly
         for (const oi of (oldItems || [])) {
@@ -2159,6 +2617,15 @@ export function registerHandlers() {
             await supabase.from('bill_audit').insert(encAudit);
         }
 
+        await writeAuditLog({
+            module: 'Billing',
+            action: 'UPDATE',
+            entity_type: 'bill',
+            entity_id: bill_id,
+            description: `Updated bill #${bill_id}`,
+            performed_by: actor,
+        });
+
         // Broadcast to trigger silent UI auto-refresh
         try {
             BrowserWindow.getAllWindows().forEach(win => {
@@ -2177,28 +2644,33 @@ export function registerHandlers() {
     // ═══ CUSTOMER LEDGER ══════════════════════════════════════════════════════════
 
     ipcMain.handle('get-customer-ledger-list', async (_e, _opts?: any) => {
-        // BUG-13 fix: Fetch totals per-customer instead of loading ALL bills and payments into memory.
-        const { data: customers, error } = await supabase
-            .from('billing_customers')
-            .select('id, name, phone, email')
-            .order('name')
-            .limit(500); // Reasonable page size prevents OOM on large datasets
+        const session = requireSession();
+        const isAdmin = isSessionAdminOrSuper(session);
+        const seeAll = isAdmin || !!session.permissions?.['see_all_customers'] || !!session.permissions?.['canSeeAllCustomers'];
+        const caller = session.username;
+
+        let query = supabase.from('billing_customers').select('*').order('name');
+        if (!seeAll && caller) {
+            const { data: bills } = await supabase.from('bills').select('customer_id').eq('billed_by', caller).not('customer_id', 'is', null);
+            const custIds = [...new Set((bills || []).map((b: any) => b.customer_id).filter(Boolean))];
+            if (custIds.length > 0) {
+                query = query.in('id', custIds);
+            }
+        }
+        const { data: customers, error } = await query.limit(500);
         if (error) throw error;
 
         const customerIds = (customers || []).map((c: any) => c.id);
-
-        // Fetch only relevant bills and payments for these customers
         const { data: billSums } = await supabase
             .from('bills')
             .select('customer_id, grand_total')
             .in('customer_id', customerIds.length ? customerIds : [-1]);
-
         const { data: paymentSums } = await supabase
             .from('customer_payments')
             .select('customer_id, amount, payment_type')
             .in('customer_id', customerIds.length ? customerIds : [-1]);
 
-        const result = (customers || []).map((c: any) => {
+        return (customers || []).map((c: any) => {
             const cBills = (billSums || []).filter((b: any) => b.customer_id === c.id);
             const totalBilled = cBills.reduce((s: number, b: any) => s + (b.grand_total || 0), 0);
             const cPayments = (paymentSums || []).filter((p: any) => p.customer_id === c.id);
@@ -2208,12 +2680,11 @@ export function registerHandlers() {
                 name: decryptField(c.name) || c.name,
                 phone: decryptField(c.phone) || c.phone,
                 email: decryptField(c.email) || c.email,
+                address: decryptField(c.address) || c.address,
                 total_bills: cBills.length,
                 balance: totalBilled - totalPaid,
             };
         });
-
-        return result;
     });
 
     ipcMain.handle('get-customer-ledger-detail', async (_e, customerId: number) => {
@@ -2259,7 +2730,9 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('add-customer-payment', async (_e, payment: any) => {
-        const { customer_id, amount, payment_type, payment_method, note, recorded_by } = payment;
+        const session = requireSession();
+        const actor = session.fullName || session.username || 'Admin';
+        const { customer_id, amount, payment_type, payment_method, note } = payment || {};
         if (!customer_id || !amount) throw new Error('customer_id and amount are required');
         const { data, error } = await supabase.from('customer_payments').insert({
             customer_id,
@@ -2267,7 +2740,7 @@ export function registerHandlers() {
             payment_type: payment_type || 'CREDIT',
             payment_method: payment_method || 'CASH',
             note: note || null,
-            recorded_by: recorded_by || 'Admin',
+            recorded_by: actor,
         }).select('id').single();
         if (error) throw error;
         try {
@@ -2275,11 +2748,20 @@ export function registerHandlers() {
                 if (!win.isDestroyed()) win.webContents.send('data-updated', 'customer_payments');
             });
         } catch { }
+        await writeAuditLog({
+            module: 'CRM',
+            action: 'CREATE',
+            entity_type: 'customer_payment',
+            entity_id: data.id,
+            description: `Recorded ${payment_type || 'CREDIT'} payment of ৳${amount} for customer #${customer_id}`,
+            performed_by: actor,
+        });
         return { success: true, id: data.id };
     });
 
     ipcMain.handle('add-customer-address', async (_e, addr: any) => {
-        const { customer_id, label, address } = addr;
+        const session = requireSession();
+        const { customer_id, label, address } = addr || {};
         if (!customer_id || !address) throw new Error('customer_id and address are required');
         const { data, error } = await supabase.from('customer_addresses').insert({
             customer_id,
@@ -2291,6 +2773,12 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('delete-billing-customer', async (_e, customerId: number) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
+        const actor = session.fullName || session.username;
+
         // Nullify customer_id on bills (convert to walk-in) before deleting customer
         await supabase.from('bills').update({ customer_id: null }).eq('customer_id', customerId);
         // Delete cascades handle customer_payments, customer_addresses automatically (ON DELETE CASCADE)
@@ -2301,13 +2789,23 @@ export function registerHandlers() {
                 if (!win.isDestroyed()) win.webContents.send('data-updated', 'billing_customers');
             });
         } catch { }
+        await writeAuditLog({
+            module: 'CRM',
+            action: 'DELETE',
+            entity_type: 'billing_customer',
+            entity_id: customerId,
+            description: `Deleted billing customer #${customerId}`,
+            performed_by: actor,
+        });
         return { success: true };
     });
 
     // ═══ EXCHANGE ORDERS ══════════════════════════════════════════════════════════
 
     ipcMain.handle('create-exchange-order', async (_e, exchange: any) => {
-        const { customer_id, original_bill_id, returned_items, new_items } = exchange;
+        const session = requireSession();
+        const actor = session.fullName || session.username || 'Admin';
+        const { customer_id, original_bill_id, returned_items, new_items } = exchange || {};
 
         const totalReturnValue = (returned_items || []).reduce((s: number, i: any) => s + (Number(i.amount) || 0), 0);
         const totalNewValue = (new_items || []).reduce((s: number, i: any) => s + (Number(i.amount) || 0), 0);
@@ -2374,6 +2872,15 @@ export function registerHandlers() {
             }
         }
 
+        await writeAuditLog({
+            module: 'Billing',
+            action: 'CREATE',
+            entity_type: 'exchange_order',
+            entity_id: order.id,
+            description: `Created exchange order ${order.exchange_number} for customer #${customer_id} (Diff: ${differenceAmount})`,
+            performed_by: actor,
+        });
+
         try {
             BrowserWindow.getAllWindows().forEach(win => {
                 if (!win.isDestroyed()) win.webContents.send('data-updated', 'exchange_orders');
@@ -2385,13 +2892,14 @@ export function registerHandlers() {
     ipcMain.handle('get-exchange-orders', async () => {
         const { data, error } = await supabase
             .from('exchange_orders')
-            .select('*, customer:billing_customers(name, phone)')
+            .select('*, customer:billing_customers(name, phone), bill:bills(invoice_number)')
             .order('created_at', { ascending: false });
         if (error) throw error;
         return (data || []).map((ex: any) => ({
             ...decryptObject(ex),
             customer_name: ex.customer?.name ? decryptField(ex.customer.name) : null,
             customer_phone: ex.customer?.phone ? decryptField(ex.customer.phone) : null,
+            original_invoice_number: decryptField(ex.bill?.invoice_number) || ex.bill?.invoice_number || null,
         }));
     });
 
@@ -2421,6 +2929,10 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('create-purchase-bill', async (_e, bill) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
         const { billNumber, billDate, dueDate, supplierLedgerId, narration, items } = bill;
         let subtotal = 0, taxTotal = 0;
         (items || []).forEach((item: any) => { const la = (Number(item.qty) || 0) * (Number(item.rate) || 0); subtotal += la; taxTotal += la * ((Number(item.taxRate) || 0) / 100); });
@@ -2429,13 +2941,33 @@ export function registerHandlers() {
         if ((items || []).length) {
             await supabase.from('purchase_bill_items').insert((items as any[]).map((item: any) => { const la = (Number(item.qty) || 0) * (Number(item.rate) || 0); const lt = la * ((Number(item.taxRate) || 0) / 100); return { bill_id: pb.id, product_id: item.productId || null, description: item.description || '', qty: item.qty || 0, rate: item.rate || 0, tax_rate: item.taxRate || 0, tax_amount: lt, amount: la + lt }; }));
         }
+        await writeAuditLog({
+            module: 'Purchase',
+            action: 'CREATE',
+            entity_type: 'purchase_bill',
+            entity_id: pb.id,
+            description: `Created purchase bill ${billNumber} (Total: ${subtotal + taxTotal})`,
+            performed_by: session.fullName || session.username,
+        });
         return { success: true, id: pb.id };
     });
 
     ipcMain.handle('delete-purchase-bill', async (_e, id: number) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
         await supabase.from('purchase_bill_items').delete().eq('bill_id', id);
         const { error } = await supabase.from('purchase_bills').delete().eq('id', id);
         if (error) throw error;
+        await writeAuditLog({
+            module: 'Purchase',
+            action: 'DELETE',
+            entity_type: 'purchase_bill',
+            entity_id: id,
+            description: `Deleted purchase bill #${id}`,
+            performed_by: session.fullName || session.username,
+        });
         return { success: true };
     });
 
@@ -2550,13 +3082,18 @@ export function registerHandlers() {
     };
 
     ipcMain.handle('create-user', async (_e, user) => {
-        const { username, password, fullName, role, groupId, email, phone, requestingUserRole, requestingUserName } = user;
-        const reqRole = (requestingUserRole || '').toLowerCase();
-        const reqName = (requestingUserName || '').toLowerCase();
-        const isSuper = reqRole === 'superadmin' || reqRole === 'admin' || reqName.includes('sabbirsuperadmin') || reqName === 'admin';
+        const { username, password, fullName, role, groupId, email, phone } = user;
+        const session = requireSession();
+        const reqRole = (session.role || '').toLowerCase();
+        const isAdminOrSuper = reqRole === 'superadmin' || reqRole === 'admin';
+        const canCreate = isAdminOrSuper || !!session.permissions?.['can_create_user'];
 
-        if (role === 'superadmin' && !isSuper) {
-            return { success: false, error: 'Only Administrators can assign the Super Admin role.' };
+        if (!canCreate) {
+            return { success: false, error: 'Unauthorized: You do not have permission to create users.' };
+        }
+
+        if (role === 'superadmin' && reqRole !== 'superadmin') {
+            return { success: false, error: 'Only Super Administrators can assign the Super Admin role.' };
         }
         if (!username?.trim()) return { success: false, error: 'Username is required' };
         if (!password || password.length < 4) return { success: false, error: 'Password must be at least 4 characters' };
@@ -2702,18 +3239,24 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('update-user', async (_e, user) => {
-        const { id, username, fullName, role, email, phone, isActive, password, groupId, requestingUserRole } = user;
+        const { id, username, fullName, role, email, phone, isActive, password, groupId } = user;
+        const session = requireSession();
+        const reqRole = (session.role || '').toLowerCase();
+        const isAdminOrSuper = reqRole === 'superadmin' || reqRole === 'admin';
+        const canEdit = isAdminOrSuper || session.userId === id || !!session.permissions?.['can_edit_user'];
+
+        if (!canEdit) {
+            throw new Error('Unauthorized: You do not have permission to update this user.');
+        }
+
         // Coerce isActive to integer (0 or 1) for Postgres compatibility
         const isActiveValue = (isActive === undefined || isActive === null) ? 1 : (Number(isActive) ? 1 : 0);
-        
-        const reqRole = (requestingUserRole || 'admin').toLowerCase();
-        const isAdminOrSuper = reqRole === 'superadmin' || reqRole === 'admin';
         
         // Fetch current user from ACTIVE DB (TrueNAS)
         const { data: currentUser } = await supabase.from('users').select('role, auth_id, group_id').eq('id', id).maybeSingle();
         
-        if (role && role === 'superadmin' && currentUser?.role !== 'superadmin' && !isAdminOrSuper) {
-            throw new Error('Only Administrators can assign the Super Admin role.');
+        if (role && role === 'superadmin' && currentUser?.role !== 'superadmin' && reqRole !== 'superadmin') {
+            throw new Error('Only Super Administrators can assign the Super Admin role.');
         }
         
         const parsedGroupId = (groupId !== undefined && groupId !== null && groupId !== '') ? parseInt(groupId as any) : null;
@@ -2799,6 +3342,17 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('delete-user', async (_e, id: number) => {
+        const session = requireSession();
+        const reqRole = (session.role || '').toLowerCase();
+        const isAdminOrSuper = reqRole === 'superadmin' || reqRole === 'admin';
+        const canDelete = isAdminOrSuper || !!session.permissions?.['can_delete_user'];
+        if (!canDelete) {
+            throw new Error('Unauthorized: Only administrators can delete users.');
+        }
+        if (session.userId === id) {
+            throw new Error('Cannot delete your own active user account.');
+        }
+
         const { data: row } = await supabase.from('users').select('auth_id, username').eq('id', id).single();
 
         const runCleanup = async (operation: () => PromiseLike<any> | any, fallback?: () => PromiseLike<any> | any) => {
@@ -3080,6 +3634,10 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('kick-user-session', async (_e, userId: number) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            return { success: false, error: 'Unauthorized: Administrator access required.' };
+        }
         if (!supabaseAdmin) return { success: false, error: 'Supabase Admin Key not configured' };
         const { error } = await supabaseAdmin.from('users').update({ is_online: false, force_logout: true }).eq('id', userId);
         if (error) return { success: false, error: error.message };
@@ -3092,16 +3650,18 @@ export function registerHandlers() {
         return data || {};
     });
 
-    ipcMain.handle('get-device-sessions', async (_e, callerContext) => {
-        if (!callerContext?.isSuperadmin) return { success: false, error: 'Unauthorized' };
+    ipcMain.handle('get-device-sessions', async () => {
+        const session = requireSession();
+        if (!isSessionSuperadmin(session)) return { success: false, error: 'Unauthorized: Superadmin access required.' };
         if (!supabaseAdmin) return { success: false, error: 'Database Admin Key not configured in settings.' };
         const { data, error } = await supabaseAdmin.from('device_sessions').select('*').order('last_seen', { ascending: false });
         if (error) return { success: false, error: error.message };
         return { success: true, data };
     });
 
-    ipcMain.handle('force-update-all', async (_e, callerContext) => {
-        if (!callerContext?.isSuperadmin) return { success: false, error: 'Unauthorized' };
+    ipcMain.handle('force-update-all', async () => {
+        const session = requireSession();
+        if (!isSessionSuperadmin(session)) return { success: false, error: 'Unauthorized: Superadmin access required.' };
         if (!supabaseAdmin) return { success: false, error: 'Database Admin Key not configured in settings.' };
         
         // Broadcast force-update signal via supabaseAdmin
@@ -3115,16 +3675,19 @@ export function registerHandlers() {
         return { success: true };
     });
 
-    ipcMain.handle('clear-database', async (_e, { section, password, username }) => {
-        // Guard: all three fields must be provided to avoid crashes
-        if (!section || !password || !username) {
-            return { success: false, error: 'Missing required fields: section, password, or username.' };
+    ipcMain.handle('clear-database', async (_e, { section, password }) => {
+        const session = requireSession();
+        if (!isSessionSuperadmin(session)) {
+            return { success: false, error: 'Unauthorized: Only superadmin can perform this action.' };
+        }
+        // Guard: section and password must be provided to avoid crashes
+        if (!section || !password) {
+            return { success: false, error: 'Missing required fields: section or password.' };
         }
         if (!supabaseAdmin) return { success: false, error: 'Database Admin Key not configured in settings.' };
         
-        // Step 1: Verify the caller's password against Supabase Auth.
-        // Construct the email: if username already has '@', use as-is;
-        // otherwise append the internal domain suffix.
+        // Step 1: Verify the caller's password against Supabase Auth using authenticated session username.
+        const username = session.username;
         const emailToUse = username.includes('@') ? username : `${username}@lesoft.local`;
         const { error: authError } = await supabaseAdmin.auth.signInWithPassword({
             email: emailToUse,
@@ -3173,6 +3736,10 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('update-settings', async (_e, s) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Administrator access required.');
+        }
         const { error } = await supabase.from('companies').update({
             name: s.name,
             mailing_name: s.mailingName || '',
@@ -3197,6 +3764,10 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('save-policy', async (_e, policy: { maxPriceAdjustment: number }) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Administrator access required.');
+        }
         const { error } = await supabase.from('companies')
             .update({ max_price_adjustment: Number(policy.maxPriceAdjustment ?? 0) })
             .eq('id', 1);
@@ -3215,47 +3786,43 @@ export function registerHandlers() {
 
     ipcMain.handle('get-supabase-config', async () => {
         try {
-            const cfgPath = path.join(app.getPath('userData'), 'supabase-config.json');
-            if (fs.existsSync(cfgPath)) {
-                return JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
-            }
-        } catch (e) {}
-        return { 
-            url: 'https://ildkkgjrolcjijwfokek.supabase.co', 
-            anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlsZGtrZ2pyb2xjamlqd2Zva2VrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE5MzMzMjQsImV4cCI6MjA4NzUwOTMyNH0.Bn6c-87BOumPXyH5F469P04fQSMnI9SjNDZAwgGyTsM' 
-        };
+            const cfg = loadConfig();
+            // NEVER return privileged secrets to the renderer
+            return {
+                url: cfg.url,
+                anonKey: cfg.anonKey,
+                nasUrl: cfg.nasUrl,
+                nasLocalUrl: cfg.nasLocalUrl,
+                nasStorageUrl: cfg.nasStorageUrl,
+                nasLocalStorageUrl: cfg.nasLocalStorageUrl,
+                nasAnonKey: cfg.nasAnonKey,
+                nasTunnelUrl: cfg.nasTunnelUrl,
+                nasTunnelStorageUrl: cfg.nasTunnelStorageUrl,
+                cfAccessClientId: cfg.cfAccessClientId || '',
+                // Mask the client secret if present so the UI can show •••••••• without receiving the secret
+                cfAccessClientSecret: cfg.cfAccessClientSecret ? '••••••••••••••••••••••••••••••••' : '',
+                hasServiceRoleKey: !!cfg.serviceRoleKey,
+            };
+        } catch (e) {
+            return { 
+                url: '', 
+                anonKey: '' 
+            };
+        }
     });
 
     ipcMain.handle('save-supabase-config', async (_e, newConfig) => {
-        // newConfig can be a partial object: { url?, anonKey?, serviceRoleKey? }
-        // We merge it with whatever is already on disk so partial saves are safe.
+        const session = requireSession();
+        if (!isSessionSuperadmin(session)) {
+            throw new Error('Unauthorized: Superadmin access required.');
+        }
         try {
-            const currentConfigPath = path.join(app.getPath('userData'), 'supabase-config.json');
-            let existing: Record<string, string> = {};
-            if (fs.existsSync(currentConfigPath)) {
-                existing = JSON.parse(fs.readFileSync(currentConfigPath, 'utf8'));
+            // If the renderer passed back the masked secret placeholder, do not overwrite the real secret
+            const configToSave = { ...newConfig };
+            if (configToSave.cfAccessClientSecret === '••••••••••••••••••••••••••••••••') {
+                delete configToSave.cfAccessClientSecret;
             }
-            // Merge: new values overwrite existing, but empty/undefined values are ignored
-            const merged: Record<string, string> = { ...existing };
-            if (newConfig.url)            merged.url            = newConfig.url;
-            if (newConfig.anonKey)        merged.anonKey        = newConfig.anonKey;
-            if (newConfig.serviceRoleKey) merged.serviceRoleKey = newConfig.serviceRoleKey;
-            
-            if (newConfig.nasUrl !== undefined)             merged.nasUrl             = newConfig.nasUrl;
-            if (newConfig.nasLocalUrl !== undefined)        merged.nasLocalUrl        = newConfig.nasLocalUrl;
-            if (newConfig.nasStorageUrl !== undefined)      merged.nasStorageUrl      = newConfig.nasStorageUrl;
-            if (newConfig.nasLocalStorageUrl !== undefined) merged.nasLocalStorageUrl = newConfig.nasLocalStorageUrl;
-            if (newConfig.nasAnonKey !== undefined)         merged.nasAnonKey         = newConfig.nasAnonKey;
-            if (newConfig.nasTunnelUrl !== undefined)        merged.nasTunnelUrl        = newConfig.nasTunnelUrl;
-            if (newConfig.nasTunnelStorageUrl !== undefined) merged.nasTunnelStorageUrl = newConfig.nasTunnelStorageUrl;
-            if (newConfig.cfAccessClientId !== undefined)    merged.cfAccessClientId    = newConfig.cfAccessClientId;
-            if (newConfig.cfAccessClientSecret !== undefined) merged.cfAccessClientSecret = newConfig.cfAccessClientSecret;
-
-            fs.writeFileSync(currentConfigPath, JSON.stringify(merged, null, 2), 'utf8');
-
-            // Automatically refresh in-memory clients
-            reinitSupabaseClients();
-
+            saveSupabaseConfig(configToSave);
             return { success: true };
         } catch (e: any) {
             return { success: false, error: e.message };
@@ -3263,16 +3830,12 @@ export function registerHandlers() {
     });
 
     // ═══ USER GROUPS ══════════════════════════════════════════════════════════
-    ipcMain.handle('get-user-groups', async (_e, opts?: { requestingUserId?: number }) => {
+    ipcMain.handle('get-user-groups', async () => {
         const { data, error } = await supabase.from('user_groups').select('*').order('id');
         if (error) throw error;
 
         // Determine if requesting user is superadmin
-        let isSuperAdmin = false;
-        if (opts?.requestingUserId) {
-            const { data: reqUser } = await supabase.from('users').select('role').eq('id', opts.requestingUserId).maybeSingle();
-            isSuperAdmin = reqUser?.role === 'superadmin';
-        }
+        const isSuperAdmin = isSessionSuperadmin();
 
         const groups = (data || []).map((group: any) => decryptObject(group));
 
@@ -3282,6 +3845,10 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('create-user-group', async (_e, group) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Administrator access required to manage user groups.');
+        }
         const { data, error } = await supabase.from('user_groups').insert({
             name: group.name,
             description: group.description || '',
@@ -3307,6 +3874,10 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('update-user-group', async (_e, group) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Administrator access required to manage user groups.');
+        }
         const { error } = await supabase.from('user_groups').update({
             name: group.name,
             description: group.description || '',
@@ -3331,6 +3902,10 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('delete-user-group', async (_e, id: number) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Administrator access required to manage user groups.');
+        }
         const { data: grp } = await supabase.from('user_groups').select('name').eq('id', id).maybeSingle();
         const { error } = await supabase.from('user_groups').delete().eq('id', id);
         if (error) throw error;
@@ -3373,7 +3948,9 @@ export function registerHandlers() {
         }
     });
 
-    ipcMain.handle('clear-all-notifications', async (_e, userId: number) => {
+    ipcMain.handle('clear-all-notifications', async (_e, _userId?: number) => {
+        const session = requireSession();
+        const userId = Number(session.id);
         const { error } = await supabase.from('notifications')
             .delete()
             .or(`recipient_id.eq.${userId},recipient_id.is.null`);
@@ -3382,11 +3959,12 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('send-notification', async (_e, notification: any) => {
-        const { title, message, senderId, recipientIds, actionPath, actionLabel, metadata, notificationKey } = notification;
+        const session = requireSession();
+        const { title, message, recipientIds, actionPath, actionLabel, metadata, notificationKey } = notification;
         const baseRow = {
             title,
             message,
-            sender_id: senderId,
+            sender_id: Number(session.id),
             action_path: actionPath || null,
             action_label: actionLabel || null,
             notification_key: notificationKey || null,
@@ -3404,16 +3982,20 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('mark-notification-read', async (_e, id: number) => {
+        requireSession();
         await supabase.from('notifications').update({ is_read: true }).eq('id', id);
         return { success: true };
     });
 
-    ipcMain.handle('mark-all-notifications-read', async (_e, userId: number) => {
+    ipcMain.handle('mark-all-notifications-read', async (_e, _userId?: number) => {
+        const session = requireSession();
+        const userId = Number(session.id);
         await supabase.from('notifications').update({ is_read: true }).or(`recipient_id.eq.${userId},recipient_id.is.null`).eq('is_read', false);
         return { success: true };
     });
 
     ipcMain.handle('delete-notification', async (_e, id: number) => {
+        requireSession();
         await supabase.from('notifications').delete().eq('id', id);
         return { success: true };
     });
@@ -3527,7 +4109,12 @@ export function registerHandlers() {
 
     // Note: approve-make-order is registered by registerMakeHandlers()
 
-    ipcMain.handle('set-make-order-price', async (_e, { orderId, customPrice, updatedBy }) => {
+    ipcMain.handle('set-make-order-price', async (_e, { orderId, customPrice }: any) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
+        const actor = session.fullName || session.username;
         const { error: updateErr } = await supabase.from('make_orders').update({ 
             custom_price: customPrice, 
             status: 'Pricing Done', 
@@ -3539,7 +4126,7 @@ export function registerHandlers() {
             order_id: orderId, 
             status: 'Pricing Done', 
             note: `Price set to ৳${customPrice}`, 
-            updated_by: updatedBy 
+            updated_by: actor 
         });
 
         // Notify the creator (designer)
@@ -3555,7 +4142,7 @@ export function registerHandlers() {
                 await supabase.from('notifications').insert({
                     title: 'Custom Price Updated',
                     message: `Custom price for "${order.furniture_name}" (Invoice: ${invoiceNumber}) has been set to ৳${customPrice}.`,
-                    sender_id: null,
+                    sender_id: Number(session.id),
                     recipient_id: designer.id,
                     action_path: '/billing',
                     action_label: 'Open Customizations',
@@ -3573,10 +4160,22 @@ export function registerHandlers() {
             });
         } catch { }
 
+        await writeAuditLog({
+            module: 'Make',
+            action: 'SET_ORDER_PRICE',
+            entity_type: 'make_order',
+            entity_id: orderId,
+            description: `Set price for order #${orderId} to ৳${customPrice}`,
+            new_value: { custom_price: customPrice },
+            performed_by: actor,
+        });
+
         return { success: true };
     });
 
-    ipcMain.handle('mark-customization-paid', async (_e, { orderId, updatedBy }) => {
+    ipcMain.handle('mark-customization-paid', async (_e, { orderId }: any) => {
+        const session = requireSession();
+        const actor = session.fullName || session.username;
         const { data: order, error: fetchErr } = await supabase.from('make_orders').select('*').eq('id', orderId).maybeSingle();
         if (fetchErr || !order) throw new Error('Order not found');
 
@@ -3590,7 +4189,7 @@ export function registerHandlers() {
             order_id: orderId,
             status: 'Placed',
             note: 'Payment confirmed. Proceeding with order.',
-            updated_by: updatedBy
+            updated_by: actor
         });
 
         if (order.bill_id && order.bill_item_id) {
@@ -3623,14 +4222,34 @@ export function registerHandlers() {
             });
         } catch { }
 
+        await writeAuditLog({
+            module: 'Make',
+            action: 'MARK_PAID',
+            entity_type: 'make_order',
+            entity_id: orderId,
+            description: `Marked custom order #${orderId} as paid`,
+            performed_by: actor,
+        });
+
         return { success: true };
     });
 
     // Note: create-make-order is registered by registerMakeHandlers()
 
-    ipcMain.handle('update-make-order-status', async (_e, { orderId, status, note, updatedBy }) => {
+    ipcMain.handle('update-make-order-status', async (_e, { orderId, status, note }: any) => {
+        const session = requireSession();
+        const actor = session.fullName || session.username;
         await supabase.from('make_orders').update({ status, updated_at: new Date().toISOString() }).eq('id', orderId);
-        await supabase.from('make_order_updates').insert({ order_id: orderId, status, note: note || '', updated_by: updatedBy });
+        await supabase.from('make_order_updates').insert({ order_id: orderId, status, note: note || '', updated_by: actor });
+        await writeAuditLog({
+            module: 'Make',
+            action: 'UPDATE_STATUS',
+            entity_type: 'make_order',
+            entity_id: orderId,
+            description: `Updated status of order #${orderId} to ${status}`,
+            new_value: { status, note },
+            performed_by: actor,
+        });
         return { success: true };
     });
 
@@ -3669,13 +4288,32 @@ export function registerHandlers() {
 
     // ═══ BILL ALTER APPROVAL ══════════════════════════════════════════════
 
-    ipcMain.handle('stage-bill-alteration', async (_e, { billId, changes, reason, changedBy }: any) => {
+    ipcMain.handle('stage-bill-alteration', async (_e, { billId, changes, reason }: any) => {
+        const session = requireSession();
+        const actor = session.fullName || session.username;
         const { data: currentBill } = await supabase.from('bills').select('*').eq('id', billId).maybeSingle();
         const { data: items } = await supabase.from('bill_items').select('*').eq('bill_id', billId);
         const snapshot = { ...currentBill, items: items || [] };
-        const { data, error } = await supabase.from('bill_audit').insert({ bill_id: billId, field_changed: 'items', old_value: JSON.stringify(snapshot), staged_data: JSON.stringify(changes), alter_reason: reason || '', alter_status: 'pending_approval', changed_by: changedBy }).select('id').single();
+        const { data, error } = await supabase.from('bill_audit').insert({
+            bill_id: billId,
+            field_changed: 'items',
+            old_value: JSON.stringify(snapshot),
+            staged_data: JSON.stringify(changes),
+            alter_reason: reason || '',
+            alter_status: 'pending_approval',
+            changed_by: actor
+        }).select('id').single();
         if (error) throw error;
-        await writeAuditLog({ module: 'Billing', action: 'BILL_ALTER_REQUESTED', entity_type: 'bill', entity_id: billId, description: `Alteration requested by ${changedBy}. Reason: ${reason}`, old_value: snapshot, new_value: changes, performed_by: changedBy });
+        await writeAuditLog({
+            module: 'Billing',
+            action: 'BILL_ALTER_REQUESTED',
+            entity_type: 'bill',
+            entity_id: billId,
+            description: `Alteration requested by ${actor}. Reason: ${reason}`,
+            old_value: snapshot,
+            new_value: changes,
+            performed_by: actor
+        });
         return { success: true, audit_id: data.id };
     });
 
@@ -3689,7 +4327,12 @@ export function registerHandlers() {
         }));
     });
 
-    ipcMain.handle('approve-alteration', async (_e, { auditId, reviewedBy }: any) => {
+    ipcMain.handle('approve-alteration', async (_e, { auditId }: any) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
+        const actor = session.fullName || session.username;
         const { data: audit } = await supabase.from('bill_audit').select('*').eq('id', auditId).maybeSingle();
         if (!audit?.staged_data) throw new Error('Alteration not found');
         const staged = JSON.parse(audit.staged_data);
@@ -3706,21 +4349,27 @@ export function registerHandlers() {
                 is_altered: true 
             }).eq('id', audit.bill_id);
         }
-        await supabase.from('bill_audit').update({ alter_status: 'approved', reviewed_by: reviewedBy, reviewed_at: new Date().toISOString() }).eq('id', auditId);
-        await writeAuditLog({ module: 'Billing', action: 'BILL_ALTER_APPROVED', entity_type: 'bill', entity_id: audit.bill_id, description: `Approved by ${reviewedBy}`, performed_by: reviewedBy });
+        await supabase.from('bill_audit').update({ alter_status: 'approved', reviewed_by: actor, reviewed_at: new Date().toISOString() }).eq('id', auditId);
+        await writeAuditLog({ module: 'Billing', action: 'BILL_ALTER_APPROVED', entity_type: 'bill', entity_id: audit.bill_id, description: `Approved by ${actor}`, performed_by: actor });
         return { success: true };
     });
 
-    ipcMain.handle('reject-alteration', async (_e, { auditId, reviewedBy, rejectReason }: any) => {
+    ipcMain.handle('reject-alteration', async (_e, { auditId, rejectReason }: any) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
+        const actor = session.fullName || session.username;
         const { data: audit } = await supabase.from('bill_audit').select('bill_id,alter_reason').eq('id', auditId).maybeSingle();
-        await supabase.from('bill_audit').update({ alter_status: 'rejected', reviewed_by: reviewedBy, reviewed_at: new Date().toISOString(), alter_reason: `${audit?.alter_reason || ''} | Rejected: ${rejectReason || ''}` }).eq('id', auditId);
-        await writeAuditLog({ module: 'Billing', action: 'BILL_ALTER_REJECTED', entity_type: 'bill', entity_id: audit?.bill_id, description: `Rejected by ${reviewedBy}. Reason: ${rejectReason}`, performed_by: reviewedBy });
+        await supabase.from('bill_audit').update({ alter_status: 'rejected', reviewed_by: actor, reviewed_at: new Date().toISOString(), alter_reason: `${audit?.alter_reason || ''} | Rejected: ${rejectReason || ''}` }).eq('id', auditId);
+        await writeAuditLog({ module: 'Billing', action: 'BILL_ALTER_REJECTED', entity_type: 'bill', entity_id: audit?.bill_id, description: `Rejected by ${actor}. Reason: ${rejectReason}`, performed_by: actor });
         return { success: true };
     });
 
     // ═══ SHIPPING ═════════════════════════════════════════════════════════
 
     ipcMain.handle('add-bill-shipping', async (_e, data: any) => {
+        requireSession();
         // Since create-bill uses the write-queue, the bill_id might not exist yet if we query Supabase immediately.
         // We queue this shipping record to insert roughly after the bill is written.
         // Handled entirely by processEntry() in write-queue.ts to survive app restarts.
@@ -3758,23 +4407,29 @@ export function registerHandlers() {
         return decryptRows(data || []);
     });
 
-    ipcMain.handle('update-shipment-status', async (_e, { shipmentId, billId, status, note, updatedBy, userRole, imagePath }: any) => {
-        const upd: any = { status, updated_by: updatedBy, updated_at: new Date().toISOString() };
+    ipcMain.handle('update-shipment-status', async (_e, { shipmentId, billId, status, note, imagePath }: any) => {
+        const session = requireSession();
+        const actor = session.fullName || session.username;
+        const actorRole = session.role;
+        const upd: any = { status, updated_by: actor, updated_at: new Date().toISOString() };
         if (imagePath) upd.packaging_image_path = imagePath;
         if (note) upd.delivery_note = note;
         await supabase.from('bill_shipping').update(upd).eq('id', shipmentId);
-        await supabase.from('shipping_status_log').insert({ shipment_id: shipmentId, bill_id: billId, status, note: note || '', image_path: imagePath || null, updated_by: updatedBy, updated_by_role: userRole });
-        await writeAuditLog({ module: 'Shipping', action: 'SHIPPING_STATUS_UPDATED', entity_type: 'shipment', entity_id: shipmentId, description: `Status → "${status}" by ${updatedBy}`, new_value: { status, note }, performed_by: updatedBy });
+        await supabase.from('shipping_status_log').insert({ shipment_id: shipmentId, bill_id: billId, status, note: note || '', image_path: imagePath || null, updated_by: actor, updated_by_role: actorRole });
+        await writeAuditLog({ module: 'Shipping', action: 'SHIPPING_STATUS_UPDATED', entity_type: 'shipment', entity_id: shipmentId, description: `Status → "${status}" by ${actor}`, new_value: { status, note }, performed_by: actor });
         return { success: true };
     });
 
-    ipcMain.handle('upload-packaging-image', async (_e, { shipmentId, billId, imageBase64, updatedBy, userRole }: any) => {
+    ipcMain.handle('upload-packaging-image', async (_e, { shipmentId, billId, imageBase64 }: any) => {
+        const session = requireSession();
+        const actor = session.fullName || session.username;
+        const actorRole = session.role;
         try {
             const buffer = Buffer.from(imageBase64.replace(/^data:image\/\w+;base64,/, ''), 'base64');
             const imgPath = await uploadOptimizedImage(buffer, `ship_${shipmentId}`);
-            await supabase.from('bill_shipping').update({ packaging_image_path: imgPath, updated_by: updatedBy, status: 'ready_to_ship', updated_at: new Date().toISOString() }).eq('id', shipmentId);
-            await supabase.from('shipping_status_log').insert({ shipment_id: shipmentId, bill_id: billId, status: 'ready_to_ship', note: 'Packaging photo uploaded, ready to ship', image_path: imgPath, updated_by: updatedBy, updated_by_role: userRole });
-            await writeAuditLog({ module: 'Shipping', action: 'PACKAGING_IMAGE_UPLOADED', entity_type: 'shipment', entity_id: shipmentId, description: `Photo uploaded by ${updatedBy}`, performed_by: updatedBy });
+            await supabase.from('bill_shipping').update({ packaging_image_path: imgPath, updated_by: actor, status: 'ready_to_ship', updated_at: new Date().toISOString() }).eq('id', shipmentId);
+            await supabase.from('shipping_status_log').insert({ shipment_id: shipmentId, bill_id: billId, status: 'ready_to_ship', note: 'Packaging photo uploaded, ready to ship', image_path: imgPath, updated_by: actor, updated_by_role: actorRole });
+            await writeAuditLog({ module: 'Shipping', action: 'PACKAGING_IMAGE_UPLOADED', entity_type: 'shipment', entity_id: shipmentId, description: `Photo uploaded by ${actor}`, performed_by: actor });
             return { success: true, imagePath: imgPath };
         } catch (e: any) { return { success: false, error: e.message }; }
     });
@@ -3791,12 +4446,11 @@ export function registerHandlers() {
         const result = licenseManager.saveLicense(key.trim());
         if (!result.success) return result;
 
-        // Step 2: On successful activation, auto-decrypt the embedded Supabase
-        // credentials (URL + anon key) using the master secret.
-        // The user never needs to manually enter the project URL or anon key.
-        const credResult = decryptEmbeddedCredentials();
+        // Step 2: On successful activation, bootstrap public Supabase client
+        // configuration (URL + anon key). No LE_GENERATION_SECRET required.
+        const credResult = bootstrapPublicClientConfig();
         if (!credResult) {
-            console.warn('[LICENSE] License activated but credential decryption failed. User may need to enter credentials manually.');
+            console.warn('[LICENSE] License activated but Supabase client configuration bootstrap failed.');
         }
 
         return { success: true, credentialsDecrypted: credResult };
@@ -3825,6 +4479,11 @@ export function registerHandlers() {
     }
 
     ipcMain.handle('create-db-backup', async () => {
+        const session = requireSession();
+        if (!isSessionSuperadmin(session)) {
+            throw new Error('Unauthorized: Super Admin access required');
+        }
+        const actor = session.fullName || session.username;
         try {
             const tables = ['groups', 'ledgers', 'vouchers', 'voucher_entries', 'products', 'bills', 'bill_items', 'billing_customers', 'purchase_bills', 'purchase_bill_items', 'users', 'notifications'];
             const backup: Record<string, any[]> = {};
@@ -3834,17 +4493,33 @@ export function registerHandlers() {
             fs.writeFileSync(backupFile, JSON.stringify(backup, null, 2), 'utf-8');
             const files = fs.readdirSync(getBackupDir()).filter((f: string) => f.startsWith('le-soft-backup-') && f.endsWith('.json')).sort().reverse();
             files.slice(10).forEach((f: string) => { try { fs.unlinkSync(path.join(getBackupDir(), f)); } catch { } });
+            await writeAuditLog({
+                module: 'Database',
+                action: 'BACKUP_CREATED',
+                entity_type: 'database',
+                description: `Backup created: ${path.basename(backupFile)}`,
+                performed_by: actor,
+            });
             return { success: true, path: backupFile, time: new Date().toISOString() };
         } catch (e: any) { return { success: false, error: e.message }; }
     });
 
     ipcMain.handle('list-db-backups', async () => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
         try {
             return fs.readdirSync(getBackupDir()).filter((f: string) => f.startsWith('le-soft-backup-') && f.endsWith('.json')).map((f: string) => { const st = fs.statSync(path.join(getBackupDir(), f)); return { name: f, size: st.size, date: st.mtime.toISOString() }; }).sort((a: any, b: any) => b.date.localeCompare(a.date));
         } catch { return []; }
     });
 
     ipcMain.handle('restore-db-backup', async (_e, backupName: string) => {
+        const session = requireSession();
+        if (!isSessionSuperadmin(session)) {
+            throw new Error('Unauthorized: Super Admin access required');
+        }
+        const actor = session.fullName || session.username;
         try {
             const backupPath = path.join(getBackupDir(), backupName);
             if (!fs.existsSync(backupPath)) return { success: false, error: 'Backup file not found' };
@@ -3853,6 +4528,13 @@ export function registerHandlers() {
                 if (!Array.isArray(rows) || rows.length === 0) continue;
                 try { await supabase.from(table).upsert(rows as any[]); } catch { }
             }
+            await writeAuditLog({
+                module: 'Database',
+                action: 'BACKUP_RESTORED',
+                entity_type: 'database',
+                description: `Backup restored from: ${backupName}`,
+                performed_by: actor,
+            });
             return { success: true, message: 'Cloud data restored from backup.' };
         } catch (e: any) { return { success: false, error: e.message }; }
     });
@@ -3871,6 +4553,11 @@ export function registerHandlers() {
     function stripHTML(html: string) { return html.replace(/<[^>]*>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&nbsp;/g, ' ').trim(); }
 
     ipcMain.handle('import-woocommerce-csv', async (_e, csvFilePath: string) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
+        const actor = session.fullName || session.username;
         try {
             let raw = fs.readFileSync(csvFilePath, 'utf-8');
             if (raw.charCodeAt(0) === 0xFEFF) raw = raw.slice(1);
@@ -3912,6 +4599,13 @@ export function registerHandlers() {
                 } catch (e: any) { errors.push(`Row ${i}: ${e.message}`); skipped++; }
             }
             if (insertRows.length) { const { error } = await supabase.from('products').insert(insertRows); if (error) return { imported: 0, skipped: lines.length - 1, errors: [error.message] }; }
+            await writeAuditLog({
+                module: 'Inventory',
+                action: 'IMPORT_WOOCOMMERCE_CSV',
+                entity_type: 'product',
+                description: `Imported ${imported} products from WooCommerce CSV (${skipped} skipped)`,
+                performed_by: actor,
+            });
             return { imported, skipped, errors: errors.slice(0, 20) };
         } catch (e: any) { return { imported: 0, skipped: 0, errors: [e.message] }; }
     });
@@ -3919,18 +4613,36 @@ export function registerHandlers() {
     // ═══ BULK SYNC TO WEBSITE ═════════════════════════════════════════════
 
     ipcMain.handle('sync-products-to-website', async () => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
+        const actor = session.fullName || session.username;
         if (!mysqlPool) return { success: false, error: 'MySQL not connected', synced: 0, failed: 0 };
         const { data: rows } = await supabase.from('products').select('id,name,sku,category,selling_price,description,image_path,quantity');
         if (!rows || rows.length === 0) return { success: true, synced: 0, failed: 0 };
         let synced = 0, failed = 0;
         for (const row of rows) { try { await syncProductToMySQL({ localId: row.id, name: row.name, sku: row.sku || '', category: row.category || '', sellingPrice: row.selling_price || 0, description: row.description || '', imagePath: row.image_path || '', quantity: row.quantity || 0 }); synced++; } catch { failed++; } }
+        await writeAuditLog({
+            module: 'Inventory',
+            action: 'SYNC_PRODUCTS_TO_WEBSITE',
+            entity_type: 'product',
+            description: `Synced ${synced} products to website MySQL (${failed} failed)`,
+            performed_by: actor,
+        });
         return { success: true, synced, failed, total: rows.length };
     });
 
     // ═══ DEVICE MONITORING ════════════════════════════════════════════════
 
     ipcMain.handle('get-connected-devices', async () => getConnectedDevices());
-    ipcMain.handle('set-backup-node', async (_e, isBackup: boolean) => setBackupNode(isBackup));
+    ipcMain.handle('set-backup-node', async (_e, isBackup: boolean) => {
+        const session = requireSession();
+        if (!isSessionSuperadmin(session)) {
+            throw new Error('Unauthorized: Super Admin access required');
+        }
+        return setBackupNode(isBackup);
+    });
     ipcMain.handle('get-device-id', async () => licenseManager.getMachineId());
 
     // ═══ APP / AUTO-UPDATE ════════════════════════════════════════════════
@@ -3939,7 +4651,13 @@ export function registerHandlers() {
 
     // ═══ NETWORK CONFIG (no-op stubs for Supabase-first mode) ═════════════
     ipcMain.handle('get-network-config', async () => ({}));
-    ipcMain.handle('save-network-config', async () => ({ success: true }));
+    ipcMain.handle('save-network-config', async () => {
+        const session = requireSession();
+        if (!isSessionSuperadmin(session)) {
+            throw new Error('Unauthorized: Super Admin access required');
+        }
+        return { success: true };
+    });
     ipcMain.handle('test-server-connection', async () => ({ success: false, error: 'Network config not applicable in Supabase mode' }));
     ipcMain.handle('get-local-ip', async () => {
         const ifaces = os.networkInterfaces();
@@ -3984,8 +4702,9 @@ export function registerHandlers() {
         }, { onConflict: 'id' });
         if (error) return { success: false, error: error.message };
 
-        // Also save locally
+        // Also save locally and bootstrap public configuration
         licenseManager.saveLicense(key);
+        bootstrapPublicClientConfig();
         return { success: true };
     });
 
@@ -4000,13 +4719,34 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('hrm-upsert-employee', async (_e, emp) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
+        const actor = session.fullName || session.username;
         if (emp.id) {
             const { error } = await supabase.from('hrm_employees').update(emp).eq('id', emp.id);
             if (error) throw error;
+            await writeAuditLog({
+                module: 'HRM',
+                action: 'UPDATE',
+                entity_type: 'employee',
+                entity_id: emp.id,
+                description: `Updated employee #${emp.id}`,
+                performed_by: actor,
+            });
             return { success: true };
         } else {
             const { data, error } = await supabase.from('hrm_employees').insert(emp).select('id').single();
             if (error) throw error;
+            await writeAuditLog({
+                module: 'HRM',
+                action: 'CREATE',
+                entity_type: 'employee',
+                entity_id: data.id,
+                description: `Created employee #${data.id}`,
+                performed_by: actor,
+            });
             return { success: true, id: data.id };
         }
     });
@@ -4019,8 +4759,20 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('hrm-delete-employee', async (_e, id) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
         const { error } = await supabase.from('hrm_employees').delete().eq('id', id);
         if (error) throw error;
+        await writeAuditLog({
+            module: 'HRM',
+            action: 'DELETE',
+            entity_type: 'employee',
+            entity_id: id,
+            description: `Deleted employee #${id}`,
+            performed_by: session.fullName || session.username,
+        });
         return { success: true };
     });
 
@@ -4034,6 +4786,8 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('hrm-mark-attendance', async (_e, att) => {
+        const session = requireSession();
+        const actor = session.fullName || session.username;
         const { error } = await supabase.from('hrm_attendance').upsert({
             employee_id: att.employee_id,
             date: att.date,
@@ -4042,6 +4796,14 @@ export function registerHandlers() {
             check_out: att.check_out || null
         }, { onConflict: 'employee_id,date' });
         if (error) throw error;
+        await writeAuditLog({
+            module: 'HRM',
+            action: 'ATTENDANCE_MARKED',
+            entity_type: 'attendance',
+            entity_id: att.employee_id,
+            description: `Marked attendance for employee #${att.employee_id} on ${att.date}: ${att.status}`,
+            performed_by: actor,
+        });
         return { success: true };
     });
 
@@ -4053,14 +4815,37 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('hrm-request-leave', async (_e, leave) => {
+        const session = requireSession();
+        const actor = session.fullName || session.username;
         const { data, error } = await supabase.from('hrm_leaves').insert(leave).select('id').single();
         if (error) throw error;
+        await writeAuditLog({
+            module: 'HRM',
+            action: 'LEAVE_REQUESTED',
+            entity_type: 'leave',
+            entity_id: data.id,
+            description: `Leave requested for employee #${leave.employee_id}`,
+            performed_by: actor,
+        });
         return { success: true, id: data.id };
     });
 
-    ipcMain.handle('hrm-update-leave-status', async (_e, { id, status }) => {
+    ipcMain.handle('hrm-update-leave-status', async (_e, { id, status }: any) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
+        const actor = session.fullName || session.username;
         const { error } = await supabase.from('hrm_leaves').update({ status }).eq('id', id);
         if (error) throw error;
+        await writeAuditLog({
+            module: 'HRM',
+            action: 'LEAVE_STATUS_UPDATED',
+            entity_type: 'leave',
+            entity_id: id,
+            description: `Leave #${id} status set to ${status}`,
+            performed_by: actor,
+        });
         return { success: true };
     });
 
@@ -4075,6 +4860,11 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('hrm-generate-payroll', async (_e, pr) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
+        const actor = session.fullName || session.username;
         const net = (parseFloat(pr.basic_salary) || 0) + (parseFloat(pr.bonus) || 0) - (parseFloat(pr.deductions) || 0);
         const { error } = await supabase.from('hrm_payroll').upsert({
             employee_id: pr.employee_id,
@@ -4088,12 +4878,33 @@ export function registerHandlers() {
             payment_date: pr.payment_date || null
         }, { onConflict: 'employee_id,month,year' });
         if (error) throw error;
+        await writeAuditLog({
+            module: 'HRM',
+            action: 'PAYROLL_GENERATED',
+            entity_type: 'payroll',
+            entity_id: pr.employee_id,
+            description: `Generated payroll for employee #${pr.employee_id} (${pr.month}/${pr.year}) net: ${net}`,
+            performed_by: actor,
+        });
         return { success: true };
     });
 
     ipcMain.handle('hrm-mark-payroll-paid', async (_e, id) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
+        const actor = session.fullName || session.username;
         const { error } = await supabase.from('hrm_payroll').update({ status: 'Paid', payment_date: new Date().toISOString().split('T')[0] }).eq('id', id);
         if (error) throw error;
+        await writeAuditLog({
+            module: 'HRM',
+            action: 'PAYROLL_PAID',
+            entity_type: 'payroll',
+            entity_id: id,
+            description: `Marked payroll #${id} as paid`,
+            performed_by: actor,
+        });
         return { success: true };
     });
 
@@ -4105,6 +4916,11 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('hrm-upsert-holiday', async (_e, item) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
+        const actor = session.fullName || session.username;
         const payload: any = {
             holiday_date: item.holiday_date,
             holiday_name: item.holiday_name,
@@ -4114,17 +4930,44 @@ export function registerHandlers() {
         if (item.id) {
             const { error } = await supabase.from('hrm_holidays').update(payload).eq('id', item.id);
             if (error) throw error;
+            await writeAuditLog({
+                module: 'HRM',
+                action: 'HOLIDAY_UPDATED',
+                entity_type: 'holiday',
+                entity_id: item.id,
+                description: `Updated holiday #${item.id}: ${item.holiday_name}`,
+                performed_by: actor,
+            });
             return { success: true };
         } else {
             const { error } = await supabase.from('hrm_holidays').upsert(payload, { onConflict: 'holiday_date' });
             if (error) throw error;
+            await writeAuditLog({
+                module: 'HRM',
+                action: 'HOLIDAY_CREATED',
+                entity_type: 'holiday',
+                description: `Created/upserted holiday: ${item.holiday_name} (${item.holiday_date})`,
+                performed_by: actor,
+            });
             return { success: true };
         }
     });
 
     ipcMain.handle('hrm-delete-holiday', async (_e, id) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
         const { error } = await supabase.from('hrm_holidays').delete().eq('id', id);
         if (error) throw error;
+        await writeAuditLog({
+            module: 'HRM',
+            action: 'DELETE',
+            entity_type: 'holiday',
+            entity_id: id,
+            description: `Deleted holiday #${id}`,
+            performed_by: session.fullName || session.username,
+        });
         return { success: true };
     });
 
@@ -4140,14 +4983,34 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('crm-upsert-customer', async (_e, cust) => {
+        const session = requireSession();
+        const actor = session.fullName || session.username;
         const payload = encryptObject(cust);
         if (payload.id) {
             const { error } = await supabase.from('billing_customers').update(payload).eq('id', payload.id);
             if (error) throw error;
+            cache.invalidate('billing_customers');
+            await writeAuditLog({
+                module: 'CRM',
+                action: 'CUSTOMER_UPDATED',
+                entity_type: 'billing_customer',
+                entity_id: payload.id,
+                description: `Updated customer #${payload.id}`,
+                performed_by: actor,
+            });
             return { success: true };
         } else {
             const { data, error } = await supabase.from('billing_customers').insert(payload).select('id').single();
             if (error) throw error;
+            cache.invalidate('billing_customers');
+            await writeAuditLog({
+                module: 'CRM',
+                action: 'CUSTOMER_CREATED',
+                entity_type: 'billing_customer',
+                entity_id: data.id,
+                description: `Created customer #${data.id}`,
+                performed_by: actor,
+            });
             return { success: true, id: data.id };
         }
     });
@@ -4159,19 +5022,36 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('crm-add-tracking-log', async (_e, log) => {
-        const { data, error } = await supabase.from('crm_tracking').insert(log).select('id').single();
+        const session = requireSession();
+        const actor = session.fullName || session.username;
+        const safeLog = {
+            ...log,
+            user_id: Number(session.id) || null,
+        };
+        const { data, error } = await supabase.from('crm_tracking').insert(safeLog).select('id').single();
         if (error) throw error;
+        await writeAuditLog({
+            module: 'CRM',
+            action: 'TRACKING_LOG_ADDED',
+            entity_type: 'crm_tracking',
+            entity_id: data.id,
+            description: `Added tracking log for customer #${log.customer_id}`,
+            performed_by: actor,
+        });
         return { success: true, id: data.id };
     });
 
     // ═══ QUOTATION MODULE ══════════════════════════════════════════════════════
 
     ipcMain.handle('create-quotation', async (_e, payload) => {
+        const session = requireSession();
+        const actor = session.fullName || session.username;
+        const actorRole = session.role;
         const {
             quoteDate, validUntil, companyName, customerName, customerAddress,
             customerMobile, customerEmail, concernedName, concernedPhone, concernedEmail,
             fittingCharge, deliveryCharge, discount, grandTotal,
-            preparedBy, preparedByRole, termsJson, items
+            termsJson, items
         } = payload;
 
         const quotRow = encryptObject({
@@ -4183,8 +5063,8 @@ export function registerHandlers() {
             concerned_name: concernedName || '',
             concerned_phone: concernedPhone || '',
             concerned_email: concernedEmail || '',
-            prepared_by: preparedBy || '',
-            prepared_by_role: preparedByRole || '',
+            prepared_by: actor,
+            prepared_by_role: actorRole,
         });
 
         const { data: quot, error } = await supabase.from('quotations').insert({
@@ -4221,6 +5101,15 @@ export function registerHandlers() {
             }
         }
 
+        await writeAuditLog({
+            module: 'CRM',
+            action: 'QUOTATION_CREATED',
+            entity_type: 'quotation',
+            entity_id: quot.id,
+            description: `Created quotation #${quot.id} (${quot.quote_number})`,
+            performed_by: actor,
+        });
+
         return { id: quot.id, quoteNumber: quot.quote_number };
     });
 
@@ -4252,60 +5141,85 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('delete-quotation', async (_e, id: number) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
+        await supabase.from('quotation_items').delete().eq('quotation_id', id);
         const { error } = await supabase.from('quotations').delete().eq('id', id);
         if (error) throw error;
+        await writeAuditLog({
+            module: 'CRM',
+            action: 'DELETE',
+            entity_type: 'quotation',
+            entity_id: id,
+            description: `Deleted quotation #${id}`,
+            performed_by: session.fullName || session.username,
+        });
         return { success: true };
     });
 
     // ═══ CUSTOMER LEDGER & ADDRESSES ══════════════════════════════════════════
-    ipcMain.handle('get-customer-ledger-list', async (_e, opts?: { callerUsername?: string; isSuperadmin?: boolean; canSeeAllCustomers?: boolean }) => {
-        const isAdmin = opts?.isSuperadmin === true;
-        const seeAll  = isAdmin || opts?.canSeeAllCustomers === true;
-        const caller  = (opts?.callerUsername || '').trim();
+    ipcMain.handle('get-customer-ledger-list', async (_e, _opts?: any) => {
+        const session = requireSession();
+        const isAdmin = isSessionAdminOrSuper(session);
+        const seeAll  = isAdmin || !!session.permissions?.['see_all_customers'] || !!session.permissions?.['canSeeAllCustomers'];
+        const caller  = session.username;
 
-        console.log('[customer-ledger-list] opts:', { isAdmin, seeAll, caller });
+        let query = supabase.from('billing_customers').select('*').order('name');
 
-        // ── Full access path (superadmin / see_all_customers) ───────────────
-        if (seeAll || !caller) {
-            const cached = cache.get('billing_customers');
-            const rows = cached || [];
-            if (rows.length > 0) return decryptRows(rows);
-            const { data: customers, error } = await supabase.from('billing_customers').select('*').order('name');
-            if (error) throw error;
-            return decryptRows(customers || []);
+        if (!seeAll && caller) {
+            // Scoped path: find customer_ids through this user's bills
+            const { data: bills } = await supabase
+                .from('bills')
+                .select('customer_id')
+                .eq('billed_by', caller)
+                .not('customer_id', 'is', null);
+
+            const custIds = [...new Set((bills || []).map((b: any) => b.customer_id).filter(Boolean))];
+            if (custIds.length > 0) {
+                query = query.in('id', custIds);
+            }
         }
 
-        // ── Scoped path: find customer_ids through this user's bills ────────
-        const { data: bills } = await supabase
-            .from('bills')
-            .select('customer_id')
-            .eq('billed_by', caller)
-            .not('customer_id', 'is', null);
-
-        const custIds = [...new Set((bills || []).map((b: any) => b.customer_id).filter(Boolean))];
-        console.log('[customer-ledger-list] bills found for caller:', (bills || []).length, 'custIds:', custIds.length);
-
-        // If no bills found for this user, fall back to returning ALL customers
-        // (covers: new user, billed_by mismatch, first-time setup)
-        if (custIds.length === 0) {
-            console.log('[customer-ledger-list] No bills matched, falling back to full list');
-            const { data: allCustomers, error } = await supabase.from('billing_customers').select('*').order('name');
-            if (error) throw error;
-            return decryptRows(allCustomers || []);
-        }
-
-        const { data: customers, error } = await supabase
-            .from('billing_customers')
-            .select('*')
-            .in('id', custIds)
-            .order('name');
+        const { data: customers, error } = await query;
         if (error) throw error;
-        return decryptRows(customers || []);
+
+        const customerIds = (customers || []).map((c: any) => c.id);
+        const { data: billSums } = await supabase
+            .from('bills')
+            .select('customer_id, grand_total')
+            .in('customer_id', customerIds.length ? customerIds : [-1]);
+
+        const { data: paymentSums } = await supabase
+            .from('customer_payments')
+            .select('customer_id, amount, payment_type')
+            .in('customer_id', customerIds.length ? customerIds : [-1]);
+
+        return (customers || []).map((c: any) => {
+            const cBills = (billSums || []).filter((b: any) => b.customer_id === c.id);
+            const totalBilled = cBills.reduce((s: number, b: any) => s + (b.grand_total || 0), 0);
+            const cPayments = (paymentSums || []).filter((p: any) => p.customer_id === c.id);
+            const totalPaid = cPayments.filter((p: any) => p.payment_type === 'CREDIT').reduce((s: number, p: any) => s + (p.amount || 0), 0);
+            return {
+                id: c.id,
+                name: decryptField(c.name) || c.name,
+                phone: decryptField(c.phone) || c.phone,
+                email: decryptField(c.email) || c.email,
+                address: decryptField(c.address) || c.address,
+                total_bills: cBills.length,
+                balance: totalBilled - totalPaid,
+            };
+        });
     });
 
-
-
     ipcMain.handle('delete-billing-customer', async (_e, id: number) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
+        const actor = session.fullName || session.username;
+
         // 1. Unlink from bills
         await supabase.from('bills').update({ customer_id: null }).eq('customer_id', id);
         // 2. Unlink from quotations
@@ -4320,8 +5234,19 @@ export function registerHandlers() {
         const { error } = await supabase.from('billing_customers').delete().eq('id', id);
         if (error) throw error;
 
+        // Invalidate cache
+        cache.invalidate('billing_customers');
+
         // Broadcast to auto-refresh lists
         BrowserWindow.getAllWindows().forEach(win => win.webContents.send('data-updated', 'billing_customers'));
+        await writeAuditLog({
+            module: 'CRM',
+            action: 'DELETE',
+            entity_type: 'billing_customer',
+            entity_id: id,
+            description: `Deleted billing customer #${id}`,
+            performed_by: actor,
+        });
         return { success: true };
     });
 
@@ -4360,88 +5285,7 @@ export function registerHandlers() {
         };
     });
 
-    ipcMain.handle('add-customer-payment', async (_e, payment) => {
-        const { error } = await supabase.from('customer_payments').insert(payment);
-        if (error) throw error;
-        return { success: true };
-    });
 
-    ipcMain.handle('add-customer-address', async (_e, address) => {
-        const { error } = await supabase.from('customer_addresses').insert(address);
-        if (error) throw error;
-        return { success: true };
-    });
-
-    // ═══ EXCHANGE ORDERS ══════════════════════════════════════════════════════
-    ipcMain.handle('create-exchange-order', async (_e, exchangeData) => {
-        const { customer_id, original_bill_id, returned_items, new_items, total_return_value, total_new_value, difference_amount } = exchangeData;
-
-        // 1. Create the order wrapper
-        const { data: order, error } = await supabase.from('exchange_orders').insert({
-            customer_id,
-            original_bill_id: original_bill_id || null,
-            total_return_value,
-            total_new_value,
-            difference_amount
-        }).select('id, exchange_number').single();
-
-        if (error) throw error;
-        const exchangeId = order.id;
-
-        // 2. Format items
-        const allItems = [];
-        for (const item of returned_items) {
-            allItems.push({ exchange_id: exchangeId, item_type: 'RETURNED', product_id: item.product_id, product_name: item.product_name, sku: item.sku, quantity: item.quantity, rate: item.rate, amount: item.amount });
-        }
-        for (const item of new_items) {
-            allItems.push({ exchange_id: exchangeId, item_type: 'NEW', product_id: item.product_id, product_name: item.product_name, sku: item.sku, quantity: item.quantity, rate: item.rate, amount: item.amount });
-        }
-
-        // 3. Save items
-        if (allItems.length > 0) {
-            const { error: itemsErr } = await supabase.from('exchange_items').insert(allItems);
-            if (itemsErr) throw itemsErr;
-
-            // 4. Adjust Inventory
-            for (const item of returned_items) {
-                if (item.product_id) {
-                    try { await supabase.from('products').update({ quantity: (supabase as any).sql`quantity + ${item.quantity}` }).eq('id', item.product_id); } catch { }
-                }
-            }
-            for (const item of new_items) {
-                if (item.product_id) {
-                    try { await supabase.from('products').update({ quantity: (supabase as any).sql`GREATEST(quantity - ${item.quantity}, 0)` }).eq('id', item.product_id); } catch { }
-                }
-            }
-        }
-
-        return { success: true, exchange_number: order.exchange_number };
-    });
-
-    ipcMain.handle('get-exchange-orders', async () => {
-        const { data, error } = await supabase.from('exchange_orders').select('*, customer:billing_customers(name,phone), bill:bills(invoice_number)').order('created_at', { ascending: false });
-        if (error) throw error;
-        return (data || []).map((b: any) => ({ 
-            ...b, 
-            customer_name: decryptField(b.customer?.name) || b.customer?.name || null, 
-            customer_phone: decryptField(b.customer?.phone) || b.customer?.phone || null,
-            original_invoice_number: decryptField(b.bill?.invoice_number) || b.bill?.invoice_number || null
-        }));
-    });
-    
-    ipcMain.handle('get-exchange-details', async (_e, id: number) => {
-        const { data: order } = await supabase.from('exchange_orders').select('*, customer:billing_customers(name,phone,address), bill:bills(invoice_number, created_at)').eq('id', id).single();
-        if (!order) return null;
-        const { data: items } = await supabase.from('exchange_items').select('*').eq('exchange_id', id);
-        return { 
-            ...order, 
-            customer_name: decryptField(order.customer?.name) || order.customer?.name || null,
-            customer_phone: decryptField(order.customer?.phone) || order.customer?.phone || null,
-            customer_address: decryptField(order.customer?.address) || order.customer?.address || null,
-            original_invoice_number: decryptField(order.bill?.invoice_number) || order.bill?.invoice_number || null,
-            items: items || [] 
-        };
-    });
 
     // ═══ PERMISSION LEVELS ════════════════════════════════════════════════════
     ipcMain.handle('get-permission-levels', async () => {
@@ -4460,6 +5304,10 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('create-permission-level', async (_e, payload) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Administrator access required.');
+        }
         const { feature_name, feature_key, description, approver_role, approver_user_id, workflow_key, workflow_step } = payload;
         const { data, error } = await supabase.from('permission_levels').insert({
             feature_name,
@@ -4476,6 +5324,10 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('update-permission-level', async (_e, payload) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Administrator access required.');
+        }
         const { id, ...updates } = payload;
         updates.updated_at = new Date().toISOString();
         const { error } = await supabase.from('permission_levels').update(updates).eq('id', id);
@@ -4484,6 +5336,10 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('delete-permission-level', async (_e, id: number) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Administrator access required.');
+        }
         const { error } = await supabase.from('permission_levels').delete().eq('id', id);
         if (error) throw error;
         return { success: true };
@@ -4491,12 +5347,16 @@ export function registerHandlers() {
 
     // ═══ AI MARKET ANALYSIS & WEB SCRAPING ════════════════════════════════════
     ipcMain.handle('save-ai-key', (_e, key: string) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            return { success: false, error: 'Unauthorized: Administrator access required.' };
+        }
         try {
             const cfgPath = path.join(app.getPath('userData'), 'supabase-config.json');
             let cfg: any = {};
             if (fs.existsSync(cfgPath)) cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
-            cfg.geminiKey = key;
-            fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+            cfg.geminiKey = key ? encryptStandardSecret(key.trim()) : '';
+            fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), { mode: 0o600 });
             return { success: true };
         } catch (err: any) {
             return { success: false, error: err.message };
@@ -4504,11 +5364,16 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('get-ai-key', () => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            return '';
+        }
         try {
             const cfgPath = path.join(app.getPath('userData'), 'supabase-config.json');
             if (fs.existsSync(cfgPath)) {
                 const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
-                return cfg.geminiKey || '';
+                if (!cfg.geminiKey) return '';
+                return cfg.geminiKey.startsWith('enc:v1:') ? decryptStandardSecret(cfg.geminiKey) : cfg.geminiKey;
             }
         } catch {}
         return '';
@@ -4521,14 +5386,38 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('add-competitor-url', async (_e, data) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
+        const actor = session.fullName || session.username;
         const { error } = await supabase.from('product_competitor_urls').insert([data]);
         if (error) throw error;
+        await writeAuditLog({
+            module: 'MarketAnalysis',
+            action: 'CREATE',
+            entity_type: 'competitor_url',
+            description: `Added competitor URL for product #${data.product_id}`,
+            performed_by: actor,
+        });
         return { success: true };
     });
 
     ipcMain.handle('delete-competitor-url', async (_e, id: number) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
         const { error } = await supabase.from('product_competitor_urls').delete().eq('id', id);
         if (error) throw error;
+        await writeAuditLog({
+            module: 'MarketAnalysis',
+            action: 'DELETE',
+            entity_type: 'competitor_url',
+            entity_id: id,
+            description: `Deleted competitor URL #${id}`,
+            performed_by: session.fullName || session.username,
+        });
         return { success: true };
     });
 
@@ -4545,6 +5434,8 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('run-auto-price-scan', async (_e, productId: number) => {
+        const session = requireSession();
+        const actor = session.fullName || session.username;
         try {
             // 1. Fetch our product details from the actual DB safely
             const { data: prodData, error: prodErr } = await supabase.from('products').select('*').eq('id', productId).single();
@@ -4594,6 +5485,15 @@ export function registerHandlers() {
                 }
             }
 
+            await writeAuditLog({
+                module: 'MarketAnalysis',
+                action: 'PRICE_SCAN_EXECUTED',
+                entity_type: 'product',
+                entity_id: productId,
+                description: `Executed market price scan for product #${productId} (${results.length} URLs scanned)`,
+                performed_by: actor,
+            });
+
             return { success: true, count: results.length };
 
         } catch (err: any) {
@@ -4604,15 +5504,28 @@ export function registerHandlers() {
 
 
 
-    ipcMain.handle('verify-bill-payment', async (_e, { paymentRef, status }) => {
+    ipcMain.handle('verify-bill-payment', async (_e, { paymentRef, status }: any) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
+        const actor = session.fullName || session.username;
         // Special handler for external automation software to verify payments
         const { error } = await supabase.from('bills').update({ payment_status: status }).eq('payment_ref', paymentRef);
         if (error) throw error;
+        await writeAuditLog({
+            module: 'Billing',
+            action: 'PAYMENT_VERIFIED',
+            entity_type: 'bill_payment',
+            description: `Verified payment ${paymentRef} -> ${status}`,
+            performed_by: actor,
+        });
         return { success: true };
     });
 
     // ═══ NATIVE WINDOW CONTROLS ═══════════════════════════════════════════════════
     ipcMain.handle('set-theme', (event, theme: string) => {
+        requireSession();
         const win = BrowserWindow.fromWebContents(event.sender);
         if (!win) return;
 
@@ -4660,6 +5573,10 @@ export function registerHandlers() {
 
     ipcMain.handle('create-payment-method', async (_e, method: any) => {
         try {
+            const session = requireSession();
+            if (!isSessionAdminOrSuper(session)) {
+                return { success: false, error: 'Unauthorized: Administrator access required.' };
+            }
             const { data, error } = await supabase
                 .from('payment_methods')
                 .insert({ name: method.name, provider: method.provider, type: method.type, is_active: method.is_active ?? true })
@@ -4674,6 +5591,10 @@ export function registerHandlers() {
 
     ipcMain.handle('delete-payment-method', async (_e, id: number) => {
         try {
+            const session = requireSession();
+            if (!isSessionAdminOrSuper(session)) {
+                return { success: false, error: 'Unauthorized: Administrator access required.' };
+            }
             const { error } = await supabase.from('payment_methods').delete().eq('id', id);
             if (error) throw error;
             return { success: true };
@@ -4684,6 +5605,10 @@ export function registerHandlers() {
 
     ipcMain.handle('update-payment-method', async (_e, method: any) => {
         try {
+            const session = requireSession();
+            if (!isSessionAdminOrSuper(session)) {
+                return { success: false, error: 'Unauthorized: Administrator access required.' };
+            }
             const { error } = await supabase.from('payment_methods').update({
                 name: method.name, provider: method.provider, type: method.type, is_active: method.is_active
             }).eq('id', method.id);
@@ -4697,9 +5622,10 @@ export function registerHandlers() {
     // ═══ LICENSE KEY GENERATOR (Superadmin only) ══════════════════════════════
     // Ports the same crypto algorithm as tools/generate-license.cjs.
     // GENERATION_SECRET lives HERE only — never sent to the renderer.
-    ipcMain.handle('generate-license-key', async (_e, { machineId, requestedBy }: { machineId: string; requestedBy: string }) => {
-        // Security gate: only superadmin role may generate keys
-        if (!requestedBy || requestedBy !== 'superadmin') {
+    ipcMain.handle('generate-license-key', async (_e, { machineId }: { machineId: string; requestedBy?: string }) => {
+        // Security gate: only verified superadmin session in Main Process may generate keys
+        const session = requireSession();
+        if (!isSessionSuperadmin(session)) {
             return { success: false, error: 'Unauthorized: superadmin access required' };
         }
         if (!machineId || typeof machineId !== 'string' || !machineId.trim().startsWith('LE-')) {
@@ -4861,7 +5787,8 @@ export function registerHandlers() {
         newValue?: any;
         performedByName?: string;
     }) {
-        const performedByName = params.performedByName || 'desktop-user';
+        const session = requireSession();
+        const performedByName = session.fullName || session.username;
         await supabase.from('purchase_requisition_status_history').insert({
             requisition_id: params.requisitionId,
             from_status: params.fromStatus || null,
@@ -4870,7 +5797,7 @@ export function registerHandlers() {
             remarks: params.remarks || null,
             old_value: params.oldValue || null,
             new_value: params.newValue || null,
-            performed_by: null,
+            performed_by: Number(session.id) || null,
             performed_by_name: performedByName,
         });
 
@@ -4909,8 +5836,9 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('create-purchase-requisition', async (_e, input: any) => {
+        const session = requireSession();
         try {
-            const userName = input?.performedByName || 'desktop-user';
+            const userName = session.fullName || session.username;
             const companyId = Number(input?.companyId || 1);
             const rawItems = Array.isArray(input?.items) ? input.items : [];
             const normalizedItems = rawItems
@@ -4967,7 +5895,7 @@ export function registerHandlers() {
                     required_delivery_date: input.requiredDeliveryDate,
                     remarks: input.remarks || primaryItem.remarks || '',
                     company_id: Number.isFinite(companyId) ? companyId : 1,
-                    created_by: null as any,
+                    created_by: Number(session.id) || null,
                 })
                 .select('*')
                 .single();
@@ -5003,14 +5931,16 @@ export function registerHandlers() {
             await notifyProcurementWorkflow('Purchase requisition created', `REQ ${data.requisition_number} was created for approval.`);
             return { success: true, data };
         } catch (e: any) {
+            if (e.message?.startsWith('Unauthorized')) throw e;
             console.error('[create-purchase-requisition] Error:', e.message);
             return { success: false, error: e.message };
         }
     });
 
     ipcMain.handle('update-purchase-requisition', async (_e, id: string, updates: any) => {
+        const session = requireSession();
         try {
-            const userName = updates?.performedByName || 'desktop-user';
+            const userName = session.fullName || session.username;
             const { data: before } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
             if (!before) throw new Error('Requisition not found.');
             if (['PURCHASED', 'RECEIVED', 'COMPLETED'].includes(before.status)) {
@@ -5044,7 +5974,7 @@ export function registerHandlers() {
                     required_delivery_date: updates.requiredDeliveryDate || before.required_delivery_date,
                     remarks: updates.remarks ?? before.remarks,
                     updated_at: new Date().toISOString(),
-                    updated_by: null,
+                    updated_by: Number(session.id) || null,
                 })
                 .eq('id', id);
             
@@ -5082,14 +6012,22 @@ export function registerHandlers() {
             });
             return { success: true };
         } catch (e: any) {
+            if (e.message?.startsWith('Unauthorized')) throw e;
             console.error('[update-purchase-requisition] Error:', e.message);
             return { success: false, error: e.message };
         }
     });
 
-    ipcMain.handle('approve-purchase-requisition', async (_e, id: string, _status: string, notes: string, performedByName?: string) => {
+    ipcMain.handle('approve-purchase-requisition', async (_e, id: string, _status: string, notes: string) => {
+        const session = requireSession();
+        const isAdmin = isSessionAdminOrSuper(session);
+        const isStoreHead = session.role === 'Store Head' || session.role === 'store_head';
+        const hasPerm = !!session.permissions?.['approve_purchase_requisition'] || !!session.permissions?.['store_head_approve'];
+        if (!isAdmin && !isStoreHead && !hasPerm) {
+            throw new Error('Unauthorized: Admin or Store Head access required');
+        }
         try {
-            const userName = performedByName || 'desktop-user';
+            const userName = session.fullName || session.username;
             const approvalDate = new Date().toISOString();
             const { data: before } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
             
@@ -5099,10 +6037,10 @@ export function registerHandlers() {
                     approval_status: 'APPROVED',
                     status: 'PENDING_ESTIMATE',
                     approval_date: approvalDate,
-                    approved_by: null,
+                    approved_by: Number(session.id) || null,
                     store_head_notes: notes || '',
                     updated_at: approvalDate,
-                    updated_by: null,
+                    updated_by: Number(session.id) || null,
                 })
                 .eq('id', id)
                 .eq('status', 'DRAFT');
@@ -5115,7 +6053,7 @@ export function registerHandlers() {
                 .insert({
                     requisition_id: id,
                     approval_level: 1,
-                    approver_id: null,
+                    approver_id: Number(session.id) || null,
                     status: 'APPROVED',
                     remarks: notes,
                 });
@@ -5135,14 +6073,16 @@ export function registerHandlers() {
             
             return { success: true };
         } catch (e: any) {
+            if (e.message?.startsWith('Unauthorized')) throw e;
             console.error('[approve-purchase-requisition] Error:', e.message);
             return { success: false, error: e.message };
         }
     });
 
-    ipcMain.handle('submit-purchase-estimates', async (_e, id: string, quotes: any[], performedByName?: string) => {
+    ipcMain.handle('submit-purchase-estimates', async (_e, id: string, quotes: any[]) => {
+        const session = requireSession();
         try {
-            const userName = performedByName || 'desktop-user';
+            const userName = session.fullName || session.username;
             const db = supabaseAdmin || supabase;
             const { data: before } = await db.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
 
@@ -5234,6 +6174,7 @@ export function registerHandlers() {
             await notifyProcurementWorkflow('Estimates Submitted', `Quotes submitted and PO generated for REQ ${before.requisition_number}.`);
             return { success: true };
         } catch (e: any) {
+            if (e.message?.startsWith('Unauthorized')) throw e;
             console.error('[submit-purchase-estimates] Error:', e.message);
             return { success: false, error: e.message };
         }
@@ -5274,9 +6215,16 @@ export function registerHandlers() {
         return data || [];
     });
 
-    ipcMain.handle('audit-review-purchase-requisition', async (_e, id: string, status: 'APPROVED' | 'REJECTED', notes: string, performedByName?: string) => {
+    ipcMain.handle('audit-review-purchase-requisition', async (_e, id: string, status: 'APPROVED' | 'REJECTED', notes: string) => {
+        const session = requireSession();
+        const isAdmin = isSessionAdminOrSuper(session);
+        const isAuditor = session.role === 'Auditor' || session.role === 'auditor';
+        const hasPerm = !!session.permissions?.['audit_purchase_requisition'] || !!session.permissions?.['audit_review'];
+        if (!isAdmin && !isAuditor && !hasPerm) {
+            throw new Error('Unauthorized: Admin or Auditor access required');
+        }
         try {
-            const userName = performedByName || 'desktop-user';
+            const userName = session.fullName || session.username;
             const reviewedAt = new Date().toISOString();
             const { data: before } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
 
@@ -5289,7 +6237,7 @@ export function registerHandlers() {
                     audit_reviewed_at: reviewedAt,
                     audit_reviewed_by_name: userName,
                     updated_at: reviewedAt,
-                    updated_by: null,
+                    updated_by: Number(session.id) || null,
                     director_status: status === 'APPROVED' ? 'PENDING' : 'REJECTED',
                 })
                 .eq('id', id)
@@ -5314,14 +6262,22 @@ export function registerHandlers() {
             );
             return { success: true };
         } catch (e: any) {
+            if (e.message?.startsWith('Unauthorized')) throw e;
             console.error('[audit-review-purchase-requisition] Error:', e.message);
             return { success: false, error: e.message };
         }
     });
 
-    ipcMain.handle('director-review-purchase-requisition', async (_e, id: string, status: 'APPROVED' | 'REJECTED', notes: string, performedByName?: string) => {
+    ipcMain.handle('director-review-purchase-requisition', async (_e, id: string, status: 'APPROVED' | 'REJECTED', notes: string) => {
+        const session = requireSession();
+        const isAdmin = isSessionAdminOrSuper(session);
+        const isDirector = session.role === 'Director' || session.role === 'director';
+        const hasPerm = !!session.permissions?.['director_approve_purchase_requisition'] || !!session.permissions?.['director_review'];
+        if (!isAdmin && !isDirector && !hasPerm) {
+            throw new Error('Unauthorized: Admin or Director access required');
+        }
         try {
-            const userName = performedByName || 'desktop-user';
+            const userName = session.fullName || session.username;
             const reviewedAt = new Date().toISOString();
             const { data: before } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
 
@@ -5334,7 +6290,7 @@ export function registerHandlers() {
                     director_reviewed_at: reviewedAt,
                     director_reviewed_by_name: userName,
                     updated_at: reviewedAt,
-                    updated_by: null,
+                    updated_by: Number(session.id) || null,
                 })
                 .eq('id', id)
                 .eq('status', 'PENDING_DIRECTOR');
@@ -5358,14 +6314,21 @@ export function registerHandlers() {
             );
             return { success: true };
         } catch (e: any) {
+            if (e.message?.startsWith('Unauthorized')) throw e;
             console.error('[director-review-purchase-requisition] Error:', e.message);
             return { success: false, error: e.message };
         }
     });
 
     ipcMain.handle('purchase-purchase-requisition', async (_e, id: string, payload: any) => {
+        const session = requireSession();
+        const isAdmin = isSessionAdminOrSuper(session);
+        const hasPerm = !!session.permissions?.['purchase_requisition'] || !!session.permissions?.['can_purchase_requisition'];
+        if (!isAdmin && !hasPerm) {
+            throw new Error('Unauthorized: Admin or Purchase access required');
+        }
         try {
-            const userName = payload?.performedByName || 'desktop-user';
+            const userName = session.fullName || session.username;
             const purchaseDate = new Date().toISOString();
             const { data: before } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
 
@@ -5384,9 +6347,9 @@ export function registerHandlers() {
                     purchased_quantity: payload.purchasedQuantity || before.quantity,
                     purchase_remarks: payload.purchaseRemarks || null,
                     purchase_date: purchaseDate,
-                    purchased_by: null,
+                    purchased_by: Number(session.id) || null,
                     updated_at: purchaseDate,
-                    updated_by: null,
+                    updated_by: Number(session.id) || null,
                 })
                 .eq('id', id)
                 .eq('status', 'APPROVED');
@@ -5457,14 +6420,16 @@ export function registerHandlers() {
             await notifyProcurementWorkflow('Purchase recorded', `REQ ${after?.requisition_number || id} has been marked purchased.`);
             return { success: true };
         } catch (e: any) {
+            if (e.message?.startsWith('Unauthorized')) throw e;
             console.error('[purchase-purchase-requisition] Error:', e.message);
             return { success: false, error: e.message };
         }
     });
 
-    ipcMain.handle('receive-purchase-requisition', async (_e, id: string, performedByName?: string) => {
+    ipcMain.handle('receive-purchase-requisition', async (_e, id: string) => {
+        const session = requireSession();
         try {
-            const userName = performedByName || 'desktop-user';
+            const userName = session.fullName || session.username;
             const receivedDate = new Date().toISOString();
             const { data: before } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
             
@@ -5474,7 +6439,7 @@ export function registerHandlers() {
                     status: 'RECEIVED',
                     received_date: receivedDate,
                     updated_at: receivedDate,
-                    updated_by: null,
+                    updated_by: Number(session.id) || null,
                 })
                 .eq('id', id)
                 .eq('status', 'PURCHASED');
@@ -5493,14 +6458,16 @@ export function registerHandlers() {
             await notifyProcurementWorkflow('Goods received', `REQ ${after?.requisition_number || id} goods were received.`);
             return { success: true };
         } catch (e: any) {
+            if (e.message?.startsWith('Unauthorized')) throw e;
             console.error('[receive-purchase-requisition] Error:', e.message);
             return { success: false, error: e.message };
         }
     });
 
-    ipcMain.handle('complete-purchase-requisition', async (_e, id: string, performedByName?: string) => {
+    ipcMain.handle('complete-purchase-requisition', async (_e, id: string) => {
+        const session = requireSession();
         try {
-            const userName = performedByName || 'desktop-user';
+            const userName = session.fullName || session.username;
             const completedDate = new Date().toISOString();
             
             // Fetch the requisition and all line items so multi-line requisitions stock every product.
@@ -5560,7 +6527,7 @@ export function registerHandlers() {
                     status: 'COMPLETED',
                     completed_date: completedDate,
                     updated_at: completedDate,
-                    updated_by: null,
+                    updated_by: Number(session.id) || null,
                 })
                 .eq('id', id)
                 .eq('status', 'RECEIVED');
@@ -5645,13 +6612,19 @@ export function registerHandlers() {
             
             return { success: true, addedQuantity };
         } catch (e: any) {
+            if (e.message?.startsWith('Unauthorized')) throw e;
             console.error('[complete-purchase-requisition] Error:', e.message);
             return { success: false, error: e.message };
         }
     });
 
-    ipcMain.handle('delete-purchase-requisition', async (_e, id: string, performedByName?: string) => {
+    ipcMain.handle('delete-purchase-requisition', async (_e, id: string) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
         try {
+            const userName = session.fullName || session.username;
             const { data: before } = await supabase.from('purchase_requisitions').select('*').eq('id', id).maybeSingle();
             const { error } = await supabase
                 .from('purchase_requisitions')
@@ -5666,10 +6639,11 @@ export function registerHandlers() {
                 toStatus: 'DELETED',
                 action: 'REQUISITION_DELETED',
                 oldValue: before,
-                performedByName: performedByName || 'desktop-user',
+                performedByName: userName,
             });
             return { success: true };
         } catch (e: any) {
+            if (e.message?.startsWith('Unauthorized')) throw e;
             console.error('[delete-purchase-requisition] Error:', e.message);
             return { success: false, error: e.message };
         }
@@ -5693,6 +6667,11 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('create-supplier-settlement', async (_e, settlement: any) => {
+        const session = requireSession();
+        if (!isSessionAdminOrSuper(session)) {
+            throw new Error('Unauthorized: Admin or Super Admin access required');
+        }
+        const actor = session.fullName || session.username;
         const payload = {
             supplier_ledger_id: Number(settlement.supplierLedgerId),
             purchase_bill_id: settlement.purchaseBillId ? Number(settlement.purchaseBillId) : null,
@@ -5703,10 +6682,10 @@ export function registerHandlers() {
             settlement_status: settlement.settlementStatus || 'POSTED',
             remarks: settlement.remarks || '',
             company_id: 1,
-            created_by: null,
-            created_by_name: 'desktop-user',
-            updated_by: null,
-            updated_by_name: 'desktop-user',
+            created_by: Number(session.id) || null,
+            created_by_name: actor,
+            updated_by: Number(session.id) || null,
+            updated_by_name: actor,
         };
         const { data, error } = await supabase.from('supplier_settlements').insert(payload).select('id').single();
         if (error) throw error;
@@ -5725,7 +6704,7 @@ export function registerHandlers() {
             entity_id: payload.supplier_ledger_id,
             description: `Settlement ${payload.settlement_status} for supplier ledger ${payload.supplier_ledger_id}`,
             new_value: payload,
-            performed_by: 'desktop-user',
+            performed_by: actor,
         });
 
         await notifyProcurementWorkflow('Supplier settlement recorded', `Settlement posted for supplier ledger ${payload.supplier_ledger_id}.`);

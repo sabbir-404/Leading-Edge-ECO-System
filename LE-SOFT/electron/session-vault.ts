@@ -1,19 +1,23 @@
 /**
- * session-vault.ts
- * ──────────────────────────────────────────────────────────────────────────
- * Heavily-encrypted last-login cache for LE-SOFT.
- * 
- * Security design:
- *   - Key derivation: PBKDF2-HMAC-SHA512, 200,000 iterations
- *   - Machine-bound salt: derived from os.hostname() + app.getPath('userData')
- *   - Cipher:  AES-256-GCM with a random 12-byte IV per write
- *   - File:    <userData>/.le_vault/.vault.ledat (hidden directory)
- *   - The only plaintext in the file is the IV and GCM auth-tag.
- *     Everything else (user data) is opaque ciphertext.
- * 
- * Public API:
- *   saveSession(user)       – call ONLY after successful Supabase login
- *   loadSession(creds)      – call when Supabase is unreachable
+ * ═══════════════════════════════════════════════════════════════════════════
+ * electron/session-vault.ts — Secure Machine-Bound Session Vault
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Heavily-encrypted last-login cache for LE-SOFT offline authentication.
+ *
+ * SECURITY DESIGN:
+ *   - Protected machine-bound key via Electron safeStorage (Windows DPAPI / macOS Keychain)
+ *   - Resilient authenticated fallback key (AES-256-GCM, 12-byte nonce, 0o600 permissions)
+ *     when safeStorage is unavailable.
+ *   - Hardcoded master passphrase eliminated.
+ *   - Seamless one-time automatic migration for existing legacy V1 session vaults.
+ *   - File: <userData>/.le_vault/.vault.ledat
+ *
+ * PUBLIC API:
+ *   saveSession(user)        – call ONLY after verified successful login
+ *   loadSession(credentials) – call when Supabase is unreachable (offline mode)
+ *   clearSession()           – call on logout or user switch
+ * ═══════════════════════════════════════════════════════════════════════════
  */
 
 import crypto from 'crypto';
@@ -23,43 +27,69 @@ import os from 'os';
 import { app } from 'electron';
 import bcrypt from 'bcryptjs';
 import { triggerSystemLockout } from './lockout';
+import {
+    encryptStandardSecret,
+    decryptStandardSecret,
+    migrateSecretToSafeStorage,
+    getUserDataPath
+} from './secure-storage';
 
-const ALG        = 'aes-256-gcm';
-const ITER       = 200_000;
-const HASH       = 'sha512';
-const KEY_LEN    = 32;
-const IV_LEN     = 12;
-const TAG_LEN    = 16;
+// Legacy constants retained exclusively for backward-compatible migration of existing vaults
+const LEGACY_ALG        = 'aes-256-gcm';
+const LEGACY_ITER       = 200_000;
+const LEGACY_HASH       = 'sha512';
+const LEGACY_KEY_LEN    = 32;
+const LEGACY_IV_LEN     = 12;
+const LEGACY_TAG_LEN    = 16;
+const LEGACY_VAULT_PASS = 'LE-SOFT-VAULT-2026-LeadingEdge-Encrypted';
 
-function vaultPath(): string {
-    const dir = path.join(app.getPath('userData'), '.le_vault');
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+export function vaultPath(): string {
+    const dir = path.join(getUserDataPath(), '.le_vault');
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     return path.join(dir, '.vault.ledat');
 }
 
-/** Machine-bound salt (deterministic, 32 bytes). */
-function getMachineSalt(): Buffer {
-    const raw = `${os.hostname()}::${app.getPath('userData')}::leadingedge2026`;
+/** Legacy machine-bound salt for V1 migration only */
+function getLegacyMachineSalt(): Buffer {
+    let userData = '';
+    try {
+        userData = app?.getPath ? app.getPath('userData') : getUserDataPath();
+    } catch {
+        userData = getUserDataPath();
+    }
+    const raw = `${os.hostname()}::${userData}::leadingedge2026`;
     return crypto.createHash('sha256').update(raw).digest();
 }
 
-/** Derive AES key from master passphrase + machine salt. */
-function deriveKey(passphrase: string): Buffer {
-    return crypto.pbkdf2Sync(passphrase, getMachineSalt(), ITER, KEY_LEN, HASH);
+/** Legacy key derivation for V1 migration only */
+export function _deriveLegacyKey(): Buffer {
+    return crypto.pbkdf2Sync(LEGACY_VAULT_PASS, getLegacyMachineSalt(), LEGACY_ITER, LEGACY_KEY_LEN, LEGACY_HASH);
 }
 
 /**
- * Static vault passphrase — the second layer of defence.
- * Even if someone copies the .ledat file to another machine,
- * `getMachineSalt()` will produce a different key there.
+ * Attempts to decrypt a legacy V1 vault buffer.
  */
-const VAULT_PASS = 'LE-SOFT-VAULT-2026-LeadingEdge-Encrypted';
+function decryptLegacyVault(fileBuffer: Buffer): any {
+    if (fileBuffer.length < LEGACY_IV_LEN + LEGACY_TAG_LEN) {
+        throw new Error('Legacy vault buffer too small');
+    }
+    const iv         = fileBuffer.subarray(0, LEGACY_IV_LEN);
+    const tag        = fileBuffer.subarray(LEGACY_IV_LEN, LEGACY_IV_LEN + LEGACY_TAG_LEN);
+    const ciphertext = fileBuffer.subarray(LEGACY_IV_LEN + LEGACY_TAG_LEN);
+
+    const key      = _deriveLegacyKey();
+    const decipher = crypto.createDecipheriv(LEGACY_ALG, key, iv);
+    decipher.setAuthTag(tag);
+
+    const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+    return JSON.parse(decrypted.toString('utf8'));
+}
 
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /**
- * Saves an encrypted session to disk.
- * Called ONLY after a verified, successful Supabase login.
+ * Saves an encrypted session to disk using the secure storage provider.
+ * Called ONLY after a verified, successful login.
  */
 export async function saveSession(user: {
     id: number;
@@ -82,24 +112,30 @@ export async function saveSession(user: {
             saved_at: Date.now(),
         });
 
-        const key = deriveKey(VAULT_PASS);
-        const iv  = crypto.randomBytes(IV_LEN);
-        const cipher = crypto.createCipheriv(ALG, key, iv);
+        // Encrypt with safeStorage (or secure fallback)
+        const encryptedEnvelope = encryptStandardSecret(payload);
 
-        const encrypted = Buffer.concat([cipher.update(payload, 'utf8'), cipher.final()]);
-        const tag       = cipher.getAuthTag();
+        const v2Record = JSON.stringify({
+            version: 2,
+            ciphertext: encryptedEnvelope,
+            saved_at: new Date().toISOString(),
+        }, null, 2);
 
-        // File layout: [IV (12)] + [AUTH_TAG (16)] + [CIPHERTEXT (N)]
-        const fileBuffer = Buffer.concat([iv, tag, encrypted]);
-        fs.writeFileSync(vaultPath(), fileBuffer);
-        console.log('[VAULT] Session saved for:', user.username || '(anonymous)');
+        const vPath = vaultPath();
+        fs.writeFileSync(vPath, v2Record, { encoding: 'utf-8', mode: 0o600 });
+        try {
+            fs.chmodSync(vPath, 0o600);
+        } catch {}
+
+        console.log('[VAULT] Session saved securely for:', user.username || '(anonymous)');
     } catch (err) {
         console.error('[VAULT] Failed to save session:', err);
     }
 }
 
 /**
- * Attempts an offline login from the vault.
+ * Attempts an offline login from the session vault.
+ * Automatically migrates legacy V1 vaults or fallback-encrypted vaults.
  * Returns user object if credentials match, null otherwise.
  */
 export async function loadSession(credentials: {
@@ -113,17 +149,44 @@ export async function loadSession(credentials: {
             return null;
         }
 
-        const fileBuffer = fs.readFileSync(filePath);
-        const iv         = fileBuffer.subarray(0, IV_LEN);
-        const tag        = fileBuffer.subarray(IV_LEN, IV_LEN + TAG_LEN);
-        const ciphertext = fileBuffer.subarray(IV_LEN + TAG_LEN);
+        const rawContent = fs.readFileSync(filePath);
+        let payload: any = null;
+        let requiresMigration = false;
 
-        const key      = deriveKey(VAULT_PASS);
-        const decipher = crypto.createDecipheriv(ALG, key, iv);
-        decipher.setAuthTag(tag);
+        // Check if file is V2 JSON format
+        const contentStr = rawContent.toString('utf-8');
+        if (contentStr.trim().startsWith('{') && contentStr.includes('"version": 2')) {
+            try {
+                const parsed = JSON.parse(contentStr);
+                const decryptedJson = decryptStandardSecret(parsed.ciphertext);
+                payload = JSON.parse(decryptedJson);
 
-        const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
-        const payload   = JSON.parse(decrypted.toString('utf8'));
+                // Check if fallback ciphertext can be migrated to safeStorage
+                const migrationCheck = migrateSecretToSafeStorage(parsed.ciphertext);
+                if (migrationCheck.migrated) {
+                    parsed.ciphertext = migrationCheck.result;
+                    fs.writeFileSync(filePath, JSON.stringify(parsed, null, 2), { encoding: 'utf-8', mode: 0o600 });
+                    console.log('[VAULT] Automatically migrated vault secret to safeStorage.');
+                }
+            } catch (v2Err) {
+                console.error('[VAULT] Error decrypting V2 vault record:', v2Err);
+                throw v2Err;
+            }
+        } else {
+            // Attempt legacy V1 decryption
+            console.log('[VAULT] Detected legacy V1 session vault. Attempting migration...');
+            try {
+                payload = decryptLegacyVault(rawContent);
+                requiresMigration = true;
+            } catch (legacyErr) {
+                console.error('[VAULT] Legacy V1 vault decryption failed:', legacyErr);
+                throw legacyErr;
+            }
+        }
+
+        if (!payload) {
+            return null;
+        }
 
         // Username must match (case-insensitive)
         if (payload.username?.toLowerCase() !== credentials.username.trim().toLowerCase()) {
@@ -136,6 +199,12 @@ export async function loadSession(credentials: {
         if (!passwordMatch) {
             console.log('[VAULT] Password mismatch for offline login.');
             return null;
+        }
+
+        // Safe one-time automatic migration: rewrite in V2 format
+        if (requiresMigration) {
+            console.log('[VAULT] Successfully migrating legacy session vault to V2 safeStorage format...');
+            await saveSession(payload);
         }
 
         console.log('[VAULT] Offline login successful for:', payload.username);
@@ -152,11 +221,10 @@ export async function loadSession(credentials: {
             offlineMode: true,
         };
     } catch (err) {
-        // Decryption failure = tampered file or wrong machine
         const errMsg = (err as Error).message;
         console.error('[VAULT] Vault decryption failed (tampered or wrong machine):', errMsg);
-        
-        // If it's a GCM authentication/crypto failure, trigger the lock-out
+
+        // If it's a GCM authentication/crypto failure, trigger system lockout
         if (errMsg.includes('bad decrypt') || errMsg.includes('Unsupported state') || errMsg.includes('tag check failed')) {
             try {
                 triggerSystemLockout(`Vault decryption failed (tampered session vault data: ${errMsg})`);

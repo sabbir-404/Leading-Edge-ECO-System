@@ -10,6 +10,7 @@ import { initEncryptionKey, clearEncryptionKey } from './field-encryption';
 import { startQueue, flush as flushQueue } from './write-queue';
 import { clearAll as clearCache } from './cache-manager';
 import { triggerSystemLockout, getLockFilePath } from './lockout';
+import { getCfAccessHeaders } from './supabase';
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Auto-Updater
@@ -423,23 +424,11 @@ app.whenReady().then(() => {
     //    without needing Tailscale. We read credentials at call-time from the config file
     //    so they're always fresh even after a config update.
     try {
-        const configPath = path.join(app.getPath('userData'), 'supabase-config.json');
-
         session.defaultSession.webRequest.onBeforeSendHeaders(
             { urls: ['https://storage.lenas.me/*'] },
             (details, callback) => {
-                let cfId = '';
-                let cfSecret = '';
-                try {
-                    const raw = fs.readFileSync(configPath, 'utf-8');
-                    const cfg = JSON.parse(raw);
-                    cfId = cfg.cfAccessClientId || '';
-                    cfSecret = cfg.cfAccessClientSecret || '';
-                } catch { /* config not found or unreadable - headers omitted */ }
-
-                const headers = { ...details.requestHeaders };
-                if (cfId) headers['CF-Access-Client-Id'] = cfId;
-                if (cfSecret) headers['CF-Access-Client-Secret'] = cfSecret;
+                const cfHeaders = getCfAccessHeaders();
+                const headers = { ...details.requestHeaders, ...cfHeaders };
                 callback({ requestHeaders: headers });
             }
         );

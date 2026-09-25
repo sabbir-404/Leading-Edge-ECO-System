@@ -3,10 +3,10 @@ import { beforeAll, vi } from 'vitest';
 // Mock electron module for node/vitest environment
 vi.mock('electron', () => ({
   app: {
-    getPath: vi.fn().mockReturnValue(process.env.APPDATA || process.cwd()),
+    getPath: vi.fn().mockImplementation((name: string) => process.env.APPDATA || process.cwd()),
     isPackaged: false,
     getName: vi.fn().mockReturnValue('LE-SOFT'),
-    getVersion: vi.fn().mockReturnValue('1.8.1'),
+    getVersion: vi.fn().mockReturnValue('1.8.2'),
   },
   dialog: {
     showOpenDialog: vi.fn(),
@@ -17,9 +17,16 @@ vi.mock('electron', () => ({
     getFocusedWindow: vi.fn().mockReturnValue({
       id: 1,
       webContents: { send: vi.fn() },
+      isDestroyed: vi.fn().mockReturnValue(false),
+      loadURL: vi.fn(),
     }),
     getAllWindows: vi.fn().mockReturnValue([
-      { id: 1, webContents: { send: vi.fn() } },
+      {
+        id: 1,
+        webContents: { send: vi.fn() },
+        isDestroyed: vi.fn().mockReturnValue(false),
+        loadURL: vi.fn(),
+      },
     ]),
   },
   ipcMain: {

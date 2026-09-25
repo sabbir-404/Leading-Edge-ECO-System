@@ -3,7 +3,15 @@ import { app } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
-import { ENCRYPTED_URL, ENCRYPTED_ANON_KEY } from './credentials';
+import { ENCRYPTED_URL, ENCRYPTED_ANON_KEY, PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY } from './credentials';
+import {
+    encryptPrivilegedSecret,
+    decryptPrivilegedSecret,
+    encryptStandardSecret,
+    decryptStandardSecret,
+    isSafeStorageAvailable,
+} from './secure-storage';
+import { isLicensed } from './license-manager';
 
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -11,7 +19,22 @@ import { ENCRYPTED_URL, ENCRYPTED_ANON_KEY } from './credentials';
 // macOS:   ~/Library/Application Support/le-soft/supabase-config.json
 // Windows: %APPDATA%\le-soft\supabase-config.json
 // ─────────────────────────────────────────────────────────────────────────────
-const CONFIG_PATH = path.join(app?.getPath ? app.getPath('userData') : path.join(process.env.APPDATA || process.cwd(), 'le-soft'), 'supabase-config.json');
+function getConfigPath(): string {
+    const defaultPath = path.join(app?.getPath ? app.getPath('userData') : path.join(process.env.APPDATA || process.cwd(), 'le-soft'), 'supabase-config.json');
+    if (fs.existsSync(defaultPath)) return defaultPath;
+
+    const candidates = [
+        path.join(process.env.APPDATA || '', 'le-soft', 'supabase-config.json'),
+        path.join(process.env.APPDATA || '', 'LE-SOFT', 'supabase-config.json'),
+        path.join(process.env.APPDATA || '', 'supabase-config.json')
+    ];
+    for (const c of candidates) {
+        if (c && fs.existsSync(c)) {
+            return c;
+        }
+    }
+    return defaultPath;
+}
 
 // Secret must be provided at runtime via environment variable or secure config — never hardcoded
 const CREDENTIAL_SALT   = 'LE-SOFT-CREDENTIAL-ENCRYPT-SALT-v1-2026';
@@ -81,31 +104,146 @@ const EMPTY_DEFAULTS: SupabaseConfig = {
     cfAccessClientSecret: process.env.CF_ACCESS_CLIENT_SECRET || ''
 };
 
-function loadConfig(): SupabaseConfig {
+export function loadConfig(): SupabaseConfig {
+    const configPath = getConfigPath();
     try {
-        if (!fs.existsSync(CONFIG_PATH)) {
+        if (!fs.existsSync(configPath)) {
+            // Option B: If machine already has an active license, auto-bootstrap public client configuration
             try {
-                const key = deriveCredentialKey();
-                if (key) {
-                    const url = decryptBlob(ENCRYPTED_URL, key);
-                    const anonKey = decryptBlob(ENCRYPTED_ANON_KEY, key);
-                    if (url.startsWith('https://') && anonKey.startsWith('eyJ')) {
-                        const autoCfg = { ...EMPTY_DEFAULTS, url, anonKey };
-                        fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true });
-                        fs.writeFileSync(CONFIG_PATH, JSON.stringify(autoCfg, null, 2), 'utf-8');
-                        console.log('[SUPABASE] Auto-configured credentials from embedded encrypted store.');
-                        return autoCfg;
-                    }
+                const lic = isLicensed();
+                if (lic.valid) {
+                    bootstrapPublicClientConfig();
                 }
-            } catch (err) {
-                console.warn('[SUPABASE] Could not auto-decrypt embedded credentials:', err);
+            } catch (licErr) {
+                console.warn('[SUPABASE] License check during config load:', licErr);
+            }
+
+            // Legacy backward-compatibility path: if LE_GENERATION_SECRET is provided in dev environment
+            if (!fs.existsSync(configPath)) {
+                try {
+                    const key = deriveCredentialKey();
+                    if (key) {
+                        const url = decryptBlob(ENCRYPTED_URL, key);
+                        const anonKey = decryptBlob(ENCRYPTED_ANON_KEY, key);
+                        if (url.startsWith('https://') && anonKey.startsWith('eyJ')) {
+                            const autoCfg: SupabaseConfig = { ...EMPTY_DEFAULTS, url, anonKey };
+                            fs.mkdirSync(path.dirname(configPath), { recursive: true });
+                            fs.writeFileSync(configPath, JSON.stringify(autoCfg, null, 2), { encoding: 'utf-8', mode: 0o600 });
+                            console.log('[SUPABASE] Auto-configured credentials from embedded encrypted store.');
+                            return autoCfg;
+                        }
+                    }
+                } catch (err) {
+                    console.warn('[SUPABASE] Could not auto-decrypt embedded credentials:', err);
+                }
             }
         }
-        if (fs.existsSync(CONFIG_PATH)) {
-            const raw = fs.readFileSync(CONFIG_PATH, 'utf-8');
+        if (fs.existsSync(configPath)) {
+            const raw = fs.readFileSync(configPath, 'utf-8');
             const parsed = JSON.parse(raw);
-            const cfg = { ...EMPTY_DEFAULTS, ...parsed };
-            // Ensure CF credentials, serviceRoleKey and proper LAN IP are filled in if missing from env
+            const cfg: SupabaseConfig = { ...EMPTY_DEFAULTS, ...parsed };
+
+            let needsMigration = false;
+
+            // Decrypt or migrate serviceRoleKey (Privileged — fails closed if fallback or unencrypted without safeStorage)
+            if (cfg.serviceRoleKey) {
+                if (cfg.serviceRoleKey.startsWith('enc:v1:safeStorage:')) {
+                    try {
+                        cfg.serviceRoleKey = decryptPrivilegedSecret(cfg.serviceRoleKey);
+                    } catch (err) {
+                        console.error('[SUPABASE] Failed to decrypt serviceRoleKey:', err);
+                        cfg.serviceRoleKey = '';
+                    }
+                } else if (cfg.serviceRoleKey.startsWith('enc:v1:fallback:')) {
+                    console.error('[SUPABASE] Security policy violation: serviceRoleKey cannot use fallback storage. Refusing to load.');
+                    cfg.serviceRoleKey = '';
+                } else {
+                    // Plaintext in existing file: migrate to safeStorage if available
+                    if (isSafeStorageAvailable()) {
+                        try {
+                            const enc = encryptPrivilegedSecret(cfg.serviceRoleKey);
+                            parsed.serviceRoleKey = enc;
+                            needsMigration = true;
+                        } catch {}
+                    } else {
+                        console.warn('[SUPABASE] safeStorage is unavailable; refusing to load plaintext serviceRoleKey');
+                        cfg.serviceRoleKey = '';
+                    }
+                }
+            }
+
+            // Decrypt or migrate cfAccessClientSecret (Privileged)
+            if (cfg.cfAccessClientSecret) {
+                if (cfg.cfAccessClientSecret.startsWith('enc:v1:safeStorage:')) {
+                    try {
+                        cfg.cfAccessClientSecret = decryptPrivilegedSecret(cfg.cfAccessClientSecret);
+                    } catch (err) {
+                        console.error('[SUPABASE] Failed to decrypt cfAccessClientSecret:', err);
+                        cfg.cfAccessClientSecret = '';
+                    }
+                } else if (cfg.cfAccessClientSecret.startsWith('enc:v1:fallback:')) {
+                    console.error('[SUPABASE] Security policy violation: cfAccessClientSecret cannot use fallback storage. Refusing to load.');
+                    cfg.cfAccessClientSecret = '';
+                } else {
+                    if (isSafeStorageAvailable()) {
+                        try {
+                            const enc = encryptPrivilegedSecret(cfg.cfAccessClientSecret);
+                            parsed.cfAccessClientSecret = enc;
+                            needsMigration = true;
+                        } catch {}
+                    } else {
+                        console.warn('[SUPABASE] safeStorage is unavailable; refusing to load plaintext cfAccessClientSecret');
+                        cfg.cfAccessClientSecret = '';
+                    }
+                }
+            }
+
+            // Decrypt or migrate cfAccessClientId
+            if (cfg.cfAccessClientId) {
+                if (cfg.cfAccessClientId.startsWith('enc:v1:')) {
+                    try {
+                        cfg.cfAccessClientId = decryptStandardSecret(cfg.cfAccessClientId);
+                    } catch {
+                        cfg.cfAccessClientId = '';
+                    }
+                } else {
+                    try {
+                        const enc = encryptStandardSecret(cfg.cfAccessClientId);
+                        parsed.cfAccessClientId = enc;
+                        needsMigration = true;
+                    } catch {}
+                }
+            }
+
+            // Decrypt or migrate geminiKey
+            if ((cfg as any).geminiKey) {
+                if ((cfg as any).geminiKey.startsWith('enc:v1:')) {
+                    try {
+                        (cfg as any).geminiKey = decryptStandardSecret((cfg as any).geminiKey);
+                    } catch {
+                        (cfg as any).geminiKey = '';
+                    }
+                } else {
+                    try {
+                        const enc = encryptStandardSecret((cfg as any).geminiKey);
+                        parsed.geminiKey = enc;
+                        needsMigration = true;
+                    } catch {}
+                }
+            }
+
+            // If we migrated any plaintext secrets, write back to disk immediately
+            if (needsMigration) {
+                try {
+                    fs.writeFileSync(configPath, JSON.stringify(parsed, null, 2), { encoding: 'utf-8', mode: 0o600 });
+                    try { fs.chmodSync(configPath, 0o600); } catch {}
+                    console.log('[SUPABASE] Migrated plaintext privileged credentials to encrypted safeStorage.');
+                } catch (e) {
+                    console.warn('[SUPABASE] Failed to write back migrated credentials:', e);
+                }
+            }
+
+            // Fill from environment defaults if missing
             if (!cfg.serviceRoleKey && EMPTY_DEFAULTS.serviceRoleKey) cfg.serviceRoleKey = EMPTY_DEFAULTS.serviceRoleKey;
             if (!cfg.cfAccessClientId && EMPTY_DEFAULTS.cfAccessClientId) cfg.cfAccessClientId = EMPTY_DEFAULTS.cfAccessClientId;
             if (!cfg.cfAccessClientSecret && EMPTY_DEFAULTS.cfAccessClientSecret) cfg.cfAccessClientSecret = EMPTY_DEFAULTS.cfAccessClientSecret;
@@ -127,9 +265,19 @@ function loadConfig(): SupabaseConfig {
  */
 export function hasSupabaseConfig(): boolean {
     try {
-        if (!fs.existsSync(CONFIG_PATH)) return false;
-        const cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
-        return !!(cfg.url && cfg.anonKey);
+        const configPath = getConfigPath();
+        if (fs.existsSync(configPath)) {
+            const cfg = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+            return !!(cfg.url && cfg.anonKey);
+        }
+        // If config file is missing but machine has a verified license, auto-bootstrap
+        try {
+            const lic = isLicensed();
+            if (lic.valid) {
+                return bootstrapPublicClientConfig();
+            }
+        } catch {}
+        return false;
     } catch {
         return false;
     }
@@ -139,24 +287,113 @@ export function saveSupabaseConfig(config: Partial<SupabaseConfig>): void {
     // Merge with any existing config so partial saves don't wipe other keys
     const existing = loadConfig();
     const merged = { ...existing, ...config };
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2), 'utf-8');
-    console.log('[SUPABASE] Config saved to', CONFIG_PATH);
+
+    // Prepare disk payload with encrypted privileged credentials
+    const diskPayload: Record<string, any> = { ...merged };
+
+    // Encrypt serviceRoleKey (Privileged — fails closed if safeStorage unavailable)
+    if (merged.serviceRoleKey && merged.serviceRoleKey.trim()) {
+        if (!merged.serviceRoleKey.startsWith('enc:v1:')) {
+            diskPayload.serviceRoleKey = encryptPrivilegedSecret(merged.serviceRoleKey);
+        }
+    }
+
+    // Encrypt cfAccessClientSecret (Privileged — fails closed if safeStorage unavailable)
+    if (merged.cfAccessClientSecret && merged.cfAccessClientSecret.trim()) {
+        if (!merged.cfAccessClientSecret.startsWith('enc:v1:')) {
+            diskPayload.cfAccessClientSecret = encryptPrivilegedSecret(merged.cfAccessClientSecret);
+        }
+    }
+
+    // Encrypt cfAccessClientId (Standard)
+    if (merged.cfAccessClientId && merged.cfAccessClientId.trim()) {
+        if (!merged.cfAccessClientId.startsWith('enc:v1:')) {
+            diskPayload.cfAccessClientId = encryptStandardSecret(merged.cfAccessClientId);
+        }
+    }
+
+    const configPath = getConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, JSON.stringify(diskPayload, null, 2), { encoding: 'utf-8', mode: 0o600 });
+    try { fs.chmodSync(configPath, 0o600); } catch {}
+    console.log('[SUPABASE] Config saved securely to', configPath);
     
     // Automatically refresh in-memory clients
     reinitSupabaseClients();
 }
 
 /**
+ * Bootstraps public Supabase client configuration for fresh or missing setups.
+ * Implements Option B: Separates public Supabase client configuration from the
+ * developer-only license-generation secret (LE_GENERATION_SECRET).
+ *
+ * Safe for customer builds:
+ * - Uses only the public project URL and anon JWT key.
+ * - Does NOT require LE_GENERATION_SECRET, private signing keys, or privileged credentials.
+ * - Preserves any existing valid configuration.
+ */
+export function bootstrapPublicClientConfig(): boolean {
+    try {
+        const configPath = getConfigPath();
+        const url = PUBLIC_SUPABASE_URL;
+        const anonKey = PUBLIC_SUPABASE_ANON_KEY;
+
+        if (!url || !anonKey || !url.startsWith('https://') || !anonKey.startsWith('eyJ')) {
+            console.error('[CONFIG] Public Supabase client configuration is invalid or missing.');
+            return false;
+        }
+
+        // If a valid config already exists on disk, do not overwrite it unnecessarily
+        if (fs.existsSync(configPath)) {
+            try {
+                const existing = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+                if (existing.url && existing.anonKey) {
+                    console.log('[CONFIG] Existing valid Supabase configuration preserved.');
+                    reinitSupabaseClients();
+                    return true;
+                }
+            } catch {
+                // If existing file is invalid JSON, repair below
+            }
+        }
+
+        // Initialize supabase-config.json with non-secret public client configuration
+        const newConfig: SupabaseConfig = {
+            ...EMPTY_DEFAULTS,
+            url,
+            anonKey,
+        };
+
+        fs.mkdirSync(path.dirname(configPath), { recursive: true });
+        fs.writeFileSync(configPath, JSON.stringify(newConfig, null, 2), { encoding: 'utf-8', mode: 0o600 });
+        try { fs.chmodSync(configPath, 0o600); } catch {}
+        console.log('[CONFIG] Public Supabase client configuration bootstrapped to', configPath);
+
+        reinitSupabaseClients();
+        return true;
+    } catch (e: any) {
+        console.error('[CONFIG] Failed to bootstrap public client configuration:', e.message);
+        return false;
+    }
+}
+
+/**
  * Decrypts the embedded Supabase URL and anon key from credentials.ts and
  * saves them to the userData config file.
  *
- * Called from the activate-license IPC handler after license validation passes.
- * This means the user NEVER has to manually type the project URL or anon key —
- * a valid license key is sufficient to unlock the database connection.
+ * Retained for backward compatibility with existing developer/legacy setups.
+ * Fresh customer installations use bootstrapPublicClientConfig() instead,
+ * eliminating any customer requirement for LE_GENERATION_SECRET.
  *
  * @returns true if decryption succeeded and config was saved, false on error
  */
 export function decryptEmbeddedCredentials(): boolean {
+    // 1. Try public configuration bootstrap first (no secret required)
+    if (PUBLIC_SUPABASE_URL && PUBLIC_SUPABASE_ANON_KEY) {
+        return bootstrapPublicClientConfig();
+    }
+
+    // 2. Legacy fallback: derive key if LE_GENERATION_SECRET is present
     try {
         const key = deriveCredentialKey();
         if (!key) {

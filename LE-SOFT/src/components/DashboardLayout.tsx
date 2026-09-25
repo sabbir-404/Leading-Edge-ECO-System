@@ -84,7 +84,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
   const hasPermission = (key: string) => {
       const lowerRole = (userRole || '').toLowerCase();
       const lowerName = (userName || '').toLowerCase();
-      if (!lowerRole || lowerRole === 'superadmin' || lowerRole === 'admin' || lowerRole === 'manager' || lowerRole === 'undefined' || lowerName.includes('sabbirsuperadmin') || lowerName === 'admin') return true;
+      if (!lowerRole || lowerRole === 'superadmin' || lowerRole === 'admin' || lowerRole === 'manager' || lowerRole === 'undefined' || lowerName === 'admin') return true;
       return Object.keys(userPermissions).length === 0 ? true : !!userPermissions[key];
   };
 

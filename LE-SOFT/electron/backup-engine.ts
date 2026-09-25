@@ -3,6 +3,8 @@ import path from 'path';
 import crypto from 'crypto';
 import { app } from 'electron';
 
+import { getOrCreateFallbackKey } from './secure-storage';
+
 /**
  * backup-engine.ts — Restic-Style Encrypted Backup Engine
  * Creates AES-256 encrypted snapshots of local SQLite database and JSON configs.
@@ -21,7 +23,8 @@ export class ResticBackupEngine {
     /**
      * Create an AES-256-GCM encrypted backup archive of a file.
      */
-    static createEncryptedSnapshot(sourceFilePath: string, destinationDir: string, masterPassword = 'LESOFT_SECURE_BACKUP_KEY'): string {
+    static createEncryptedSnapshot(sourceFilePath: string, destinationDir: string, masterPassword?: string): string {
+        const passwordToUse = masterPassword || getOrCreateFallbackKey().toString('hex');
         if (!fs.existsSync(sourceFilePath)) {
             throw new Error(`Source file for backup does not exist: ${sourceFilePath}`);
         }
@@ -33,7 +36,7 @@ export class ResticBackupEngine {
         const rawData = fs.readFileSync(sourceFilePath);
         const salt = crypto.randomBytes(16);
         const iv = crypto.randomBytes(12);
-        const key = this.deriveKey(masterPassword, salt);
+        const key = this.deriveKey(passwordToUse, salt);
 
         const cipher = crypto.createCipheriv(this.algorithm, key, iv);
         const encryptedData = Buffer.concat([cipher.update(rawData), cipher.final()]);

@@ -1,7 +1,7 @@
 {
   "name": "le-soft",
   "private": true,
-  "version": "1.8.1",
+  "version": "1.8.2",
   "description": "Leading Edge ECO-System Software",
   "author": "Leading Edge <leadingedge.com.bd>",
   "type": "module",
@@ -21,7 +21,9 @@
     "dist:publish": "node build-electron.cjs && electron-builder --win -p always",
     "dist:mac:publish": "node build-electron.cjs && electron-builder --mac -p always",
     "dist:all": "node build-electron.cjs && electron-builder --win --mac",
-    "manuscript:pdf": "node docs/generate_manuscript_pdf.cjs"
+    "manuscript:pdf": "node docs/generate_manuscript_pdf.cjs",
+    "license:check": "node tools/generate-license.cjs --check",
+    "license:generate": "node tools/generate-license.cjs"
   },
   "dependencies": {
     "@casl/ability": "^7.0.1",

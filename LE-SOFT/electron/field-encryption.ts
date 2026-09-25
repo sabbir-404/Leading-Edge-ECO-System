@@ -1,153 +1,276 @@
 /**
- * field-encryption.ts
- * AES-256-GCM field-level encryption for ALL Supabase data columns.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * electron/field-encryption.ts — Versioned AES-256-GCM Field-Level Encryption
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- * Key derivation:
- *   HKDF( licenseKey + machineId ) → 32-byte AES key
- *   Stored in memory only — never written to disk.
+ * CRYPTOGRAPHIC SPECIFICATION (Version 3 — New Writes):
+ *   - Cipher: AES-256-GCM (Authenticated Encryption with Associated Data)
+ *   - Nonce: Cryptographically random 12-byte IV per record (NIST SP 800-38D)
+ *   - Salt: Cryptographically random 16-byte salt per record
+ *   - Key Derivation: HKDF-SHA256 (RFC 5869) deriving a 32-byte record key
+ *     from Master Key + per-record Salt with info 'lesoft-field-encryption-v3'.
+ *   - Tag: 16-byte authentication tag verified on every decryption.
+ *   - Format: e3:<base64( salt[16] + iv[12] + authTag[16] + ciphertext )>
  *
- * Ciphertext format (base64):
- *   e1:<base64( iv[12] + authTag[16] + ciphertext )>
+ * BACKWARD COMPATIBILITY:
+ *   - e1: format (AES-256-GCM, static salt HMAC-SHA256 key, IV[12] + Tag[16] + Ciphertext)
+ *     is fully supported for decryption of existing records.
+ *   - e2: format (legacy AES-256-CBC, IV[16] + Ciphertext) is supported for decryption.
+ *   - Plaintext / unencrypted values are returned as-is.
+ *   - New writes use ONLY the e3: format.
  *
- * Columns that are NEVER encrypted (structural / relational):
- *   - id, *_id (foreign keys), auth_id
- *   - created_at, updated_at, last_active, date timestamps
- *   - is_active, email_confirm (booleans)
- *   - Any null values
+ * COLUMNS EXCLUDED FROM ENCRYPTION (Structural / Relational):
+ *   - id, foreign keys (*_id), auth_id, timestamps, booleans, search keys.
+ * ═══════════════════════════════════════════════════════════════════════════
  */
 
 import crypto from 'crypto';
-import os from 'os';
 import fs from 'fs';
 import path from 'path';
 import { app } from 'electron';
+import {
+    encryptStandardSecret,
+    decryptStandardSecret,
+    getUserDataPath
+} from './secure-storage';
 
-const CIPHER = 'aes-256-gcm';
-const IV_LEN = 12;
-const TAG_LEN = 16;
-const PREFIX = 'e1:';
+const CIPHER_GCM    = 'aes-256-gcm';
+const V3_PREFIX     = 'e3:';
+const V1_PREFIX     = 'e1:';
+const V2_CBC_PREFIX = 'e2:';
 
-// ── Key derivation ─────────────────────────────────────────────────────────────
-let _key: Buffer | null = null;
+const SALT_LEN = 16;
+const IV_LEN   = 12;
+const TAG_LEN  = 16;
+const HKDF_INFO = Buffer.from('lesoft-field-encryption-v3', 'utf-8');
 
+const MASTER_SEED_FILE = '.field-master-seed.key';
+const LEGACY_SALT = crypto.createHash('sha256').update('lesoft-e2e-salt-v1').digest();
+
+// In-memory keys
+let _masterKey: Buffer | null = null;
+let _legacyE1Key: Buffer | null = null;
+
+/**
+ * Retrieves the raw license or project key string from configuration.
+ */
 function getLicenseKey(): string {
     try {
-        const cfgPath = path.join(app.getPath('userData'), 'supabase-config.json');
+        const cfgPath = path.join(getUserDataPath(), 'supabase-config.json');
         if (fs.existsSync(cfgPath)) {
-            const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
-            return cfg.serviceRoleKey || cfg.anonKey || 'default-lesoft-key';
+            const raw = fs.readFileSync(cfgPath, 'utf-8');
+            const cfg = JSON.parse(raw);
+            const key = cfg.serviceRoleKey || cfg.anonKey;
+            if (key && typeof key === 'string') {
+                return key.startsWith('enc:v1:') ? decryptStandardSecret(key) : key;
+            }
         }
-    } catch { }
-    return 'default-lesoft-key';
+    } catch {}
+    return '';
 }
 
+/**
+ * Retrieves or generates the machine-protected master seed.
+ * Protected by safeStorage or secure fallback.
+ */
+function getOrCreateMachineMasterSeed(): Buffer {
+    const keyPath = path.join(getUserDataPath(), MASTER_SEED_FILE);
+    if (fs.existsSync(keyPath)) {
+        try {
+            const fileContent = fs.readFileSync(keyPath, 'utf-8');
+            const decryptedHex = decryptStandardSecret(fileContent);
+            const seedBuf = Buffer.from(decryptedHex, 'hex');
+            if (seedBuf.length === 32) {
+                return seedBuf;
+            }
+        } catch (err) {
+            console.warn('[FieldEncryption] Error reading protected master seed, generating new one:', err);
+        }
+    }
+
+    // Generate fresh 32-byte master seed
+    const newSeed = crypto.randomBytes(32);
+    try {
+        const encryptedEnvelope = encryptStandardSecret(newSeed.toString('hex'));
+        fs.writeFileSync(keyPath, encryptedEnvelope, { encoding: 'utf-8', mode: 0o600 });
+        try { fs.chmodSync(keyPath, 0o600); } catch {}
+    } catch (err) {
+        console.error('[FieldEncryption] Failed to persist protected master seed:', err);
+    }
+    return newSeed;
+}
+
+/**
+ * Initializes the master encryption key using safeStorage-protected key material
+ * and configured credentials.
+ */
 export function initEncryptionKey(): void {
     const licenseKey = getLicenseKey();
-    const salt = crypto.createHash('sha256').update('lesoft-e2e-salt-v1').digest();
-    // Portable derivation: License Key only
-    const ikm = licenseKey;
-    _key = crypto.createHmac('sha256', salt).update(ikm).digest();
-    console.log('[Encryption] Portable Key derived.');
+    const machineSeed = getOrCreateMachineMasterSeed();
+
+    // 1. Derive Legacy E1 Key for backwards compatibility with existing e1: records
+    const legacyIkm = licenseKey || 'default-lesoft-key';
+    _legacyE1Key = crypto.createHmac('sha256', LEGACY_SALT).update(legacyIkm).digest();
+
+    // 2. Derive Version 3 Master Key via HKDF using machine-bound protected seed + license key
+    const ikm = Buffer.concat([
+        machineSeed,
+        Buffer.from(licenseKey || 'lesoft-v3-root', 'utf-8')
+    ]);
+
+    const masterSalt = crypto.createHash('sha256').update(machineSeed).digest();
+    _masterKey = crypto.hkdfSync('sha256', ikm, masterSalt, Buffer.from('lesoft-field-master-v3', 'utf-8'), 32);
+
+    console.log('[Encryption] Master field encryption key initialized.');
 }
 
-function getKey(): Buffer {
-    if (!_key) initEncryptionKey();
-    return _key!;
+/**
+ * Retrieves the master key, initializing it if necessary.
+ */
+function getMasterKey(): Buffer {
+    if (!_masterKey) initEncryptionKey();
+    return _masterKey!;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Core encrypt / decrypt
-//
-// ENCRYPTION FORMAT (all new writes):
-//   e1:<base64( IV[12 bytes] + AuthTag[16 bytes] + Ciphertext )>
-//   Algorithm: AES-256-GCM
-//   - GCM provides authenticated encryption: any bit-flip to the ciphertext
-//     causes decryption to throw, preventing silent data corruption.
-//   - IV is random 12 bytes per field (GCM standard).
-//   - AuthTag is 16 bytes appended after the IV in the base64 blob.
-//
-// BACKWARD COMPAT:
-//   e2: format (AES-256-CBC, no auth tag) is still DECRYPTED but never written.
-//   It exists for rows written between v1.3.x and v1.3.6 before this fix.
-//   Over time, as data gets re-saved via the app, e2: rows will be replaced
-//   with e1: GCM rows automatically.
-// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * Retrieves the legacy E1 key for backward-compatible decryption of existing e1: records.
+ */
+function getLegacyE1Key(): Buffer {
+    if (!_legacyE1Key) initEncryptionKey();
+    return _legacyE1Key!;
+}
 
-export function encryptField(text: string): string {
-    // Return empty strings as-is — encrypting blank fields adds no security
-    // and causes problems when comparing/searching for empty values.
-    // KNOWN GAP (H5): if a user clears a field, the empty string is stored plaintext.
-    // This is acceptable because an empty string reveals no sensitive data.
-    if (!text) return text || '';
-    const key = getKey();
-    try {
-        // AES-256-GCM: authenticated encryption.
-        // IV must be 12 bytes for GCM (NIST recommendation; 96-bit IV is most efficient).
-        const iv = crypto.randomBytes(IV_LEN); // IV_LEN = 12 bytes
-        const cipher = crypto.createCipheriv(CIPHER, key, iv); // CIPHER = 'aes-256-gcm'
-
-        // Encrypt the plaintext — two-step: update() + final()
-        const encryptedBuf = Buffer.concat([
-            cipher.update(text, 'utf8'),
-            cipher.final()
-        ]);
-
-        // GCM produces an authentication tag after final() is called.
-        // This 16-byte tag is stored alongside the ciphertext and verified on decrypt.
-        const tag = cipher.getAuthTag(); // TAG_LEN = 16 bytes
-
-        // Pack everything into a single base64 blob: [IV][AuthTag][Ciphertext]
-        const combined = Buffer.concat([iv, tag, encryptedBuf]);
-        return `${PREFIX}${combined.toString('base64')}`; // PREFIX = 'e1:'
-    } catch (e) {
-        console.error('[Encrypt] GCM encryption failed:', e);
-        // Fallback: return plaintext rather than crashing the app.
-        // This should never happen in practice — log it as a critical error.
-        return text;
+/**
+ * For testing: manually set or clear the master key and legacy key.
+ */
+export function _setKeysForTesting(masterKey: Buffer | null, legacyKey?: Buffer | null): void {
+    _masterKey = masterKey;
+    if (legacyKey !== undefined) {
+        _legacyE1Key = legacyKey;
+    } else if (masterKey) {
+        _legacyE1Key = crypto.createHmac('sha256', LEGACY_SALT).update(masterKey).digest();
     }
 }
 
+export function clearEncryptionKey(): void {
+    _masterKey = null;
+    _legacyE1Key = null;
+    console.log('[Encryption] Keys cleared from memory.');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Core Encrypt / Decrypt
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Encrypts a single field using Version 3 (AES-256-GCM + random per-record salt + random nonce).
+ *
+ * All new writes strictly use this format.
+ */
+export function encryptField(text: string): string {
+    if (!text) return text || '';
+    const masterKey = getMasterKey();
+
+    try {
+        // Random 16-byte salt and 12-byte nonce per record
+        const salt = crypto.randomBytes(SALT_LEN);
+        const iv   = crypto.randomBytes(IV_LEN);
+
+        // Derive unique record key using HKDF-SHA256
+        const recordKey = crypto.hkdfSync('sha256', masterKey, salt, HKDF_INFO, 32);
+
+        const cipher = crypto.createCipheriv(CIPHER_GCM, recordKey, iv);
+        const ciphertextBuf = Buffer.concat([
+            cipher.update(text, 'utf8'),
+            cipher.final()
+        ]);
+        const tag = cipher.getAuthTag();
+
+        // Binary layout: [Salt (16)] + [IV (12)] + [AuthTag (16)] + [Ciphertext (N)]
+        const combined = Buffer.concat([salt, iv, tag, ciphertextBuf]);
+        return `${V3_PREFIX}${combined.toString('base64')}`;
+    } catch (e) {
+        console.error('[Encrypt] V3 GCM encryption failed:', e);
+        throw e;
+    }
+}
+
+/**
+ * Decrypts an encrypted field string.
+ *
+ * Seamlessly handles:
+ *   - e3: (Version 3 AES-256-GCM with per-record salt + nonce)
+ *   - e1: (Legacy AES-256-GCM with static salt)
+ *   - e2: (Legacy AES-256-CBC)
+ *   - Plaintext (returned unmodified)
+ */
 export function decryptField(encryptedText: string | null): string {
     if (!encryptedText || typeof encryptedText !== 'string') {
         return encryptedText || '';
     }
-    const key = getKey();
 
-    // ── Handle CURRENT format: e1:<base64(iv[12]+tag[16]+ciphertext)> (AES-256-GCM) ─
-    // This handles BOTH the original legacy GCM (v1.0-v1.2) AND the new GCM (v1.3.7+).
-    // The binary layout is identical — same IV size, same tag size, same algorithm.
-    if (encryptedText.startsWith('e1:')) {
+    // ── Handle CURRENT format: e3:<base64(salt[16] + iv[12] + tag[16] + ciphertext)> ─
+    if (encryptedText.startsWith(V3_PREFIX)) {
         try {
-            const combined = Buffer.from(encryptedText.slice(3), 'base64');
-            const iv         = combined.subarray(0, IV_LEN);           // 12 bytes
-            const tag        = combined.subarray(IV_LEN, IV_LEN + TAG_LEN); // 16 bytes
-            const ciphertext = combined.subarray(IV_LEN + TAG_LEN);    // rest = ciphertext
+            const masterKey = getMasterKey();
+            const combined = Buffer.from(encryptedText.slice(V3_PREFIX.length), 'base64');
 
-            const decipher = crypto.createDecipheriv(CIPHER, key, iv);
+            if (combined.length < SALT_LEN + IV_LEN + TAG_LEN) {
+                console.warn('[Decrypt e3] Payload length too short.');
+                return encryptedText;
+            }
+
+            const salt       = combined.subarray(0, SALT_LEN);
+            const iv         = combined.subarray(SALT_LEN, SALT_LEN + IV_LEN);
+            const tag        = combined.subarray(SALT_LEN + IV_LEN, SALT_LEN + IV_LEN + TAG_LEN);
+            const ciphertext = combined.subarray(SALT_LEN + IV_LEN + TAG_LEN);
+
+            // Derive record key via HKDF-SHA256
+            const recordKey = crypto.hkdfSync('sha256', masterKey, salt, HKDF_INFO, 32);
+
+            const decipher = crypto.createDecipheriv(CIPHER_GCM, recordKey, iv);
             decipher.setAuthTag(tag);
-            // If the data has been tampered with, setAuthTag verification fails here
-            // and an error is thrown — preventing silent data corruption.
+
+            return decipher.update(ciphertext).toString('utf8') + decipher.final('utf8');
+        } catch (err) {
+            console.warn('[Decrypt e3] GCM authentication verification failed (tampered ciphertext or invalid key).');
+            return encryptedText;
+        }
+    }
+
+    // ── Handle LEGACY format: e1:<base64(iv[12] + tag[16] + ciphertext)> ─────────────
+    if (encryptedText.startsWith(V1_PREFIX)) {
+        try {
+            const legacyKey = getLegacyE1Key();
+            const combined = Buffer.from(encryptedText.slice(V1_PREFIX.length), 'base64');
+
+            if (combined.length < IV_LEN + TAG_LEN) {
+                console.warn('[Decrypt e1] Payload length too short.');
+                return encryptedText;
+            }
+
+            const iv         = combined.subarray(0, IV_LEN);
+            const tag        = combined.subarray(IV_LEN, IV_LEN + TAG_LEN);
+            const ciphertext = combined.subarray(IV_LEN + TAG_LEN);
+
+            const decipher = crypto.createDecipheriv(CIPHER_GCM, legacyKey, iv);
+            decipher.setAuthTag(tag);
+
             return decipher.update(ciphertext).toString('utf8') + decipher.final('utf8');
         } catch {
-            // GCM auth failure = data tampered OR encrypted with a different key.
-            // Return ciphertext as-is rather than crashing — prevents data loss.
-            // These rows should be investigated: they may need re-encryption.
             console.warn('[Decrypt e1] GCM auth failed — key mismatch or tampered data.');
             return encryptedText;
         }
     }
 
-    // ── Handle LEGACY format: e2:iv:ciphertext (AES-256-CBC) ─────────────────────
-    // Written between v1.3.x and v1.3.6 (before the GCM standardisation fix).
-    // This path is PERMANENT for backward compatibility — never remove it until
-    // all e2: rows have been re-saved (and thus re-encrypted as e1: GCM).
-    // CBC has no auth tag so tampered data decrypts silently to garbage.
-    if (encryptedText.startsWith('e2:')) {
+    // ── Handle LEGACY format: e2:iv:ciphertext (AES-256-CBC) ─────────────────────────
+    if (encryptedText.startsWith(V2_CBC_PREFIX)) {
         try {
+            const legacyKey = getLegacyE1Key();
             const parts = encryptedText.split(':');
             if (parts.length !== 3) return encryptedText;
-            const iv = Buffer.from(parts[1], 'hex'); // 16-byte hex IV for CBC
-            const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
+            const iv = Buffer.from(parts[1], 'hex');
+            const decipher = crypto.createDecipheriv('aes-256-cbc', legacyKey, iv);
             let decrypted = decipher.update(parts[2], 'hex', 'utf8');
             decrypted += decipher.final('utf8');
             return decrypted;
@@ -172,7 +295,7 @@ const SKIP_KEYS = new Set([
     'permissions',   // JSONB
     'le_local_id',   // mysql sync key
 
-    // ── NEW: Linkages and Search keys (PlainText for reliability) ──
+    // Linkages and Search keys (PlainText for indexability and reliability)
     'username',
     'full_name',
     'role',
@@ -202,11 +325,10 @@ export function encryptObject(obj: Record<string, any>): Record<string, any> {
         } else if (typeof v === 'string' && v.length > 0) {
             result[k] = encryptField(v);
         } else if (typeof v === 'number') {
-            result[k] = v; // numbers: never encrypt, preserves NUMERIC db types
+            result[k] = v;
         } else if (typeof v === 'boolean') {
-            result[k] = v; // booleans: never encrypt
+            result[k] = v;
         } else if (typeof v === 'object') {
-            // JSONB fields: store encrypted JSON string
             result[k] = encryptField(JSON.stringify(v));
         } else {
             result[k] = v;
@@ -219,15 +341,11 @@ export function decryptObject(obj: Record<string, any>): Record<string, any> {
     if (!obj || typeof obj !== 'object') return obj;
     const result: Record<string, any> = {};
     for (const [k, v] of Object.entries(obj)) {
-        // ALWAYS try to decrypt if it looks like ciphertext, 
-        // regardless of whether the key is now in SKIP_KEYS.
-        if (typeof v === 'string' && (v.startsWith('e1:') || v.startsWith('e2:'))) {
+        if (typeof v === 'string' && (v.startsWith(V3_PREFIX) || v.startsWith(V1_PREFIX) || v.startsWith(V2_CBC_PREFIX))) {
             const plain = decryptField(v);
-            // Try to re-parse JSONB fields
             if (plain.startsWith('{') || plain.startsWith('[')) {
                 try { result[k] = JSON.parse(plain); } catch { result[k] = plain; }
             } else if (!isNaN(Number(plain)) && plain.trim() !== '') {
-                // Re-parse numbers (since we encrypted them as strings)
                 result[k] = Number(plain);
             } else {
                 result[k] = plain;
@@ -247,7 +365,6 @@ export function decryptRows(rows: Record<string, any>[]): Record<string, any>[] 
 
 /** 
  * Non-blocking Decrypt for large datasets. 
- * Processes the array in chunks to prevent freezing the Node.js Event Loop.
  */
 export async function decryptRowsAsync(rows: Record<string, any>[], chunkSize: number = 200): Promise<Record<string, any>[]> {
     if (!rows || !Array.isArray(rows)) return [];
@@ -255,7 +372,6 @@ export async function decryptRowsAsync(rows: Record<string, any>[], chunkSize: n
     for (let i = 0; i < rows.length; i += chunkSize) {
         const chunk = rows.slice(i, i + chunkSize);
         result.push(...chunk.map(decryptObject));
-        // Yield the CPU back to the event loop so the UI and IPC don't hang
         await new Promise(resolve => setImmediate(resolve));
     }
     return result;
@@ -270,7 +386,6 @@ export async function encryptRowsAsync(rows: Record<string, any>[], chunkSize: n
     for (let i = 0; i < rows.length; i += chunkSize) {
         const chunk = rows.slice(i, i + chunkSize);
         result.push(...chunk.map(encryptObject));
-        // Yield the CPU back to the event loop so the UI and IPC don't hang
         await new Promise(resolve => setImmediate(resolve));
     }
     return result;
@@ -289,7 +404,7 @@ export function encryptObjectPartial(
         } else if (typeof v === 'string' && v.length > 0) {
             result[k] = encryptField(v);
         } else if (typeof v === 'number') {
-            result[k] = v; // numbers: never encrypt
+            result[k] = v;
         } else if (typeof v === 'boolean') {
             result[k] = v;
         } else if (typeof v === 'object') {
@@ -299,9 +414,4 @@ export function encryptObjectPartial(
         }
     }
     return result;
-}
-
-export function clearEncryptionKey(): void {
-    _key = null;
-    console.log('[Encryption] Key cleared from memory.');
 }
