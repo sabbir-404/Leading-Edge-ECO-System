@@ -334,6 +334,36 @@ function createWindow() {
         }
     });
 
+    // Renderer process crash & unresponsive recovery handlers
+    win.webContents.on('render-process-gone', (_event, details) => {
+        const lp = path.join(app.getPath('userData'), 'app.log');
+        fs.appendFileSync(lp, `[${new Date().toISOString()}] RENDER PROCESS GONE: ${details.reason} (exit: ${details.exitCode})\n`);
+        try {
+            const { TelemetryEngine } = require('./services/telemetry/TelemetryEngine');
+            TelemetryEngine.getInstance().reportError({
+                error: new Error(`Renderer process terminated: ${details.reason} (exitCode: ${details.exitCode})`),
+                source: 'renderer',
+                severity: details.reason === 'clean-exit' ? 'info' : 'fatal',
+                operation: 'RENDERER_PROCESS_GONE',
+                metadata: { reason: details.reason, exitCode: details.exitCode }
+            });
+        } catch {}
+    });
+
+    win.webContents.on('unresponsive', () => {
+        const lp = path.join(app.getPath('userData'), 'app.log');
+        fs.appendFileSync(lp, `[${new Date().toISOString()}] RENDERER UNRESPONSIVE\n`);
+        try {
+            const { TelemetryEngine } = require('./services/telemetry/TelemetryEngine');
+            TelemetryEngine.getInstance().reportError({
+                error: new Error('Renderer window unresponsive'),
+                source: 'renderer',
+                severity: 'warning',
+                operation: 'RENDERER_UNRESPONSIVE'
+            });
+        } catch {}
+    });
+
     // Block reload / devtools shortcuts
     win.webContents.on('before-input-event', (event, input) => {
         const ctrl = input.control || input.meta;
@@ -372,6 +402,46 @@ function createWindow() {
 // ─────────────────────────────────────────────────────────────────────────────
 // Disable hardware acceleration to resolve GPU/Blank screen issues on some systems
 app.disableHardwareAcceleration();
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Production-Safe Exception & Rejection Capture
+// ─────────────────────────────────────────────────────────────────────────────
+process.on('uncaughtException', (error) => {
+    console.error('[MAIN:FATAL] Uncaught Exception:', error);
+    try {
+        const lp = path.join(app.getPath('userData'), 'app.log');
+        fs.appendFileSync(lp, `[${new Date().toISOString()}] UNCAUGHT EXCEPTION: ${error?.stack || error}\n`);
+    } catch {}
+
+    try {
+        const { TelemetryEngine } = require('./services/telemetry/TelemetryEngine');
+        TelemetryEngine.getInstance().recordPendingCrash(error, 'Main process uncaughtException');
+        TelemetryEngine.getInstance().reportError({
+            error,
+            source: 'main',
+            severity: 'fatal',
+            operation: 'PROCESS_UNCAUGHT_EXCEPTION'
+        });
+    } catch {}
+});
+
+process.on('unhandledRejection', (reason) => {
+    console.error('[MAIN] Unhandled Promise Rejection:', reason);
+    try {
+        const lp = path.join(app.getPath('userData'), 'app.log');
+        fs.appendFileSync(lp, `[${new Date().toISOString()}] UNHANDLED REJECTION: ${reason instanceof Error ? reason.stack : reason}\n`);
+    } catch {}
+
+    try {
+        const { TelemetryEngine } = require('./services/telemetry/TelemetryEngine');
+        TelemetryEngine.getInstance().reportError({
+            error: reason instanceof Error ? reason : new Error(String(reason)),
+            source: 'main',
+            severity: 'error',
+            operation: 'PROCESS_UNHANDLED_REJECTION'
+        });
+    } catch {}
+});
 
 app.whenReady().then(() => {
     const logPath = path.join(app.getPath('userData'), 'app.log');
@@ -512,6 +582,15 @@ app.on('before-quit', async (event) => {
     } catch (e: any) {
         console.error('[App] Flush failed on quit:', e.message);
     }
+
+    // Flush offline telemetry queue before exiting (bounded 1.5s timeout)
+    try {
+        const { TelemetryEngine } = require('./services/telemetry/TelemetryEngine');
+        await Promise.race([
+            TelemetryEngine.getInstance().flushOfflineQueue(),
+            new Promise(resolve => setTimeout(resolve, 1500))
+        ]);
+    } catch {}
 
     // Clear sensitive data from memory before exit
     clearCache();

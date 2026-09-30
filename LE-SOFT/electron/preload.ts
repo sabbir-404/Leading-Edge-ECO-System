@@ -202,6 +202,10 @@ contextBridge.exposeInMainWorld('electron', {
     activateLicense: (key: string) => ipcRenderer.invoke('activate-license', key),
     getSupabaseConfig: () => ipcRenderer.invoke('get-supabase-config'),
     getDbConnectionState: () => ipcRenderer.invoke('get-db-connection-state'),
+    getDbStatus: () => ipcRenderer.invoke('get-db-status'),
+    triggerDbReconcile: () => ipcRenderer.invoke('trigger-db-reconcile'),
+    triggerRetentionCleanup: () => ipcRenderer.invoke('trigger-retention-cleanup'),
+    triggerDbBootstrap: () => ipcRenderer.invoke('trigger-db-bootstrap'),
     getDeviceSessions: (opts?: any) => ipcRenderer.invoke('get-device-sessions', opts),
     forceUpdateAll: (opts?: any) => ipcRenderer.invoke('force-update-all', opts),
     clearDatabase: (opts?: any) => ipcRenderer.invoke('clear-database', opts),
@@ -472,5 +476,13 @@ contextBridge.exposeInMainWorld('electron', {
     createSupplierSettlement: (settlement: any) => ipcRenderer.invoke('create-supplier-settlement', settlement),
     getSupplierLedgerDetail: (id: number) => ipcRenderer.invoke('get-supplier-ledger-detail', id),
 
+    // ─── ERROR & DIAGNOSTICS TELEMETRY ───
+    reportClientError: (payload: any) => ipcRenderer.invoke('report-client-error', payload),
+    getTelemetryStatus: () => ipcRenderer.invoke('get-telemetry-status'),
+    setTelemetryEnabled: (enabled: boolean) => ipcRenderer.invoke('set-telemetry-enabled', enabled),
+    sendDiagnosticTest: () => ipcRenderer.invoke('send-diagnostic-test'),
+    exportDiagnosticLog: () => ipcRenderer.invoke('export-diagnostic-log'),
+    getAdminErrorReports: (params?: any) => ipcRenderer.invoke('get-admin-error-reports', params),
+    pruneRemoteReports: (params?: any) => ipcRenderer.invoke('prune-remote-reports', params),
 
 });

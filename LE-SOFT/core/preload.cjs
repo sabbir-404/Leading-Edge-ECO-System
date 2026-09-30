@@ -174,6 +174,10 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   activateLicense: (key) => import_electron.ipcRenderer.invoke("activate-license", key),
   getSupabaseConfig: () => import_electron.ipcRenderer.invoke("get-supabase-config"),
   getDbConnectionState: () => import_electron.ipcRenderer.invoke("get-db-connection-state"),
+  getDbStatus: () => import_electron.ipcRenderer.invoke("get-db-status"),
+  triggerDbReconcile: () => import_electron.ipcRenderer.invoke("trigger-db-reconcile"),
+  triggerRetentionCleanup: () => import_electron.ipcRenderer.invoke("trigger-retention-cleanup"),
+  triggerDbBootstrap: () => import_electron.ipcRenderer.invoke("trigger-db-bootstrap"),
   getDeviceSessions: (opts) => import_electron.ipcRenderer.invoke("get-device-sessions", opts),
   forceUpdateAll: (opts) => import_electron.ipcRenderer.invoke("force-update-all", opts),
   clearDatabase: (opts) => import_electron.ipcRenderer.invoke("clear-database", opts),
@@ -406,5 +410,13 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   // ─── SUPPLIER SETTLEMENTS ───
   getSupplierSettlements: (supplierLedgerId) => import_electron.ipcRenderer.invoke("get-supplier-settlements", supplierLedgerId),
   createSupplierSettlement: (settlement) => import_electron.ipcRenderer.invoke("create-supplier-settlement", settlement),
-  getSupplierLedgerDetail: (id) => import_electron.ipcRenderer.invoke("get-supplier-ledger-detail", id)
+  getSupplierLedgerDetail: (id) => import_electron.ipcRenderer.invoke("get-supplier-ledger-detail", id),
+  // ─── ERROR & DIAGNOSTICS TELEMETRY ───
+  reportClientError: (payload) => import_electron.ipcRenderer.invoke("report-client-error", payload),
+  getTelemetryStatus: () => import_electron.ipcRenderer.invoke("get-telemetry-status"),
+  setTelemetryEnabled: (enabled) => import_electron.ipcRenderer.invoke("set-telemetry-enabled", enabled),
+  sendDiagnosticTest: () => import_electron.ipcRenderer.invoke("send-diagnostic-test"),
+  exportDiagnosticLog: () => import_electron.ipcRenderer.invoke("export-diagnostic-log"),
+  getAdminErrorReports: (params) => import_electron.ipcRenderer.invoke("get-admin-error-reports", params),
+  pruneRemoteReports: (params) => import_electron.ipcRenderer.invoke("prune-remote-reports", params)
 });

@@ -7,8 +7,10 @@ import {
 } from 'lucide-react';
 import DashboardLayout from '../../components/DashboardLayout';
 import { 
-  getUserPricingPermissions 
+  getUserPricingPermissions,
+  canManageMakeCatalog 
 } from '../../utils/permissions';
+import { ProductCreateModal } from './components/ProductCreateModal';
 
 const PRIORITIES = ['Low', 'Normal', 'High', 'Urgent'];
 
@@ -43,6 +45,8 @@ interface CartItem {
 
 const PlaceOrder: React.FC = () => {
   const pricingPerms = getUserPricingPermissions();
+  const canCreateProduct = canManageMakeCatalog();
+  const [showProductCreateModal, setShowProductCreateModal] = useState(false);
 
   // Order Header state
   const [priority, setPriority] = useState('Normal');
@@ -177,6 +181,21 @@ const PlaceOrder: React.FC = () => {
       });
     }
   }, []);
+
+  const handleProductCreated = (newProd: any) => {
+    // Immediately select and add to catalog state without waiting for full catalog reload
+    setCatalogProducts(prev => [newProd, ...prev.filter(p => p.id !== newProd.id)]);
+    handleProductSelect(newProd.id, newProd);
+
+    // Refresh catalog asynchronously in background
+    if (window.electron?.makeGetCatalogProducts) {
+      window.electron.makeGetCatalogProducts({ activeOnly: true }).then((products: any[]) => {
+        if (Array.isArray(products) && products.length > 0) {
+          setCatalogProducts(products);
+        }
+      }).catch(() => {});
+    }
+  };
 
   // Debounced product search
   useEffect(() => {
@@ -678,14 +697,38 @@ const PlaceOrder: React.FC = () => {
 
             {/* ── 2. PRODUCT CATALOG SELECTION (ITEM BUILDER) ────────────── */}
             <div style={{ background: 'var(--bg-secondary, rgba(0,0,0,0.02))', padding: '20px', borderRadius: '14px', border: '1px solid var(--border-color)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
                 <p style={{ ...sectionTitle, margin: 0, border: 'none', padding: 0 }}>
                   <ShoppingBag size={18} color="var(--accent-color)" /> Add Products to Order
                 </p>
-                <button type="button" onClick={() => setIsCustomItemMode(!isCustomItemMode)}
-                  style={{ background: 'none', border: 'none', color: 'var(--accent-color)', fontSize: '0.82rem', fontWeight: 700, cursor: 'pointer', textDecoration: 'underline' }}>
-                  {isCustomItemMode ? '← Switch to Catalog Product Selector' : '+ Add Custom / Non-Catalog Item'}
-                </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  {canCreateProduct && (
+                    <button
+                      type="button"
+                      onClick={() => setShowProductCreateModal(true)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '6px 14px',
+                        background: '#3b82f6',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: '8px',
+                        fontSize: '0.82rem',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        boxShadow: '0 2px 8px rgba(59,130,246,0.3)'
+                      }}
+                    >
+                      <Plus size={14} /> Create New Product
+                    </button>
+                  )}
+                  <button type="button" onClick={() => setIsCustomItemMode(!isCustomItemMode)}
+                    style={{ background: 'none', border: 'none', color: 'var(--accent-color)', fontSize: '0.82rem', fontWeight: 700, cursor: 'pointer', textDecoration: 'underline' }}>
+                    {isCustomItemMode ? '← Switch to Catalog Product Selector' : '+ Add Custom / Non-Catalog Item'}
+                  </button>
+                </div>
               </div>
 
               {!isCustomItemMode ? (
@@ -787,7 +830,28 @@ const PlaceOrder: React.FC = () => {
                   <div className="make-responsive-grid-2">
                     {/* 1. Product Selection */}
                     <div>
-                      <label style={labelStyle}>Select Catalog Product</label>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '5px' }}>
+                        <label style={{ ...labelStyle, margin: 0 }}>Select Catalog Product</label>
+                        {canCreateProduct && (
+                          <button
+                            type="button"
+                            onClick={() => setShowProductCreateModal(true)}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: '#3b82f6',
+                              fontSize: '0.75rem',
+                              fontWeight: 700,
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '3px'
+                            }}
+                          >
+                            <Plus size={12} /> Create New Product
+                          </button>
+                        )}
+                      </div>
                       <select value={selectedProduct?.id || ''} onChange={e => handleProductSelect(Number(e.target.value))} style={inputStyle}>
                         <option value="">-- Choose Product --</option>
                         {(catalogProducts || []).map(p => (
@@ -1420,6 +1484,14 @@ const PlaceOrder: React.FC = () => {
           </form>
         </motion.div>
       </div>
+
+      {showProductCreateModal && (
+        <ProductCreateModal
+          isOpen={showProductCreateModal}
+          onClose={() => setShowProductCreateModal(false)}
+          onSuccess={handleProductCreated}
+        />
+      )}
     </DashboardLayout>
   );
 };

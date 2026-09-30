@@ -96,6 +96,11 @@ const PERMISSION_GROUPS = [
             { key: 'alter_make', label: 'Alter Manufacturing Orders' },
             { key: 'read_make_catalog', label: 'View Customized Product Catalog' },
             { key: 'write_make_catalog', label: 'Manage Customized Product Catalog (Specs, Sizes, Colors)' },
+            { 
+                key: 'manage_global_product_attributes', 
+                label: 'Manage Global Product Attributes', 
+                desc: 'Create and modify global Categories, Sizes, Colors, and Specifications used by the MAKE product catalog.' 
+            },
             { key: 'set_make_cost_price', label: 'Enter Production Cost Price' },
             { key: 'set_make_sale_price', label: 'Set Customer Sale Price' },
             { key: 'approve_make_order', label: 'Approve Manufacturing Orders' },
@@ -339,9 +344,16 @@ const UserGroupCreate: React.FC = () => {
                                                             <div style={{ width: '18px', height: '18px', borderRadius: '4px', border: `2px solid ${permissions[perm.key] ? 'var(--accent-color)' : 'var(--text-secondary)'}`, background: permissions[perm.key] ? 'var(--accent-color)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                                                 {permissions[perm.key] && <div style={{ width: 10, height: 10, background: 'white', clipPath: 'polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%)' }} />}
                                                             </div>
-                                                            <span style={{ fontSize: '0.9rem', fontWeight: permissions[perm.key] ? 600 : 500, color: permissions[perm.key] ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
-                                                                {perm.label}
-                                                            </span>
+                                                            <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                                                <span style={{ fontSize: '0.9rem', fontWeight: permissions[perm.key] ? 600 : 500, color: permissions[perm.key] ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
+                                                                    {perm.label}
+                                                                </span>
+                                                                {(perm as any).desc && (
+                                                                    <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', marginTop: '2px', lineHeight: 1.25 }}>
+                                                                        {(perm as any).desc}
+                                                                    </span>
+                                                                )}
+                                                            </div>
                                                         </div>
                                                     ))}
                                                 </div>

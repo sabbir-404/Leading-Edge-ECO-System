@@ -3,9 +3,18 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Package, Plus, Search, Edit2, Trash2, 
   Layers, Maximize2, Palette, CheckCircle, AlertCircle, RefreshCw, X, Upload, Image as ImageIcon,
-  ShoppingCart, History as HistoryIcon
+  ShoppingCart, History as HistoryIcon, RotateCcw
 } from 'lucide-react';
 import DashboardLayout from '../../components/DashboardLayout';
+import { canManageGlobalProductAttributes } from '../../utils/permissions';
+import { 
+  loadProductCatalogDraft, 
+  saveProductCatalogDraft, 
+  clearProductCatalogDraft, 
+  clearProductFormDraft, 
+  hasMeaningfulDraftContent 
+} from '../../utils/productCatalogDraft';
+import { ProductCreateModal } from './components/ProductCreateModal';
 
 interface Size {
   id?: number;
@@ -90,37 +99,43 @@ interface PurchaseHistoryData {
 }
 
 const MakeProductCatalog: React.FC = () => {
+  const initialDraft = loadProductCatalogDraft();
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(initialDraft.search || '');
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 
   // Active section tab inside selected product view
-  const [activeTab, setActiveTab] = useState<'all' | 'specs' | 'sizes' | 'colors' | 'history'>('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'specs' | 'sizes' | 'colors' | 'history'>(initialDraft.activeTab || 'all');
 
   // Purchase History State
   const [historyData, setHistoryData] = useState<PurchaseHistoryData | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
-  const [historySearch, setHistorySearch] = useState('');
+  const [historySearch, setHistorySearch] = useState(initialDraft.historySearch || '');
 
   // Top view toggle: products or global attributes
-  const [catalogMainView, setCatalogMainView] = useState<'products' | 'attributes'>('products');
+  const [catalogMainView, setCatalogMainView] = useState<'products' | 'attributes'>(initialDraft.catalogMainView || 'products');
   const [globalAttributes, setGlobalAttributes] = useState<{ categories: any[]; specs: any[]; sizes: any[]; colors: any[] }>({ categories: [], specs: [], sizes: [], colors: [] });
-  const [attrTab, setAttrTab] = useState<'categories' | 'sizes' | 'colors' | 'specs'>('categories');
+  const [attrTab, setAttrTab] = useState<'categories' | 'sizes' | 'colors' | 'specs'>(initialDraft.attrTab || 'categories');
 
-  // Product modal attribute selections
-  const [selectedSpecIds, setSelectedSpecIds] = useState<(number | string)[]>([]);
-  const [selectedSizeIds, setSelectedSizeIds] = useState<(number | string)[]>([]);
-  const [selectedColorIds, setSelectedColorIds] = useState<(number | string)[]>([]);
-
-  // Inline attribute creation state
-  const [inlineNewAttrType, setInlineNewAttrType] = useState<'category' | 'spec' | 'size' | 'color' | null>(null);
-  const [inlineAttrName, setInlineAttrName] = useState('');
-  const [inlineAttrExtra, setInlineAttrExtra] = useState('');
+  // Permissions
+  const canManageGlobal = canManageGlobalProductAttributes();
 
   // Modals
-  const [showProductModal, setShowProductModal] = useState(false);
-  const [editingProduct, setEditingProduct] = useState<Partial<Product>>({ is_active: true });
+  const [showProductModal, setShowProductModal] = useState(!!initialDraft.productForm?.isOpen);
+  const [editingProduct, setEditingProduct] = useState<Partial<Product>>(
+    initialDraft.productForm
+      ? {
+          is_active: initialDraft.productForm.is_active !== undefined ? initialDraft.productForm.is_active : true,
+          product_code: initialDraft.productForm.product_code || '',
+          product_name: initialDraft.productForm.product_name || '',
+          description: initialDraft.productForm.description || '',
+          category_id: initialDraft.productForm.category_id || null,
+          category: initialDraft.productForm.category || null,
+          main_image: initialDraft.productForm.main_image || '',
+        }
+      : { is_active: true }
+  );
 
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [editingCategory, setEditingCategory] = useState<any>({ is_active: true });
@@ -220,88 +235,104 @@ const MakeProductCatalog: React.FC = () => {
     }
   }, [selectedProduct?.id]);
 
+  useEffect(() => {
+    saveProductCatalogDraft({
+      search,
+      historySearch,
+      catalogMainView,
+      attrTab,
+      activeTab,
+    });
+  }, [search, historySearch, catalogMainView, attrTab, activeTab]);
+
   const showFeedback = (type: 'success' | 'error', text: string) => {
     setMsg({ type, text });
     setTimeout(() => setMsg(null), 3500);
   };
 
   const handleOpenNewProduct = () => {
-    setEditingProduct({ is_active: true, category_id: null, category: null });
-    setSelectedSpecIds([]);
-    setSelectedSizeIds([]);
-    setSelectedColorIds([]);
+    const draft = loadProductCatalogDraft();
+    if (draft.productForm) {
+      setEditingProduct({
+        is_active: draft.productForm.is_active !== undefined ? draft.productForm.is_active : true,
+        product_code: draft.productForm.product_code || '',
+        product_name: draft.productForm.product_name || '',
+        description: draft.productForm.description || '',
+        category_id: draft.productForm.category_id || null,
+        category: draft.productForm.category || null,
+        main_image: draft.productForm.main_image || '',
+        specifications: (globalAttributes.specs || []).filter((s: any) => (draft.productForm?.selectedSpecIds || []).includes(s.id)),
+        sizes: (globalAttributes.sizes || []).filter((s: any) => (draft.productForm?.selectedSizeIds || []).includes(s.id)),
+        colors: (globalAttributes.colors || []).filter((c: any) => (draft.productForm?.selectedColorIds || []).includes(c.id)),
+      });
+    } else {
+      setEditingProduct({ is_active: true, category_id: null, category: null });
+    }
     setShowProductModal(true);
+    saveProductCatalogDraft({
+      productForm: {
+        ...(draft.productForm || {}),
+        isOpen: true
+      }
+    });
   };
 
   const handleOpenEditProduct = (prod: Product) => {
     setEditingProduct(prod);
-    setSelectedSpecIds((prod.specifications || []).map((s: any) => s.id));
-    setSelectedSizeIds((prod.sizes || []).map((s: any) => s.id));
-    setSelectedColorIds((prod.colors || []).map((c: any) => c.id));
     setShowProductModal(true);
   };
 
-  const handleCreateInlineAttribute = async () => {
-    if (!inlineAttrName.trim() || !inlineNewAttrType) return;
-    try {
-      const payload: any = { type: inlineNewAttrType };
-      if (inlineNewAttrType === 'category') {
-        payload.name = inlineAttrName.trim();
-        payload.code = inlineAttrExtra.trim() || undefined;
-      } else if (inlineNewAttrType === 'spec') {
-        payload.spec_name = inlineAttrName.trim();
-        payload.spec_details = inlineAttrExtra.trim() || undefined;
-      } else if (inlineNewAttrType === 'size') {
-        payload.size_label = inlineAttrName.trim();
-        payload.unit = inlineAttrExtra.trim() || 'mm';
-      } else if (inlineNewAttrType === 'color') {
-        payload.color_name = inlineAttrName.trim();
-        payload.color_code = inlineAttrExtra.trim() || undefined;
-      }
-
-      if (window.electron?.makeSaveGlobalAttribute) {
-        const created = await window.electron.makeSaveGlobalAttribute(payload);
-        if (created && created.error) {
-          alert('Failed to create attribute: ' + created.error);
-          return;
-        }
-        const savedAttr = created?.attribute;
-        if (savedAttr) {
-          setGlobalAttributes(prev => {
-            if (inlineNewAttrType === 'category') {
-              return { ...prev, categories: [...prev.categories, savedAttr].sort((a, b) => a.name.localeCompare(b.name)) };
-            } else if (inlineNewAttrType === 'spec') {
-              return { ...prev, specs: [...prev.specs, savedAttr].sort((a, b) => a.spec_name.localeCompare(b.spec_name)) };
-            } else if (inlineNewAttrType === 'size') {
-              return { ...prev, sizes: [...prev.sizes, savedAttr] };
-            } else if (inlineNewAttrType === 'color') {
-              return { ...prev, colors: [...prev.colors, savedAttr].sort((a, b) => a.color_name.localeCompare(b.color_name)) };
-            }
-            return prev;
-          });
-        }
-        await fetchGlobalAttributes();
-        const attrId = created?.attribute?.id ?? created?.id;
-        if (attrId) {
-          if (inlineNewAttrType === 'category') {
-            setEditingProduct(prev => ({
-              ...prev,
-              category_id: attrId,
-              category: inlineAttrName.trim()
-            }));
+  const handleCloseProductModal = () => {
+    setShowProductModal(false);
+    if (!editingProduct?.id) {
+      const currentDraft = loadProductCatalogDraft();
+      if (currentDraft.productForm) {
+        saveProductCatalogDraft({
+          productForm: {
+            ...currentDraft.productForm,
+            isOpen: false
           }
-          if (inlineNewAttrType === 'spec') setSelectedSpecIds(prev => [...prev, attrId]);
-          if (inlineNewAttrType === 'size') setSelectedSizeIds(prev => [...prev, attrId]);
-          if (inlineNewAttrType === 'color') setSelectedColorIds(prev => [...prev, attrId]);
-        }
+        });
       }
-      setInlineNewAttrType(null);
-      setInlineAttrName('');
-      setInlineAttrExtra('');
-    } catch (err: any) {
-      alert('Failed to create attribute: ' + (err.message || 'Permission denied'));
     }
   };
+
+  const handleProductSaved = async (saved: any) => {
+    setShowProductModal(false);
+    clearProductFormDraft();
+    showFeedback('success', editingProduct?.id ? 'Product updated.' : 'Product created successfully.');
+    if (saved) {
+      setSelectedProduct(saved);
+      setProducts(prev => {
+        const idx = prev.findIndex(p => p.id === saved.id);
+        if (idx >= 0) {
+          const updated = [...prev];
+          updated[idx] = { ...updated[idx], ...saved };
+          return updated;
+        }
+        return [saved, ...prev];
+      });
+    }
+    // Refresh catalog and attributes in background without blocking modal close or UI responsiveness
+    fetchCatalog().catch(() => {});
+    fetchGlobalAttributes().catch(() => {});
+  };
+
+  const handleClearDraft = () => {
+    const hasMeaningful = hasMeaningfulDraftContent();
+    if (hasMeaningful) {
+      if (!window.confirm('Clear all unsaved product catalog inputs, drafts, and search filters?')) {
+        return;
+      }
+    }
+    clearProductCatalogDraft();
+    setSearch('');
+    setHistorySearch('');
+    setEditingProduct({ is_active: true });
+    setShowProductModal(false);
+    showFeedback('success', 'Draft cleared successfully.');
+  };
+
 
   // Category Actions
   const handleSaveCategory = async (e: React.FormEvent) => {
@@ -369,33 +400,6 @@ const MakeProductCatalog: React.FC = () => {
     }
   };
 
-  // Product Actions
-  const handleSaveProduct = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingProduct.product_name || !editingProduct.product_code) {
-      showFeedback('error', 'Product Code and Name are required.');
-      return;
-    }
-    try {
-      // @ts-ignore
-      const saved = await window.electron.makeSaveCatalogProduct(editingProduct);
-      if (saved && saved.id && window.electron?.makeAssignProductAttributes) {
-        await window.electron.makeAssignProductAttributes({
-          productId: saved.id,
-          specIds: selectedSpecIds,
-          sizeIds: selectedSizeIds,
-          colorIds: selectedColorIds
-        });
-      }
-      setShowProductModal(false);
-      showFeedback('success', 'Product saved successfully.');
-      await fetchCatalog();
-      await fetchGlobalAttributes();
-      if (saved) setSelectedProduct(saved);
-    } catch (err: any) {
-      showFeedback('error', err.message || 'Failed to save product');
-    }
-  };
 
   const handleDeleteProduct = async (id: number) => {
     if (!window.confirm('Delete this product and all its specifications, sizes, and colors?')) return;
@@ -647,6 +651,13 @@ const MakeProductCatalog: React.FC = () => {
               style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '8px', cursor: 'pointer', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
               <RefreshCw size={15} /> Refresh
             </button>
+            <button
+              onClick={handleClearDraft}
+              style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', background: 'var(--card-bg)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '8px', cursor: 'pointer', fontSize: '0.85rem', color: '#ef4444', fontWeight: 600 }}
+              title="Clear all buffered drafts and search text"
+            >
+              <RotateCcw size={15} /> Clear Draft
+            </button>
             <button 
               onClick={handleOpenNewProduct}
               style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', background: '#3b82f6', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem', boxShadow: '0 4px 12px rgba(59,130,246,0.25)' }}>
@@ -658,7 +669,10 @@ const MakeProductCatalog: React.FC = () => {
         {/* Top View Selector: Products Catalog vs Global Attributes */}
         <div data-tutorial="make-product-catalog" style={{ display: 'flex', gap: '8px', marginBottom: '1.5rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem' }}>
           <button
-            onClick={() => setCatalogMainView('products')}
+            onClick={() => {
+              setCatalogMainView('products');
+              saveProductCatalogDraft({ catalogMainView: 'products' });
+            }}
             style={{
               display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px',
               borderRadius: '8px', border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: '0.9rem',
@@ -669,7 +683,11 @@ const MakeProductCatalog: React.FC = () => {
             <Package size={16} /> Products Catalog ({products.length})
           </button>
           <button
-            onClick={() => { setCatalogMainView('attributes'); fetchGlobalAttributes(); }}
+            onClick={() => {
+              setCatalogMainView('attributes');
+              saveProductCatalogDraft({ catalogMainView: 'attributes' });
+              fetchGlobalAttributes();
+            }}
             style={{
               display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px',
               borderRadius: '8px', border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: '0.9rem',
@@ -715,7 +733,11 @@ const MakeProductCatalog: React.FC = () => {
                 type="text" 
                 placeholder="Search products..." 
                 value={search} 
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setSearch(val);
+                  saveProductCatalogDraft({ search: val });
+                }}
                 style={{ width: '100%', padding: '8px 10px 8px 32px', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '8px', fontSize: '0.85rem', color: 'var(--text-primary)', boxSizing: 'border-box', outline: 'none' }}
               />
             </div>
@@ -841,27 +863,27 @@ const MakeProductCatalog: React.FC = () => {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '10px', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '10px' }}>
                   <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                     <button 
-                      onClick={() => setActiveTab('all')}
+                      onClick={() => { setActiveTab('all'); saveProductCatalogDraft({ activeTab: 'all' }); }}
                       style={{ padding: '6px 14px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '0.82rem', fontWeight: 600, background: activeTab === 'all' ? '#3b82f6' : 'var(--bg-secondary)', color: activeTab === 'all' ? '#fff' : 'var(--text-secondary)' }}>
                       All Overview
                     </button>
                     <button 
-                      onClick={() => setActiveTab('specs')}
+                      onClick={() => { setActiveTab('specs'); saveProductCatalogDraft({ activeTab: 'specs' }); }}
                       style={{ padding: '6px 14px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '0.82rem', fontWeight: 600, background: activeTab === 'specs' ? '#8b5cf6' : 'var(--bg-secondary)', color: activeTab === 'specs' ? '#fff' : 'var(--text-secondary)' }}>
                       📋 Specifications ({selectedProduct.specifications?.length || 0})
                     </button>
                     <button 
-                      onClick={() => setActiveTab('sizes')}
+                      onClick={() => { setActiveTab('sizes'); saveProductCatalogDraft({ activeTab: 'sizes' }); }}
                       style={{ padding: '6px 14px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '0.82rem', fontWeight: 600, background: activeTab === 'sizes' ? '#10b981' : 'var(--bg-secondary)', color: activeTab === 'sizes' ? '#fff' : 'var(--text-secondary)' }}>
                       📏 Sizes &amp; Dimensions ({selectedProduct.sizes?.length || 0})
                     </button>
                     <button 
-                      onClick={() => setActiveTab('colors')}
+                      onClick={() => { setActiveTab('colors'); saveProductCatalogDraft({ activeTab: 'colors' }); }}
                       style={{ padding: '6px 14px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '0.82rem', fontWeight: 600, background: activeTab === 'colors' ? '#f59e0b' : 'var(--bg-secondary)', color: activeTab === 'colors' ? '#fff' : 'var(--text-secondary)' }}>
                       🎨 Colors &amp; Finishes ({selectedProduct.colors?.length || 0})
                     </button>
                     <button 
-                      onClick={() => setActiveTab('history')}
+                      onClick={() => { setActiveTab('history'); saveProductCatalogDraft({ activeTab: 'history' }); }}
                       style={{ padding: '6px 14px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '0.82rem', fontWeight: 700, background: activeTab === 'history' ? '#059669' : 'rgba(16,185,129,0.1)', color: activeTab === 'history' ? '#fff' : '#059669', display: 'flex', alignItems: 'center', gap: '6px' }}>
                       <ShoppingCart size={14} /> Purchase History ({historyData?.totalQuantity || selectedProduct.purchased_count || 0})
                     </button>
@@ -909,7 +931,11 @@ const MakeProductCatalog: React.FC = () => {
                             type="text" 
                             placeholder="Filter order history..." 
                             value={historySearch} 
-                            onChange={(e) => setHistorySearch(e.target.value)}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setHistorySearch(val);
+                              saveProductCatalogDraft({ historySearch: val });
+                            }}
                             style={{ width: '100%', padding: '6px 10px 6px 30px', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '6px', fontSize: '0.8rem', color: 'var(--text-primary)', boxSizing: 'border-box' }}
                           />
                         </div>
@@ -1198,7 +1224,7 @@ const MakeProductCatalog: React.FC = () => {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '10px' }}>
               <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                 <button
-                  onClick={() => setAttrTab('categories')}
+                  onClick={() => { setAttrTab('categories'); saveProductCatalogDraft({ attrTab: 'categories' }); }}
                   style={{
                     padding: '8px 16px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: '0.85rem',
                     background: attrTab === 'categories' ? '#10b981' : 'var(--bg-secondary)',
@@ -1208,7 +1234,7 @@ const MakeProductCatalog: React.FC = () => {
                   Categories ({globalAttributes?.categories?.length || 0})
                 </button>
                 <button
-                  onClick={() => setAttrTab('sizes')}
+                  onClick={() => { setAttrTab('sizes'); saveProductCatalogDraft({ attrTab: 'sizes' }); }}
                   style={{
                     padding: '8px 16px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: '0.85rem',
                     background: attrTab === 'sizes' ? '#3b82f6' : 'var(--bg-secondary)',
@@ -1218,7 +1244,7 @@ const MakeProductCatalog: React.FC = () => {
                   Sizes ({globalAttributes?.sizes?.length || 0})
                 </button>
                 <button
-                  onClick={() => setAttrTab('colors')}
+                  onClick={() => { setAttrTab('colors'); saveProductCatalogDraft({ attrTab: 'colors' }); }}
                   style={{
                     padding: '8px 16px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: '0.85rem',
                     background: attrTab === 'colors' ? '#ec4899' : 'var(--bg-secondary)',
@@ -1228,7 +1254,7 @@ const MakeProductCatalog: React.FC = () => {
                   Colors ({globalAttributes?.colors?.length || 0})
                 </button>
                 <button
-                  onClick={() => setAttrTab('specs')}
+                  onClick={() => { setAttrTab('specs'); saveProductCatalogDraft({ attrTab: 'specs' }); }}
                   style={{
                     padding: '8px 16px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: '0.85rem',
                     background: attrTab === 'specs' ? '#8b5cf6' : 'var(--bg-secondary)',
@@ -1239,26 +1265,28 @@ const MakeProductCatalog: React.FC = () => {
                 </button>
               </div>
 
-              <button
-                onClick={() => {
-                  if (attrTab === 'categories') {
-                    setEditingCategory({ is_active: true });
-                    setShowCategoryModal(true);
-                  } else if (attrTab === 'specs') {
-                    setEditingSpec({ is_active: true });
-                    setShowSpecModal(true);
-                  } else if (attrTab === 'sizes') {
-                    setEditingSize({ unit: 'mm', is_active: true });
-                    setShowSizeModal(true);
-                  } else {
-                    setEditingColor({ is_active: true });
-                    setShowColorModal(true);
-                  }
-                }}
-                style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', background: '#3b82f6', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 700, fontSize: '0.85rem' }}
-              >
-                <Plus size={15} /> Add Global {attrTab === 'categories' ? 'Category' : attrTab === 'sizes' ? 'Size' : attrTab === 'colors' ? 'Color' : 'Specification'}
-              </button>
+              {canManageGlobal && (
+                <button
+                  onClick={() => {
+                    if (attrTab === 'categories') {
+                      setEditingCategory({ is_active: true });
+                      setShowCategoryModal(true);
+                    } else if (attrTab === 'specs') {
+                      setEditingSpec({ is_active: true });
+                      setShowSpecModal(true);
+                    } else if (attrTab === 'sizes') {
+                      setEditingSize({ unit: 'mm', is_active: true });
+                      setShowSizeModal(true);
+                    } else {
+                      setEditingColor({ is_active: true });
+                      setShowColorModal(true);
+                    }
+                  }}
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', background: '#3b82f6', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 700, fontSize: '0.85rem' }}
+                >
+                  <Plus size={15} /> Add Global {attrTab === 'categories' ? 'Category' : attrTab === 'sizes' ? 'Size' : attrTab === 'colors' ? 'Color' : 'Specification'}
+                </button>
+              )}
             </div>
 
             {attrTab === 'categories' && (
@@ -1280,22 +1308,24 @@ const MakeProductCatalog: React.FC = () => {
                         <h4 style={{ margin: '8px 0 2px', fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)' }}>{cat.name}</h4>
                         {cat.description && <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{cat.description}</p>}
                       </div>
-                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px', borderTop: '1px solid var(--border-color)', paddingTop: '8px' }}>
-                        <button
-                          type="button"
-                          onClick={() => { setEditingCategory(cat); setShowCategoryModal(true); }}
-                          style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.78rem' }}
-                        >
-                          <Edit2 size={13} /> Edit
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteCategory(cat)}
-                          style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.78rem' }}
-                        >
-                          <Trash2 size={13} /> Delete
-                        </button>
-                      </div>
+                      {canManageGlobal && (
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px', borderTop: '1px solid var(--border-color)', paddingTop: '8px' }}>
+                          <button
+                            type="button"
+                            onClick={() => { setEditingCategory(cat); setShowCategoryModal(true); }}
+                            style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.78rem' }}
+                          >
+                            <Edit2 size={13} /> Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteCategory(cat)}
+                            style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.78rem' }}
+                          >
+                            <Trash2 size={13} /> Delete
+                          </button>
+                        </div>
+                      )}
                     </div>
                   ))
                 )}
@@ -1314,22 +1344,24 @@ const MakeProductCatalog: React.FC = () => {
                         <h4 style={{ margin: '6px 0 2px', fontSize: '0.92rem', fontWeight: 700 }}>{s.spec_name}</h4>
                         {s.spec_details && <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--text-secondary)' }}>{s.spec_details}</p>}
                       </div>
-                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px', borderTop: '1px solid var(--border-color)', paddingTop: '8px' }}>
-                        <button
-                          type="button"
-                          onClick={() => { setEditingSpec(s); setShowSpecModal(true); }}
-                          style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.78rem' }}
-                        >
-                          <Edit2 size={13} /> Edit
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteSpec(s.id, s.spec_name)}
-                          style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.78rem' }}
-                        >
-                          <Trash2 size={13} /> Delete
-                        </button>
-                      </div>
+                      {canManageGlobal && (
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px', borderTop: '1px solid var(--border-color)', paddingTop: '8px' }}>
+                          <button
+                            type="button"
+                            onClick={() => { setEditingSpec(s); setShowSpecModal(true); }}
+                            style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.78rem' }}
+                          >
+                            <Edit2 size={13} /> Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteSpec(s.id, s.spec_name)}
+                            style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.78rem' }}
+                          >
+                            <Trash2 size={13} /> Delete
+                          </button>
+                        </div>
+                      )}
                     </div>
                   ))
                 )}
@@ -1349,22 +1381,24 @@ const MakeProductCatalog: React.FC = () => {
                           L: {sz.length || '-'} × W: {sz.width || '-'} × H: {sz.height || '-'} {sz.unit}
                         </p>
                       </div>
-                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px', borderTop: '1px solid var(--border-color)', paddingTop: '8px' }}>
-                        <button
-                          type="button"
-                          onClick={() => { setEditingSize(sz); setShowSizeModal(true); }}
-                          style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.78rem' }}
-                        >
-                          <Edit2 size={13} /> Edit
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteSize(sz.id, sz.size_label)}
-                          style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.78rem' }}
-                        >
-                          <Trash2 size={13} /> Delete
-                        </button>
-                      </div>
+                      {canManageGlobal && (
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px', borderTop: '1px solid var(--border-color)', paddingTop: '8px' }}>
+                          <button
+                            type="button"
+                            onClick={() => { setEditingSize(sz); setShowSizeModal(true); }}
+                            style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.78rem' }}
+                          >
+                            <Edit2 size={13} /> Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteSize(sz.id, sz.size_label)}
+                            style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.78rem' }}
+                          >
+                            <Trash2 size={13} /> Delete
+                          </button>
+                        </div>
+                      )}
                     </div>
                   ))
                 )}
@@ -1391,22 +1425,24 @@ const MakeProductCatalog: React.FC = () => {
                           </div>
                         </div>
                       </div>
-                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px', borderTop: '1px solid var(--border-color)', paddingTop: '8px' }}>
-                        <button
-                          type="button"
-                          onClick={() => { setEditingColor(c); setShowColorModal(true); }}
-                          style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.78rem' }}
-                        >
-                          <Edit2 size={13} /> Edit
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteColor(c.id, c.color_name)}
-                          style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.78rem' }}
-                        >
-                          <Trash2 size={13} /> Delete
-                        </button>
-                      </div>
+                      {canManageGlobal && (
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px', borderTop: '1px solid var(--border-color)', paddingTop: '8px' }}>
+                          <button
+                            type="button"
+                            onClick={() => { setEditingColor(c); setShowColorModal(true); }}
+                            style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.78rem' }}
+                          >
+                            <Edit2 size={13} /> Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteColor(c.id, c.color_name)}
+                            style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.78rem' }}
+                          >
+                            <Trash2 size={13} /> Delete
+                          </button>
+                        </div>
+                      )}
                     </div>
                   ))
                 )}
@@ -1417,259 +1453,18 @@ const MakeProductCatalog: React.FC = () => {
 
         {/* Modal: Create/Edit Product */}
         {showProductModal && (
-          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
-            <div className="make-modal-container" style={{ background: 'var(--card-bg)', borderRadius: '16px', width: '100%', maxWidth: '560px', maxHeight: '90vh', overflowY: 'auto', padding: '1.5rem', boxShadow: '0 20px 50px rgba(0,0,0,0.3)', border: '1px solid var(--border-color)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-                <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 800 }}>{editingProduct.id ? 'Edit Product' : 'New Product'}</h3>
-                <button onClick={() => setShowProductModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}><X size={18} /></button>
-              </div>
-              <form onSubmit={handleSaveProduct} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '4px' }}>PRODUCT CODE *</label>
-                  <input type="text" placeholder="e.g. DT-01" value={editingProduct.product_code || ''} onChange={(e) => setEditingProduct({ ...editingProduct, product_code: e.target.value.toUpperCase() })} required
-                    style={{ width: '100%', padding: '9px 12px', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', boxSizing: 'border-box' }} />
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '4px' }}>PRODUCT NAME *</label>
-                  <input type="text" placeholder="e.g. Solid Teak Dining Table" value={editingProduct.product_name || ''} onChange={(e) => setEditingProduct({ ...editingProduct, product_name: e.target.value })} required
-                    style={{ width: '100%', padding: '9px 12px', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', boxSizing: 'border-box' }} />
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '4px' }}>DESCRIPTION</label>
-                  <textarea rows={3} placeholder="General design notes, material overview..." value={editingProduct.description || ''} onChange={(e) => setEditingProduct({ ...editingProduct, description: e.target.value })}
-                    style={{ width: '100%', padding: '9px 12px', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', boxSizing: 'border-box', resize: 'vertical' }} />
-                </div>
-
-                {/* Category Selection with Dropdown and Inline Add */}
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                    <label style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)' }}>
-                      CATEGORY
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => { setInlineNewAttrType('category'); setInlineAttrName(''); setInlineAttrExtra(''); }}
-                      style={{ background: 'none', border: 'none', color: '#10b981', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}
-                    >
-                      <Plus size={12} /> Add New Category
-                    </button>
-                  </div>
-
-                  {inlineNewAttrType === 'category' && (
-                    <div style={{ background: 'rgba(16,185,129,0.06)', border: '1px dashed #10b981', borderRadius: '8px', padding: '8px', marginBottom: '8px', display: 'flex', gap: '6px', alignItems: 'center' }}>
-                      <input
-                        placeholder="Category Name (e.g. Table, Sofa, Chair)..."
-                        value={inlineAttrName}
-                        onChange={e => setInlineAttrName(e.target.value)}
-                        style={{ flex: 1, padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', fontSize: '0.8rem' }}
-                        autoFocus
-                      />
-                      <button type="button" onClick={handleCreateInlineAttribute} style={{ background: '#10b981', color: '#fff', border: 'none', borderRadius: '4px', padding: '4px 10px', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer' }}>Add</button>
-                      <button type="button" onClick={() => setInlineNewAttrType(null)} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}><X size={14} /></button>
-                    </div>
-                  )}
-
-                  <select
-                    value={editingProduct.category_id || (editingProduct.category ? (globalAttributes.categories || []).find(c => c.name.toLowerCase() === (editingProduct.category || '').toLowerCase())?.id : '') || ''}
-                    onChange={e => {
-                      const selectedId = e.target.value ? Number(e.target.value) : null;
-                      const selectedCat = (globalAttributes.categories || []).find(c => c.id === selectedId);
-                      setEditingProduct(prev => ({
-                        ...prev,
-                        category_id: selectedId,
-                        category: selectedCat ? selectedCat.name : null
-                      }));
-                    }}
-                    style={{ width: '100%', padding: '9px 12px', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', boxSizing: 'border-box' }}
-                  >
-                    <option value="">Select Category...</option>
-                    {(globalAttributes.categories || []).map((cat: any) => (
-                      <option key={cat.id} value={cat.id}>
-                        {cat.name} {cat.code ? `[${cat.code}]` : ''}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '4px' }}>PRODUCT MAIN IMAGE (STORED ON NAS)</label>
-                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                    <input type="text" placeholder="https://... or click Upload" value={editingProduct.main_image || ''} onChange={(e) => setEditingProduct({ ...editingProduct, main_image: e.target.value })}
-                      style={{ flex: 1, padding: '9px 12px', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', boxSizing: 'border-box' }} />
-                    <button type="button" disabled={uploadingImage} onClick={() => handlePickAndUploadImage(url => setEditingProduct(prev => ({ ...prev, main_image: url })))}
-                      style={{ padding: '9px 14px', background: '#3b82f6', border: 'none', borderRadius: '8px', color: '#fff', cursor: uploadingImage ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', fontWeight: 600, whiteSpace: 'nowrap' }}>
-                      <Upload size={14} /> {uploadingImage ? 'Uploading...' : 'Upload to NAS'}
-                    </button>
-                  </div>
-                  {editingProduct.main_image && (
-                    <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <img src={editingProduct.main_image} alt="Preview" style={{ width: '50px', height: '50px', objectFit: 'cover', borderRadius: '6px', border: '1px solid var(--border-color)' }} />
-                      <span style={{ fontSize: '0.75rem', color: '#10b981', fontWeight: 600 }}>✓ Live NAS Storage URL</span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Attributes Assignment with Checkboxes and Inline Add */}
-                <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                  
-                  {/* Specifications */}
-                  <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                      <label style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)' }}>
-                        ASSIGN SPECIFICATIONS ({selectedSpecIds.length} selected)
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => { setInlineNewAttrType('spec'); setInlineAttrName(''); setInlineAttrExtra(''); }}
-                        style={{ background: 'none', border: 'none', color: '#8b5cf6', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}
-                      >
-                        <Plus size={12} /> Add New Spec
-                      </button>
-                    </div>
-
-                    {inlineNewAttrType === 'spec' && (
-                      <div style={{ background: 'rgba(139,92,246,0.06)', border: '1px dashed #8b5cf6', borderRadius: '8px', padding: '8px', marginBottom: '8px', display: 'flex', gap: '6px', alignItems: 'center' }}>
-                        <input
-                          placeholder="Spec Name..."
-                          value={inlineAttrName}
-                          onChange={e => setInlineAttrName(e.target.value)}
-                          style={{ flex: 1, padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', fontSize: '0.8rem' }}
-                        />
-                        <button type="button" onClick={handleCreateInlineAttribute} style={{ background: '#8b5cf6', color: '#fff', border: 'none', borderRadius: '4px', padding: '4px 10px', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer' }}>Add</button>
-                        <button type="button" onClick={() => setInlineNewAttrType(null)} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}><X size={14} /></button>
-                      </div>
-                    )}
-
-                    <div style={{ maxHeight: '110px', overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '6px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                      {(!globalAttributes?.specs || globalAttributes.specs.length === 0) ? (
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>No global specs found</span>
-                      ) : (
-                        (globalAttributes.specs || []).map((s: any) => (
-                          <label key={s.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', cursor: 'pointer' }}>
-                            <input
-                              type="checkbox"
-                              checked={selectedSpecIds.includes(s.id)}
-                              onChange={e => {
-                                if (e.target.checked) setSelectedSpecIds(prev => [...prev, s.id]);
-                                else setSelectedSpecIds(prev => prev.filter(id => id !== s.id));
-                              }}
-                            />
-                            <span>{s.spec_name} {s.spec_code ? `[${s.spec_code}]` : ''}</span>
-                          </label>
-                        ))
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Sizes */}
-                  <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                      <label style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)' }}>
-                        ASSIGN SIZES ({selectedSizeIds.length} selected)
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => { setInlineNewAttrType('size'); setInlineAttrName(''); setInlineAttrExtra('mm'); }}
-                        style={{ background: 'none', border: 'none', color: '#3b82f6', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}
-                      >
-                        <Plus size={12} /> Add New Size
-                      </button>
-                    </div>
-
-                    {inlineNewAttrType === 'size' && (
-                      <div style={{ background: 'rgba(59,130,246,0.06)', border: '1px dashed #3b82f6', borderRadius: '8px', padding: '8px', marginBottom: '8px', display: 'flex', gap: '6px', alignItems: 'center' }}>
-                        <input
-                          placeholder="Size Label (e.g. King, 120x60cm)..."
-                          value={inlineAttrName}
-                          onChange={e => setInlineAttrName(e.target.value)}
-                          style={{ flex: 1, padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', fontSize: '0.8rem' }}
-                        />
-                        <button type="button" onClick={handleCreateInlineAttribute} style={{ background: '#3b82f6', color: '#fff', border: 'none', borderRadius: '4px', padding: '4px 10px', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer' }}>Add</button>
-                        <button type="button" onClick={() => setInlineNewAttrType(null)} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}><X size={14} /></button>
-                      </div>
-                    )}
-
-                    <div style={{ maxHeight: '110px', overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '6px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                      {(!globalAttributes?.sizes || globalAttributes.sizes.length === 0) ? (
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>No global sizes found</span>
-                      ) : (
-                        (globalAttributes.sizes || []).map((sz: any) => (
-                          <label key={sz.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', cursor: 'pointer' }}>
-                            <input
-                              type="checkbox"
-                              checked={selectedSizeIds.includes(sz.id)}
-                              onChange={e => {
-                                if (e.target.checked) setSelectedSizeIds(prev => [...prev, sz.id]);
-                                else setSelectedSizeIds(prev => prev.filter(id => id !== sz.id));
-                              }}
-                            />
-                            <span>{sz.size_label || `${sz.length || ''}x${sz.width || ''}x${sz.height || ''} ${sz.unit || ''}`}</span>
-                          </label>
-                        ))
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Colors */}
-                  <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                      <label style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)' }}>
-                        ASSIGN COLORS ({selectedColorIds.length} selected)
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => { setInlineNewAttrType('color'); setInlineAttrName(''); setInlineAttrExtra('#000000'); }}
-                        style={{ background: 'none', border: 'none', color: '#ec4899', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}
-                      >
-                        <Plus size={12} /> Add New Color
-                      </button>
-                    </div>
-
-                    {inlineNewAttrType === 'color' && (
-                      <div style={{ background: 'rgba(236,72,153,0.06)', border: '1px dashed #ec4899', borderRadius: '8px', padding: '8px', marginBottom: '8px', display: 'flex', gap: '6px', alignItems: 'center' }}>
-                        <input
-                          placeholder="Color Name..."
-                          value={inlineAttrName}
-                          onChange={e => setInlineAttrName(e.target.value)}
-                          style={{ flex: 1, padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', fontSize: '0.8rem' }}
-                        />
-                        <button type="button" onClick={handleCreateInlineAttribute} style={{ background: '#ec4899', color: '#fff', border: 'none', borderRadius: '4px', padding: '4px 10px', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer' }}>Add</button>
-                        <button type="button" onClick={() => setInlineNewAttrType(null)} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}><X size={14} /></button>
-                      </div>
-                    )}
-
-                    <div style={{ maxHeight: '110px', overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '6px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                      {(!globalAttributes?.colors || globalAttributes.colors.length === 0) ? (
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>No global colors found</span>
-                      ) : (
-                        (globalAttributes.colors || []).map((c: any) => (
-                          <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', cursor: 'pointer' }}>
-                            <input
-                              type="checkbox"
-                              checked={selectedColorIds.includes(c.id)}
-                              onChange={e => {
-                                if (e.target.checked) setSelectedColorIds(prev => [...prev, c.id]);
-                                else setSelectedColorIds(prev => prev.filter(id => id !== c.id));
-                              }}
-                            />
-                            {c.color_code && (
-                              <span style={{ width: '12px', height: '12px', borderRadius: '50%', background: c.color_code, border: '1px solid #ccc', display: 'inline-block' }} />
-                            )}
-                            <span>{c.color_name}</span>
-                          </label>
-                        ))
-                      )}
-                    </div>
-                  </div>
-
-                </div>
-
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '0.5rem' }}>
-                  <button type="button" onClick={() => setShowProductModal(false)} style={{ padding: '8px 16px', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', cursor: 'pointer' }}>Cancel</button>
-                  <button type="submit" style={{ padding: '8px 18px', background: '#3b82f6', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600 }}>Save Product</button>
-                </div>
-              </form>
-            </div>
-          </div>
+          <ProductCreateModal
+            isOpen={showProductModal}
+            onClose={handleCloseProductModal}
+            onSuccess={handleProductSaved}
+            initialProduct={editingProduct}
+            globalAttributes={globalAttributes}
+            onRefreshGlobalAttributes={fetchGlobalAttributes}
+            isDraftManaged={!editingProduct?.id}
+            onClearDraft={() => {
+              setEditingProduct({ is_active: true });
+            }}
+          />
         )}
 
         {/* Modal: Create/Edit Category */}

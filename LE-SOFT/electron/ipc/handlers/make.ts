@@ -13,7 +13,7 @@
  */
 
 import { ipcMain, BrowserWindow } from 'electron';
-import { supabase, supabaseAdmin } from '../../supabase';
+import { supabase, supabaseAdmin, failoverEngine } from '../../supabase';
 import { SessionManager, UserSession } from '../../session-manager';
 import { MakeOrderService } from '../../services/make/MakeOrderService';
 import { MakePricingService } from '../../services/make/MakePricingService';
@@ -55,9 +55,29 @@ export function registerMakeHandlers(): void {
      * Verifies if the session user has permissions to modify the product catalog.
      */
     function canManageCatalog(session: UserSession): boolean {
-        const role = session.role.toLowerCase();
+        const role = (session.role || '').toLowerCase();
         if (role === 'admin' || role === 'superadmin' || role === 'manager') return true;
-        return !!(session.permissions['manage_catalog'] || session.permissions['make_admin'] || session.permissions['catalog_manage']);
+        return !!(
+            session.permissions && (
+                session.permissions['manage_catalog'] ||
+                session.permissions['make_admin'] ||
+                session.permissions['catalog_manage'] ||
+                session.permissions['write_make_catalog']
+            )
+        );
+    }
+
+    /**
+     * Verifies if the session user has permissions to manage global product attributes
+     * (Categories, Specs, Sizes, Colors).
+     * Superadmin, Admin, and Manager retain access.
+     * Furniture Designer and other roles require explicit 'manage_global_product_attributes' permission.
+     * Does NOT infer from write_make_catalog, manage_catalog, or product creation permissions.
+     */
+    function canManageGlobalProductAttributes(session: UserSession): boolean {
+        const role = (session.role || '').toLowerCase();
+        if (role === 'admin' || role === 'superadmin' || role === 'manager') return true;
+        return !!(session.permissions && session.permissions['manage_global_product_attributes']);
     }
 
     /**
@@ -484,22 +504,31 @@ export function registerMakeHandlers(): void {
 
     // ── 12. Secured Product Catalog Operations ────────────────────────────────
     ipcMain.handle('make-get-catalog-products', async (_e, { search, activeOnly }: any = {}) => {
-        let q = supabase.from('make_products')
-            .select('*, specifications:make_product_specifications(*), sizes:make_product_sizes(*), colors:make_product_colors(*), images:make_product_images(*)')
-            .order('created_at', { ascending: false });
+        const queryFn = async (client: any) => {
+            let q = client.from('make_products')
+                .select('*, specifications:make_product_specifications(*), sizes:make_product_sizes(*), colors:make_product_colors(*), images:make_product_images(*)')
+                .order('created_at', { ascending: false });
 
-        if (activeOnly) q = q.eq('is_active', true);
-        if (search) q = q.or(`product_name.ilike.%${search}%,product_code.ilike.%${search}%`);
+            if (activeOnly) q = q.eq('is_active', true);
+            if (search) q = q.or(`product_name.ilike.%${search}%,product_code.ilike.%${search}%`);
 
-        const { data, error } = await q;
-        if (error) throw error;
+            return await q;
+        };
+
+        const { data, error, databaseUsed } = await failoverEngine.executeRead(queryFn, 'make-get-catalog-products');
+        if (error) {
+            console.error(`[make-get-catalog-products] Query failed on ${databaseUsed}:`, error);
+            throw error;
+        }
+
         const products = decryptRows(data || []);
 
-        // Aggregate purchased counts from make_order_items for returned products only
+        // Aggregate purchased counts from make_order_items for returned products only (bounded to first 100 to avoid huge joins)
         try {
             const productIds = products.map((p: any) => p.id).filter(Boolean);
-            if (productIds.length > 0) {
-                const { data: orderItems } = await supabase
+            if (productIds.length > 0 && productIds.length <= 100) {
+                const activeClient = failoverEngine.getActiveClient();
+                const { data: orderItems } = await activeClient
                     .from('make_order_items')
                     .select('product_id, product_name, quantity')
                     .in('product_id', productIds);
@@ -536,12 +565,18 @@ export function registerMakeHandlers(): void {
 
         if (product.category_id) {
             resolvedCategoryId = Number(product.category_id);
-            const { data: catRow } = await supabase.from('make_product_categories').select('name').eq('id', resolvedCategoryId).maybeSingle();
+            const { data: catRow } = await failoverEngine.executeRead(async client => 
+                client.from('make_product_categories').select('name').eq('id', resolvedCategoryId).maybeSingle(),
+                'resolve-category-id'
+            );
             if (catRow) {
                 resolvedCategoryName = catRow.name;
             }
         } else if (product.category) {
-            const { data: catRow } = await supabase.from('make_product_categories').select('id, name').ilike('name', product.category.trim()).maybeSingle();
+            const { data: catRow } = await failoverEngine.executeRead(async client => 
+                client.from('make_product_categories').select('id, name').ilike('name', product.category!.trim()).maybeSingle(),
+                'resolve-category-name'
+            );
             if (catRow) {
                 resolvedCategoryId = catRow.id;
                 resolvedCategoryName = catRow.name;
@@ -550,40 +585,98 @@ export function registerMakeHandlers(): void {
             }
         }
 
-        const db = supabase;
-        let savedData: any = null;
-        if (product.id) {
-            const { data, error } = await db.from('make_products').update({
-                product_code: product.product_code,
-                product_name: product.product_name,
-                description: product.description || null,
-                category_id: resolvedCategoryId,
-                category: resolvedCategoryName,
-                main_image: product.main_image || null,
-                is_active: product.is_active !== undefined ? product.is_active : true,
-                updated_at: new Date().toISOString()
-            }).eq('id', product.id).select().single();
-            if (error) throw error;
-            savedData = data;
-        } else {
-            const { data, error } = await db.from('make_products').insert({
-                product_code: product.product_code,
-                product_name: product.product_name,
-                description: product.description || null,
-                category_id: resolvedCategoryId,
-                category: resolvedCategoryName,
-                main_image: product.main_image || null,
-                is_active: product.is_active !== undefined ? product.is_active : true,
-                created_by: session.fullName || session.username
-            }).select().single();
-            if (error) throw error;
-            savedData = data;
+        const isUpdate = Boolean(product.id);
+        const writePayload = isUpdate ? {
+            product_code: product.product_code,
+            product_name: product.product_name,
+            description: product.description || null,
+            category_id: resolvedCategoryId,
+            category: resolvedCategoryName,
+            main_image: product.main_image || null,
+            is_active: product.is_active !== undefined ? product.is_active : true,
+            updated_at: new Date().toISOString()
+        } : {
+            product_code: product.product_code,
+            product_name: product.product_name,
+            description: product.description || null,
+            category_id: resolvedCategoryId,
+            category: resolvedCategoryName,
+            main_image: product.main_image || null,
+            is_active: product.is_active !== undefined ? product.is_active : true,
+            created_by: session.fullName || session.username
+        };
+
+        const writeResult = await failoverEngine.executeWrite(
+            async (client) => {
+                if (isUpdate) {
+                    return await client.from('make_products').update(writePayload).eq('id', product.id).select().single();
+                } else {
+                    return await client.from('make_products').insert(writePayload).select().single();
+                }
+            },
+            {
+                table: 'make_products',
+                operation: isUpdate ? 'update' : 'insert',
+                primaryKey: isUpdate ? { name: 'id', value: product.id } : undefined,
+                data: writePayload
+            },
+            isUpdate ? 'update-product' : 'insert-product'
+        );
+
+        if (writeResult.error) throw writeResult.error;
+        const savedData = writeResult.data;
+
+        // Process attribute junction links in parallel if provided
+        const specIds = (product as any).specIds;
+        const sizeIds = (product as any).sizeIds;
+        const colorIds = (product as any).colorIds;
+
+        const junctionPromises: Promise<any>[] = [];
+
+        if (specIds !== undefined && Array.isArray(specIds)) {
+            junctionPromises.push((async () => {
+                await failoverEngine.executeWrite(async client => {
+                    await client.from('make_product_specification_links').delete().eq('product_id', savedData.id);
+                    if (specIds.length > 0) {
+                        const rows = specIds.map(sId => ({ product_id: savedData.id, spec_id: sId }));
+                        return await client.from('make_product_specification_links').insert(rows).select();
+                    }
+                    return { data: [], error: null };
+                }, { table: 'make_product_specification_links', operation: 'insert' }, 'link-specs');
+            })());
+        }
+
+        if (sizeIds !== undefined && Array.isArray(sizeIds)) {
+            junctionPromises.push((async () => {
+                await failoverEngine.executeWrite(async client => {
+                    await client.from('make_product_size_links').delete().eq('product_id', savedData.id);
+                    if (sizeIds.length > 0) {
+                        const rows = sizeIds.map(sId => ({ product_id: savedData.id, size_id: sId }));
+                        return await client.from('make_product_size_links').insert(rows).select();
+                    }
+                    return { data: [], error: null };
+                }, { table: 'make_product_size_links', operation: 'insert' }, 'link-sizes');
+            })());
+        }
+
+        if (colorIds !== undefined && Array.isArray(colorIds)) {
+            junctionPromises.push((async () => {
+                await failoverEngine.executeWrite(async client => {
+                    await client.from('make_product_color_links').delete().eq('product_id', savedData.id);
+                    if (colorIds.length > 0) {
+                        const rows = colorIds.map(cId => ({ product_id: savedData.id, color_id: cId }));
+                        return await client.from('make_product_color_links').insert(rows).select();
+                    }
+                    return { data: [], error: null };
+                }, { table: 'make_product_color_links', operation: 'insert' }, 'link-colors');
+            })());
+        }
+
+        if (junctionPromises.length > 0) {
+            await Promise.all(junctionPromises);
         }
 
         MakeSearchService.invalidateCache();
-        if (supabaseAdmin && savedData) {
-            supabaseAdmin.from('make_products').upsert(savedData).catch((e: any) => console.warn('[SYNC] Cloud product sync:', e.message));
-        }
         return savedData;
     });
 
@@ -592,23 +685,23 @@ export function registerMakeHandlers(): void {
         if (!canManageCatalog(session)) {
             throw new Error('Forbidden: Catalog modification requires Administrator or Manager privileges.');
         }
-        const db = supabase;
-        const { error } = await db.from('make_products').delete().eq('id', id);
-        if (error) throw error;
+        const writeResult = await failoverEngine.executeWrite(
+            async client => client.from('make_products').delete().eq('id', id),
+            { table: 'make_products', operation: 'delete', primaryKey: { name: 'id', value: id } },
+            'delete-catalog-product'
+        );
+        if (writeResult.error) throw writeResult.error;
         MakeSearchService.invalidateCache();
-        if (supabaseAdmin) {
-            supabaseAdmin.from('make_products').delete().eq('id', id).catch((e: any) => console.warn('[SYNC] Cloud product delete sync:', e.message));
-        }
         return { success: true };
     });
 
     ipcMain.handle('make-save-spec', async (_e, rawSpec: any) => {
         const session = requireSession();
-        if (!canManageCatalog(session)) {
-            throw new Error('Forbidden: Catalog modification requires Administrator or Manager privileges.');
-        }
-
         const spec = CatalogSpecSchema.parse(rawSpec);
+        const isGlobal = !spec.product_id;
+        if (isGlobal ? !canManageGlobalProductAttributes(session) : !canManageCatalog(session)) {
+            throw new Error(`Forbidden: ${isGlobal ? 'Global specification modification requires "manage_global_product_attributes" permission.' : 'Catalog modification requires Administrator or Manager privileges.'}`);
+        }
 
         if (spec.id) {
             const { data, error } = await supabase.from('make_product_specifications').update({
@@ -642,25 +735,31 @@ export function registerMakeHandlers(): void {
 
     ipcMain.handle('make-delete-spec', async (_e, id: number) => {
         const session = requireSession();
-        if (!canManageCatalog(session)) {
-            throw new Error('Forbidden: Catalog modification requires Administrator or Manager privileges.');
+        const { data: spec } = await failoverEngine.executeRead(
+            async client => client.from('make_product_specifications').select('product_id').eq('id', id).maybeSingle(),
+            'check-spec-global'
+        );
+        const isGlobal = !spec || spec.product_id === null;
+        if (isGlobal ? !canManageGlobalProductAttributes(session) : !canManageCatalog(session)) {
+            throw new Error(`Forbidden: ${isGlobal ? 'Global specification deletion requires "manage_global_product_attributes" permission.' : 'Catalog modification requires Administrator or Manager privileges.'}`);
         }
-        const { error } = await supabase.from('make_product_specifications').delete().eq('id', id);
-        if (error) throw error;
+        const writeResult = await failoverEngine.executeWrite(
+            async client => client.from('make_product_specifications').delete().eq('id', id),
+            { table: 'make_product_specifications', operation: 'delete', primaryKey: { name: 'id', value: id } },
+            'delete-spec'
+        );
+        if (writeResult.error) throw writeResult.error;
         MakeSearchService.invalidateCache();
-        if (supabaseAdmin) {
-            supabaseAdmin.from('make_product_specifications').delete().eq('id', id).catch((e: any) => console.warn('[SYNC] Cloud spec delete sync:', e.message));
-        }
         return { success: true };
     });
 
     ipcMain.handle('make-save-size', async (_e, rawSize: any) => {
         const session = requireSession();
-        if (!canManageCatalog(session)) {
-            throw new Error('Forbidden: Catalog modification requires Administrator or Manager privileges.');
-        }
-
         const size = CatalogSizeSchema.parse(rawSize);
+        const isGlobal = !size.product_id;
+        if (isGlobal ? !canManageGlobalProductAttributes(session) : !canManageCatalog(session)) {
+            throw new Error(`Forbidden: ${isGlobal ? 'Global size modification requires "manage_global_product_attributes" permission.' : 'Catalog modification requires Administrator or Manager privileges.'}`);
+        }
 
         const payload = {
             product_id: size.product_id,
@@ -695,25 +794,31 @@ export function registerMakeHandlers(): void {
 
     ipcMain.handle('make-delete-size', async (_e, id: number) => {
         const session = requireSession();
-        if (!canManageCatalog(session)) {
-            throw new Error('Forbidden: Catalog modification requires Administrator or Manager privileges.');
+        const { data: size } = await failoverEngine.executeRead(
+            async client => client.from('make_product_sizes').select('product_id').eq('id', id).maybeSingle(),
+            'check-size-global'
+        );
+        const isGlobal = !size || size.product_id === null;
+        if (isGlobal ? !canManageGlobalProductAttributes(session) : !canManageCatalog(session)) {
+            throw new Error(`Forbidden: ${isGlobal ? 'Global size deletion requires "manage_global_product_attributes" permission.' : 'Catalog modification requires Administrator or Manager privileges.'}`);
         }
-        const { error } = await supabase.from('make_product_sizes').delete().eq('id', id);
-        if (error) throw error;
+        const writeResult = await failoverEngine.executeWrite(
+            async client => client.from('make_product_sizes').delete().eq('id', id),
+            { table: 'make_product_sizes', operation: 'delete', primaryKey: { name: 'id', value: id } },
+            'delete-size'
+        );
+        if (writeResult.error) throw writeResult.error;
         MakeSearchService.invalidateCache();
-        if (supabaseAdmin) {
-            supabaseAdmin.from('make_product_sizes').delete().eq('id', id).catch((e: any) => console.warn('[SYNC] Cloud size delete sync:', e.message));
-        }
         return { success: true };
     });
 
     ipcMain.handle('make-save-color', async (_e, rawColor: any) => {
         const session = requireSession();
-        if (!canManageCatalog(session)) {
-            throw new Error('Forbidden: Catalog modification requires Administrator or Manager privileges.');
-        }
-
         const color = CatalogColorSchema.parse(rawColor);
+        const isGlobal = !color.product_id;
+        if (isGlobal ? !canManageGlobalProductAttributes(session) : !canManageCatalog(session)) {
+            throw new Error(`Forbidden: ${isGlobal ? 'Global color modification requires "manage_global_product_attributes" permission.' : 'Catalog modification requires Administrator or Manager privileges.'}`);
+        }
 
         const payload = {
             product_id: color.product_id,
@@ -745,15 +850,21 @@ export function registerMakeHandlers(): void {
 
     ipcMain.handle('make-delete-color', async (_e, id: number) => {
         const session = requireSession();
-        if (!canManageCatalog(session)) {
-            throw new Error('Forbidden: Catalog modification requires Administrator or Manager privileges.');
+        const { data: color } = await failoverEngine.executeRead(
+            async client => client.from('make_product_colors').select('product_id').eq('id', id).maybeSingle(),
+            'check-color-global'
+        );
+        const isGlobal = !color || color.product_id === null;
+        if (isGlobal ? !canManageGlobalProductAttributes(session) : !canManageCatalog(session)) {
+            throw new Error(`Forbidden: ${isGlobal ? 'Global color deletion requires "manage_global_product_attributes" permission.' : 'Catalog modification requires Administrator or Manager privileges.'}`);
         }
-        const { error } = await supabase.from('make_product_colors').delete().eq('id', id);
-        if (error) throw error;
+        const writeResult = await failoverEngine.executeWrite(
+            async client => client.from('make_product_colors').delete().eq('id', id),
+            { table: 'make_product_colors', operation: 'delete', primaryKey: { name: 'id', value: id } },
+            'delete-color'
+        );
+        if (writeResult.error) throw writeResult.error;
         MakeSearchService.invalidateCache();
-        if (supabaseAdmin) {
-            supabaseAdmin.from('make_product_colors').delete().eq('id', id).catch((e: any) => console.warn('[SYNC] Cloud color delete sync:', e.message));
-        }
         return { success: true };
     });
 
@@ -971,8 +1082,8 @@ export function registerMakeHandlers(): void {
     ipcMain.handle('make-save-global-attribute', async (_e, rawPayload: any) => {
         try {
             const session = requireSession();
-            if (!canManageCatalog(session)) {
-                return { success: false, error: 'Forbidden: Global attribute management requires Administrator or Manager privileges.' };
+            if (!canManageGlobalProductAttributes(session)) {
+                return { success: false, error: 'Forbidden: Global attribute management requires "manage_global_product_attributes" permission.' };
             }
 
             const parsed = GlobalAttributeSchema.parse(rawPayload);
@@ -1107,8 +1218,8 @@ export function registerMakeHandlers(): void {
     ipcMain.handle('make-delete-category', async (_e, id: number | string) => {
         try {
             const session = requireSession();
-            if (!canManageCatalog(session)) {
-                return { success: false, error: 'Forbidden: Category deletion requires Administrator or Manager privileges.' };
+            if (!canManageGlobalProductAttributes(session)) {
+                return { success: false, error: 'Forbidden: Category deletion requires "manage_global_product_attributes" permission.' };
             }
 
             const catId = Number(id);
@@ -1137,14 +1248,13 @@ export function registerMakeHandlers(): void {
             }
 
             // 3. Safe to delete from operational master (NAS)
-            const db = supabase;
-            const { error: delErr } = await db.from('make_product_categories').delete().eq('id', catId);
-            if (delErr) throw delErr;
+            const writeResult = await failoverEngine.executeWrite(
+                async client => client.from('make_product_categories').delete().eq('id', catId),
+                { table: 'make_product_categories', operation: 'delete', primaryKey: { name: 'id', value: catId } },
+                'delete-category'
+            );
+            if (writeResult.error) throw writeResult.error;
             MakeSearchService.invalidateCache();
-            if (supabaseAdmin) {
-                supabaseAdmin.from('make_product_categories').delete().eq('id', catId).catch((e: any) => console.warn('[SYNC] Cloud category delete sync:', e.message));
-            }
-
             return { success: true };
         } catch (err: any) {
             console.error('[MAKE IPC] make-delete-category error:', err);
@@ -1162,30 +1272,49 @@ export function registerMakeHandlers(): void {
             const parsed = AssignProductAttributesSchema.parse(rawPayload);
             const { productId, specIds, sizeIds, colorIds } = parsed;
 
+            const junctionPromises: Promise<any>[] = [];
+
             if (specIds !== undefined) {
-                await supabase.from('make_product_specification_links').delete().eq('product_id', productId);
-                if (specIds.length > 0) {
-                    const rows = specIds.map(specId => ({ product_id: productId, spec_id: specId }));
-                    await supabase.from('make_product_specification_links').insert(rows);
-                }
+                junctionPromises.push((async () => {
+                    await failoverEngine.executeWrite(async client => {
+                        await client.from('make_product_specification_links').delete().eq('product_id', productId);
+                        if (specIds.length > 0) {
+                            const rows = specIds.map(specId => ({ product_id: productId, spec_id: specId }));
+                            return await client.from('make_product_specification_links').insert(rows).select();
+                        }
+                        return { data: [], error: null };
+                    }, { table: 'make_product_specification_links', operation: 'insert' }, 'assign-specs');
+                })());
             }
 
             if (sizeIds !== undefined) {
-                await supabase.from('make_product_size_links').delete().eq('product_id', productId);
-                if (sizeIds.length > 0) {
-                    const rows = sizeIds.map(sizeId => ({ product_id: productId, size_id: sizeId }));
-                    await supabase.from('make_product_size_links').insert(rows);
-                }
+                junctionPromises.push((async () => {
+                    await failoverEngine.executeWrite(async client => {
+                        await client.from('make_product_size_links').delete().eq('product_id', productId);
+                        if (sizeIds.length > 0) {
+                            const rows = sizeIds.map(sizeId => ({ product_id: productId, size_id: sizeId }));
+                            return await client.from('make_product_size_links').insert(rows).select();
+                        }
+                        return { data: [], error: null };
+                    }, { table: 'make_product_size_links', operation: 'insert' }, 'assign-sizes');
+                })());
             }
 
             if (colorIds !== undefined) {
-                await supabase.from('make_product_color_links').delete().eq('product_id', productId);
-                if (colorIds.length > 0) {
-                    const rows = colorIds.map(colorId => ({ product_id: productId, color_id: colorId }));
-                    await supabase.from('make_product_color_links').insert(rows);
-                }
+                junctionPromises.push((async () => {
+                    await failoverEngine.executeWrite(async client => {
+                        await client.from('make_product_color_links').delete().eq('product_id', productId);
+                        if (colorIds.length > 0) {
+                            const rows = colorIds.map(colorId => ({ product_id: productId, color_id: colorId }));
+                            return await client.from('make_product_color_links').insert(rows).select();
+                        }
+                        return { data: [], error: null };
+                    }, { table: 'make_product_color_links', operation: 'insert' }, 'assign-colors');
+                })());
             }
 
+            await Promise.all(junctionPromises);
+            MakeSearchService.invalidateCache();
             return { success: true };
         } catch (err: any) {
             console.error('[MAKE IPC] make-assign-product-attributes error:', err);

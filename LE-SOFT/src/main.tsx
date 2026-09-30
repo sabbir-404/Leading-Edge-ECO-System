@@ -13,6 +13,35 @@ let permissions = {};
 try { permissions = JSON.parse(localStorage.getItem('user_permissions') || '{}'); } catch {}
 const ability = defineAbilityFor(userRole, permissions);
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Production-Safe Global Error Listeners (Window onerror & Unhandled Rejection)
+// ─────────────────────────────────────────────────────────────────────────────
+window.onerror = (message, source, lineno, colno, error) => {
+  try {
+    (window as any).electron?.reportClientError?.({
+      error: error || String(message),
+      source: 'renderer',
+      severity: 'error',
+      operation: 'WINDOW_ONERROR',
+      metadata: { file: source, line: lineno, col: colno }
+    });
+  } catch {}
+};
+
+window.addEventListener('unhandledrejection', (event) => {
+  try {
+    const error = event.reason instanceof Error
+      ? event.reason
+      : new Error(String(event.reason || 'Unhandled Promise Rejection'));
+    (window as any).electron?.reportClientError?.({
+      error,
+      source: 'renderer',
+      severity: 'error',
+      operation: 'UNHANDLED_REJECTION'
+    });
+  } catch {}
+});
+
 ReactDOM.createRoot(document.getElementById('app')!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>

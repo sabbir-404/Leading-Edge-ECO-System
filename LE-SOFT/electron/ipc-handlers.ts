@@ -3776,12 +3776,49 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('get-db-connection-state', async () => {
-        const { connectionState, activeNasUrl, isNasOnline } = await import('./supabase');
+        const { failoverEngine } = await import('./supabase');
+        const status = failoverEngine.getStatus();
         return {
-            connectionState,
-            activeNasUrl,
-            isNasOnline
+            connectionState: status.connectionTier,
+            activeNasUrl: status.activeNasUrl,
+            isNasOnline: status.isNasReachable,
+            activeTarget: status.activeTarget,
+            circuitState: status.circuitState,
+            pendingReconciliationCount: status.pendingReconciliationCount,
+            metrics: status.metrics
         };
+    });
+
+    ipcMain.handle('get-db-status', async () => {
+        const { failoverEngine } = await import('./supabase');
+        return failoverEngine.getStatus();
+    });
+
+    ipcMain.handle('trigger-db-reconcile', async () => {
+        const session = requireSession();
+        if (session.role !== 'Administrator' && session.role !== 'Manager') {
+            throw new Error('Forbidden: Manual database reconciliation requires Administrator or Manager privileges.');
+        }
+        const { failoverEngine } = await import('./supabase');
+        return await failoverEngine.reconcileFallbackWrites();
+    });
+
+    ipcMain.handle('trigger-retention-cleanup', async () => {
+        const session = requireSession();
+        if (session.role !== 'Administrator') {
+            throw new Error('Forbidden: Retention cleanup requires Administrator privileges.');
+        }
+        const { failoverEngine } = await import('./supabase');
+        return await failoverEngine.maintainSupabaseRetention();
+    });
+
+    ipcMain.handle('trigger-db-bootstrap', async () => {
+        const session = requireSession();
+        if (session.role !== 'Administrator') {
+            throw new Error('Forbidden: Database bootstrap requires Administrator privileges.');
+        }
+        const { failoverEngine } = await import('./supabase');
+        return await failoverEngine.bootstrapFallbackDataset();
     });
 
     ipcMain.handle('get-supabase-config', async () => {
@@ -6740,6 +6777,94 @@ export function registerHandlers() {
                 trending: [],
                 logs: []
             };
+        }
+    });
+
+    // ─── ERROR & DIAGNOSTICS TELEMETRY ───
+    ipcMain.handle('report-client-error', async (_e, payload: any) => {
+        try {
+            const { TelemetryEngine } = require('./services/telemetry/TelemetryEngine');
+            const session = SessionManager.getSession();
+            TelemetryEngine.getInstance().reportError({
+                error: payload?.error || payload?.message || 'Client error',
+                source: payload?.source || 'renderer',
+                severity: payload?.severity || 'error',
+                operation: payload?.operation,
+                userRole: session?.role || payload?.userRole,
+                metadata: payload?.metadata,
+                durationMs: payload?.durationMs,
+                activeDb: payload?.activeDb,
+                databaseState: payload?.databaseState,
+                failoverReason: payload?.failoverReason,
+                retryCount: payload?.retryCount
+            });
+            return { success: true };
+        } catch (e: any) {
+            return { success: false, error: e.message };
+        }
+    });
+
+    ipcMain.handle('get-telemetry-status', async () => {
+        try {
+            const { TelemetryEngine } = require('./services/telemetry/TelemetryEngine');
+            return { success: true, data: TelemetryEngine.getInstance().getStatus() };
+        } catch (e: any) {
+            return { success: false, error: e.message };
+        }
+    });
+
+    ipcMain.handle('set-telemetry-enabled', async (_e, enabled: boolean) => {
+        try {
+            const { TelemetryEngine } = require('./services/telemetry/TelemetryEngine');
+            TelemetryEngine.getInstance().setEnabled(enabled);
+            return { success: true, enabled: TelemetryEngine.getInstance().isEnabled() };
+        } catch (e: any) {
+            return { success: false, error: e.message };
+        }
+    });
+
+    ipcMain.handle('send-diagnostic-test', async () => {
+        try {
+            const { TelemetryEngine } = require('./services/telemetry/TelemetryEngine');
+            const res = await TelemetryEngine.getInstance().sendDiagnosticTest();
+            return res;
+        } catch (e: any) {
+            return { success: false, message: e.message };
+        }
+    });
+
+    ipcMain.handle('export-diagnostic-log', async () => {
+        try {
+            const { TelemetryEngine } = require('./services/telemetry/TelemetryEngine');
+            return await TelemetryEngine.getInstance().exportDiagnosticLog();
+        } catch (e: any) {
+            return { success: false, error: e.message };
+        }
+    });
+
+    ipcMain.handle('get-admin-error-reports', async (_e, params: any) => {
+        const session = SessionManager.getSession();
+        if (session && !isSessionAdminOrSuper(session)) {
+            return { success: false, error: 'Unauthorized: Admin or Superadmin role required.' };
+        }
+        try {
+            const { TelemetryEngine } = require('./services/telemetry/TelemetryEngine');
+            return await TelemetryEngine.getInstance().getAdminErrorReports(params || {});
+        } catch (e: any) {
+            return { success: false, error: e.message };
+        }
+    });
+
+    ipcMain.handle('prune-remote-reports', async (_e, params: any) => {
+        const session = SessionManager.getSession();
+        if (session && !isSessionAdminOrSuper(session)) {
+            return { success: false, error: 'Unauthorized: Admin or Superadmin role required.' };
+        }
+        try {
+            const { TelemetryEngine } = require('./services/telemetry/TelemetryEngine');
+            return await TelemetryEngine.getInstance().pruneRemoteReports(params);
+        } catch (e: any) {
+            return { success: false, error: e.message };
         }
     });
 

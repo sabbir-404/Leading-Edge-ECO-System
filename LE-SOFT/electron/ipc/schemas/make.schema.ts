@@ -116,7 +116,10 @@ export const CatalogProductSchema = z.object({
     category_id: z.union([z.number().int().positive(), z.string(), z.null()]).optional(),
     category: z.string().nullable().optional(),
     main_image: z.string().nullable().optional(),
-    is_active: z.boolean().default(true)
+    is_active: z.boolean().default(true),
+    specIds: z.array(z.union([z.number(), z.string()])).optional(),
+    sizeIds: z.array(z.union([z.number(), z.string()])).optional(),
+    colorIds: z.array(z.union([z.number(), z.string()])).optional()
 });
 
 export const CatalogSpecSchema = z.object({

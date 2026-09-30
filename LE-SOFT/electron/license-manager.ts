@@ -259,7 +259,7 @@ export function saveLicense(key: string): { success: boolean; error?: string } {
             machineId,
             key: trimmed,
             activatedAt: new Date().toISOString(),
-            appVersion: app?.getVersion ? app.getVersion() : '1.8.3',
+            appVersion: app?.getVersion ? app.getVersion() : '1.8.4',
         };
         fs.writeFileSync(licensePath, JSON.stringify(data, null, 2), 'utf-8');
         return { success: true };

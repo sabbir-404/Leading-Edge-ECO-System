@@ -3,6 +3,7 @@ import { app } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
+import { DatabaseFailoverEngine } from './services/DatabaseFailoverEngine';
 import { ENCRYPTED_URL, ENCRYPTED_ANON_KEY, PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY } from './credentials';
 import {
     encryptPrivilegedSecret,
@@ -424,7 +425,9 @@ export function decryptEmbeddedCredentials(): boolean {
 // Client singletons — dynamic and refreshable on-the-fly
 // ─────────────────────────────────────────────────────────────────────────────
 // ─── Clients & Failover Logic ──────────────────────────────────────────────
-let activeClient: SupabaseClient = createClient('https://placeholder.supabase.co', 'placeholder');
+export const failoverEngine = DatabaseFailoverEngine.getInstance();
+export let dbReadyPromise: Promise<boolean> | null = null;
+
 export let supabaseAdmin: SupabaseClient | null = null;
 export let nasClient: SupabaseClient | null = null;
 export let supabaseClient: SupabaseClient | null = null;
@@ -433,21 +436,26 @@ export let connectionState: 'supabase' | 'nas_local' | 'nas_tunnel' | 'nas_publi
 export let activeNasUrl: string | null = null;
 
 // Proxy wrapper for the default export/standard client so external modules
-// always reference the active instances after reconfiguration.
+// always reference the authoritative active client determined by failoverEngine.
 export const supabase = new Proxy({} as SupabaseClient, {
     get(target, prop, receiver) {
         if (prop === 'auth' && supabaseClient) {
             return supabaseClient.auth;
         }
-        return Reflect.get(activeClient, prop, activeClient);
+        const active = failoverEngine.getActiveClient();
+        return Reflect.get(active, prop, active);
     }
 });
 
 export function getDbClients() {
+    const status = failoverEngine.getStatus();
+    isNasOnline = status.isNasReachable;
+    connectionState = status.connectionTier;
+    activeNasUrl = status.activeNasUrl;
     return {
         nas: nasClient,
         supabase: supabaseClient,
-        active: activeClient
+        active: failoverEngine.getActiveClient()
     };
 }
 
@@ -488,15 +496,11 @@ export function getNasStorageUrl(): string | null {
     }
 }
 
-let pingInterval: ReturnType<typeof setInterval> | null = null;
-
 function recreateNasClient(url: string) {
     try {
         const config = loadConfig();
         const isTunnel = url.startsWith('https://');
 
-        // Build the CF Access headers — only injected on tunnel (HTTPS) connections.
-        // On local LAN (HTTP) there is no Cloudflare edge, so headers are omitted.
         const cfHeaders: Record<string, string> = {};
         if (isTunnel && config.cfAccessClientId && config.cfAccessClientSecret) {
             cfHeaders['CF-Access-Client-Id']     = config.cfAccessClientId;
@@ -508,10 +512,7 @@ function recreateNasClient(url: string) {
             if (reqUrl.includes('/rest/v1/')) {
                 reqUrl = reqUrl.replace('/rest/v1/', '/');
             }
-            // PostgREST requires application/json for mutating operations (PGRST102 fix)
             const method = (init?.method || 'GET').toUpperCase();
-            const contentTypeHeader: Record<string, string> = ['POST', 'PATCH', 'PUT'].includes(method)
-                ? { 'Content-Type': 'application/json' } : {};
             const headers = new Headers(init?.headers);
             for (const [k, v] of Object.entries(cfHeaders)) {
                 headers.set(k, v);
@@ -551,107 +552,15 @@ function recreateNasClient(url: string) {
                 }
             }).catch(() => {});
         }
+
+        // Register updated client with failover engine
+        failoverEngine.registerClients({
+            nas: nasClient,
+            supabase: supabaseClient,
+            supabaseAdmin: supabaseAdmin
+        });
     } catch (e: any) {
         console.error('[SUPABASE] Failed to recreate nasClient:', e.message);
-    }
-}
-
-async function checkNasConnectivity() {
-    const config = loadConfig();
-    const localUrl   = config.nasLocalUrl   || 'http://192.168.1.14:3001';
-    const tunnelUrl  = config.nasTunnelUrl  || 'https://db.lenas.me';
-    // Legacy Tailscale fallback (still supported if configured)
-    const publicUrl  = config.nasUrl;
-
-    // CF-Access headers for tunnel pings — without these the Cloudflare
-    // Access policy returns 403 and the ping would incorrectly show OFFLINE.
-    const cfHeaders: Record<string, string> = {};
-    if (config.cfAccessClientId && config.cfAccessClientSecret) {
-        cfHeaders['CF-Access-Client-Id']     = config.cfAccessClientId;
-        cfHeaders['CF-Access-Client-Secret'] = config.cfAccessClientSecret;
-    }
-
-    // Helper to check if a PostgREST URL is responding
-    const pingUrl = async (url: string, timeoutMs = 3000, extraHeaders: Record<string, string> = {}): Promise<boolean> => {
-        try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-            const res = await fetch(url, {
-                signal: controller.signal,
-                headers: extraHeaders
-            });
-            clearTimeout(timeoutId);
-            return res.ok;
-        } catch {
-            return false;
-        }
-    };
-
-    // If already on Cloudflare Tunnel and it is responding, keep active tunnel connection immediately (no LAN stall)
-    if (connectionState === 'nas_tunnel' && tunnelUrl) {
-        const isTunnelStillAlive = await pingUrl(tunnelUrl, 2000, cfHeaders);
-        if (isTunnelStillAlive) {
-            activeClient = nasClient!;
-            isNasOnline = true;
-            return;
-        }
-    }
-
-    // ── Tier 1: Local LAN (fast 800ms timeout) ─────────────────────────────
-    const isLocalOnline = await pingUrl(localUrl, 800);
-    if (isLocalOnline) {
-        if (connectionState !== 'nas_local' || activeNasUrl !== localUrl) {
-            console.log(`[SUPABASE] Local NAS database (${localUrl}) is ONLINE. Switched active database to Local NAS.`);
-            connectionState = 'nas_local';
-            activeNasUrl = localUrl;
-            recreateNasClient(localUrl);
-        }
-        activeClient = nasClient!;
-        isNasOnline = true;
-        return;
-    }
-
-    // ── Tier 2: Cloudflare Tunnel (no VPN required, ~4 s timeout) ────────────
-    if (tunnelUrl) {
-        const isTunnelOnline = await pingUrl(tunnelUrl, 4000, cfHeaders);
-        if (isTunnelOnline) {
-            if (connectionState !== 'nas_tunnel' || activeNasUrl !== tunnelUrl) {
-                console.log(`[SUPABASE] Cloudflare Tunnel (${tunnelUrl}) is ONLINE. Switched active database to Tunnel.`);
-                connectionState = 'nas_tunnel';
-                activeNasUrl = tunnelUrl;
-                recreateNasClient(tunnelUrl);
-            }
-            activeClient = nasClient!;
-            isNasOnline = true;
-            return;
-        }
-    }
-
-    // ── Tier 3: Legacy Tailscale/public IP (backward-compat) ─────────────────
-    if (publicUrl) {
-        const isPublicOnline = await pingUrl(publicUrl, 3000);
-        if (isPublicOnline) {
-            if (connectionState !== 'nas_public' || activeNasUrl !== publicUrl) {
-                console.log(`[SUPABASE] Legacy public NAS (${publicUrl}) is ONLINE. Using legacy connection.`);
-                connectionState = 'nas_public';
-                activeNasUrl = publicUrl;
-                recreateNasClient(publicUrl);
-            }
-            activeClient = nasClient!;
-            isNasOnline = true;
-            return;
-        }
-    }
-
-    // ── Fallback: Supabase Cloud ───────────────────────────────────────────────
-    if (connectionState !== 'supabase') {
-        console.warn('[SUPABASE] All NAS connections OFFLINE. Falling back to remote Supabase.');
-        connectionState = 'supabase';
-        activeNasUrl = null;
-    }
-    isNasOnline = false;
-    if (supabaseClient) {
-        activeClient = supabaseClient;
     }
 }
 
@@ -659,16 +568,13 @@ export function reinitSupabaseClients(): void {
     try {
         const config = loadConfig();
         
-        // Stop any existing ping interval
-        if (pingInterval) {
-            clearInterval(pingInterval);
-            pingInterval = null;
-        }
+        // Stop any existing monitoring timer
+        failoverEngine.stopBackgroundMonitoring();
         
         // Initialize Supabase Client
         supabaseClient = createClient(config.url || 'https://placeholder.supabase.co', config.anonKey || 'placeholder', {
             auth: {
-                persistSession: false,    // Electron manages sessions via session-vault.ts
+                persistSession: false,
                 autoRefreshToken: true,
             },
             global: {
@@ -690,8 +596,6 @@ export function reinitSupabaseClients(): void {
             }
         });
         
-        activeClient = supabaseClient; // Default to Supabase initially
-        
         supabaseAdmin = config.serviceRoleKey ? createClient(config.url, config.serviceRoleKey, {
             auth: {
                 autoRefreshToken: false,
@@ -699,20 +603,46 @@ export function reinitSupabaseClients(): void {
             }
         }) : null;
 
-        // Initialize NAS Client if configured — trigger if either local or tunnel URL is set
-        if (config.nasLocalUrl || config.nasTunnelUrl || config.nasUrl) {
-            // Check immediately and start connectivity interval
-            checkNasConnectivity();
-            pingInterval = setInterval(checkNasConnectivity, 30000);
-        } else {
-            nasClient = null;
-            isNasOnline = false;
-            activeNasUrl = null;
-            connectionState = 'supabase';
-        }
+        // Candidate NAS endpoint priority
+        const defaultNasCandidate = config.nasUrl || config.nasLocalUrl || config.nasTunnelUrl || 'http://100.88.85.6:3001';
+        recreateNasClient(defaultNasCandidate);
+
+        failoverEngine.registerClients({
+            nas: nasClient,
+            supabase: supabaseClient,
+            supabaseAdmin: supabaseAdmin
+        });
+
+        try {
+            const { TelemetryEngine } = require('./services/telemetry/TelemetryEngine');
+            TelemetryEngine.getInstance().registerClients({
+                supabase: supabaseClient,
+                supabaseAdmin: supabaseAdmin
+            });
+        } catch {}
+
+        const getCandidates = () => ({
+            localUrl: config.nasLocalUrl || 'http://192.168.1.14:3001',
+            tunnelUrl: config.nasTunnelUrl || 'https://db.lenas.me',
+            publicUrl: config.nasUrl || 'http://100.88.85.6:3001',
+            cfHeaders: getCfAccessHeaders()
+        });
+
+        // Fast parallel startup check with bounded timeout (resolves within ~1000ms)
+        dbReadyPromise = failoverEngine.checkNasConnectivity(getCandidates()).then(online => {
+            const status = failoverEngine.getStatus();
+            isNasOnline = status.isNasReachable;
+            connectionState = status.connectionTier;
+            activeNasUrl = status.activeNasUrl;
+            if (activeNasUrl) recreateNasClient(activeNasUrl);
+            return online;
+        });
+
+        // Start background health monitor (10s cycle) and retention audit
+        failoverEngine.startBackgroundMonitoring(getCandidates);
 
         if (config.url && config.anonKey) {
-            console.log('[SUPABASE] Clients successfully re-initialized →', config.url);
+            console.log('[SUPABASE] Clients successfully re-initialized with FailoverEngine →', config.url);
         } else {
             console.warn('[SUPABASE] Clients re-initialized with placeholders (redirecting to setup).');
         }

@@ -233,3 +233,32 @@ export const getCallerContext = (): CallerContext => {
     };
 };
 
+// ── MAKE Product Catalog & Global Attribute Permissions ──────────────────────
+
+/**
+ * True if the current user has permission to manage global product attributes:
+ * - Superadmin and Admin retain access.
+ * - Other roles (such as Furniture Designer) require explicit 'manage_global_product_attributes' permission.
+ * - Denied by default for other roles unless explicitly granted.
+ * - Does NOT infer from generic product edit or billing permissions.
+ */
+export const canManageGlobalProductAttributes = (): boolean => {
+    if (isSuperadmin() || isAdmin()) return true;
+    const u = getUser();
+    const perms: Record<string, any> = typeof u.permissions === 'object' ? (u.permissions || {}) : {};
+    return !!perms['manage_global_product_attributes'];
+};
+
+/**
+ * True if the current user can create or manage products in the MAKE catalog:
+ * - Superadmin and Admin retain access.
+ * - Users with 'write_make_catalog', 'manage_catalog', or 'make_admin' permissions.
+ */
+export const canManageMakeCatalog = (): boolean => {
+    if (isSuperadmin() || isAdmin()) return true;
+    const u = getUser();
+    const perms: Record<string, any> = typeof u.permissions === 'object' ? (u.permissions || {}) : {};
+    return !!(perms['write_make_catalog'] || perms['manage_catalog'] || perms['make_admin'] || perms['catalog_manage']);
+};
+
+

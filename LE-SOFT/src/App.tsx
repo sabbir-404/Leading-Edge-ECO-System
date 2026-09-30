@@ -138,6 +138,15 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { has
   }
   componentDidCatch(error: any, errorInfo: any) {
     console.error("App Crash:", error, errorInfo);
+    try {
+      (window as any).electron?.reportClientError?.({
+        error: error || 'React ErrorBoundary caught error',
+        source: 'renderer',
+        severity: 'fatal',
+        operation: 'REACT_ERROR_BOUNDARY',
+        metadata: { componentStack: errorInfo?.componentStack }
+      });
+    } catch {}
   }
   render() {
     if (this.state.hasError) {

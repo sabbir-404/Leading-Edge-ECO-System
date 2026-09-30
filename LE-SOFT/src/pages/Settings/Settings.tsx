@@ -13,13 +13,15 @@ import { useToast } from '../../context/ToastContext';
 import { PRINT_PAGE_SIZE_OPTIONS, getPrintPageSize, getPrintPageSizeKey } from '../../utils/printPageSize';
 import { isSuperadmin } from '../../utils/permissions';
 import { requestTutorialReplay } from '../../components/tutorial/tutorialState';
+import { DiagnosticsTab } from './DiagnosticsTab';
 import '../Accounting/Masters/Masters.css';
 
-type SettingsTab = 'profile' | 'system_hardware' | 'payment_methods' | 'database_api' | 'policy' | 'about' | 'license_generator' | 'versions';
+type SettingsTab = 'profile' | 'system_hardware' | 'payment_methods' | 'database_api' | 'policy' | 'about' | 'license_generator' | 'versions' | 'diagnostics';
 
 const TAB_LIST: { id: SettingsTab; label: string; icon: React.ReactNode; adminOnly?: boolean }[] = [
     { id: 'profile',            label: 'Profile',             icon: <User size={18} />       },
     { id: 'versions',           label: 'App Versions & Devices', icon: <MonitorPlay size={18} />, adminOnly: true },
+    { id: 'diagnostics',        label: 'System Diagnostics',  icon: <AlertTriangle size={18} />, adminOnly: true },
     { id: 'system_hardware',    label: 'System & Hardware',    icon: <SettingsIcon size={18} />},
     { id: 'policy',             label: 'Policy',              icon: <Lock size={18} />, adminOnly: true },
     { id: 'payment_methods',    label: 'Payment Methods',      icon: <DollarSign size={18} />, adminOnly: true },
@@ -489,7 +491,12 @@ const Settings: React.FC = () => {
 
                 {/* Tab strip */}
                 <div style={{ display: 'flex', gap: '0.35rem', overflowX: 'auto', marginBottom: '1.5rem', padding: '4px', background: 'var(--input-bg)', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
-                    {TAB_LIST.filter(t => !t.adminOnly || (localStorage.getItem('user_role') === 'superadmin')).map(tab => (
+                    {TAB_LIST.filter(t => {
+                        const role = (localStorage.getItem('user_role') || '').toLowerCase();
+                        if (t.id === 'diagnostics') return role === 'admin' || role === 'superadmin';
+                        if (!t.adminOnly) return true;
+                        return role === 'superadmin';
+                    }).map(tab => (
                         <button
                             key={tab.id}
                             onClick={() => setActiveTab(tab.id)}
@@ -510,8 +517,10 @@ const Settings: React.FC = () => {
                 <AnimatePresence mode="wait">
                     <motion.div key={activeTab} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}>
 
-
-
+                        {/* ── DIAGNOSTICS TAB ─────────────────────────── */}
+                        {activeTab === 'diagnostics' && (
+                            <DiagnosticsTab />
+                        )}
 
                         {/* ── VERSIONS TAB ─────────────────────────────── */}
                         {activeTab === 'versions' && (
