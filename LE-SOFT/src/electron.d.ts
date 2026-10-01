@@ -422,6 +422,8 @@ export interface ElectronAPI {
     // Make Catalog & Versioning & Global Attributes
     makeGetCatalogProducts: (params?: any) => Promise<any[]>;
     makeSearchProducts?: (params?: { query?: string; category?: string; activeOnly?: boolean }) => Promise<any[]>;
+    makeSearchOrders?: (params?: { query?: string; status?: string; limit?: number }) => Promise<any[]>;
+    makeGetNextOrderNumber?: () => Promise<string>;
     makeSaveCatalogProduct: (product: any) => Promise<any>;
     makeDeleteCatalogProduct: (id: number | string) => Promise<any>;
     makeSaveSpec: (spec: any) => Promise<any>;
@@ -443,6 +445,10 @@ export interface ElectronAPI {
 
     // Window Controls
     setTheme: (theme: string) => Promise<void>;
+
+    // Media & Image Diagnostics
+    diagnoseImage?: (rawSrc: string) => Promise<any>;
+    resolveImageSrc?: (imagePath: string) => Promise<string>;
 }
 
 declare global {

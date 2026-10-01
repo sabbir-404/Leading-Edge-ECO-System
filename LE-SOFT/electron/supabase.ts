@@ -507,12 +507,24 @@ function recreateNasClient(url: string) {
             cfHeaders['CF-Access-Client-Secret'] = config.cfAccessClientSecret;
         }
 
-        const nasFetch = (input: RequestInfo | URL, init?: RequestInit) => {
+        const nasFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
             let reqUrl = typeof input === 'string' ? input : input.toString();
-            if (reqUrl.includes('/rest/v1/')) {
-                reqUrl = reqUrl.replace('/rest/v1/', '/');
+            let relativePath = '';
+            try {
+                const parsed = new URL(reqUrl);
+                relativePath = parsed.pathname + parsed.search;
+            } catch {
+                relativePath = reqUrl;
             }
+
+            // PostgREST URL path normalization for NAS
+            let nasTargetUrl = reqUrl;
+            if (nasTargetUrl.includes('/rest/v1/')) {
+                nasTargetUrl = nasTargetUrl.replace('/rest/v1/', '/');
+            }
+
             const method = (init?.method || 'GET').toUpperCase();
+            const isRead = method === 'GET' || method === 'HEAD';
             const headers = new Headers(init?.headers);
             for (const [k, v] of Object.entries(cfHeaders)) {
                 headers.set(k, v);
@@ -520,11 +532,79 @@ function recreateNasClient(url: string) {
             if (['POST', 'PATCH', 'PUT'].includes(method) && !headers.has('Content-Type')) {
                 headers.set('Content-Type', 'application/json');
             }
+
+            // Bounded 2000ms timeout for NAS requests to prevent TCP SYN hang on Windows
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 2000);
+
+            if (init?.signal) {
+                init.signal.addEventListener('abort', () => controller.abort());
+            }
+
             const mergedInit: RequestInit = {
                 ...init,
-                headers
+                headers,
+                signal: controller.signal
             };
-            return fetch(reqUrl, mergedInit);
+
+            const t0 = Date.now();
+            try {
+                const resp = await fetch(nasTargetUrl, mergedInit);
+                clearTimeout(timeoutId);
+
+                const contentType = resp.headers.get('content-type') || '';
+                const isHtmlBlock = contentType.includes('text/html');
+                const isAuthBlocked = resp.status === 401 || resp.status === 403;
+                const isServerError = resp.status >= 500;
+
+                if (!isHtmlBlock && !isAuthBlocked && !isServerError) {
+                    failoverEngine.recordNasSuccess(Date.now() - t0);
+                    return resp;
+                }
+                throw new Error(`NAS connection blocked or server error: ${resp.status} ${resp.statusText}${isHtmlBlock ? ' (HTML response)' : ''}`);
+            } catch (err: any) {
+                clearTimeout(timeoutId);
+                const isTimeout = controller.signal.aborted || err?.name === 'AbortError' || err?.message?.includes('aborted');
+                const errMsg = isTimeout ? 'NAS request timed out after 2000ms' : (err?.message || 'NAS connection failed');
+                
+                failoverEngine.recordNasFailure(new Error(errMsg));
+
+                // ARCHITECTURAL MANDATE:
+                // Low-level transport MUST NOT blindly replay mutation requests (POST, PUT, PATCH, DELETE).
+                // DatabaseFailoverEngine is the sole authority for write execution, idempotency, and journaling.
+                // Replaying a write mutation after an ambiguous timeout risks duplicate record creation.
+                if (!isRead) {
+                    throw new Error(`[NAS:FETCH] Mutation operation (${method}) failed or timed out on NAS: ${errMsg}. Low-level replay rejected to protect database integrity.`);
+                }
+
+                // Safe fallback ONLY for idempotent READ requests (GET, HEAD)
+                if (config.url && config.anonKey) {
+                    try {
+                        const cleanPath = relativePath.startsWith('/rest/v1/') 
+                            ? relativePath 
+                            : `/rest/v1${relativePath.startsWith('/') ? relativePath : '/' + relativePath}`;
+                        const cloudUrl = new URL(cleanPath, config.url).toString();
+                        
+                        const cloudHeaders = new Headers(init?.headers);
+                        cloudHeaders.set('apikey', config.anonKey);
+                        if (!cloudHeaders.has('Authorization')) {
+                            cloudHeaders.set('Authorization', `Bearer ${config.anonKey}`);
+                        }
+                        cloudHeaders.delete('CF-Access-Client-Id');
+                        cloudHeaders.delete('CF-Access-Client-Secret');
+
+                        console.warn(`[NAS:FETCH] NAS read failed (${errMsg}). Routing read to Supabase Cloud:`, cloudUrl);
+                        return await fetch(cloudUrl, {
+                            ...init,
+                            headers: cloudHeaders
+                        });
+                    } catch (forwardErr: any) {
+                        console.error('[NAS:FETCH] Supabase Cloud auto-forward failed:', forwardErr.message);
+                    }
+                }
+
+                throw err;
+            }
         };
 
         nasClient = createClient(url, config.nasAnonKey || config.anonKey || 'placeholder', {
@@ -603,8 +683,9 @@ export function reinitSupabaseClients(): void {
             }
         }) : null;
 
-        // Candidate NAS endpoint priority
-        const defaultNasCandidate = config.nasUrl || config.nasLocalUrl || config.nasTunnelUrl || 'http://100.88.85.6:3001';
+        // Candidate NAS endpoint priority — prioritize last working URL, then tunnel, local, or legacy IP
+        const lastWorking = failoverEngine.getLastWorkingNasUrl();
+        const defaultNasCandidate = lastWorking || config.nasTunnelUrl || config.nasLocalUrl || config.nasUrl || 'https://db.lenas.me';
         recreateNasClient(defaultNasCandidate);
 
         failoverEngine.registerClients({
@@ -628,15 +709,19 @@ export function reinitSupabaseClients(): void {
             cfHeaders: getCfAccessHeaders()
         });
 
-        // Fast parallel startup check with bounded timeout (resolves within ~1000ms)
-        dbReadyPromise = failoverEngine.checkNasConnectivity(getCandidates()).then(online => {
+        // Fast asynchronous startup probe: does NOT block UI or first query
+        // The first query will immediately hit lastWorking NAS candidate with 2000ms bounded timeout, or Supabase
+        dbReadyPromise = Promise.resolve(true);
+        failoverEngine.checkNasConnectivity(getCandidates()).then(online => {
             const status = failoverEngine.getStatus();
             isNasOnline = status.isNasReachable;
             connectionState = status.connectionTier;
             activeNasUrl = status.activeNasUrl;
-            if (activeNasUrl) recreateNasClient(activeNasUrl);
+            if (activeNasUrl && activeNasUrl !== defaultNasCandidate) {
+                recreateNasClient(activeNasUrl);
+            }
             return online;
-        });
+        }).catch(() => false);
 
         // Start background health monitor (10s cycle) and retention audit
         failoverEngine.startBackgroundMonitoring(getCandidates);
@@ -654,4 +739,19 @@ export function reinitSupabaseClients(): void {
 // Initial initialization
 reinitSupabaseClients();
 
+/**
+ * Returns prioritized storage candidate base URLs for TrueNAS storage.
+ * Prioritizes direct Tailscale (port 8081) and LAN (port 8081) over Cloudflare Tunnel (storage.lenas.me).
+ */
+export function getNasStorageCandidates(): string[] {
+    const config = loadConfig();
+    const candidates = [
+        config.nasStorageUrl || 'http://100.88.85.6:8081',
+        config.nasLocalStorageUrl || 'http://192.168.1.14:8081',
+        config.nasTunnelStorageUrl || 'https://storage.lenas.me'
+    ].filter(Boolean);
+    return Array.from(new Set(candidates));
+}
+
 export default supabase;
+

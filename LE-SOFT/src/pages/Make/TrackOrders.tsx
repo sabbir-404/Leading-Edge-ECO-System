@@ -3,12 +3,13 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { 
   ClipboardList, ChevronDown, ChevronUp, CheckCircle, Trash2, Send, 
   FileText, Download, Eye, X, Edit2, Ruler, MapPin, 
-  User, History, Layers, ArrowRight, RefreshCw, Upload
+  User, History, Layers, ArrowRight, RefreshCw, Upload, Search
 } from 'lucide-react';
 import DashboardLayout from '../../components/DashboardLayout';
 import { useAutoRefresh } from '../../hooks/useAutoRefresh';
 import AlterOrder from './AlterOrder';
 import { getUserPricingPermissions } from '../../utils/permissions';
+import { resolveImageSrc, handleImageLoadError } from '../../utils/imageSrc';
 
 const STATUSES = [
   'Draft',
@@ -144,6 +145,7 @@ interface Order {
   quantity: number;
   designer_name: string;
   status: string;
+  current_stage?: string | null;
   priority: string;
   delivery_date: string | null;
   target_delivery_date?: string | null;
@@ -197,6 +199,9 @@ const TrackOrders: React.FC = () => {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [updates, setUpdates] = useState<StatusUpdate[]>([]);
   const [statusFilter, setStatusFilter] = useState('All');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchResults, setSearchResults] = useState<Order[] | null>(null);
   
   // Designer pricing form state per order
   const [costPrices, setCostPrices] = useState<Record<number, string>>({});
@@ -276,6 +281,46 @@ const TrackOrders: React.FC = () => {
 
   useEffect(() => { fetchOrders(); }, []);
   useAutoRefresh(['make_orders', 'make_order_updates', 'make_order_versions'], fetchOrders);
+
+  useEffect(() => {
+    const trimmed = searchQuery.trim();
+    if (!trimmed) {
+      setSearchResults(null);
+      setIsSearching(false);
+      return;
+    }
+
+    setIsSearching(true);
+    const timeout = setTimeout(async () => {
+      try {
+        // @ts-ignore
+        if (window.electron?.makeSearchOrders) {
+          // @ts-ignore
+          const results = await window.electron.makeSearchOrders({
+            query: trimmed,
+            status: statusFilter !== 'All' ? statusFilter : undefined
+          });
+          setSearchResults(Array.isArray(results) ? results : []);
+        } else {
+          const lower = trimmed.toLowerCase();
+          const local = orders.filter(o => 
+            (o.order_number || '').toLowerCase().includes(lower) ||
+            (o.furniture_name || '').toLowerCase().includes(lower) ||
+            (o.customer_name || '').toLowerCase().includes(lower) ||
+            (o.customer_phone || '').toLowerCase().includes(lower) ||
+            (o.shipping_address || '').toLowerCase().includes(lower)
+          );
+          setSearchResults(local);
+        }
+      } catch (err) {
+        console.error('[TrackOrders] Order search failed:', err);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 250);
+
+    return () => clearTimeout(timeout);
+  }, [searchQuery, statusFilter, orders]);
 
   const loadExpanded = async (orderId: number) => {
     if (expandedId === orderId) { setExpandedId(null); return; }
@@ -570,7 +615,7 @@ const TrackOrders: React.FC = () => {
       if (expandedId === id) setExpandedId(null);
     } catch (e: any) {
       console.error(e);
-      alert('Error deleting order: ' + (e?.message || 'Permission denied or database error'));
+      alert('Error deleting order: ' + (e?.message || 'Permission denied or unable to delete order.'));
     }
   };
 
@@ -643,12 +688,41 @@ const TrackOrders: React.FC = () => {
     }
   };
 
-  const canAlter = (order: Order) => {
-    if (userRole === 'admin') return true;
-    return ['Placed', 'In Production', 'Pending Approval', 'Awaiting Pricing'].includes(order.status);
+  const isPostProductionStage = (stg?: string | null) => {
+    if (!stg) return false;
+    const lower = stg.trim().toLowerCase();
+    const postStages = [
+      'production on going',
+      'primary qc',
+      'color ongoing (oven)',
+      'color ongoing',
+      'qc final',
+      'packaging',
+      'ready to ship',
+      'delivered',
+      'in production',
+      'welding',
+      'painting',
+      'ready for dispatch'
+    ];
+    return postStages.includes(lower);
   };
 
-  const filtered = statusFilter === 'All' ? orders : orders.filter(o => o.status === statusFilter);
+  const isSalesperson = userRole === 'sales' || userRole === 'salesman' || userRole === 'salesperson';
+  const isAdmin = userRole === 'admin' || userRole === 'superadmin';
+
+  const canAlter = (order: Order) => {
+    if (isSalesperson) return false;
+    if (isAdmin) return true;
+    if (isDesigner) {
+      const isPost = isPostProductionStage(order.current_stage) || isPostProductionStage(order.status);
+      return !isPost;
+    }
+    return false;
+  };
+
+  const baseOrders = searchResults !== null ? searchResults : orders;
+  const filtered = statusFilter === 'All' ? baseOrders : baseOrders.filter(o => o.status === statusFilter);
 
   const chipStyle = (color: string): React.CSSProperties => ({
     display: 'inline-flex', alignItems: 'center', gap: '4px',
@@ -667,6 +741,64 @@ const TrackOrders: React.FC = () => {
     <DashboardLayout title="Track Orders & Production">
       <div style={{ padding: '1.5rem', maxWidth: '1150px', margin: '0 auto' }}>
         
+        {/* Global Track Orders Search Bar */}
+        <div style={{ marginBottom: '1.25rem' }}>
+          <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+            <Search size={16} color="var(--text-secondary)" style={{ position: 'absolute', left: '14px', pointerEvents: 'none' }} />
+            <input
+              id="track-orders-global-search"
+              placeholder="Search orders by order #, product name, model/SKU, category, size, color, customer, phone, location landmark..."
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '11px 40px 11px 40px',
+                background: 'var(--card-bg)',
+                border: '1px solid var(--border-color)',
+                borderRadius: '10px',
+                fontSize: '0.88rem',
+                color: 'var(--text-primary)',
+                outline: 'none',
+                boxShadow: '0 2px 6px rgba(0,0,0,0.02)'
+              }}
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                style={{
+                  position: 'absolute',
+                  right: '12px',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  color: 'var(--text-secondary)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  padding: '4px'
+                }}
+                aria-label="Clear search"
+              >
+                <X size={15} />
+              </button>
+            )}
+          </div>
+          {searchQuery && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '6px', fontSize: '0.78rem', color: 'var(--text-secondary)', padding: '0 4px' }}>
+              <span>
+                {isSearching ? 'Searching complete order dataset...' : `Found ${filtered.length} order${filtered.length === 1 ? '' : 's'} matching "${searchQuery}"`}
+              </span>
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                style={{ background: 'none', border: 'none', color: 'var(--accent-color)', cursor: 'pointer', fontWeight: 600, padding: 0 }}
+              >
+                Clear search
+              </button>
+            </div>
+          )}
+        </div>
+
         {/* Header & Filter Bar */}
         <div data-tutorial="make-track-orders" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.25rem' }}>
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
@@ -677,7 +809,7 @@ const TrackOrders: React.FC = () => {
                 background: statusFilter === s ? 'var(--accent-color)' : 'var(--input-bg, #f0f0f0)',
                 color: statusFilter === s ? 'white' : 'var(--text-secondary)', transition: 'all 0.15s'
               }}>
-                {s} {s !== 'All' && `(${orders.filter(o => o.status === s).length})`}
+                {s} {s !== 'All' && `(${baseOrders.filter(o => o.status === s).length})`}
               </button>
             ))}
           </div>
@@ -686,34 +818,8 @@ const TrackOrders: React.FC = () => {
           </button>
         </div>
 
-        {/* Canonical 8-Stage Production Flow Stepper */}
-        <div data-tutorial="make-production-stages" style={{
-          background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '12px',
-          padding: '12px 16px', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '8px', overflowX: 'auto'
-        }}>
-          <div style={{ fontSize: '0.78rem', fontWeight: 800, color: 'var(--accent-color)', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '5px' }}>
-            <Layers size={14} /> Production Stages:
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: 1, minWidth: 'max-content' }}>
-            {PRODUCTION_STAGES.map((stg, sIdx) => (
-              <React.Fragment key={stg}>
-                <span style={{
-                  padding: '3px 8px', borderRadius: '14px', fontSize: '0.72rem', fontWeight: 600,
-                  background: `${statusColors[stg] || '#6b7280'}18`, color: statusColors[stg] || '#6b7280',
-                  border: `1px solid ${statusColors[stg] || '#6b7280'}33`
-                }}>
-                  {sIdx + 1}. {stg}
-                </span>
-                {sIdx < PRODUCTION_STAGES.length - 1 && (
-                  <span style={{ color: 'var(--text-secondary)', fontSize: '0.7rem' }}>→</span>
-                )}
-              </React.Fragment>
-            ))}
-          </div>
-        </div>
-
         {loading ? (
-          <div style={{ textAlign: 'center', padding: '4rem', color: 'var(--text-secondary)' }}>Loading orders from NAS database...</div>
+          <div style={{ textAlign: 'center', padding: '4rem', color: 'var(--text-secondary)' }}>Loading orders...</div>
         ) : filtered.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '4rem', background: 'var(--card-bg)', borderRadius: '16px', border: '1px solid var(--border-color)' }}>
             <ClipboardList size={48} style={{ opacity: 0.3, marginBottom: '12px', color: 'var(--accent-color)' }} />
@@ -1415,7 +1521,8 @@ const TrackOrders: React.FC = () => {
                                       {upd.photo_url && (
                                         <div style={{ marginTop: '8px' }}>
                                           <img 
-                                            src={upd.photo_url} 
+                                            src={resolveImageSrc(upd.photo_url)} 
+                                            onError={e => handleImageLoadError(e, upd.photo_url)} 
                                             alt="Stage Photo" 
                                             onClick={() => setPdfViewer({ url: upd.photo_url!, name: `${upd.status || 'Stage'} Photo`, path: '' })}
                                             style={{ width: '100px', height: '70px', objectFit: 'cover', borderRadius: '8px', border: '1px solid var(--border-color)', cursor: 'pointer', boxShadow: '0 2px 6px rgba(0,0,0,0.1)' }}
@@ -1446,7 +1553,8 @@ const TrackOrders: React.FC = () => {
                               {order.current_stage_photo && (
                                 <div style={{ marginBottom: '14px', position: 'relative', borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--border-color)', background: 'var(--input-bg)' }}>
                                   <img 
-                                    src={order.current_stage_photo} 
+                                    src={resolveImageSrc(order.current_stage_photo)} 
+                                    onError={e => handleImageLoadError(e, order.current_stage_photo)} 
                                     alt="Current Stage" 
                                     onClick={() => setPdfViewer({ url: order.current_stage_photo!, name: `${order.status} Live Photo`, path: '' })}
                                     style={{ width: '100%', height: '140px', objectFit: 'cover', display: 'block', cursor: 'pointer' }}
@@ -1801,7 +1909,7 @@ const TrackOrders: React.FC = () => {
               </div>
               {(/\.(png|jpe?g|webp|gif|svg)$/i.test(pdfViewer.name) || /\.(png|jpe?g|webp|gif|svg)/i.test(pdfViewer.url)) ? (
                 <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#1e293b', overflow: 'auto', padding: '20px' }}>
-                  <img src={pdfViewer.url} alt={pdfViewer.name} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: '8px', boxShadow: '0 8px 32px rgba(0,0,0,0.4)' }} />
+                  <img src={resolveImageSrc(pdfViewer.url)} onError={e => handleImageLoadError(e, pdfViewer.url)} alt={pdfViewer.name} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: '8px', boxShadow: '0 8px 32px rgba(0,0,0,0.4)' }} />
                 </div>
               ) : (/\.(dwg|dxf|step|stp|iges|igs|skp|stl|obj)$/i.test(pdfViewer.name) || /\.(dwg|dxf|step|stp|iges|igs|skp|stl|obj)/i.test(pdfViewer.url)) ? (
                 <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#0f172a', padding: '40px', textAlign: 'center' }}>

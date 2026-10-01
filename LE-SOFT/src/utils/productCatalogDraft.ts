@@ -12,6 +12,7 @@ export interface ProductFormDraft {
   description?: string;
   category_id?: number | null;
   category?: string | null;
+  selectedCategoryIds?: (number | string)[];
   main_image?: string;
   is_active?: boolean;
   selectedSpecIds?: (number | string)[];
@@ -133,6 +134,7 @@ export function hasMeaningfulDraftContent(draft?: ProductCatalogDraftData): bool
     if (pf.description && pf.description.trim().length > 0) return true;
     if (pf.main_image && pf.main_image.trim().length > 0) return true;
     if (pf.category_id || (pf.category && pf.category.trim().length > 0)) return true;
+    if (Array.isArray(pf.selectedCategoryIds) && pf.selectedCategoryIds.length > 0) return true;
     if (Array.isArray(pf.selectedSpecIds) && pf.selectedSpecIds.length > 0) return true;
     if (Array.isArray(pf.selectedSizeIds) && pf.selectedSizeIds.length > 0) return true;
     if (Array.isArray(pf.selectedColorIds) && pf.selectedColorIds.length > 0) return true;

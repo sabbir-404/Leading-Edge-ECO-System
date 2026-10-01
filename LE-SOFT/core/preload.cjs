@@ -262,6 +262,8 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   // Make — Customized Product Catalog & Global Attributes
   makeGetCatalogProducts: (params) => import_electron.ipcRenderer.invoke("make-get-catalog-products", params),
   makeSearchProducts: (params) => import_electron.ipcRenderer.invoke("make-search-products", params),
+  makeSearchOrders: (params) => import_electron.ipcRenderer.invoke("make-search-orders", params),
+  makeGetNextOrderNumber: () => import_electron.ipcRenderer.invoke("make-get-next-order-number"),
   makeSaveCatalogProduct: (product) => import_electron.ipcRenderer.invoke("make-save-catalog-product", product),
   makeDeleteCatalogProduct: (id) => import_electron.ipcRenderer.invoke("make-delete-catalog-product", id),
   makeSaveSpec: (spec) => import_electron.ipcRenderer.invoke("make-save-spec", spec),
@@ -418,5 +420,8 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   sendDiagnosticTest: () => import_electron.ipcRenderer.invoke("send-diagnostic-test"),
   exportDiagnosticLog: () => import_electron.ipcRenderer.invoke("export-diagnostic-log"),
   getAdminErrorReports: (params) => import_electron.ipcRenderer.invoke("get-admin-error-reports", params),
-  pruneRemoteReports: (params) => import_electron.ipcRenderer.invoke("prune-remote-reports", params)
+  pruneRemoteReports: (params) => import_electron.ipcRenderer.invoke("prune-remote-reports", params),
+  // ─── MEDIA & IMAGE DIAGNOSTICS ───
+  diagnoseImage: (rawSrc) => import_electron.ipcRenderer.invoke("diagnose-image", rawSrc),
+  resolveImageSrc: (imagePath) => import_electron.ipcRenderer.invoke("resolve-image-src", imagePath)
 });

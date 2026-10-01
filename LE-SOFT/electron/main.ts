@@ -11,6 +11,10 @@ import { startQueue, flush as flushQueue } from './write-queue';
 import { clearAll as clearCache } from './cache-manager';
 import { triggerSystemLockout, getLockFilePath } from './lockout';
 import { getCfAccessHeaders } from './supabase';
+import { MediaProtocolService } from './services/media/MediaProtocolService';
+
+// Register privileged custom scheme for secure media loading before app is ready
+MediaProtocolService.registerSchemeAsPrivileged();
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Auto-Updater
@@ -485,6 +489,13 @@ app.whenReady().then(() => {
         log(`Failed to register IPC handlers early: ${err.message}`);
     }
 
+    try {
+        MediaProtocolService.getInstance().initialize();
+        log('Media protocol service initialized');
+    } catch (err: any) {
+        log(`Failed to initialize media protocol service: ${err.message}`);
+    }
+
     // 1. Open main window immediately so the app is visibly running
     createWindow();
     log('Window created call done');
@@ -505,6 +516,22 @@ app.whenReady().then(() => {
         log('CF Access webRequest interceptor registered for storage.lenas.me');
     } catch (e: any) {
         log(`CF Access interceptor setup failed: ${e.message}`);
+    }
+
+    // Explicitly enforce Content-Security-Policy with app-media: permitted for images
+    try {
+        session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+            const responseHeaders = { ...details.responseHeaders };
+            if (!responseHeaders['content-security-policy'] && !responseHeaders['Content-Security-Policy']) {
+                responseHeaders['Content-Security-Policy'] = [
+                    "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: app-media:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https://*.supabase.co https://storage.lenas.me http://100.88.85.6:* ws://localhost:* ws://127.0.0.1:* http://localhost:* http://127.0.0.1:*; media-src 'self' app-media: blob:; object-src 'none'; base-uri 'self';"
+                ];
+            }
+            callback({ responseHeaders });
+        });
+        log('Content-Security-Policy onHeadersReceived interceptor registered');
+    } catch (e: any) {
+        log(`CSP interceptor setup failed: ${e.message}`);
     }
 
 

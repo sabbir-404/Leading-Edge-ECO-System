@@ -33,7 +33,7 @@ import fs from 'fs';
 import path from 'path';
 
 export type DatabaseTarget = 'nas' | 'supabase';
-export type CircuitBreakerState = 'healthy' | 'degraded' | 'recovering';
+export type CircuitBreakerState = 'healthy' | 'degraded' | 'recovering' | 'offline';
 export type ConnectionTier = 'nas_local' | 'nas_tunnel' | 'nas_public' | 'supabase';
 
 export interface DatabaseMetrics {
@@ -44,6 +44,13 @@ export interface DatabaseMetrics {
     failoverQueries: number;
     reconciledWrites: number;
     lastQueryDurationMs: number;
+}
+
+export interface DatabaseLatencyStats {
+    lastLatencyMs: number;
+    avgLatencyMs: number;
+    p95LatencyMs: number;
+    cooldownRemainingMs: number;
 }
 
 export interface FallbackFreshnessInfo {
@@ -71,6 +78,7 @@ export interface DatabaseStatus {
     lastHealthCheckTime: number;
     metrics: DatabaseMetrics;
     freshness: FallbackFreshnessInfo;
+    latencyStats?: DatabaseLatencyStats;
 }
 
 export interface FallbackJournalEntry {
@@ -111,12 +119,20 @@ export class DatabaseFailoverEngine {
     private activeTarget: DatabaseTarget = 'supabase';
     private activeNasUrl: string | null = null;
     private lastWorkingNasUrl: string | null = null;
+    private connectionStatePath: string;
 
     private isNasReachable = false;
     private consecutiveFailures = 0;
-    private readonly MAX_CONSECUTIVE_FAILURES = 2;
+    private readonly MAX_CONSECUTIVE_FAILURES = 1; // Trip immediately on verified failure to avoid waiting
 
     private lastHealthCheckTime = 0;
+    private lastLatencyMs = 0;
+    private avgLatencyMs = 0;
+    private latencyHistory: number[] = [];
+    private cooldownUntil = 0;
+    private cooldownDurationMs = 30_000; // 30s initial cooldown
+    private errorCount = 0;
+
     private healthProbeTimer: ReturnType<typeof setInterval> | null = null;
     private retentionTimer: ReturnType<typeof setInterval> | null = null;
     private mirrorRetryTimer: ReturnType<typeof setInterval> | null = null;
@@ -164,10 +180,39 @@ export class DatabaseFailoverEngine {
         this.journalPath = path.join(userData, 'fallback_write_journal.json');
         this.mirrorJournalPath = path.join(userData, 'cloud_mirror_retry_journal.json');
         this.freshnessPath = path.join(userData, 'fallback_freshness.json');
+        this.connectionStatePath = path.join(userData, 'nas_connection.json');
 
         this.loadJournal();
         this.loadMirrorJournal();
         this.loadFreshness();
+        this.loadNasConnectionState();
+    }
+
+    private loadNasConnectionState(): void {
+        try {
+            if (fs.existsSync(this.connectionStatePath)) {
+                const raw = fs.readFileSync(this.connectionStatePath, 'utf-8');
+                const parsed = JSON.parse(raw);
+                if (parsed.lastWorkingNasUrl) {
+                    this.lastWorkingNasUrl = parsed.lastWorkingNasUrl;
+                    this.activeNasUrl = parsed.lastWorkingNasUrl;
+                }
+                if (parsed.tier) {
+                    this.connectionTier = parsed.tier;
+                }
+            }
+        } catch {}
+    }
+
+    private saveNasConnectionState(): void {
+        try {
+            fs.mkdirSync(path.dirname(this.connectionStatePath), { recursive: true });
+            fs.writeFileSync(this.connectionStatePath, JSON.stringify({
+                lastWorkingNasUrl: this.lastWorkingNasUrl,
+                tier: this.connectionTier,
+                updatedAt: Date.now()
+            }, null, 2), 'utf-8');
+        } catch {}
     }
 
     public static getInstance(): DatabaseFailoverEngine {
@@ -175,6 +220,10 @@ export class DatabaseFailoverEngine {
             DatabaseFailoverEngine.instance = new DatabaseFailoverEngine();
         }
         return DatabaseFailoverEngine.instance;
+    }
+
+    public getLastWorkingNasUrl(): string | null {
+        return this.lastWorkingNasUrl;
     }
 
     // ── Client Registry ──────────────────────────────────────────────────────────
@@ -189,7 +238,14 @@ export class DatabaseFailoverEngine {
     }
 
     public getActiveClient(): SupabaseClient {
-        if (this.circuitState === 'healthy' && this.nasClient) {
+        const inCooldown = Date.now() < this.cooldownUntil;
+        // If degraded, offline, or during cooldown, return Supabase fallback immediately without stalling
+        if (this.circuitState === 'degraded' || this.circuitState === 'offline' || inCooldown) {
+            if (this.supabaseClient) {
+                return this.supabaseClient;
+            }
+        }
+        if ((this.circuitState === 'healthy' || this.circuitState === 'recovering') && this.nasClient) {
             return this.nasClient;
         }
         if (this.supabaseClient) {
@@ -277,6 +333,14 @@ export class DatabaseFailoverEngine {
                 storageUsageMb: usageMb,
                 storageLimitMb: 1024,
                 storageWarningState: warningState
+            },
+            latencyStats: {
+                lastLatencyMs: this.lastLatencyMs,
+                avgLatencyMs: this.avgLatencyMs,
+                p95LatencyMs: this.latencyHistory.length > 0 
+                    ? [...this.latencyHistory].sort((a, b) => a - b)[Math.floor(this.latencyHistory.length * 0.95)] || this.lastLatencyMs 
+                    : this.lastLatencyMs,
+                cooldownRemainingMs: Math.max(0, this.cooldownUntil - Date.now())
             }
         };
     }
@@ -330,25 +394,28 @@ export class DatabaseFailoverEngine {
         const tunnel = candidates.tunnelUrl || 'https://db.lenas.me';
         const pub = candidates.publicUrl || 'http://100.88.85.6:3001';
 
-        // 1. Fast check: If last working URL is known, test it first with tight timeout
+        // 1. Fast check: If last working URL is known, test it first with tight timeout (800ms)
         if (this.lastWorkingNasUrl) {
             const headers = this.lastWorkingNasUrl.startsWith('https://') ? cfHeaders : {};
-            const alive = await this.pingUrl(this.lastWorkingNasUrl, 1000, headers);
+            const t0 = Date.now();
+            const alive = await this.pingUrl(this.lastWorkingNasUrl, 800, headers);
             if (alive) {
-                this.handleNasReachable(this.lastWorkingNasUrl, this.deriveTier(this.lastWorkingNasUrl, local, tunnel, pub));
+                const latency = Date.now() - t0;
+                this.handleNasReachable(this.lastWorkingNasUrl, this.deriveTier(this.lastWorkingNasUrl, local, tunnel, pub), latency);
                 this.isProbing = false;
                 return true;
             }
         }
 
-        // 2. Parallel race across all candidate endpoints with bounded timeout (1500ms max)
+        // 2. Parallel race across all candidate endpoints with bounded timeout (max 1200ms)
         const tests = [
-            { url: local, tier: 'nas_local' as ConnectionTier, headers: {}, timeout: 800 },
-            { url: tunnel, tier: 'nas_tunnel' as ConnectionTier, headers: cfHeaders, timeout: 1500 },
-            { url: pub, tier: 'nas_public' as ConnectionTier, headers: {}, timeout: 1500 }
+            { url: local, tier: 'nas_local' as ConnectionTier, headers: {}, timeout: 600 },
+            { url: pub, tier: 'nas_public' as ConnectionTier, headers: {}, timeout: 1000 },
+            { url: tunnel, tier: 'nas_tunnel' as ConnectionTier, headers: cfHeaders, timeout: 1200 }
         ];
 
         try {
+            const t0 = Date.now();
             const winner = await Promise.any(
                 tests.map(async t => {
                     const ok = await this.pingUrl(t.url, t.timeout, t.headers);
@@ -357,7 +424,8 @@ export class DatabaseFailoverEngine {
                 })
             );
 
-            this.handleNasReachable(winner.url, winner.tier);
+            const latency = Date.now() - t0;
+            this.handleNasReachable(winner.url, winner.tier, latency);
             this.isProbing = false;
             return true;
         } catch {
@@ -373,25 +441,32 @@ export class DatabaseFailoverEngine {
         return 'nas_public';
     }
 
-    private handleNasReachable(url: string, tier: ConnectionTier): void {
+    private handleNasReachable(url: string, tier: ConnectionTier, latency = 0): void {
         this.isNasReachable = true;
         this.activeNasUrl = url;
         this.lastWorkingNasUrl = url;
         this.connectionTier = tier;
         this.lastHealthCheckTime = Date.now();
+        this.saveNasConnectionState();
 
-        const wasDegraded = this.circuitState === 'degraded';
+        const wasDegraded = this.circuitState === 'degraded' || this.circuitState === 'offline';
         this.consecutiveFailures = 0;
 
+        if (latency > 0) {
+            this.lastLatencyMs = latency;
+            this.latencyHistory.push(latency);
+            if (this.latencyHistory.length > 50) this.latencyHistory.shift();
+            this.avgLatencyMs = Math.round(this.latencyHistory.reduce((a, b) => a + b, 0) / this.latencyHistory.length);
+        }
+
         if (wasDegraded) {
-            console.log(`[DB:FAILOVER] NAS recovered via ${tier} (${url}). Entering RECOVERING state.`);
+            console.log(`[DB:FAILOVER] NAS ping succeeded via ${tier} (${url}). Entering RECOVERING state.`);
             this.circuitState = 'recovering';
-            this.activeTarget = 'nas';
             this.broadcastStatus();
 
-            // Trigger reconciliation in background without blocking current loop
-            this.reconcileFallbackWrites().catch(err => {
-                console.error('[DB:RECONCILE] Background reconciliation error:', err);
+            // Verify recovery with a real lightweight request before restoring as primary
+            this.verifyAndRecoverNas().catch(err => {
+                console.warn('[DB:FAILOVER] Recovery verification failed:', err.message);
             });
         } else if (this.circuitState === 'healthy') {
             this.activeTarget = 'nas';
@@ -401,16 +476,52 @@ export class DatabaseFailoverEngine {
         this.checkAndBootstrapFallbackIfEmpty().catch(() => {});
     }
 
+    /**
+     * Verifies NAS recovery with an actual real database query, reconciles pending fallback
+     * writes, and restores NAS as primary.
+     */
+    public async verifyAndRecoverNas(): Promise<boolean> {
+        if (!this.nasClient) return false;
+        try {
+            console.log('[DB:RECOVERY] Verifying NAS with real lightweight query...');
+            const t0 = Date.now();
+            const { error } = await this.nasClient.from('companies').select('id').limit(1);
+            if (error) {
+                console.warn('[DB:RECOVERY] NAS real query failed:', error.message);
+                return false;
+            }
+            const duration = Date.now() - t0;
+            console.log(`[DB:RECOVERY] NAS verified healthy in ${duration}ms.`);
+            this.recordNasSuccess(duration);
+
+            // Reconcile pending writes
+            if (this.getPendingJournalEntries().length > 0) {
+                console.log('[DB:RECOVERY] Reconciling pending fallback writes before restoring primary...');
+                await this.reconcileFallbackWrites();
+            }
+
+            this.circuitState = 'healthy';
+            this.activeTarget = 'nas';
+            this.cooldownUntil = 0;
+            this.broadcastStatus();
+            return true;
+        } catch (err: any) {
+            console.warn('[DB:RECOVERY] Verification exception:', err.message);
+            return false;
+        }
+    }
+
     private handleNasUnreachable(): void {
         this.isNasReachable = false;
         this.activeNasUrl = null;
         this.connectionTier = 'supabase';
         this.lastHealthCheckTime = Date.now();
 
-        if (this.circuitState === 'healthy') {
+        if (this.circuitState === 'healthy' || this.circuitState === 'recovering') {
             console.warn('[DB:FAILOVER] NAS health check failed. Switching circuit breaker to DEGRADED_FALLBACK.');
             this.circuitState = 'degraded';
             this.activeTarget = 'supabase';
+            this.cooldownUntil = Date.now() + this.cooldownDurationMs;
             this.broadcastStatus();
         }
     }
@@ -475,9 +586,14 @@ export class DatabaseFailoverEngine {
             err.message.includes('504')
         );
 
+        // Adaptive cooldown (30s to 120s) preventing dead connection stall on flapping
+        const backoffStep = Math.min(4, Math.max(0, this.consecutiveFailures - 1));
+        this.cooldownDurationMs = Math.min(120_000, 30_000 * Math.pow(1.5, backoffStep));
+        this.cooldownUntil = Date.now() + this.cooldownDurationMs;
+
         if (this.consecutiveFailures >= this.MAX_CONSECUTIVE_FAILURES || isNetworkErr) {
-            if (this.circuitState === 'healthy') {
-                console.warn(`[DB:FAILOVER] Circuit breaker tripped to DEGRADED_FALLBACK (failures: ${this.consecutiveFailures}, reason: ${err?.message || 'unknown'}).`);
+            if (this.circuitState === 'healthy' || this.circuitState === 'recovering') {
+                console.warn(`[DB:FAILOVER] Circuit breaker tripped to DEGRADED_FALLBACK (failures: ${this.consecutiveFailures}, cooldown: ${Math.round(this.cooldownDurationMs / 1000)}s, reason: ${err?.message || 'unknown'}).`);
                 this.circuitState = 'degraded';
                 this.activeTarget = 'supabase';
                 this.isNasReachable = false;
@@ -500,8 +616,22 @@ export class DatabaseFailoverEngine {
         }
     }
 
-    public recordNasSuccess(): void {
+    public recordNasSuccess(durationMs?: number): void {
         this.consecutiveFailures = 0;
+        this.cooldownUntil = 0;
+        this.cooldownDurationMs = 30_000;
+
+        if (typeof durationMs === 'number' && durationMs >= 0) {
+            this.lastLatencyMs = durationMs;
+            this.latencyHistory.push(durationMs);
+            if (this.latencyHistory.length > 30) {
+                this.latencyHistory.shift();
+            }
+            this.avgLatencyMs = Math.round(
+                this.latencyHistory.reduce((sum, val) => sum + val, 0) / this.latencyHistory.length
+            );
+        }
+
         if (this.circuitState === 'recovering') {
             this.circuitState = 'healthy';
             this.activeTarget = 'nas';
@@ -511,7 +641,8 @@ export class DatabaseFailoverEngine {
 
     // ── Query Execution with Automatic Failover ──────────────────────────────────
     /**
-     * Executes a read query. If NAS is active and fails, automatically falls back to Supabase.
+     * Executes a read query. If NAS is eligible, attempts on NAS with bounded timeout (2000ms).
+     * If degraded, offline, in cooldown, or on failure/timeout, automatically falls back to Supabase.
      */
     public async executeRead<T>(
         queryFn: (client: SupabaseClient) => Promise<{ data: T | null; error: any }>,
@@ -520,12 +651,17 @@ export class DatabaseFailoverEngine {
         this.metrics.totalQueries++;
         const t0 = Date.now();
 
-        // 1. If NAS is healthy, attempt on NAS first with bounded timeout (3500ms)
-        if (this.circuitState === 'healthy' && this.nasClient) {
+        const isCooldownActive = Date.now() < this.cooldownUntil;
+        const canTryNas = this.nasClient &&
+            (this.circuitState === 'healthy' || this.circuitState === 'recovering') &&
+            !isCooldownActive;
+
+        // 1. If NAS is eligible, attempt on NAS first with bounded timeout (2000ms)
+        if (canTryNas && this.nasClient) {
             this.metrics.nasQueries++;
             try {
                 const timeoutPromise = new Promise<{ data: null; error: any }>((_, reject) =>
-                    setTimeout(() => reject(new Error(`NAS read timeout on ${queryDesc}`)), 3500)
+                    setTimeout(() => reject(new Error(`NAS read timeout (2000ms) on ${queryDesc}`)), 2000)
                 );
 
                 const res = await Promise.race([queryFn(this.nasClient), timeoutPromise]);
@@ -533,10 +669,11 @@ export class DatabaseFailoverEngine {
                 this.metrics.lastQueryDurationMs = duration;
 
                 if (!res.error) {
-                    this.recordNasSuccess();
+                    this.recordNasSuccess(duration);
                     return { data: res.data, error: null, databaseUsed: 'nas' };
                 }
 
+                // If it's a data-level query error (e.g. invalid column/filter, not connection/timeout), return directly
                 if (res.error?.code && !['ECONNREFUSED', 'ETIMEDOUT', 'PGRST000'].includes(res.error.code)) {
                     return { data: res.data, error: res.error, databaseUsed: 'nas' };
                 }
@@ -554,7 +691,8 @@ export class DatabaseFailoverEngine {
 
         this.metrics.supabaseQueries++;
         this.metrics.failoverQueries++;
-        console.warn(`[DB:FAILOVER] Routing ${queryDesc} to Supabase Cloud fallback.`);
+        const remainingCooldown = Math.max(0, this.cooldownUntil - Date.now());
+        console.warn(`[DB:FAILOVER] Routing ${queryDesc} to Supabase Cloud fallback (cooldown remaining: ${remainingCooldown}ms).`);
 
         try {
             const res = await queryFn(this.supabaseClient);
@@ -568,8 +706,8 @@ export class DatabaseFailoverEngine {
 
     /**
      * Executes a write query.
-     * When NAS is healthy: writes to NAS, then mirrors async to Supabase Cloud (with durable retry journal).
-     * When in fallback: writes to Supabase Cloud and logs to Fallback Write Journal for recovery.
+     * When NAS is eligible: writes to NAS (bounded 3000ms), then mirrors async to Supabase Cloud (with durable retry journal).
+     * When in fallback/cooldown: writes to Supabase Cloud and logs to Fallback Write Journal for recovery.
      */
     public async executeWrite<T>(
         writeFn: (client: SupabaseClient) => Promise<{ data: T | null; error: any }>,
@@ -585,45 +723,86 @@ export class DatabaseFailoverEngine {
         this.metrics.totalQueries++;
         const t0 = Date.now();
 
-        // 1. Primary path: NAS is healthy
-        if (this.circuitState === 'healthy' && this.nasClient) {
+        const isCooldownActive = Date.now() < this.cooldownUntil;
+        const canTryNas = this.nasClient &&
+            (this.circuitState === 'healthy' || this.circuitState === 'recovering') &&
+            !isCooldownActive;
+
+        // 1. Primary path: NAS is eligible
+        if (canTryNas && this.nasClient) {
             this.metrics.nasQueries++;
+            let res: { data: T | null; error: any };
+
             try {
                 const timeoutPromise = new Promise<{ data: null; error: any }>((_, reject) =>
-                    setTimeout(() => reject(new Error(`NAS write timeout on ${writeDesc}`)), 5000)
+                    setTimeout(() => reject(new Error(`NAS write timeout (3000ms) on ${writeDesc}`)), 3000)
                 );
 
-                const res = await Promise.race([writeFn(this.nasClient), timeoutPromise]);
-                const duration = Date.now() - t0;
-                this.metrics.lastQueryDurationMs = duration;
-
-                if (!res.error) {
-                    this.recordNasSuccess();
-
-                    // Asynchronously mirror write to Supabase Cloud with durable retry protection
-                    const cloudClient = this.supabaseAdmin || this.supabaseClient;
-                    if (cloudClient) {
-                        this.mirrorWriteToCloud(cloudClient, metadata, res.data || metadata.data).catch(e => {
-                            console.warn(`[DB:SYNC] Async cloud mirror failed for ${metadata.table}, saving to mirror retry journal:`, e.message);
-                            this.journalMirrorRetry({
-                                table: metadata.table,
-                                operation: metadata.operation,
-                                primaryKey: metadata.primaryKey,
-                                data: res.data || metadata.data,
-                                filter: metadata.filter
-                            });
-                        });
-                    }
-
-                    return { data: res.data, error: null, databaseUsed: 'nas' };
-                }
-
-                if (res.error) {
-                    this.recordNasFailure(res.error);
-                }
+                res = await Promise.race([writeFn(this.nasClient), timeoutPromise]);
             } catch (err: any) {
                 this.recordNasFailure(err);
+
+                // AMBIGUOUS TIMEOUT GUARD:
+                // Write was dispatched to NAS, but response was lost or timed out (>3000ms).
+                // The database server MAY have committed the transaction!
+                // To avoid duplicate product/order creation (split-brain duplicate writes),
+                // we must NEVER autonomously replay this write to Supabase Cloud.
+                console.error(`[DB:FAILOVER] Ambiguous write timeout on NAS for ${writeDesc} (${metadata.table}). Preventing duplicate replay to Supabase.`);
+                
+                // Durable record of ambiguous write for verification upon reconnection
+                this.journalWrite({
+                    table: metadata.table,
+                    operation: metadata.operation,
+                    primaryKey: metadata.primaryKey,
+                    data: metadata.data,
+                    filter: metadata.filter
+                });
+
+                return {
+                    data: null,
+                    error: new Error(`NAS write timeout on ${writeDesc}: operation sent to primary database but response timed out. Replay halted to prevent duplicate mutations.`),
+                    databaseUsed: 'nas'
+                };
             }
+
+            const duration = Date.now() - t0;
+            this.metrics.lastQueryDurationMs = duration;
+
+            if (!res.error) {
+                this.recordNasSuccess(duration);
+
+                // Asynchronously mirror write to Supabase Cloud with durable retry protection
+                const cloudClient = this.supabaseAdmin || this.supabaseClient;
+                if (cloudClient) {
+                    this.mirrorWriteToCloud(cloudClient, metadata, res.data || metadata.data).catch(e => {
+                        console.warn(`[DB:SYNC] Async cloud mirror failed for ${metadata.table}, saving to mirror retry journal:`, e.message);
+                        this.journalMirrorRetry({
+                            table: metadata.table,
+                            operation: metadata.operation,
+                            primaryKey: metadata.primaryKey,
+                            data: res.data || metadata.data,
+                            filter: metadata.filter
+                        });
+                    });
+                }
+
+                return { data: res.data, error: null, databaseUsed: 'nas' };
+            }
+
+            // If NAS returned an application-level SQL error (e.g. constraint violation, schema error),
+            // do not fail over to Supabase — return the database error to the caller.
+            const isPgError = res.error?.code || res.error?.details || res.error?.hint;
+            if (isPgError) {
+                return { data: null, error: res.error, databaseUsed: 'nas' };
+            }
+
+            // For non-timeout transport errors returned in res.error
+            this.recordNasFailure(res.error);
+            return {
+                data: null,
+                error: res.error,
+                databaseUsed: 'nas'
+            };
         }
 
         // 2. Fallback path: Write to Supabase Cloud + Journal for reconciliation

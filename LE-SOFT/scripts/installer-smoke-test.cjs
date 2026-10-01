@@ -15,8 +15,9 @@ const fs = require('fs');
 const path = require('path');
 const { spawn, execSync } = require('child_process');
 const os = require('os');
-
-const installerPath = path.resolve(__dirname, '../release/LESOFT Setup 1.8.4.exe');
+const pkg = require('../package.json');
+const targetVersion = pkg.version;
+const installerPath = path.resolve(__dirname, `../release/LESOFT Setup ${targetVersion}.exe`);
 
 if (!fs.existsSync(installerPath)) {
     console.error(`ERROR: Installer not found at ${installerPath}`);
@@ -120,8 +121,8 @@ function verifyInstallation(targetDir) {
     console.log(`[VERIFY] LESOFT.exe size: ${(exeStat.size / (1024 * 1024)).toFixed(2)} MB`);
     console.log(`[VERIFY] app.asar size: ${(asarStat.size / (1024 * 1024)).toFixed(2)} MB`);
 
-    if (!versionOutput.startsWith('1.8.4')) {
-        throw new Error(`Expected ProductVersion to start with '1.8.4', got '${versionOutput}'`);
+    if (!versionOutput.startsWith(targetVersion)) {
+        throw new Error(`Expected ProductVersion to start with '${targetVersion}', got '${versionOutput}'`);
     }
 
     return {
@@ -135,7 +136,7 @@ function verifyInstallation(targetDir) {
 
 async function runTestSuite() {
     console.log(`=============================================================`);
-    console.log(`LESOFT v1.8.4 BOUNDED INSTALLER SMOKE TEST SUITE`);
+    console.log(`LESOFT v${targetVersion} BOUNDED INSTALLER SMOKE TEST SUITE`);
     console.log(`=============================================================`);
 
     // ── TEST A: Silent install to a path WITHOUT spaces ─────────────────────

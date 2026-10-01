@@ -15,6 +15,7 @@ import {
   hasMeaningfulDraftContent 
 } from '../../utils/productCatalogDraft';
 import { ProductCreateModal } from './components/ProductCreateModal';
+import { resolveImageSrc, handleImageLoadError } from '../../utils/imageSrc';
 
 interface Size {
   id?: number;
@@ -121,6 +122,9 @@ const MakeProductCatalog: React.FC = () => {
   // Permissions
   const canManageGlobal = canManageGlobalProductAttributes();
 
+  // Track image load failures to gracefully show initials fallback
+  const [imageErrors, setImageErrors] = useState<Record<number, boolean>>({});
+
   // Modals
   const [showProductModal, setShowProductModal] = useState(!!initialDraft.productForm?.isOpen);
   const [editingProduct, setEditingProduct] = useState<Partial<Product>>(
@@ -159,12 +163,12 @@ const MakeProductCatalog: React.FC = () => {
       const url = await window.electron.pickImage();
       if (url) {
         onSuccess(url);
-        setMsg({ type: 'success', text: 'Image successfully uploaded and stored on NAS!' });
+        setMsg({ type: 'success', text: 'Image uploaded successfully!' });
         setTimeout(() => setMsg(null), 4000);
       }
     } catch (e: any) {
       console.error(e);
-      setMsg({ type: 'error', text: 'Failed to upload image to NAS: ' + (e.message || String(e)) });
+      setMsg({ type: 'error', text: 'Failed to upload image. Please try again.' });
     } finally {
       setUploadingImage(false);
     }
@@ -634,7 +638,7 @@ const MakeProductCatalog: React.FC = () => {
   });
 
   return (
-    <DashboardLayout title="Customized Product Database">
+    <DashboardLayout title="Customized Product Catalog">
       <div style={{ padding: '1.5rem', maxWidth: '1440px', margin: '0 auto' }}>
         
         {/* Header */}
@@ -761,10 +765,41 @@ const MakeProductCatalog: React.FC = () => {
                         border: `1px solid ${isSelected ? '#3b82f6' : 'var(--border-color)'}`
                       }}>
                       <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                        {p.main_image ? (
-                          <img src={p.main_image} alt={p.product_name} style={{ width: '42px', height: '42px', borderRadius: '6px', objectFit: 'cover', border: '1px solid var(--border-color)' }} />
-                        ) : (
-                          <div style={{ width: '42px', height: '42px', borderRadius: '6px', background: 'rgba(59,130,246,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#3b82f6', fontWeight: 800, fontSize: '0.9rem' }}>
+                        {p.main_image && !imageErrors[p.id!] ? (() => {
+                          const resolved = resolveImageSrc(p.main_image);
+                          const resolvedType = resolved.startsWith('app-media://nas/') ? 'nas_storage' : resolved.startsWith('app-media://local/') ? 'local_file' : resolved.startsWith('data:') ? 'data_url' : resolved.startsWith('http') ? 'remote_http' : 'other';
+                          const startTime = performance.now();
+                          return (
+                            <img 
+                              src={resolved} 
+                              alt={p.product_name} 
+                              data-diagnostic-product-id={p.id}
+                              data-diagnostic-field-name="main_image"
+                              data-diagnostic-field-type={typeof p.main_image}
+                              data-diagnostic-value-exists="true"
+                              data-diagnostic-resolved-type={resolvedType}
+                              onLoad={(e) => {
+                                const img = e.currentTarget;
+                                const duration = Math.round(performance.now() - startTime);
+                                const mime = p.main_image?.toLowerCase().endsWith('.png') ? 'image/png' : p.main_image?.toLowerCase().endsWith('.jpg') || p.main_image?.toLowerCase().endsWith('.jpeg') ? 'image/jpeg' : 'image/webp';
+                                console.log(`[SAFE_IMAGE_DIAGNOSTIC] Product #${p.id} | Field: main_image (${typeof p.main_image}) | ValueExists: true | ResolvedType: ${resolvedType} | Status: 200 | MIME: ${mime} | Dimensions: ${img.naturalWidth}x${img.naturalHeight} | LoadDuration: ${duration}ms`);
+                              }}
+                              onError={e => { 
+                                const duration = Math.round(performance.now() - startTime);
+                                console.warn(`[SAFE_IMAGE_DIAGNOSTIC] Product #${p.id} | Field: main_image (${typeof p.main_image}) | ValueExists: true | ResolvedType: ${resolvedType} | Status: ERROR | Duration: ${duration}ms`);
+                                setImageErrors(prev => ({ ...prev, [p.id!]: true })); 
+                                handleImageLoadError(e, p.main_image); 
+                              }} 
+                              style={{ width: '42px', height: '42px', borderRadius: '6px', objectFit: 'cover', border: '1px solid var(--border-color)' }} 
+                            />
+                          );
+                        })() : (
+                          <div 
+                            data-diagnostic-product-id={p.id}
+                            data-diagnostic-field-name="main_image"
+                            data-diagnostic-value-exists={!!p.main_image}
+                            data-diagnostic-status="fallback"
+                            style={{ width: '42px', height: '42px', borderRadius: '6px', background: 'rgba(59,130,246,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#3b82f6', fontWeight: 800, fontSize: '0.9rem' }}>
                             {p.product_code?.slice(0, 2) || 'PR'}
                           </div>
                         )}
@@ -806,13 +841,43 @@ const MakeProductCatalog: React.FC = () => {
                 <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '1.25rem', marginBottom: '1.5rem' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
                     <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-start' }}>
-                      {selectedProduct.main_image ? (
-                        <div style={{ position: 'relative' }}>
-                          <img src={selectedProduct.main_image} alt={selectedProduct.product_name} style={{ width: '90px', height: '90px', borderRadius: '10px', objectFit: 'cover', border: '1px solid var(--border-color)', boxShadow: '0 4px 10px rgba(0,0,0,0.1)' }} />
-                          <span style={{ position: 'absolute', bottom: '-6px', right: '-6px', background: '#10b981', color: '#fff', fontSize: '0.65rem', padding: '2px 6px', borderRadius: '4px', fontWeight: 700 }}>NAS</span>
-                        </div>
-                      ) : (
-                        <div style={{ width: '90px', height: '90px', borderRadius: '10px', background: 'rgba(59,130,246,0.1)', border: '1.5px dashed #3b82f6', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '4px', color: '#3b82f6' }}>
+                      {selectedProduct.main_image && !imageErrors[selectedProduct.id!] ? (() => {
+                        const resolved = resolveImageSrc(selectedProduct.main_image);
+                        const resolvedType = resolved.startsWith('app-media://nas/') ? 'nas_storage' : resolved.startsWith('app-media://local/') ? 'local_file' : resolved.startsWith('data:') ? 'data_url' : resolved.startsWith('http') ? 'remote_http' : 'other';
+                        const startTime = performance.now();
+                        return (
+                          <div style={{ position: 'relative' }}>
+                            <img 
+                              src={resolved} 
+                              alt={selectedProduct.product_name} 
+                              data-diagnostic-product-id={selectedProduct.id}
+                              data-diagnostic-field-name="main_image"
+                              data-diagnostic-field-type={typeof selectedProduct.main_image}
+                              data-diagnostic-value-exists="true"
+                              data-diagnostic-resolved-type={resolvedType}
+                              onLoad={(e) => {
+                                const img = e.currentTarget;
+                                const duration = Math.round(performance.now() - startTime);
+                                const mime = selectedProduct.main_image?.toLowerCase().endsWith('.png') ? 'image/png' : selectedProduct.main_image?.toLowerCase().endsWith('.jpg') || selectedProduct.main_image?.toLowerCase().endsWith('.jpeg') ? 'image/jpeg' : 'image/webp';
+                                console.log(`[SAFE_IMAGE_DIAGNOSTIC:SELECTED] Product #${selectedProduct.id} | Field: main_image (${typeof selectedProduct.main_image}) | ValueExists: true | ResolvedType: ${resolvedType} | Status: 200 | MIME: ${mime} | Dimensions: ${img.naturalWidth}x${img.naturalHeight} | LoadDuration: ${duration}ms`);
+                              }}
+                              onError={e => { 
+                                const duration = Math.round(performance.now() - startTime);
+                                console.warn(`[SAFE_IMAGE_DIAGNOSTIC:SELECTED] Product #${selectedProduct.id} | Field: main_image (${typeof selectedProduct.main_image}) | ValueExists: true | ResolvedType: ${resolvedType} | Status: ERROR | Duration: ${duration}ms`);
+                                setImageErrors(prev => ({ ...prev, [selectedProduct.id!]: true })); 
+                                handleImageLoadError(e, selectedProduct.main_image); 
+                              }} 
+                              style={{ width: '90px', height: '90px', borderRadius: '10px', objectFit: 'cover', border: '1px solid var(--border-color)', boxShadow: '0 4px 10px rgba(0,0,0,0.1)' }} 
+                            />
+                          </div>
+                        );
+                      })() : (
+                        <div 
+                          data-diagnostic-product-id={selectedProduct.id}
+                          data-diagnostic-field-name="main_image"
+                          data-diagnostic-value-exists={!!selectedProduct.main_image}
+                          data-diagnostic-status="fallback"
+                          style={{ width: '90px', height: '90px', borderRadius: '10px', background: 'rgba(59,130,246,0.1)', border: '1.5px dashed #3b82f6', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '4px', color: '#3b82f6' }}>
                           <ImageIcon size={24} />
                           <span style={{ fontSize: '0.65rem', fontWeight: 600 }}>No Image</span>
                         </div>
@@ -1098,7 +1163,7 @@ const MakeProductCatalog: React.FC = () => {
                               )}
                               {s.image_url && (
                                 <div style={{ marginTop: '8px' }}>
-                                  <img src={s.image_url} alt={s.spec_name} style={{ width: '100%', height: '80px', objectFit: 'cover', borderRadius: '6px', border: '1px solid var(--border-color)' }} />
+                                  <img src={resolveImageSrc(s.image_url)} alt={s.spec_name} onError={e => handleImageLoadError(e, s.image_url)} style={{ width: '100%', height: '80px', objectFit: 'cover', borderRadius: '6px', border: '1px solid var(--border-color)' }} />
                                 </div>
                               )}
                             </div>
@@ -1188,7 +1253,7 @@ const MakeProductCatalog: React.FC = () => {
                             <div key={c.id} style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '12px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                                 {c.image_url ? (
-                                  <img src={c.image_url} alt={c.color_name} style={{ width: '32px', height: '32px', borderRadius: '6px', objectFit: 'cover', border: '1px solid var(--border-color)' }} />
+                                  <img src={resolveImageSrc(c.image_url)} alt={c.color_name} onError={e => handleImageLoadError(e, c.image_url)} style={{ width: '32px', height: '32px', borderRadius: '6px', objectFit: 'cover', border: '1px solid var(--border-color)' }} />
                                 ) : (
                                   <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: c.color_code || '#666', border: '2px solid rgba(255,255,255,0.2)', boxShadow: '0 2px 5px rgba(0,0,0,0.15)', flexShrink: 0 }} />
                                 )}
@@ -1550,19 +1615,23 @@ const MakeProductCatalog: React.FC = () => {
                     style={{ width: '100%', padding: '9px 12px', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', boxSizing: 'border-box', resize: 'vertical' }} />
                 </div>
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '4px' }}>DRAWING / SPEC IMAGE (STORED ON NAS)</label>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '4px' }}>DRAWING / SPEC IMAGE</label>
                   <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                    <input type="text" placeholder="https://... or click Upload" value={editingSpec.image_url || ''} onChange={(e) => setEditingSpec({ ...editingSpec, image_url: e.target.value })}
-                      style={{ flex: 1, padding: '9px 12px', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', boxSizing: 'border-box' }} />
                     <button type="button" disabled={uploadingImage} onClick={() => handlePickAndUploadImage(url => setEditingSpec(prev => ({ ...prev, image_url: url })))}
                       style={{ padding: '9px 14px', background: '#8b5cf6', border: 'none', borderRadius: '8px', color: '#fff', cursor: uploadingImage ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', fontWeight: 600, whiteSpace: 'nowrap' }}>
-                      <Upload size={14} /> {uploadingImage ? 'Uploading...' : 'Upload to NAS'}
+                      <Upload size={14} /> {uploadingImage ? 'Uploading...' : 'Upload Image'}
                     </button>
+                    {editingSpec.image_url && (
+                      <button type="button" onClick={() => setEditingSpec(prev => ({ ...prev, image_url: '' }))}
+                        style={{ padding: '9px 12px', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.82rem' }}>
+                        Remove
+                      </button>
+                    )}
                   </div>
                   {editingSpec.image_url && (
                     <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <img src={editingSpec.image_url} alt="Spec Preview" style={{ width: '50px', height: '50px', objectFit: 'cover', borderRadius: '6px', border: '1px solid var(--border-color)' }} />
-                      <span style={{ fontSize: '0.75rem', color: '#10b981', fontWeight: 600 }}>✓ Stored on NAS Storage</span>
+                      <img src={resolveImageSrc(editingSpec.image_url)} alt="Spec Preview" onError={e => handleImageLoadError(e, editingSpec.image_url)} style={{ width: '50px', height: '50px', objectFit: 'cover', borderRadius: '6px', border: '1px solid var(--border-color)' }} />
+                      <span style={{ fontSize: '0.75rem', color: '#10b981', fontWeight: 600 }}>✓ Image uploaded</span>
                     </div>
                   )}
                 </div>
@@ -1660,19 +1729,23 @@ const MakeProductCatalog: React.FC = () => {
                   </div>
                 </div>
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '4px' }}>TEXTURE / FINISH SAMPLE IMAGE (STORED ON NAS)</label>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '4px' }}>TEXTURE / FINISH SAMPLE IMAGE</label>
                   <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                    <input type="text" placeholder="https://... or click Upload" value={editingColor.image_url || ''} onChange={(e) => setEditingColor({ ...editingColor, image_url: e.target.value })}
-                      style={{ flex: 1, padding: '9px 12px', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', boxSizing: 'border-box' }} />
                     <button type="button" disabled={uploadingImage} onClick={() => handlePickAndUploadImage(url => setEditingColor(prev => ({ ...prev, image_url: url })))}
                       style={{ padding: '9px 14px', background: '#f59e0b', border: 'none', borderRadius: '8px', color: '#fff', cursor: uploadingImage ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', fontWeight: 600, whiteSpace: 'nowrap' }}>
-                      <Upload size={14} /> {uploadingImage ? 'Uploading...' : 'Upload to NAS'}
+                      <Upload size={14} /> {uploadingImage ? 'Uploading...' : 'Upload Image'}
                     </button>
+                    {editingColor.image_url && (
+                      <button type="button" onClick={() => setEditingColor(prev => ({ ...prev, image_url: '' }))}
+                        style={{ padding: '9px 12px', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.82rem' }}>
+                        Remove
+                      </button>
+                    )}
                   </div>
                   {editingColor.image_url && (
                     <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <img src={editingColor.image_url} alt="Color Swatch Preview" style={{ width: '50px', height: '50px', objectFit: 'cover', borderRadius: '6px', border: '1px solid var(--border-color)' }} />
-                      <span style={{ fontSize: '0.75rem', color: '#10b981', fontWeight: 600 }}>✓ Stored on NAS Storage</span>
+                      <img src={resolveImageSrc(editingColor.image_url)} alt="Color Swatch Preview" onError={e => handleImageLoadError(e, editingColor.image_url)} style={{ width: '50px', height: '50px', objectFit: 'cover', borderRadius: '6px', border: '1px solid var(--border-color)' }} />
+                      <span style={{ fontSize: '0.75rem', color: '#10b981', fontWeight: 600 }}>✓ Image uploaded</span>
                     </div>
                   )}
                 </div>

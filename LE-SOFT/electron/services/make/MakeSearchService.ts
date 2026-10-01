@@ -80,10 +80,15 @@ export class MakeSearchService {
         specIdsByProd: Map<string, any[]>;
         sizeIdsByProd: Map<string, any[]>;
         colorIdsByProd: Map<string, any[]>;
+        categoryIdsByProd: Map<string, any[]>;
         allCatsMap: Map<string, string>;
     } | null = null;
 
     public static invalidateCache(): void {
+        this.cache = null;
+    }
+
+    public static clearCache(): void {
         this.cache = null;
     }
 
@@ -143,6 +148,7 @@ export class MakeSearchService {
         let specIdsByProd: Map<string, any[]>;
         let sizeIdsByProd: Map<string, any[]>;
         let colorIdsByProd: Map<string, any[]>;
+        let categoryIdsByProd: Map<string, any[]>;
         let allCatsMap: Map<string, string>;
 
         if (this.cache && (Date.now() - this.cache.timestamp < 30_000)) {
@@ -150,10 +156,11 @@ export class MakeSearchService {
             specIdsByProd = this.cache.specIdsByProd;
             sizeIdsByProd = this.cache.sizeIdsByProd;
             colorIdsByProd = this.cache.colorIdsByProd;
+            categoryIdsByProd = this.cache.categoryIdsByProd;
             allCatsMap = this.cache.allCatsMap;
         } else {
             // Fetch catalog products and their attributes (both direct and junction links)
-            const [productsRes, specLinksRes, sizeLinksRes, colorLinksRes, allSpecsRes, allSizesRes, allColorsRes, allCatsRes] = await Promise.all([
+            const [productsRes, specLinksRes, sizeLinksRes, colorLinksRes, catLinksRes, allSpecsRes, allSizesRes, allColorsRes, allCatsRes] = await Promise.all([
                 supabase.from('make_products').select(`
                     *,
                     specifications:make_product_specifications(*),
@@ -164,6 +171,7 @@ export class MakeSearchService {
                 supabase.from('make_product_specification_links').select('*'),
                 supabase.from('make_product_size_links').select('*'),
                 supabase.from('make_product_color_links').select('*'),
+                supabase.from('make_product_category_links').select('*'),
                 supabase.from('make_product_specifications').select('*'),
                 supabase.from('make_product_sizes').select('*'),
                 supabase.from('make_product_colors').select('*'),
@@ -174,6 +182,7 @@ export class MakeSearchService {
             const specLinks = specLinksRes.data || [];
             const sizeLinks = sizeLinksRes.data || [];
             const colorLinks = colorLinksRes.data || [];
+            const catLinks = catLinksRes.data || [];
             const allSpecsMap = new Map((allSpecsRes.data || []).map((s: any) => [String(s.id), s]));
             const allSizesMap = new Map((allSizesRes.data || []).map((s: any) => [String(s.id), s]));
             const allColorsMap = new Map((allColorsRes.data || []).map((c: any) => [String(c.id), c]));
@@ -213,12 +222,24 @@ export class MakeSearchService {
                 }
             }
 
+            categoryIdsByProd = new Map<string, any[]>();
+            for (const link of catLinks) {
+                const pId = String(link.product_id);
+                const catName = allCatsMap.get(String(link.category_id));
+                if (catName) {
+                    const list = categoryIdsByProd.get(pId) || [];
+                    list.push({ id: link.category_id, name: catName });
+                    categoryIdsByProd.set(pId, list);
+                }
+            }
+
             this.cache = {
                 timestamp: Date.now(),
                 products,
                 specIdsByProd,
                 sizeIdsByProd,
                 colorIdsByProd,
+                categoryIdsByProd,
                 allCatsMap
             };
         }
@@ -232,12 +253,18 @@ export class MakeSearchService {
 
         for (const prod of products) {
             if (activeOnly && prod.is_active === false) continue;
-            const resolvedCategory = prod.category || (prod.category_id ? allCatsMap.get(String(prod.category_id)) : null) || null;
-            if (params.category && resolvedCategory && !this.normalize(resolvedCategory).includes(this.normalize(params.category))) {
-                continue;
+            const pIdStr = String(prod.id);
+            const linkedCats = (categoryIdsByProd ? categoryIdsByProd.get(pIdStr) : null) || [];
+            const linkedCatNames = linkedCats.map((c: any) => c.name);
+            const resolvedCategory = prod.category || (prod.category_id ? allCatsMap.get(String(prod.category_id)) : null) || (linkedCatNames.length > 0 ? linkedCatNames[0] : null) || null;
+            const allProductCatNames = Array.from(new Set([resolvedCategory, ...linkedCatNames].filter(Boolean))) as string[];
+
+            if (params.category) {
+                const targetCat = this.normalize(params.category);
+                const matchesAnyCat = allProductCatNames.some(c => this.normalize(c).includes(targetCat));
+                if (!matchesAnyCat) continue;
             }
 
-            const pIdStr = String(prod.id);
             // Merge direct and junction attributes (deduped by id)
             const combinedSpecs: any[] = [...(prod.specifications || [])];
             const junctionSpecs = specIdsByProd.get(pIdStr) || [];
@@ -477,5 +504,188 @@ export class MakeSearchService {
         });
 
         return scoredResults.slice(0, limit);
+    }
+
+    /**
+     * Powerful global search across orders dataset and order items.
+     * Searches order header fields, order items, and links with catalog products.
+     * Critical: Searching for a product returns ALL orders containing that product.
+     */
+    public static async searchOrders(params: {
+        query?: string;
+        status?: string;
+        limit?: number;
+    }): Promise<any[]> {
+        const rawQuery = (params.query || '').trim();
+        const normQuery = this.normalize(rawQuery);
+        const strippedQuery = this.stripPunctuation(rawQuery);
+        const limit = params.limit || 200;
+
+        // If no search query, return default order list
+        if (!normQuery) {
+            let q = supabase
+                .from('make_orders')
+                .select('*, salesman:users(full_name), bill:bills(invoice_number)')
+                .order('created_at', { ascending: false });
+
+            if (params.status && params.status !== 'All') {
+                q = q.eq('status', params.status);
+            }
+            if (params.limit) {
+                q = q.limit(params.limit);
+            }
+
+            try {
+                const { data, error } = await q;
+                if (!error && data) {
+                    return decryptRows(data).map((o: any) => ({
+                        ...o,
+                        salesman_name: o.salesman?.full_name || 'Unassigned',
+                        bill_invoice_number: o.bill?.invoice_number || null
+                    }));
+                }
+            } catch (err: any) {
+                console.warn('[MakeSearchService.searchOrders] Default query error:', err.message);
+            }
+
+            const { data: baseData } = await supabase
+                .from('make_orders')
+                .select('*, salesman:users(full_name)')
+                .order('created_at', { ascending: false });
+
+            return decryptRows(baseData || []).map((o: any) => ({
+                ...o,
+                salesman_name: o.salesman?.full_name || 'Unassigned',
+                bill_invoice_number: null
+            }));
+        }
+
+        const queryTokens = normQuery.split(/\s+/).filter(t => t.length > 0);
+        const matchedOrderIds = new Set<number>();
+
+        // 1. Whole-Catalog Product Resolution:
+        // Find catalog products matching the query (by name, model/code, specs, colors, sizes, categories)
+        let matchingProductIds: number[] = [];
+        try {
+            const catalogResults = await this.searchProducts({ query: rawQuery, limit: 100 });
+            matchingProductIds = catalogResults.map(p => Number(p.id)).filter(id => !isNaN(id) && id > 0);
+        } catch (e: any) {
+            console.warn('[MakeSearchService.searchOrders] Catalog search step:', e.message);
+        }
+
+        // 2. Query make_order_items for matching products or matching item attributes
+        try {
+            // (a) Find order items referencing matching product IDs
+            if (matchingProductIds.length > 0) {
+                const { data: itemRows } = await supabase
+                    .from('make_order_items')
+                    .select('order_id')
+                    .in('product_id', matchingProductIds);
+
+                (itemRows || []).forEach((r: any) => {
+                    if (r.order_id) matchedOrderIds.add(Number(r.order_id));
+                });
+            }
+
+            // (b) Find order items by direct text match on item fields:
+            // product_name, spec_name, size_label, color_name, custom_dimensions, salesperson_note
+            for (const token of queryTokens) {
+                const { data: itemRows } = await supabase
+                    .from('make_order_items')
+                    .select('order_id')
+                    .or(`product_name.ilike.%${token}%,spec_name.ilike.%${token}%,size_label.ilike.%${token}%,color_name.ilike.%${token}%,custom_dimensions.ilike.%${token}%,salesperson_note.ilike.%${token}%`);
+
+                (itemRows || []).forEach((r: any) => {
+                    if (r.order_id) matchedOrderIds.add(Number(r.order_id));
+                });
+            }
+        } catch (e: any) {
+            console.warn('[MakeSearchService.searchOrders] Order items search step:', e.message);
+        }
+
+        // 3. Query make_orders header fields:
+        // order_number, furniture_name, customer_name, customer_phone, customer_email,
+        // shipping_address, location_landmark, receiver_name, receiver_phone, description
+        try {
+            for (const token of queryTokens) {
+                const { data: orderRows } = await supabase
+                    .from('make_orders')
+                    .select('id')
+                    .or(`order_number.ilike.%${token}%,furniture_name.ilike.%${token}%,customer_name.ilike.%${token}%,customer_phone.ilike.%${token}%,customer_email.ilike.%${token}%,shipping_address.ilike.%${token}%,location_landmark.ilike.%${token}%,receiver_name.ilike.%${token}%,receiver_phone.ilike.%${token}%,description.ilike.%${token}%`);
+
+                (orderRows || []).forEach((r: any) => {
+                    if (r.id) matchedOrderIds.add(Number(r.id));
+                });
+            }
+
+            // Check stripped/exact match for order number or phone
+            if (strippedQuery) {
+                const { data: exactRows } = await supabase
+                    .from('make_orders')
+                    .select('id')
+                    .or(`order_number.ilike.%${rawQuery}%,customer_phone.ilike.%${rawQuery}%`);
+
+                (exactRows || []).forEach((r: any) => {
+                    if (r.id) matchedOrderIds.add(Number(r.id));
+                });
+            }
+        } catch (e: any) {
+            console.warn('[MakeSearchService.searchOrders] Order headers search step:', e.message);
+        }
+
+        const idList = Array.from(matchedOrderIds);
+        if (idList.length === 0) {
+            return [];
+        }
+
+        // 4. Fetch full order records for all matched IDs
+        try {
+            let q = supabase
+                .from('make_orders')
+                .select('*, salesman:users(full_name), bill:bills(invoice_number)')
+                .in('id', idList)
+                .order('created_at', { ascending: false });
+
+            if (params.status && params.status !== 'All') {
+                q = q.eq('status', params.status);
+            }
+            if (limit) {
+                q = q.limit(limit);
+            }
+
+            const { data, error } = await q;
+            if (!error && data) {
+                return decryptRows(data).map((o: any) => ({
+                    ...o,
+                    salesman_name: o.salesman?.full_name || 'Unassigned',
+                    bill_invoice_number: o.bill?.invoice_number || null
+                }));
+            }
+        } catch (err: any) {
+            console.warn('[MakeSearchService.searchOrders] Joined fetch error, falling back:', err.message);
+        }
+
+        // Fallback without bills join
+        let baseQ = supabase
+            .from('make_orders')
+            .select('*, salesman:users(full_name)')
+            .in('id', idList)
+            .order('created_at', { ascending: false });
+
+        if (params.status && params.status !== 'All') {
+            baseQ = baseQ.eq('status', params.status);
+        }
+        if (limit) {
+            baseQ = baseQ.limit(limit);
+        }
+
+        const { data: baseData, error: baseErr } = await baseQ;
+        if (baseErr) throw baseErr;
+
+        return decryptRows(baseData || []).map((o: any) => ({
+            ...o,
+            salesman_name: o.salesman?.full_name || 'Unassigned',
+            bill_invoice_number: null
+        }));
     }
 }

@@ -97,9 +97,39 @@ export const UpdateProductionStageSchema = z.object({
     photoUrl: z.string().nullable().optional()
 });
 
+export const AlterMakeOrderItemSchema = z.object({
+    id: z.union([z.number().int().positive(), z.string()]).optional(),
+    itemId: z.union([z.number().int().positive(), z.string()]).optional(),
+    product_id: z.union([z.number().int().positive(), z.string(), z.null()]).optional(),
+    productId: z.union([z.number().int().positive(), z.string(), z.null()]).optional(),
+    product_name: z.string().optional(),
+    productName: z.string().optional(),
+    spec_id: z.union([z.number().int().positive(), z.string(), z.null()]).optional(),
+    specId: z.union([z.number().int().positive(), z.string(), z.null()]).optional(),
+    spec_name: z.string().nullable().optional(),
+    specName: z.string().nullable().optional(),
+    size_id: z.union([z.number().int().positive(), z.string(), z.null()]).optional(),
+    sizeId: z.union([z.number().int().positive(), z.string(), z.null()]).optional(),
+    size_label: z.string().nullable().optional(),
+    sizeLabel: z.string().nullable().optional(),
+    color_id: z.union([z.number().int().positive(), z.string(), z.null()]).optional(),
+    colorId: z.union([z.number().int().positive(), z.string(), z.null()]).optional(),
+    color_name: z.string().nullable().optional(),
+    colorName: z.string().nullable().optional(),
+    quantity: z.number().int().positive().optional(),
+    item_cost_price: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
+    item_sale_price: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
+    salesperson_note: z.string().nullable().optional(),
+    custom_dimensions: z.string().nullable().optional(),
+    is_customized: z.boolean().optional()
+});
+
 export const AlterMakeOrderSchema = z.object({
     orderId: z.union([z.string().min(1), z.number()]),
-    changes: z.record(z.any()),
+    changes: z.record(z.any()).optional().default({}),
+    itemChanges: z.array(AlterMakeOrderItemSchema).optional(),
+    items: z.array(AlterMakeOrderItemSchema).optional(),
+    reason: z.string().optional(),
     alteredBy: z.string().optional()
 });
 
@@ -115,6 +145,8 @@ export const CatalogProductSchema = z.object({
     description: z.string().nullable().optional(),
     category_id: z.union([z.number().int().positive(), z.string(), z.null()]).optional(),
     category: z.string().nullable().optional(),
+    category_ids: z.array(z.union([z.number(), z.string()])).optional(),
+    categoryIds: z.array(z.union([z.number(), z.string()])).optional(),
     main_image: z.string().nullable().optional(),
     is_active: z.boolean().default(true),
     specIds: z.array(z.union([z.number(), z.string()])).optional(),

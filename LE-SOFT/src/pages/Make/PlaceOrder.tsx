@@ -11,6 +11,13 @@ import {
   canManageMakeCatalog 
 } from '../../utils/permissions';
 import { ProductCreateModal } from './components/ProductCreateModal';
+import { 
+  loadPlaceOrderDraft, 
+  savePlaceOrderDraft, 
+  clearPlaceOrderDraft, 
+  hasMeaningfulPlaceOrderDraft 
+} from '../../utils/placeOrderDraft';
+import { formatSizeDisplay } from '../../utils/formatSize';
 
 const PRIORITIES = ['Low', 'Normal', 'High', 'Urgent'];
 
@@ -47,6 +54,7 @@ const PlaceOrder: React.FC = () => {
   const pricingPerms = getUserPricingPermissions();
   const canCreateProduct = canManageMakeCatalog();
   const [showProductCreateModal, setShowProductCreateModal] = useState(false);
+  const [autoOrderNumber, setAutoOrderNumber] = useState<string>('');
 
   // Order Header state
   const [priority, setPriority] = useState('Normal');
@@ -161,6 +169,184 @@ const PlaceOrder: React.FC = () => {
 
 
   const designerName = localStorage.getItem('user_name') || 'Unknown';
+  const isDraftRestoredRef = React.useRef(false);
+
+  // Restore draft on initial mount
+  useEffect(() => {
+    try {
+      const draft = loadPlaceOrderDraft();
+      if (draft && Object.keys(draft).length > 0) {
+        if (draft.priority) setPriority(draft.priority);
+        if (draft.targetDeliveryDate) setTargetDeliveryDate(draft.targetDeliveryDate);
+        if (draft.requestedDeliveryDate) setRequestedDeliveryDate(draft.requestedDeliveryDate);
+        if (draft.selectedSalesmanId) setSelectedSalesmanId(draft.selectedSalesmanId);
+
+        if (draft.customerName) setCustomerName(draft.customerName);
+        if (draft.customerPhone) setCustomerPhone(draft.customerPhone);
+        if (draft.customerEmail) setCustomerEmail(draft.customerEmail);
+        if (draft.shippingAddress) setShippingAddress(draft.shippingAddress);
+        if (draft.locationLandmark) setLocationLandmark(draft.locationLandmark);
+        if (draft.receiverName) setReceiverName(draft.receiverName);
+        if (draft.receiverPhone) setReceiverPhone(draft.receiverPhone);
+        if (draft.specialInstructions) setSpecialInstructions(draft.specialInstructions);
+
+        if (draft.selectedProduct) setSelectedProduct(draft.selectedProduct);
+        if (draft.selectedSpecId && draft.selectedProduct?.specifications) {
+          const sp = draft.selectedProduct.specifications.find((s: any) => s.id === draft.selectedSpecId);
+          if (sp) setSelectedSpec(sp);
+        }
+        if (draft.selectedSizeId && draft.selectedProduct?.sizes) {
+          const sz = draft.selectedProduct.sizes.find((s: any) => s.id === draft.selectedSizeId);
+          if (sz) setSelectedSize(sz);
+        }
+        if (draft.selectedColorId && draft.selectedProduct?.colors) {
+          const cl = draft.selectedProduct.colors.find((c: any) => c.id === draft.selectedColorId);
+          if (cl) setSelectedColor(cl);
+        }
+
+        if (draft.itemQuantity !== undefined) setItemQuantity(draft.itemQuantity);
+        if (draft.itemCostPrice !== undefined) setItemCostPrice(draft.itemCostPrice);
+        if (draft.itemSalePrice !== undefined) setItemSalePrice(draft.itemSalePrice);
+        if (draft.itemRemarks !== undefined) setItemRemarks(draft.itemRemarks);
+
+        if (draft.isCustomSize !== undefined) setIsCustomSize(draft.isCustomSize);
+        if (draft.customShape) setCustomShape(draft.customShape);
+        if (draft.customLength) setCustomLength(draft.customLength);
+        if (draft.customWidth) setCustomWidth(draft.customWidth);
+        if (draft.customHeight) setCustomHeight(draft.customHeight);
+        if (draft.customDiameter) setCustomDiameter(draft.customDiameter);
+        if (draft.customUnit) setCustomUnit(draft.customUnit);
+
+        if (draft.isCustomSpec !== undefined) setIsCustomSpec(draft.isCustomSpec);
+        if (draft.customSpecName) setCustomSpecName(draft.customSpecName);
+
+        if (draft.isCustomColor !== undefined) setIsCustomColor(draft.isCustomColor);
+        if (draft.customColorName) setCustomColorName(draft.customColorName);
+
+        if (draft.isCustomItemMode !== undefined) setIsCustomItemMode(draft.isCustomItemMode);
+        if (draft.customItemName) setCustomItemName(draft.customItemName);
+        if (draft.customItemSpec) setCustomItemSpec(draft.customItemSpec);
+
+        if (Array.isArray(draft.cartItems) && draft.cartItems.length > 0) {
+          setCartItems(draft.cartItems as any);
+        }
+        if (Array.isArray(draft.invoiceAttachments) && draft.invoiceAttachments.length > 0) {
+          setInvoiceAttachments(draft.invoiceAttachments);
+        }
+      }
+    } catch (e) {
+      console.warn('[PlaceOrder] Error restoring draft:', e);
+    } finally {
+      isDraftRestoredRef.current = true;
+    }
+  }, []);
+
+  // Auto-persist draft changes across page navigation
+  useEffect(() => {
+    if (!isDraftRestoredRef.current) return;
+    const timer = setTimeout(() => {
+      savePlaceOrderDraft({
+        priority,
+        targetDeliveryDate,
+        requestedDeliveryDate,
+        selectedSalesmanId,
+        customerName,
+        customerPhone,
+        customerEmail,
+        shippingAddress,
+        locationLandmark,
+        receiverName,
+        receiverPhone,
+        specialInstructions,
+        selectedProduct,
+        selectedSpecId: selectedSpec?.id,
+        selectedSizeId: selectedSize?.id,
+        selectedColorId: selectedColor?.id,
+        itemQuantity,
+        itemCostPrice,
+        itemSalePrice,
+        itemRemarks,
+        isCustomSize,
+        customShape,
+        customLength,
+        customWidth,
+        customHeight,
+        customDiameter,
+        customUnit,
+        isCustomSpec,
+        customSpecName,
+        isCustomColor,
+        customColorName,
+        isCustomItemMode,
+        customItemName,
+        customItemSpec,
+        cartItems: cartItems as any,
+        invoiceAttachments
+      });
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [
+    priority, targetDeliveryDate, requestedDeliveryDate, selectedSalesmanId,
+    customerName, customerPhone, customerEmail, shippingAddress, locationLandmark,
+    receiverName, receiverPhone, specialInstructions, selectedProduct, selectedSpec,
+    selectedSize, selectedColor, itemQuantity, itemCostPrice, itemSalePrice, itemRemarks,
+    isCustomSize, customShape, customLength, customWidth, customHeight, customDiameter,
+    customUnit, isCustomSpec, customSpecName, isCustomColor, customColorName,
+    isCustomItemMode, customItemName, customItemSpec, cartItems, invoiceAttachments
+  ]);
+
+  const handleClearDraft = () => {
+    const hasContent = hasMeaningfulPlaceOrderDraft({
+      customerName,
+      customerPhone,
+      customerEmail,
+      shippingAddress,
+      specialInstructions,
+      cartItems: cartItems as any,
+      invoiceAttachments,
+      selectedProduct,
+      customItemName,
+      targetDeliveryDate
+    });
+
+    if (hasContent) {
+      const confirmed = window.confirm(
+        'Are you sure you want to clear your unsaved order draft? All entered fields will be reset.'
+      );
+      if (!confirmed) return;
+    }
+
+    clearPlaceOrderDraft();
+    setCustomerName('');
+    setCustomerPhone('');
+    setCustomerEmail('');
+    setShippingAddress('');
+    setLocationLandmark('');
+    setReceiverName('');
+    setReceiverPhone('');
+    setSpecialInstructions('');
+    setPriority('Normal');
+    setTargetDeliveryDate('');
+    setRequestedDeliveryDate('');
+    setSelectedSalesmanId('');
+    setSelectedProduct(null);
+    setSelectedSpec(null);
+    setSelectedSize(null);
+    setSelectedColor(null);
+    setItemQuantity(1);
+    setItemCostPrice('');
+    setItemSalePrice('');
+    setItemRemarks('');
+    setIsCustomSize(false);
+    setIsCustomSpec(false);
+    setIsCustomColor(false);
+    setIsCustomItemMode(false);
+    setCustomItemName('');
+    setCustomItemSpec('');
+    setCartItems([]);
+    setInvoiceAttachments([]);
+    setAttachedFile(null);
+  };
 
   useEffect(() => {
     // Load Salesmen
@@ -179,6 +365,13 @@ const PlaceOrder: React.FC = () => {
         console.error(e);
         setCatalogProducts([]);
       });
+    }
+
+    // Fetch next auto-generated order number for display
+    if (window.electron?.makeGetNextOrderNumber) {
+      window.electron.makeGetNextOrderNumber().then((num: string) => {
+        if (num) setAutoOrderNumber(num);
+      }).catch(() => {});
     }
   }, []);
 
@@ -552,6 +745,7 @@ const PlaceOrder: React.FC = () => {
       }
 
       setSuccess(true);
+      clearPlaceOrderDraft();
       setCartItems([]);
       setCustomerName(''); setCustomerPhone(''); setCustomerEmail(''); setShippingAddress('');
       setLocationLandmark(''); setReceiverName(''); setReceiverPhone(''); setSpecialInstructions('');
@@ -561,7 +755,7 @@ const PlaceOrder: React.FC = () => {
       setTimeout(() => setSuccess(false), 3500);
     } catch (err: any) {
       console.error(err);
-      setError('Failed to place order: ' + (err?.message || 'Database error'));
+      setError('Failed to place order: ' + (err?.message || 'Please try again.'));
     } finally {
       setLoading(false);
     }
@@ -596,12 +790,54 @@ const PlaceOrder: React.FC = () => {
                 <Plus size={24} />
               </div>
               <div>
-                <h2 style={{ margin: 0, fontSize: '1.3rem', fontWeight: 800 }}>New Production Order</h2>
-                <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-secondary)' }}>Connected to NAS PostgreSQL Database • Active User: <strong>{designerName}</strong></p>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <h2 style={{ margin: 0, fontSize: '1.3rem', fontWeight: 800 }}>New Production Order</h2>
+                  {autoOrderNumber && (
+                    <span 
+                      id="place-order-number-badge"
+                      title="Authoritative system-generated order number"
+                      style={{
+                        padding: '3px 8px',
+                        background: 'rgba(99, 102, 241, 0.1)',
+                        border: '1px solid rgba(99, 102, 241, 0.25)',
+                        borderRadius: '6px',
+                        fontSize: '0.78rem',
+                        fontWeight: 800,
+                        color: 'var(--accent-color)',
+                        letterSpacing: '0.04em'
+                      }}
+                    >
+                      {autoOrderNumber}
+                    </span>
+                  )}
+                </div>
+                <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-secondary)' }}>Active User: <strong>{designerName}</strong> • Order Number: Auto-generated</p>
               </div>
             </div>
-            <div style={{ padding: '6px 14px', background: 'rgba(99,102,241,0.1)', color: 'var(--accent-color)', borderRadius: '20px', fontSize: '0.8rem', fontWeight: 700 }}>
-              {cartItems.length} Item(s) in Order
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <button
+                type="button"
+                onClick={handleClearDraft}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '6px 12px',
+                  background: 'rgba(239, 68, 68, 0.08)',
+                  border: '1px solid rgba(239, 68, 68, 0.3)',
+                  borderRadius: '8px',
+                  color: '#ef4444',
+                  fontSize: '0.8rem',
+                  fontWeight: 700,
+                  cursor: 'pointer'
+                }}
+                title="Clear entered order details and reset form"
+              >
+                <Trash2 size={14} /> Clear Draft
+              </button>
+              <div style={{ padding: '6px 14px', background: 'rgba(99,102,241,0.1)', color: 'var(--accent-color)', borderRadius: '20px', fontSize: '0.8rem', fontWeight: 700 }}>
+                {cartItems.length} Item(s) in Order
+              </div>
             </div>
           </div>
 
@@ -702,28 +938,6 @@ const PlaceOrder: React.FC = () => {
                   <ShoppingBag size={18} color="var(--accent-color)" /> Add Products to Order
                 </p>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  {canCreateProduct && (
-                    <button
-                      type="button"
-                      onClick={() => setShowProductCreateModal(true)}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '6px',
-                        padding: '6px 14px',
-                        background: '#3b82f6',
-                        color: '#fff',
-                        border: 'none',
-                        borderRadius: '8px',
-                        fontSize: '0.82rem',
-                        fontWeight: 700,
-                        cursor: 'pointer',
-                        boxShadow: '0 2px 8px rgba(59,130,246,0.3)'
-                      }}
-                    >
-                      <Plus size={14} /> Create New Product
-                    </button>
-                  )}
                   <button type="button" onClick={() => setIsCustomItemMode(!isCustomItemMode)}
                     style={{ background: 'none', border: 'none', color: 'var(--accent-color)', fontSize: '0.82rem', fontWeight: 700, cursor: 'pointer', textDecoration: 'underline' }}>
                     {isCustomItemMode ? '← Switch to Catalog Product Selector' : '+ Add Custom / Non-Catalog Item'}
@@ -764,7 +978,7 @@ const PlaceOrder: React.FC = () => {
                         marginTop: '4px', maxHeight: '340px', overflowY: 'auto'
                       }}>
                         {(searchResults || []).map((item: any) => {
-                          const sizesText = (item.sizes || []).map((s: any) => s.size_label || (s.diameter ? `Ø ${s.diameter}x${s.height}` : `${s.length}x${s.width}${s.height ? `x${s.height}` : ''} ${s.unit || 'mm'}`)).slice(0, 3).join(', ');
+                          const sizesText = (item.sizes || []).map((s: any) => formatSizeDisplay(s)).slice(0, 3).join(', ');
                           const colorsText = (item.colors || []).map((c: any) => c.color_name).slice(0, 3).join(', ');
                           const specsText = (item.specifications || []).map((sp: any) => sp.spec_name).slice(0, 3).join(', ');
 
@@ -834,18 +1048,22 @@ const PlaceOrder: React.FC = () => {
                         <label style={{ ...labelStyle, margin: 0 }}>Select Catalog Product</label>
                         {canCreateProduct && (
                           <button
+                            id="place-order-create-product-btn"
                             type="button"
                             onClick={() => setShowProductCreateModal(true)}
                             style={{
-                              background: 'none',
+                              background: '#3b82f6',
+                              color: '#fff',
                               border: 'none',
-                              color: '#3b82f6',
+                              borderRadius: '6px',
+                              padding: '3px 10px',
                               fontSize: '0.75rem',
                               fontWeight: 700,
                               cursor: 'pointer',
                               display: 'flex',
                               alignItems: 'center',
-                              gap: '3px'
+                              gap: '4px',
+                              boxShadow: '0 2px 6px rgba(59,130,246,0.25)'
                             }}
                           >
                             <Plus size={12} /> Create New Product
@@ -931,11 +1149,7 @@ const PlaceOrder: React.FC = () => {
                             style={inputStyle}>
                             <option value="">-- Standard / Default Size --</option>
                             {((selectedProduct.sizes && selectedProduct.sizes.length > 0) ? selectedProduct.sizes : (selectedSpec?.sizes || [])).map((sz: any) => {
-                              const label = sz.size_label 
-                                ? `${sz.size_label} (${sz.diameter ? `Ø ${sz.diameter} ${sz.unit || 'mm'}` : `${sz.length}x${sz.width}x${sz.height} ${sz.unit || 'mm'}`})`
-                                : (sz.diameter 
-                                  ? `Ø ${sz.diameter} x ${sz.height || '—'} ${sz.unit || 'mm'} (Round)` 
-                                  : `${sz.length || '—'} x ${sz.width || '—'} x ${sz.height || '—'} ${sz.unit || 'mm'}`);
+                              const label = formatSizeDisplay(sz);
                               return <option key={sz.id} value={sz.id}>{label}</option>;
                             })}
                           </select>
@@ -1476,11 +1690,32 @@ const PlaceOrder: React.FC = () => {
               )}
             </div>
 
-            {/* ── SUBMIT BUTTON ──────────────────────────────────────────── */}
-            <motion.button type="submit" disabled={loading} whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }}
-              style={{ padding: '16px', background: 'linear-gradient(135deg, #f97316, #ea580c)', color: 'white', border: 'none', borderRadius: '12px', fontWeight: 800, fontSize: '1.05rem', cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.7 : 1, boxShadow: '0 8px 24px rgba(249,115,22,0.3)' }}>
-              {loading ? 'Submitting Order to NAS Database...' : `Submit Order (${cartItems.length} Products)`}
-            </motion.button>
+            {/* ── SUBMIT & ACTION BUTTONS ──────────────────────────────────── */}
+            <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+              <button
+                type="button"
+                onClick={handleClearDraft}
+                style={{
+                  padding: '16px 22px',
+                  background: 'rgba(239, 68, 68, 0.08)',
+                  border: '1px solid rgba(239, 68, 68, 0.3)',
+                  borderRadius: '12px',
+                  color: '#ef4444',
+                  fontWeight: 700,
+                  fontSize: '0.95rem',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px'
+                }}
+              >
+                <Trash2 size={18} /> Clear Draft
+              </button>
+              <motion.button type="submit" disabled={loading} whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }}
+                style={{ flex: 1, padding: '16px', background: 'linear-gradient(135deg, #f97316, #ea580c)', color: 'white', border: 'none', borderRadius: '12px', fontWeight: 800, fontSize: '1.05rem', cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.7 : 1, boxShadow: '0 8px 24px rgba(249,115,22,0.3)' }}>
+                {loading ? 'Submitting Order...' : `Submit Order (${cartItems.length} Products)`}
+              </motion.button>
+            </div>
           </form>
         </motion.div>
       </div>

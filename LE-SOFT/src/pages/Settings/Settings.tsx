@@ -1006,7 +1006,7 @@ const Settings: React.FC = () => {
                                         <div style={{ padding: '1.25rem', borderRadius: '12px', background: 'var(--input-bg)', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                                                 <Server size={16} color="#8b5cf6" />
-                                                <span style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-primary)' }}>TrueNAS Server</span>
+                                                <span style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-primary)' }}>Dedicated Server</span>
                                             </div>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                                                 <div style={{ width: '12px', height: '12px', borderRadius: '50%',
@@ -1015,10 +1015,10 @@ const Settings: React.FC = () => {
                                                 }} />
                                                 <div>
                                                     <p style={{ margin: 0, fontWeight: 600, fontSize: '0.85rem' }}>
-                                                        {!nasConnectionState.isNasOnline ? 'Offline' : nasConnectionState.connectionState === 'nas_local' ? 'Connected (Local IP)' : 'Connected (Public IP)'}
+                                                        {!nasConnectionState.isNasOnline ? 'Offline' : 'Connected'}
                                                     </p>
                                                     <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                                                        {nasConnectionState.isNasOnline ? `Running at: ${nasConnectionState.activeNasUrl}` : 'Local network storage offline'}
+                                                        {nasConnectionState.isNasOnline ? 'Primary server online & operational' : 'Dedicated server offline'}
                                                     </p>
                                                 </div>
                                             </div>
@@ -1033,11 +1033,11 @@ const Settings: React.FC = () => {
                                             <span style={{ color: 'var(--text-secondary)' }}>
                                                 {nasConnectionState.isNasOnline ? (
                                                     <>
-                                                        <strong>TrueNAS PostgreSQL</strong> (using {nasConnectionState.connectionState === 'nas_local' ? 'Local LAN IP' : 'Public Tailscale IP'} for maximum performance). A live backup copy is dual-written to Supabase Cloud.
+                                                        <strong>Dedicated Primary Database</strong> (Operating at maximum performance). Redundant cloud sync enabled.
                                                     </>
                                                 ) : (
                                                     <>
-                                                        <strong>Supabase Cloud</strong> (Running in WAN mode. Local NAS is unreachable).
+                                                        <strong>Cloud Database</strong> (Operating in WAN fallback mode).
                                                     </>
                                                 )}
                                             </span>

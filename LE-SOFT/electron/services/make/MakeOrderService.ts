@@ -15,6 +15,7 @@ import { supabase } from '../../supabase';
 import { MakePricingService, PricingItem, PricingOverride } from './MakePricingService';
 import { MakeVersionService } from './MakeVersionService';
 import { MakeSearchService } from './MakeSearchService';
+import { SessionManager } from '../../session-manager';
 
 export interface CreateMakeOrderInput {
     furniture_name: string;
@@ -64,6 +65,34 @@ export class MakeOrderService {
         const year = new Date().getFullYear();
         const randomNum = Math.floor(100000 + Math.random() * 900000);
         return `MAKE-${year}-${randomNum}`;
+    }
+
+    /**
+     * Generates a guaranteed unique order number: MAKE-YYYY-XXXXXX
+     * Checks database for duplicates to protect against concurrent collisions.
+     */
+    public static async generateUniqueOrderNumber(): Promise<string> {
+        const year = new Date().getFullYear();
+        for (let attempt = 0; attempt < 10; attempt++) {
+            const randomNum = Math.floor(100000 + Math.random() * 900000);
+            const candidate = `MAKE-${year}-${randomNum}`;
+            try {
+                const query: any = supabase.from('make_orders').select('id');
+                if (query && typeof query.eq === 'function') {
+                    const eqQuery = query.eq('order_number', candidate);
+                    const data = typeof eqQuery?.maybeSingle === 'function'
+                        ? (await eqQuery.maybeSingle())?.data
+                        : (await eqQuery)?.data;
+                    if (!data) return candidate;
+                } else {
+                    return candidate;
+                }
+            } catch {
+                return candidate;
+            }
+        }
+        const ts = Date.now().toString().slice(-6);
+        return `MAKE-${year}-${ts}`;
     }
 
     /**
@@ -215,7 +244,7 @@ export class MakeOrderService {
             }
         }
 
-        const orderNumber = this.generateOrderNumber();
+        const orderNumber = await this.generateUniqueOrderNumber();
         const totalQty = input.items.reduce((sum, item) => sum + (Number(item.quantity) || 1), 0);
         const initialStatus = input.salesman_id ? 'Pending Approval' : 'Placed';
         const isApproved = !input.salesman_id;
@@ -592,12 +621,68 @@ export class MakeOrderService {
     /**
      * Role-based order header alteration with audit logging.
      */
-    public static async alterOrder(params: {
-        orderId: number;
-        changes: Record<string, any>;
-        actorSession: { userId: number; username: string; fullName: string; role: string };
-    }): Promise<{ success: boolean; changed?: string[]; error?: string; message?: string }> {
-        const { orderId, changes, actorSession } = params;
+    /**
+     * Authoritative role-based order alteration with complete audit logging.
+     * Enforces canonical MAKE stages:
+     * 1. Work in process
+     * 2. Production On Going
+     * 3. Primary QC
+     * 4. Color Ongoing (oven)
+     * 5. QC Final
+     * 6. Packaging
+     * 7. Ready to Ship
+     * 8. Delivered
+     * 
+     * Before production (not yet reached Production On Going):
+     *   - Designer can modify
+     *   - Admin can modify
+     *   - Salesperson is denied
+     * At or after Production On Going:
+     *   - Only Admin can modify
+     *   - Designer is denied
+     *   - Salesperson is denied
+     */
+    public static async alterOrder(
+        paramsOrOrderId: number | {
+            orderId: number;
+            changes?: Record<string, any>;
+            itemChanges?: any[];
+            items?: any[];
+            reason?: string;
+            actorSession?: { userId?: number; username?: string; fullName?: string; role?: string };
+            alteredBy?: string;
+            userRole?: string;
+        },
+        changesArg?: Record<string, any>,
+        alteredByArg?: string,
+        userRoleArg?: string,
+        itemsArg?: any[],
+        reasonArg?: string,
+        actorSessionArg?: any
+    ): Promise<{ success: boolean; changed?: string[]; error?: string; message?: string; order_number?: string }> {
+        let orderId: number;
+        let changes: Record<string, any>;
+        let itemChanges: any[];
+        let reason: string | undefined;
+        let actorSession: { userId?: number; username?: string; fullName?: string; role?: string } | null;
+
+        if (typeof paramsOrOrderId === 'object' && paramsOrOrderId !== null) {
+            orderId = paramsOrOrderId.orderId;
+            changes = paramsOrOrderId.changes || {};
+            itemChanges = paramsOrOrderId.itemChanges || paramsOrOrderId.items || [];
+            reason = paramsOrOrderId.reason;
+            actorSession = paramsOrOrderId.actorSession || SessionManager.getSession() || (paramsOrOrderId.userRole ? { role: paramsOrOrderId.userRole, username: paramsOrOrderId.alteredBy || 'User' } : null);
+        } else {
+            orderId = paramsOrOrderId;
+            changes = changesArg || {};
+            itemChanges = itemsArg || [];
+            reason = reasonArg;
+            actorSession = actorSessionArg || SessionManager.getSession() || (userRoleArg ? { role: userRoleArg, username: alteredByArg || 'User' } : null);
+        }
+
+        if (!actorSession) {
+            return { success: false, error: 'Unauthorized: Session or user identity required' };
+        }
 
         const { data: current, error: fetchErr } = await supabase
             .from('make_orders')
@@ -607,56 +692,329 @@ export class MakeOrderService {
 
         if (fetchErr || !current) return { success: false, error: 'Order not found' };
 
-        const RESTRICTED_STATUSES = ['Welding', 'Painting', 'Ready for Dispatch', 'Delivered'];
-        const ALTERABLE_BY_NON_ADMIN = ['Placed', 'Awaiting Pricing', 'Pricing Done', 'Pending Approval', 'Draft'];
-        const ALTERABLE_FIELDS = ['furniture_name', 'description', 'quantity', 'priority', 'delivery_date'];
+        const role = (actorSession.role || '').toLowerCase();
+        const isAdmin = role === 'admin' || role === 'superadmin' || role === 'manager';
+        const isDesigner = role === 'furniture_designer' || role === 'furniture designer' || role === 'designer' || role === 'make_designer';
+        const isSalesperson = role === 'salesperson' || role === 'salesman';
 
-        const isAdmin = actorSession.role.toLowerCase() === 'admin' || actorSession.role.toLowerCase() === 'superadmin';
-
-        if (!isAdmin && RESTRICTED_STATUSES.includes(current.status)) {
+        // 1. Strict denial for salespersons
+        if (isSalesperson) {
             return {
                 success: false,
-                error: `Order is in "${current.status}" stage. Only administrators can alter an order at this stage.`
+                error: 'Forbidden: Salespersons cannot modify production orders.'
             };
         }
 
-        const filteredChanges: Record<string, any> = {};
-        for (const [field, newVal] of Object.entries(changes)) {
-            if (isAdmin || ALTERABLE_FIELDS.includes(field)) {
-                if (current[field] !== newVal) {
-                    filteredChanges[field] = newVal;
+        // 2. Canonical stage progression check
+        // Stages at or after "Production On Going" are post-production
+        const postProductionStages = [
+            'production on going',
+            'in production',
+            'primary qc',
+            'color ongoing',
+            'color ongoing (oven)',
+            'qc final',
+            'packaging',
+            'ready to ship',
+            'delivered',
+            // legacy stage names mapped defensively:
+            'welding',
+            'painting',
+            'ready for dispatch'
+        ];
+
+        const currentStageNorm = (current.status || '').trim().toLowerCase();
+        const hasProductionStarted = postProductionStages.includes(currentStageNorm);
+
+        if (hasProductionStarted && !isAdmin) {
+            return {
+                success: false,
+                error: `Order has entered "${current.status}". At or after "Production On Going", only Administrators can modify orders.`
+            };
+        }
+
+        if (!isAdmin && !isDesigner) {
+            return {
+                success: false,
+                error: 'Forbidden: You do not have permission to modify this order.'
+            };
+        }
+
+        const actorName = actorSession.fullName || actorSession.username || 'System';
+        const actorRole = actorSession.role || (isAdmin ? 'Admin' : 'Designer');
+        const actionContext = hasProductionStarted ? 'admin_post_production_override' : 'order_modification';
+        const auditReason = reason?.trim() || '';
+
+        const auditRows: any[] = [];
+        const changedFieldNames: Set<string> = new Set();
+
+        // 3. Process Item Changes (Product replacement, quantity change, spec/size/color modification)
+        // Fetch current items for order
+        const { data: existingItems } = await supabase
+            .from('make_order_items')
+            .select('*')
+            .eq('order_id', orderId)
+            .order('id', { ascending: true });
+
+        const itemsList = existingItems || [];
+        let itemsModified = false;
+
+        // If itemChanges array is provided:
+        if (itemChanges.length > 0) {
+            for (const itUpd of itemChanges) {
+                const targetItemId = itUpd.id || itUpd.itemId;
+                const currentItem = itemsList.find((it: any) => String(it.id) === String(targetItemId)) || (itemsList.length === 1 ? itemsList[0] : null);
+                if (!currentItem) continue;
+
+                const itemPayload: Record<string, any> = {};
+
+                // Product Replacement
+                const newProductId = itUpd.productId || itUpd.product_id;
+                if (newProductId && String(newProductId) !== String(currentItem.product_id)) {
+                    // Fetch new product details from catalog
+                    const { data: prodData } = await supabase
+                        .from('make_products')
+                        .select('id, product_name, product_code')
+                        .eq('id', newProductId)
+                        .maybeSingle();
+
+                    if (prodData) {
+                        itemPayload.product_id = prodData.id;
+                        itemPayload.product_name = prodData.product_name;
+                        itemPayload.is_customized = false;
+
+                        auditRows.push({
+                            order_id: orderId,
+                            order_number: current.order_number || '',
+                            altered_by: actorName,
+                            user_role: actorRole,
+                            action_type: 'product_replacement',
+                            field_name: 'product_id',
+                            old_value: `${currentItem.product_name} (ID: ${currentItem.product_id})`,
+                            new_value: `${prodData.product_name} (ID: ${prodData.id})`,
+                            reason: auditReason,
+                            altered_at: new Date().toISOString()
+                        });
+                        changedFieldNames.add('product');
+                        itemsModified = true;
+                    }
+                }
+
+                // Quantity change
+                if (itUpd.quantity !== undefined && itUpd.quantity !== null) {
+                    const newQty = Math.max(1, Number(itUpd.quantity) || 1);
+                    if (Number(currentItem.quantity) !== newQty) {
+                        itemPayload.quantity = newQty;
+                        auditRows.push({
+                            order_id: orderId,
+                            order_number: current.order_number || '',
+                            altered_by: actorName,
+                            user_role: actorRole,
+                            action_type: 'quantity_change',
+                            field_name: `quantity (item #${currentItem.id})`,
+                            old_value: String(currentItem.quantity),
+                            new_value: String(newQty),
+                            reason: auditReason,
+                            altered_at: new Date().toISOString()
+                        });
+                        changedFieldNames.add('quantity');
+                        itemsModified = true;
+                    }
+                }
+
+                // Attributes (spec, size, color)
+                if (itUpd.spec_name !== undefined && itUpd.spec_name !== currentItem.spec_name) {
+                    itemPayload.spec_name = itUpd.spec_name;
+                    itemPayload.spec_id = itUpd.spec_id || itUpd.specId || null;
+                    itemsModified = true;
+                    changedFieldNames.add('specification');
+                }
+                if (itUpd.size_label !== undefined && itUpd.size_label !== currentItem.size_label) {
+                    itemPayload.size_label = itUpd.size_label;
+                    itemPayload.size_id = itUpd.size_id || itUpd.sizeId || null;
+                    itemsModified = true;
+                    changedFieldNames.add('size');
+                }
+                if (itUpd.color_name !== undefined && itUpd.color_name !== currentItem.color_name) {
+                    itemPayload.color_name = itUpd.color_name;
+                    itemPayload.color_id = itUpd.color_id || itUpd.colorId || null;
+                    itemsModified = true;
+                    changedFieldNames.add('color');
+                }
+                if (itUpd.item_cost_price !== undefined && itUpd.item_cost_price !== currentItem.item_cost_price) {
+                    itemPayload.item_cost_price = Number(itUpd.item_cost_price) || 0;
+                    itemsModified = true;
+                }
+                if (itUpd.item_sale_price !== undefined && itUpd.item_sale_price !== currentItem.item_sale_price) {
+                    itemPayload.item_sale_price = itUpd.item_sale_price !== null ? Number(itUpd.item_sale_price) : null;
+                    itemsModified = true;
+                }
+
+                if (Object.keys(itemPayload).length > 0) {
+                    await supabase
+                        .from('make_order_items')
+                        .update(itemPayload)
+                        .eq('id', currentItem.id);
                 }
             }
         }
 
-        if (Object.keys(filteredChanges).length === 0) {
-            return { success: true, message: 'No changes detected' };
+        // Support flat changes: product_id or quantity on single-item orders
+        if (changes.product_id && itemsList.length > 0) {
+            const firstItem = itemsList[0];
+            if (String(firstItem.product_id) !== String(changes.product_id)) {
+                const { data: prodData } = await supabase
+                    .from('make_products')
+                    .select('id, product_name, product_code')
+                    .eq('id', changes.product_id)
+                    .maybeSingle();
+
+                if (prodData) {
+                    await supabase
+                        .from('make_order_items')
+                        .update({ product_id: prodData.id, product_name: prodData.product_name, is_customized: false })
+                        .eq('id', firstItem.id);
+
+                    auditRows.push({
+                        order_id: orderId,
+                        order_number: current.order_number || '',
+                        altered_by: actorName,
+                        user_role: actorRole,
+                        action_type: 'product_replacement',
+                        field_name: 'product_id',
+                        old_value: `${firstItem.product_name} (ID: ${firstItem.product_id})`,
+                        new_value: `${prodData.product_name} (ID: ${prodData.id})`,
+                        reason: auditReason,
+                        altered_at: new Date().toISOString()
+                    });
+                    changedFieldNames.add('product');
+                    itemsModified = true;
+                }
+            }
         }
 
-        const actorName = actorSession.fullName || actorSession.username;
-        const actorRole = actorSession.role;
+        if (changes.quantity !== undefined && itemsList.length > 0 && !changedFieldNames.has('quantity')) {
+            const firstItem = itemsList[0];
+            const newQty = Math.max(1, Number(changes.quantity) || 1);
+            if (Number(firstItem.quantity) !== newQty) {
+                await supabase
+                    .from('make_order_items')
+                    .update({ quantity: newQty })
+                    .eq('id', firstItem.id);
 
-        // Log alterations in make_order_alteration_log
-        const logRows = Object.entries(filteredChanges).map(([field, newVal]) => ({
-            order_id: orderId,
-            altered_by: actorName,
-            user_role: actorRole,
-            field_name: field,
-            old_value: String(current[field] ?? ''),
-            new_value: String(newVal ?? ''),
-            altered_at: new Date().toISOString()
-        }));
-        await supabase.from('make_order_alteration_log').insert(logRows);
+                auditRows.push({
+                    order_id: orderId,
+                    order_number: current.order_number || '',
+                    altered_by: actorName,
+                    user_role: actorRole,
+                    action_type: 'quantity_change',
+                    field_name: 'quantity',
+                    old_value: String(firstItem.quantity),
+                    new_value: String(newQty),
+                    reason: auditReason,
+                    altered_at: new Date().toISOString()
+                });
+                changedFieldNames.add('quantity');
+                itemsModified = true;
+            }
+        }
 
-        // Apply changes
-        const { error: updateErr } = await supabase
-            .from('make_orders')
-            .update({ ...filteredChanges, updated_at: new Date().toISOString() })
-            .eq('id', orderId);
+        // 4. Recalculate totals if items were modified
+        const filteredOrderChanges: Record<string, any> = {};
 
-        if (updateErr) return { success: false, error: updateErr.message };
+        if (itemsModified) {
+            const { data: updatedItems } = await supabase
+                .from('make_order_items')
+                .select('*')
+                .eq('order_id', orderId);
 
-        return { success: true, changed: Object.keys(filteredChanges) };
+            const allItems = updatedItems || [];
+            const totalQty = allItems.reduce((acc, it) => acc + (Number(it.quantity) || 1), 0);
+            const totalCost = allItems.reduce((acc, it) => acc + ((Number(it.quantity) || 1) * (Number(it.item_cost_price) || 0)), 0);
+            const totalSale = allItems.reduce((acc, it) => acc + ((Number(it.quantity) || 1) * (Number(it.item_sale_price) || 0)), 0);
+
+            filteredOrderChanges.quantity = totalQty;
+            filteredOrderChanges.total_cost_price = totalCost;
+            filteredOrderChanges.cost_price = totalCost;
+            filteredOrderChanges.total_sale_price = totalSale;
+            filteredOrderChanges.sale_price = totalSale;
+            filteredOrderChanges.total_amount = totalSale;
+            filteredOrderChanges.remaining_balance = Math.max(0, totalSale - Number(current.advance_amount || 0));
+
+            // If there is a primary item product name, keep furniture_name consistent
+            if (allItems.length === 1 && allItems[0].product_name) {
+                filteredOrderChanges.furniture_name = allItems[0].product_name;
+            }
+        }
+
+        // 5. Order Header level editable fields
+        const ALTERABLE_HEADER_FIELDS = [
+            'furniture_name',
+            'description',
+            'quantity',
+            'priority',
+            'delivery_date',
+            'target_delivery_date',
+            'requested_delivery_date',
+            'shipping_address',
+            'delivery_address',
+            'location_landmark',
+            'receiver_name',
+            'receiver_phone',
+            'special_instructions',
+            'customer_name',
+            'customer_phone',
+            'customer_email'
+        ];
+
+        for (const [field, newVal] of Object.entries(changes)) {
+            if (ALTERABLE_HEADER_FIELDS.includes(field)) {
+                if (field === 'quantity' && changedFieldNames.has('quantity')) continue;
+                const currentVal = current[field];
+                if (String(currentVal ?? '') !== String(newVal ?? '')) {
+                    filteredOrderChanges[field] = field === 'quantity' ? Math.max(1, Number(newVal) || 1) : newVal;
+                    auditRows.push({
+                        order_id: orderId,
+                        order_number: current.order_number || '',
+                        altered_by: actorName,
+                        user_role: actorRole,
+                        action_type: field === 'quantity' ? 'quantity_change' : actionContext,
+                        field_name: field,
+                        old_value: String(currentVal ?? ''),
+                        new_value: String(newVal ?? ''),
+                        reason: auditReason,
+                        altered_at: new Date().toISOString()
+                    });
+                    changedFieldNames.add(field);
+                }
+            }
+        }
+
+        if (auditRows.length === 0 && Object.keys(filteredOrderChanges).length === 0) {
+            return { success: true, message: 'No changes detected', order_number: current.order_number };
+        }
+
+        // 6. Save audit rows
+        if (auditRows.length > 0) {
+            await supabase.from('make_order_alteration_log').insert(auditRows);
+        }
+
+        // 7. Update order header
+        if (Object.keys(filteredOrderChanges).length > 0) {
+            filteredOrderChanges.updated_at = new Date().toISOString();
+            const { error: updateErr } = await supabase
+                .from('make_orders')
+                .update(filteredOrderChanges)
+                .eq('id', orderId);
+
+            if (updateErr) return { success: false, error: updateErr.message };
+        }
+
+        return {
+            success: true,
+            changed: Array.from(changedFieldNames),
+            order_number: current.order_number
+        };
     }
 
     /**

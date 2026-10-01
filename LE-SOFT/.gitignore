@@ -47,3 +47,4 @@ supabase-config.json
 .env
 .env.*
 !.env.example
+tests/fixtures/temp_userdata*

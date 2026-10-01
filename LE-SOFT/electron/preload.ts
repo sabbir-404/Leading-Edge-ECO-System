@@ -297,6 +297,8 @@ contextBridge.exposeInMainWorld('electron', {
     // Make — Customized Product Catalog & Global Attributes
     makeGetCatalogProducts: (params?: any) => ipcRenderer.invoke('make-get-catalog-products', params),
     makeSearchProducts: (params?: { query?: string; category?: string; activeOnly?: boolean }) => ipcRenderer.invoke('make-search-products', params),
+    makeSearchOrders: (params?: { query?: string; status?: string; limit?: number }) => ipcRenderer.invoke('make-search-orders', params),
+    makeGetNextOrderNumber: () => ipcRenderer.invoke('make-get-next-order-number'),
     makeSaveCatalogProduct: (product: any) => ipcRenderer.invoke('make-save-catalog-product', product),
     makeDeleteCatalogProduct: (id: number | string) => ipcRenderer.invoke('make-delete-catalog-product', id),
     makeSaveSpec: (spec: any) => ipcRenderer.invoke('make-save-spec', spec),
@@ -484,5 +486,9 @@ contextBridge.exposeInMainWorld('electron', {
     exportDiagnosticLog: () => ipcRenderer.invoke('export-diagnostic-log'),
     getAdminErrorReports: (params?: any) => ipcRenderer.invoke('get-admin-error-reports', params),
     pruneRemoteReports: (params?: any) => ipcRenderer.invoke('prune-remote-reports', params),
+
+    // ─── MEDIA & IMAGE DIAGNOSTICS ───
+    diagnoseImage: (rawSrc: string) => ipcRenderer.invoke('diagnose-image', rawSrc),
+    resolveImageSrc: (imagePath: string) => ipcRenderer.invoke('resolve-image-src', imagePath),
 
 });

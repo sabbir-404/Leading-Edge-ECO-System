@@ -255,7 +255,8 @@ export const canManageGlobalProductAttributes = (): boolean => {
  * - Users with 'write_make_catalog', 'manage_catalog', or 'make_admin' permissions.
  */
 export const canManageMakeCatalog = (): boolean => {
-    if (isSuperadmin() || isAdmin()) return true;
+    if (isSalesperson()) return false;
+    if (isSuperadmin() || isAdmin() || isFurnitureDesigner()) return true;
     const u = getUser();
     const perms: Record<string, any> = typeof u.permissions === 'object' ? (u.permissions || {}) : {};
     return !!(perms['write_make_catalog'] || perms['manage_catalog'] || perms['make_admin'] || perms['catalog_manage']);

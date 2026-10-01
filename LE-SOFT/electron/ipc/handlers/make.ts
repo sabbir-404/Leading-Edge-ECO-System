@@ -53,10 +53,20 @@ export function registerMakeHandlers(): void {
 
     /**
      * Verifies if the session user has permissions to modify the product catalog.
+     * Furniture Designer and Admin groups are authorized.
+     * Salesperson / Sales group is strictly denied.
      */
     function canManageCatalog(session: UserSession): boolean {
         const role = (session.role || '').toLowerCase();
+        // Salespersons are strictly forbidden from creating or managing products
+        if (role === 'salesperson' || role === 'salesman' || role === 'sales') return false;
         if (role === 'admin' || role === 'superadmin' || role === 'manager') return true;
+        if (
+            role === 'furniture_designer' || 
+            role === 'furniture designer' || 
+            role === 'designer' ||
+            role === 'make_designer'
+        ) return true;
         return !!(
             session.permissions && (
                 session.permissions['manage_catalog'] ||
@@ -249,8 +259,10 @@ export function registerMakeHandlers(): void {
             const session = requireSession();
             const parsed = AlterMakeOrderSchema.parse(rawPayload);
             const result = await MakeOrderService.alterOrder({
-                orderId: parsed.orderId,
+                orderId: Number(parsed.orderId),
                 changes: parsed.changes,
+                itemChanges: parsed.itemChanges || parsed.items,
+                reason: parsed.reason,
                 actorSession: session
             });
             return result;
@@ -549,28 +561,61 @@ export function registerMakeHandlers(): void {
             console.warn('[make-get-catalog-products] Could not aggregate order counts:', e);
         }
 
+        // Aggregate multi-category links for returned products
+        try {
+            const productIds = products.map((p: any) => p.id).filter(Boolean);
+            if (productIds.length > 0) {
+                const activeClient = failoverEngine.getActiveClient();
+                const [catLinksRes, allCatsRes] = await Promise.all([
+                    activeClient.from('make_product_category_links').select('product_id, category_id').in('product_id', productIds),
+                    activeClient.from('make_product_categories').select('id, name')
+                ]);
+                const catMap = new Map((allCatsRes.data || []).map((c: any) => [c.id, c.name]));
+                const linksMap = new Map<number, number[]>();
+                (catLinksRes.data || []).forEach((link: any) => {
+                    const list = linksMap.get(link.product_id) || [];
+                    list.push(link.category_id);
+                    linksMap.set(link.product_id, list);
+                });
+                for (const p of products) {
+                    const ids = linksMap.get(p.id) || (p.category_id ? [p.category_id] : []);
+                    p.category_ids = ids;
+                    p.categories = ids.map(id => ({ id, name: catMap.get(id) || p.category || '' }));
+                }
+            }
+        } catch (e) {
+            for (const p of products) {
+                p.category_ids = p.category_id ? [p.category_id] : [];
+                p.categories = p.category_id ? [{ id: p.category_id, name: p.category || '' }] : [];
+            }
+        }
+
         return products;
     });
 
     ipcMain.handle('make-save-catalog-product', async (_e, rawProduct: any) => {
         const session = requireSession();
         if (!canManageCatalog(session)) {
-            throw new Error('Forbidden: Catalog modification requires Administrator or Manager privileges.');
+            throw new Error('Forbidden: Catalog modification requires Administrator or Furniture Designer privileges.');
         }
 
         const product = CatalogProductSchema.parse(rawProduct);
 
+        // Extract multi-category IDs
+        const rawCatIds = (product.category_ids || product.categoryIds || (product.category_id ? [product.category_id] : [])) as any[];
+        const categoryIds = rawCatIds.map(Number).filter(id => !isNaN(id) && id > 0);
+
         let resolvedCategoryId: number | null = null;
         let resolvedCategoryName: string | null = null;
 
-        if (product.category_id) {
-            resolvedCategoryId = Number(product.category_id);
-            const { data: catRow } = await failoverEngine.executeRead(async client => 
-                client.from('make_product_categories').select('name').eq('id', resolvedCategoryId).maybeSingle(),
-                'resolve-category-id'
+        if (categoryIds.length > 0) {
+            resolvedCategoryId = categoryIds[0];
+            const { data: catRows } = await failoverEngine.executeRead(async client => 
+                client.from('make_product_categories').select('id, name').in('id', categoryIds),
+                'resolve-category-ids'
             );
-            if (catRow) {
-                resolvedCategoryName = catRow.name;
+            if (catRows && catRows.length > 0) {
+                resolvedCategoryName = catRows.map((c: any) => c.name).join(', ');
             }
         } else if (product.category) {
             const { data: catRow } = await failoverEngine.executeRead(async client => 
@@ -580,6 +625,7 @@ export function registerMakeHandlers(): void {
             if (catRow) {
                 resolvedCategoryId = catRow.id;
                 resolvedCategoryName = catRow.name;
+                categoryIds.push(catRow.id);
             } else {
                 resolvedCategoryName = product.category.trim();
             }
@@ -632,6 +678,18 @@ export function registerMakeHandlers(): void {
         const colorIds = (product as any).colorIds;
 
         const junctionPromises: Promise<any>[] = [];
+
+        // Save multiple categories
+        junctionPromises.push((async () => {
+            await failoverEngine.executeWrite(async client => {
+                await client.from('make_product_category_links').delete().eq('product_id', savedData.id);
+                if (categoryIds.length > 0) {
+                    const rows = categoryIds.map(catId => ({ product_id: savedData.id, category_id: catId }));
+                    return await client.from('make_product_category_links').insert(rows).select();
+                }
+                return { data: [], error: null };
+            }, { table: 'make_product_category_links', operation: 'insert' }, 'link-categories');
+        })());
 
         if (specIds !== undefined && Array.isArray(specIds)) {
             junctionPromises.push((async () => {
@@ -1057,22 +1115,54 @@ export function registerMakeHandlers(): void {
         }
     });
 
+    // ── 16B. Global Order Search ──────────────────────────────────────────────
+    ipcMain.handle('make-search-orders', async (_e, rawPayload: any) => {
+        try {
+            const parsed = rawPayload || {};
+            return await MakeSearchService.searchOrders({
+                query: parsed.query,
+                status: parsed.status,
+                limit: parsed.limit
+            });
+        } catch (err: any) {
+            console.error('[MAKE IPC] make-search-orders error:', err);
+            return [];
+        }
+    });
+
+    // ── 16C. Automatic Order Number Generation ─────────────────────────────────
+    ipcMain.handle('make-get-next-order-number', async () => {
+        try {
+            return await MakeOrderService.generateUniqueOrderNumber();
+        } catch (err: any) {
+            console.error('[MAKE IPC] make-get-next-order-number error:', err);
+            return MakeOrderService.generateOrderNumber();
+        }
+    });
+
     // ── 17. Global Product Attributes (Categories, Specs, Sizes, Colors) ─────
     ipcMain.handle('make-get-global-attributes', async () => {
         try {
-            const [categoriesRes, specsRes, sizesRes, colorsRes] = await Promise.all([
-                supabase.from('make_product_categories').select('*').order('name', { ascending: true }),
-                supabase.from('make_product_specifications').select('*').is('product_id', null).order('spec_name', { ascending: true }),
-                supabase.from('make_product_sizes').select('*').is('product_id', null).order('size_label', { ascending: true }),
-                supabase.from('make_product_colors').select('*').is('product_id', null).order('color_name', { ascending: true })
-            ]);
+            const res = await failoverEngine.executeRead(async (client) => {
+                const [categoriesRes, specsRes, sizesRes, colorsRes] = await Promise.all([
+                    client.from('make_product_categories').select('*').order('name', { ascending: true }),
+                    client.from('make_product_specifications').select('*').is('product_id', null).order('spec_name', { ascending: true }),
+                    client.from('make_product_sizes').select('*').is('product_id', null).order('size_label', { ascending: true }),
+                    client.from('make_product_colors').select('*').is('product_id', null).order('color_name', { ascending: true })
+                ]);
 
-            return {
-                categories: decryptRows(categoriesRes.data || []),
-                specs: decryptRows(specsRes.data || []),
-                sizes: decryptRows(sizesRes.data || []),
-                colors: decryptRows(colorsRes.data || [])
-            };
+                return {
+                    data: {
+                        categories: decryptRows(categoriesRes.data || []),
+                        specs: decryptRows(specsRes.data || []),
+                        sizes: decryptRows(sizesRes.data || []),
+                        colors: decryptRows(colorsRes.data || [])
+                    },
+                    error: categoriesRes.error || specsRes.error || sizesRes.error || colorsRes.error
+                };
+            }, 'make-get-global-attributes');
+
+            return res.data || { categories: [], specs: [], sizes: [], colors: [] };
         } catch (err: any) {
             console.error('[MAKE IPC] make-get-global-attributes error:', err);
             return { categories: [], specs: [], sizes: [], colors: [] };

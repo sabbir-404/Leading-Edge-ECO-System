@@ -29,7 +29,7 @@ export const MAKE_TUTORIAL_STEPS: TutorialStep[] = [
     badge: 'Step 1 of 8',
     description: 'High-level executive overview of production metrics, order statuses, and recent manufacturing activity.',
     details: 'View active orders, orders awaiting pricing, in-progress factory units, ready-to-ship items, and completed deliveries at a glance.',
-    tips: 'Use the Refresh button anytime to pull real-time factory data from the NAS database.'
+    tips: 'Use the Refresh button anytime to pull real-time factory data.'
   },
   {
     id: 'product-catalog',
@@ -72,7 +72,7 @@ export const MAKE_TUTORIAL_STEPS: TutorialStep[] = [
     title: 'Invoice Attachments & Documents',
     badge: 'Step 5 of 8',
     description: 'Attach official invoices, work orders, sketches, and specifications directly to orders before submission.',
-    details: 'Upload desktop files, capture live invoice photos on mobile devices, or attach multi-page PDF documents. Files are stored on local NAS storage with verifiable audit trails.',
+    details: 'Upload desktop files, capture live invoice photos on mobile devices, or attach multi-page PDF documents. Files are securely stored with verifiable audit trails.',
     tips: 'Attachments remain permanently associated with the order throughout all production stages.'
   },
   {

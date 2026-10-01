@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { X, Plus, Upload, RotateCcw } from 'lucide-react';
 import { canManageGlobalProductAttributes } from '../../../utils/permissions';
 import { clearProductFormDraft, hasMeaningfulDraftContent, saveProductCatalogDraft } from '../../../utils/productCatalogDraft';
+import { resolveImageSrc, handleImageLoadError } from '../../../utils/imageSrc';
+import { formatSizeDisplay } from '../../../utils/formatSize';
 
 export interface ProductCreateModalProps {
   isOpen: boolean;
@@ -49,6 +51,7 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
     is_active: true
   });
 
+  const [selectedCategoryIds, setSelectedCategoryIds] = useState<(number | string)[]>([]);
   const [selectedSpecIds, setSelectedSpecIds] = useState<(number | string)[]>([]);
   const [selectedSizeIds, setSelectedSizeIds] = useState<(number | string)[]>([]);
   const [selectedColorIds, setSelectedColorIds] = useState<(number | string)[]>([]);
@@ -106,6 +109,10 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
         main_image: initialProduct.main_image || '',
         is_active: initialProduct.is_active !== undefined ? initialProduct.is_active : true
       });
+      const catIds = Array.isArray(initialProduct.category_ids) && initialProduct.category_ids.length > 0
+        ? initialProduct.category_ids
+        : (initialProduct.category_id ? [initialProduct.category_id] : []);
+      setSelectedCategoryIds(catIds);
       setSelectedSpecIds((initialProduct.specifications || []).map((s: any) => s.id));
       setSelectedSizeIds((initialProduct.sizes || []).map((s: any) => s.id));
       setSelectedColorIds((initialProduct.colors || []).map((c: any) => c.id));
@@ -119,6 +126,7 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
         main_image: '',
         is_active: true
       });
+      setSelectedCategoryIds([]);
       setSelectedSpecIds([]);
       setSelectedSizeIds([]);
       setSelectedColorIds([]);
@@ -128,10 +136,11 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
   }, [isOpen, initialProduct]);
 
   // Notify parent of draft updates (only when drafting a new product)
-  const notifyDraftUpdate = (updatedForm: any, specIds: any[], sizeIds: any[], colorIds: any[]) => {
+  const notifyDraftUpdate = (updatedForm: any, catIds: any[], specIds: any[], sizeIds: any[], colorIds: any[]) => {
     if (isDraftManaged && !initialProduct?.id) {
       const payload = {
         ...updatedForm,
+        selectedCategoryIds: catIds,
         selectedSpecIds: specIds,
         selectedSizeIds: sizeIds,
         selectedColorIds: colorIds,
@@ -145,7 +154,7 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
   const handleFieldChange = (field: string, value: any) => {
     setFormData((prev: any) => {
       const next = { ...prev, [field]: value };
-      notifyDraftUpdate(next, selectedSpecIds, selectedSizeIds, selectedColorIds);
+      notifyDraftUpdate(next, selectedCategoryIds, selectedSpecIds, selectedSizeIds, selectedColorIds);
       return next;
     });
   };
@@ -161,7 +170,7 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
       }
     } catch (e: any) {
       console.error(e);
-      setErrorMessage('Failed to upload image: ' + (e.message || String(e)));
+      setErrorMessage('Failed to upload image. Please try again.');
     } finally {
       setUploadingImage(false);
     }
@@ -207,24 +216,29 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
         const attrId = created?.attribute?.id ?? created?.id;
         if (attrId) {
           if (inlineNewAttrType === 'category') {
+            setSelectedCategoryIds(prev => {
+              const next = [...prev, attrId];
+              notifyDraftUpdate(formData, next, selectedSpecIds, selectedSizeIds, selectedColorIds);
+              return next;
+            });
             handleFieldChange('category_id', attrId);
             handleFieldChange('category', inlineAttrName.trim());
           } else if (inlineNewAttrType === 'spec') {
             setSelectedSpecIds(prev => {
               const next = [...prev, attrId];
-              notifyDraftUpdate(formData, next, selectedSizeIds, selectedColorIds);
+              notifyDraftUpdate(formData, selectedCategoryIds, next, selectedSizeIds, selectedColorIds);
               return next;
             });
           } else if (inlineNewAttrType === 'size') {
             setSelectedSizeIds(prev => {
               const next = [...prev, attrId];
-              notifyDraftUpdate(formData, selectedSpecIds, next, selectedColorIds);
+              notifyDraftUpdate(formData, selectedCategoryIds, selectedSpecIds, next, selectedColorIds);
               return next;
             });
           } else if (inlineNewAttrType === 'color') {
             setSelectedColorIds(prev => {
               const next = [...prev, attrId];
-              notifyDraftUpdate(formData, selectedSpecIds, selectedSizeIds, next);
+              notifyDraftUpdate(formData, selectedCategoryIds, selectedSpecIds, selectedSizeIds, next);
               return next;
             });
           }
@@ -243,6 +257,7 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
     const hasContent = hasMeaningfulDraftContent({
       productForm: {
         ...formData,
+        selectedCategoryIds,
         selectedSpecIds,
         selectedSizeIds,
         selectedColorIds
@@ -265,6 +280,7 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
       main_image: '',
       is_active: true
     });
+    setSelectedCategoryIds([]);
     setSelectedSpecIds([]);
     setSelectedSizeIds([]);
     setSelectedColorIds([]);
@@ -286,10 +302,16 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
 
     setSaving(true);
     try {
+      const primaryCatId = selectedCategoryIds.length > 0 ? Number(selectedCategoryIds[0]) : null;
+      const primaryCat = (attrs.categories || []).find((c: any) => c.id === primaryCatId);
+
       const payload = {
         ...formData,
         product_code: code,
         product_name: name,
+        category_id: primaryCatId,
+        category: primaryCat ? primaryCat.name : (formData.category || null),
+        category_ids: selectedCategoryIds.map(Number),
         specIds: selectedSpecIds,
         sizeIds: selectedSizeIds,
         colorIds: selectedColorIds
@@ -384,11 +406,11 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
             />
           </div>
 
-          {/* Category Selection with Dropdown and Inline Add */}
+          {/* Category Selection (Multi-select) */}
           <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
               <label style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)' }}>
-                CATEGORY
+                ASSIGN CATEGORIES ({selectedCategoryIds.length} selected)
               </label>
               {canManageGlobal && (
                 <button
@@ -415,57 +437,57 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
               </div>
             )}
 
-            <select
-              value={formData.category_id || (formData.category ? (attrs.categories || []).find(c => c.name.toLowerCase() === (formData.category || '').toLowerCase())?.id : '') || ''}
-              onChange={e => {
-                const selectedId = e.target.value ? Number(e.target.value) : null;
-                const selectedCat = (attrs.categories || []).find(c => c.id === selectedId);
-                setFormData((prev: any) => {
-                  const next = {
-                    ...prev,
-                    category_id: selectedId,
-                    category: selectedCat ? selectedCat.name : null
-                  };
-                  notifyDraftUpdate(next, selectedSpecIds, selectedSizeIds, selectedColorIds);
-                  return next;
-                });
-              }}
-              style={{ width: '100%', padding: '9px 12px', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', boxSizing: 'border-box' }}
-            >
-              <option value="">Select Category...</option>
-              {(attrs.categories || []).map((cat: any) => (
-                <option key={cat.id} value={cat.id}>
-                  {cat.name} {cat.code ? `[${cat.code}]` : ''}
-                </option>
-              ))}
-            </select>
+            <div style={{ maxHeight: '110px', overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '6px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              {(!attrs?.categories || attrs.categories.length === 0) ? (
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>No global categories found</span>
+              ) : (
+                (attrs.categories || []).map((cat: any) => (
+                  <label key={cat.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedCategoryIds.includes(cat.id)}
+                      onChange={e => {
+                        const next = e.target.checked
+                          ? [...selectedCategoryIds, cat.id]
+                          : selectedCategoryIds.filter(id => id !== cat.id);
+                        setSelectedCategoryIds(next);
+                        notifyDraftUpdate(formData, next, selectedSpecIds, selectedSizeIds, selectedColorIds);
+                      }}
+                    />
+                    <span>{cat.name} {cat.code ? `[${cat.code}]` : ''}</span>
+                  </label>
+                ))
+              )}
+            </div>
           </div>
 
           <div>
             <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '4px' }}>
-              PRODUCT MAIN IMAGE (STORED ON NAS)
+              PRODUCT IMAGE
             </label>
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <input
-                type="text"
-                placeholder="https://... or click Upload"
-                value={formData.main_image || ''}
-                onChange={(e) => handleFieldChange('main_image', e.target.value)}
-                style={{ flex: 1, padding: '9px 12px', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', boxSizing: 'border-box' }}
-              />
               <button
                 type="button"
                 disabled={uploadingImage}
                 onClick={handlePickAndUploadImage}
                 style={{ padding: '9px 14px', background: '#3b82f6', border: 'none', borderRadius: '8px', color: '#fff', cursor: uploadingImage ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', fontWeight: 600, whiteSpace: 'nowrap' }}
               >
-                <Upload size={14} /> {uploadingImage ? 'Uploading...' : 'Upload to NAS'}
+                <Upload size={14} /> {uploadingImage ? 'Uploading...' : 'Upload Image'}
               </button>
+              {formData.main_image && (
+                <button
+                  type="button"
+                  onClick={() => handleFieldChange('main_image', '')}
+                  style={{ padding: '9px 12px', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.82rem' }}
+                >
+                  Remove
+                </button>
+              )}
             </div>
             {formData.main_image && (
               <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <img src={formData.main_image} alt="Preview" style={{ width: '50px', height: '50px', objectFit: 'cover', borderRadius: '6px', border: '1px solid var(--border-color)' }} />
-                <span style={{ fontSize: '0.75rem', color: '#10b981', fontWeight: 600 }}>✓ Live NAS Storage URL</span>
+                <img src={resolveImageSrc(formData.main_image)} alt="Preview" onError={e => handleImageLoadError(e, formData.main_image)} style={{ width: '50px', height: '50px', objectFit: 'cover', borderRadius: '6px', border: '1px solid var(--border-color)' }} />
+                <span style={{ fontSize: '0.75rem', color: '#10b981', fontWeight: 600 }}>✓ Image uploaded</span>
               </div>
             )}
           </div>
@@ -516,7 +538,7 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
                             ? [...selectedSpecIds, s.id]
                             : selectedSpecIds.filter(id => id !== s.id);
                           setSelectedSpecIds(next);
-                          notifyDraftUpdate(formData, next, selectedSizeIds, selectedColorIds);
+                          notifyDraftUpdate(formData, selectedCategoryIds, next, selectedSizeIds, selectedColorIds);
                         }}
                       />
                       <span>{s.spec_name} {s.spec_code ? `[${s.spec_code}]` : ''}</span>
@@ -570,10 +592,10 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
                             ? [...selectedSizeIds, sz.id]
                             : selectedSizeIds.filter(id => id !== sz.id);
                           setSelectedSizeIds(next);
-                          notifyDraftUpdate(formData, selectedSpecIds, next, selectedColorIds);
+                          notifyDraftUpdate(formData, selectedCategoryIds, selectedSpecIds, next, selectedColorIds);
                         }}
                       />
-                      <span>{sz.size_label || `${sz.length || ''}x${sz.width || ''}x${sz.height || ''} ${sz.unit || 'mm'}`}</span>
+                      <span>{formatSizeDisplay(sz)}</span>
                     </label>
                   ))
                 )}
@@ -624,7 +646,7 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
                             ? [...selectedColorIds, c.id]
                             : selectedColorIds.filter(id => id !== c.id);
                           setSelectedColorIds(next);
-                          notifyDraftUpdate(formData, selectedSpecIds, selectedSizeIds, next);
+                          notifyDraftUpdate(formData, selectedCategoryIds, selectedSpecIds, selectedSizeIds, next);
                         }}
                       />
                       {c.color_code && (

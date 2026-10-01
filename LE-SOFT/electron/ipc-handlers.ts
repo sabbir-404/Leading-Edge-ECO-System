@@ -17,7 +17,7 @@ try {
     console.warn('[IPC] sharp native module not loaded:', err);
 }
 
-import supabase, { supabaseAdmin, nasClient, isNasOnline, decryptEmbeddedCredentials, bootstrapPublicClientConfig, reinitSupabaseClients, getNasStorageUrl, getCfAccessHeaders, loadConfig, saveSupabaseConfig } from './supabase';
+import supabase, { supabaseAdmin, nasClient, isNasOnline, decryptEmbeddedCredentials, bootstrapPublicClientConfig, reinitSupabaseClients, getNasStorageUrl, getNasStorageCandidates, getCfAccessHeaders, loadConfig, saveSupabaseConfig } from './supabase';
 import mysql from 'mysql2/promise';
 import * as licenseManager from './license-manager';
 import { getConnectedDevices, setBackupNode, DEVICE_ID } from './device-monitor';
@@ -80,44 +80,51 @@ export function toPublicStorageUrl(url: string | null | undefined): string {
 
 async function uploadOptimizedImage(buffer: Buffer, filenamePrefix: string): Promise<string> {
     const optimized = await optimizeImageBuffer(buffer);
-    const nasStorageUrl = getNasStorageUrl();
+    const candidates = getNasStorageCandidates();
     const finalFilename = `${filenamePrefix}_${Date.now()}.webp`;
 
-    if (nasStorageUrl) {
-        // Upload to NAS Storage Server (fast via local LAN or tunnel)
-        const formData = new FormData();
-        formData.append('file', new Blob([new Uint8Array(optimized)], { type: 'image/webp' }), finalFilename);
+    if (candidates.length > 0) {
+        let lastError: any = null;
+        for (const candidateUrl of candidates) {
+            try {
+                const formData = new FormData();
+                formData.append('file', new Blob([new Uint8Array(optimized)], { type: 'image/webp' }), finalFilename);
 
-        const cfHeaders = nasStorageUrl.startsWith('https://') ? getCfAccessHeaders() : {};
-        const response = await fetch(`${nasStorageUrl.replace(/\/$/, '')}/upload`, { 
-            method: 'POST', 
-            body: formData,
-            headers: {
-                'x-subfolder': 'product-images',
-                ...cfHeaders
+                const cfHeaders = candidateUrl.startsWith('https://') ? getCfAccessHeaders() : {};
+                const response = await fetch(`${candidateUrl.replace(/\/$/, '')}/upload`, { 
+                    method: 'POST', 
+                    body: formData,
+                    headers: {
+                        'x-subfolder': 'product-images',
+                        ...cfHeaders
+                    },
+                    signal: AbortSignal.timeout(3000)
+                });
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.success) {
+                        return `https://storage.lenas.me/files/product-images/${finalFilename}`;
+                    }
+                }
+            } catch (err) {
+                lastError = err;
             }
-        });
-        const data = await response.json();
-        if (!data.success) {
-            throw new Error(data.error || 'Failed to upload image to NAS');
         }
-        // Always return the public universal Cloudflare tunnel URL so the image is universally accessible
-        return `https://storage.lenas.me/files/product-images/${finalFilename}`;
-    } else {
-        // Upload to Hostinger (fallback)
-        const formData = new FormData();
-        formData.append('secret_key', HOSTINGER_UPLOAD_SECRET);
-        formData.append('image', new Blob([new Uint8Array(optimized)], { type: 'image/webp' }), finalFilename);
-
-        const response = await fetch(HOSTINGER_UPLOAD_URL, { method: 'POST', body: formData });
-        const data = await response.json();
-
-        if (!data.success || !data.url) {
-            throw new Error(data.error || 'Failed to upload image to Hostinger');
-        }
-
-        return data.url;
     }
+
+    // Upload to Hostinger (fallback)
+    const formData = new FormData();
+    formData.append('secret_key', HOSTINGER_UPLOAD_SECRET);
+    formData.append('image', new Blob([new Uint8Array(optimized)], { type: 'image/webp' }), finalFilename);
+
+    const response = await fetch(HOSTINGER_UPLOAD_URL, { method: 'POST', body: formData });
+    const data = await response.json();
+
+    if (!data.success || !data.url) {
+        throw new Error(data.error || 'Failed to upload image');
+    }
+
+    return data.url;
 }
 
 async function createSystemNotification(input: {
@@ -6866,6 +6873,26 @@ export function registerHandlers() {
         } catch (e: any) {
             return { success: false, error: e.message };
         }
+    });
+
+    // ─── MEDIA & IMAGE DIAGNOSTICS ───
+    ipcMain.handle('diagnose-image', async (_e, rawSrc: string) => {
+        try {
+            const { MediaProtocolService } = require('./services/media/MediaProtocolService');
+            return await MediaProtocolService.getInstance().diagnoseImage(rawSrc);
+        } catch (e: any) {
+            return {
+                sourceType: 'unknown',
+                normalizedSource: '',
+                exists: false,
+                loadDurationMs: 0,
+                failureReason: e.message || 'diagnose_failed'
+            };
+        }
+    });
+
+    ipcMain.handle('resolve-image-src', (_e, imagePath: string) => {
+        return imagePath || '';
     });
 
 } // end registerHandlers
