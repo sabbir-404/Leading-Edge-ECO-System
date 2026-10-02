@@ -561,11 +561,30 @@ function recreateNasClient(url: string) {
                     failoverEngine.recordNasSuccess(Date.now() - t0);
                     return resp;
                 }
-                throw new Error(`NAS connection blocked or server error: ${resp.status} ${resp.statusText}${isHtmlBlock ? ' (HTML response)' : ''}`);
+
+                let classifiedError: string;
+                if (isHtmlBlock && isAuthBlocked) {
+                    classifiedError = `Database proxy/access blocked: ${resp.status} ${resp.statusText} (HTML response from proxy/gateway)`;
+                } else if (isAuthBlocked) {
+                    classifiedError = `Database authorization rejected: ${resp.status} ${resp.statusText} (PostgREST authentication error)`;
+                } else if (isServerError) {
+                    classifiedError = `Database server error: ${resp.status} ${resp.statusText}`;
+                } else if (isHtmlBlock) {
+                    classifiedError = `Database returned unexpected HTML gateway response: ${resp.status} ${resp.statusText}`;
+                } else {
+                    classifiedError = `Database request rejected: ${resp.status} ${resp.statusText}`;
+                }
+
+                throw new Error(classifiedError);
             } catch (err: any) {
                 clearTimeout(timeoutId);
                 const isTimeout = controller.signal.aborted || err?.name === 'AbortError' || err?.message?.includes('aborted');
-                const errMsg = isTimeout ? 'NAS request timed out after 2000ms' : (err?.message || 'NAS connection failed');
+                const isConnRefused = err?.message?.includes('ECONNREFUSED');
+                const errMsg = isTimeout
+                    ? 'Database connection timeout (2000ms)'
+                    : isConnRefused
+                    ? 'Database connection refused'
+                    : (err?.message || 'Database connection failed');
                 
                 failoverEngine.recordNasFailure(new Error(errMsg));
 
@@ -683,15 +702,31 @@ export function reinitSupabaseClients(): void {
             }
         }) : null;
 
-        // Candidate NAS endpoint priority — prioritize last working URL, then tunnel, local, or legacy IP
+        // Candidate NAS endpoint priority
+        // Prioritize last working URL (if not an unauthenticated tunnel), then direct Tailscale IP (port 3001), then LAN
+        const hasCf = Boolean(config.cfAccessClientId && config.cfAccessClientSecret);
         const lastWorking = failoverEngine.getLastWorkingNasUrl();
-        const defaultNasCandidate = lastWorking || config.nasTunnelUrl || config.nasLocalUrl || config.nasUrl || 'https://db.lenas.me';
+        const isLastWorkingValid = lastWorking && (!lastWorking.startsWith('https://') || hasCf);
+
+        let defaultNasCandidate: string;
+        if (isLastWorkingValid) {
+            defaultNasCandidate = lastWorking;
+        } else if (config.nasUrl) {
+            defaultNasCandidate = config.nasUrl;
+        } else if (config.nasLocalUrl && config.nasLocalUrl !== 'http://192.168.1.14:3001') {
+            defaultNasCandidate = config.nasLocalUrl;
+        } else if (hasCf && config.nasTunnelUrl) {
+            defaultNasCandidate = config.nasTunnelUrl;
+        } else {
+            defaultNasCandidate = 'http://100.88.85.6:3001';
+        }
         recreateNasClient(defaultNasCandidate);
 
         failoverEngine.registerClients({
             nas: nasClient,
             supabase: supabaseClient,
-            supabaseAdmin: supabaseAdmin
+            supabaseAdmin: supabaseAdmin,
+            onRecreateNasClient: recreateNasClient
         });
 
         try {
@@ -702,17 +737,18 @@ export function reinitSupabaseClients(): void {
             });
         } catch {}
 
-        const getCandidates = () => ({
-            localUrl: config.nasLocalUrl || 'http://192.168.1.14:3001',
-            tunnelUrl: config.nasTunnelUrl || 'https://db.lenas.me',
-            publicUrl: config.nasUrl || 'http://100.88.85.6:3001',
-            cfHeaders: getCfAccessHeaders()
-        });
+        const getCandidates = () => {
+            const hasCfAccess = Boolean(config.cfAccessClientId && config.cfAccessClientSecret);
+            return {
+                localUrl: config.nasLocalUrl || 'http://192.168.1.14:3001',
+                publicUrl: config.nasUrl || 'http://100.88.85.6:3001',
+                tunnelUrl: hasCfAccess ? (config.nasTunnelUrl || 'https://db.lenas.me') : undefined,
+                cfHeaders: getCfAccessHeaders()
+            };
+        };
 
-        // Fast asynchronous startup probe: does NOT block UI or first query
-        // The first query will immediately hit lastWorking NAS candidate with 2000ms bounded timeout, or Supabase
-        dbReadyPromise = Promise.resolve(true);
-        failoverEngine.checkNasConnectivity(getCandidates()).then(online => {
+        // Bounded startup check (resolves in ~300ms against Tailscale)
+        dbReadyPromise = failoverEngine.checkNasConnectivity(getCandidates()).then(online => {
             const status = failoverEngine.getStatus();
             isNasOnline = status.isNasReachable;
             connectionState = status.connectionTier;

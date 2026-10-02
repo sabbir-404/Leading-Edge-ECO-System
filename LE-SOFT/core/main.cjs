@@ -23027,6 +23027,7 @@ var init_DatabaseFailoverEngine = __esm({
       nasClient = null;
       supabaseClient = null;
       supabaseAdmin = null;
+      onRecreateNasClient;
       circuitState = "healthy";
       connectionTier = "supabase";
       activeTarget = "supabase";
@@ -23126,6 +23127,9 @@ var init_DatabaseFailoverEngine = __esm({
         this.nasClient = clients.nas;
         this.supabaseClient = clients.supabase;
         this.supabaseAdmin = clients.supabaseAdmin;
+        if (clients.onRecreateNasClient) {
+          this.onRecreateNasClient = clients.onRecreateNasClient;
+        }
       }
       getActiveClient() {
         const inCooldown = Date.now() < this.cooldownUntil;
@@ -23250,15 +23254,15 @@ var init_DatabaseFailoverEngine = __esm({
         this.isProbing = true;
         const cfHeaders = candidates.cfHeaders || {};
         const local = candidates.localUrl || "http://192.168.1.14:3001";
-        const tunnel = candidates.tunnelUrl || "https://db.lenas.me";
         const pub = candidates.publicUrl || "http://100.88.85.6:3001";
+        const tunnel = candidates.tunnelUrl;
         if (this.lastWorkingNasUrl) {
           const headers = this.lastWorkingNasUrl.startsWith("https://") ? cfHeaders : {};
           const t0 = Date.now();
           const alive = await this.pingUrl(this.lastWorkingNasUrl, 800, headers);
           if (alive) {
             const latency = Date.now() - t0;
-            this.handleNasReachable(this.lastWorkingNasUrl, this.deriveTier(this.lastWorkingNasUrl, local, tunnel, pub), latency);
+            this.handleNasReachable(this.lastWorkingNasUrl, this.deriveTier(this.lastWorkingNasUrl, local, tunnel || "", pub), latency);
             this.isProbing = false;
             return true;
           }
@@ -23266,7 +23270,7 @@ var init_DatabaseFailoverEngine = __esm({
         const tests = [
           { url: local, tier: "nas_local", headers: {}, timeout: 600 },
           { url: pub, tier: "nas_public", headers: {}, timeout: 1e3 },
-          { url: tunnel, tier: "nas_tunnel", headers: cfHeaders, timeout: 1200 }
+          ...tunnel ? [{ url: tunnel, tier: "nas_tunnel", headers: cfHeaders, timeout: 1200 }] : []
         ];
         try {
           const t0 = Date.now();
@@ -23289,7 +23293,7 @@ var init_DatabaseFailoverEngine = __esm({
       }
       deriveTier(url2, local, tunnel, pub) {
         if (url2 === local) return "nas_local";
-        if (url2 === tunnel) return "nas_tunnel";
+        if (tunnel && url2 === tunnel) return "nas_tunnel";
         return "nas_public";
       }
       handleNasReachable(url2, tier, latency = 0) {
@@ -23299,6 +23303,13 @@ var init_DatabaseFailoverEngine = __esm({
         this.connectionTier = tier;
         this.lastHealthCheckTime = Date.now();
         this.saveNasConnectionState();
+        if (this.onRecreateNasClient) {
+          try {
+            this.onRecreateNasClient(url2);
+          } catch (e2) {
+            console.warn("[DB:FAILOVER] Error updating nasClient to reachable URL:", e2.message);
+          }
+        }
         const wasDegraded = this.circuitState === "degraded" || this.circuitState === "offline";
         this.consecutiveFailures = 0;
         if (latency > 0) {
@@ -23323,15 +23334,39 @@ var init_DatabaseFailoverEngine = __esm({
       /**
        * Verifies NAS recovery with an actual real database query, reconciles pending fallback
        * writes, and restores NAS as primary.
+       * Probes make_products first as the authoritative MAKE table, with fallback to companies.
        */
       async verifyAndRecoverNas() {
         if (!this.nasClient) return false;
         try {
           console.log("[DB:RECOVERY] Verifying NAS with real lightweight query...");
           const t0 = Date.now();
-          const { error: error51 } = await this.nasClient.from("companies").select("id").limit(1);
-          if (error51) {
-            console.warn("[DB:RECOVERY] NAS real query failed:", error51.message);
+          let queryError = null;
+          let success2 = false;
+          try {
+            const res = await this.nasClient.from("make_products")?.select?.("id")?.limit?.(1);
+            if (res && !res.error && res.data) {
+              success2 = true;
+            } else if (res?.error) {
+              queryError = res.error;
+            }
+          } catch (err) {
+            queryError = err;
+          }
+          if (!success2) {
+            try {
+              const res = await this.nasClient.from("companies")?.select?.("id")?.limit?.(1);
+              if (res && !res.error && res.data) {
+                success2 = true;
+              } else if (res?.error) {
+                queryError = res.error;
+              }
+            } catch (err) {
+              queryError = err;
+            }
+          }
+          if (!success2) {
+            console.warn("[DB:RECOVERY] NAS real query failed:", queryError?.message || "unknown error");
             return false;
           }
           const duration3 = Date.now() - t0;
@@ -23404,6 +23439,13 @@ var init_DatabaseFailoverEngine = __esm({
         const backoffStep = Math.min(4, Math.max(0, this.consecutiveFailures - 1));
         this.cooldownDurationMs = Math.min(12e4, 3e4 * Math.pow(1.5, backoffStep));
         this.cooldownUntil = Date.now() + this.cooldownDurationMs;
+        if (err?.message && (err.message.includes("HTML response") || err.message.includes("proxy/gateway"))) {
+          if (this.lastWorkingNasUrl && this.lastWorkingNasUrl.startsWith("https://")) {
+            console.warn("[DB:FAILOVER] Invalidating blocked tunnel URL from lastWorkingNasUrl cache:", this.lastWorkingNasUrl);
+            this.lastWorkingNasUrl = null;
+            this.saveNasConnectionState();
+          }
+        }
         if (this.consecutiveFailures >= this.MAX_CONSECUTIVE_FAILURES || isNetworkErr) {
           if (this.circuitState === "healthy" || this.circuitState === "recovering") {
             console.warn(`[DB:FAILOVER] Circuit breaker tripped to DEGRADED_FALLBACK (failures: ${this.consecutiveFailures}, cooldown: ${Math.round(this.cooldownDurationMs / 1e3)}s, reason: ${err?.message || "unknown"}).`);
@@ -24769,11 +24811,24 @@ function recreateNasClient(url2) {
           failoverEngine.recordNasSuccess(Date.now() - t0);
           return resp;
         }
-        throw new Error(`NAS connection blocked or server error: ${resp.status} ${resp.statusText}${isHtmlBlock ? " (HTML response)" : ""}`);
+        let classifiedError;
+        if (isHtmlBlock && isAuthBlocked) {
+          classifiedError = `Database proxy/access blocked: ${resp.status} ${resp.statusText} (HTML response from proxy/gateway)`;
+        } else if (isAuthBlocked) {
+          classifiedError = `Database authorization rejected: ${resp.status} ${resp.statusText} (PostgREST authentication error)`;
+        } else if (isServerError) {
+          classifiedError = `Database server error: ${resp.status} ${resp.statusText}`;
+        } else if (isHtmlBlock) {
+          classifiedError = `Database returned unexpected HTML gateway response: ${resp.status} ${resp.statusText}`;
+        } else {
+          classifiedError = `Database request rejected: ${resp.status} ${resp.statusText}`;
+        }
+        throw new Error(classifiedError);
       } catch (err) {
         clearTimeout(timeoutId);
         const isTimeout = controller.signal.aborted || err?.name === "AbortError" || err?.message?.includes("aborted");
-        const errMsg = isTimeout ? "NAS request timed out after 2000ms" : err?.message || "NAS connection failed";
+        const isConnRefused = err?.message?.includes("ECONNREFUSED");
+        const errMsg = isTimeout ? "Database connection timeout (2000ms)" : isConnRefused ? "Database connection refused" : err?.message || "Database connection failed";
         failoverEngine.recordNasFailure(new Error(errMsg));
         if (!isRead) {
           throw new Error(`[NAS:FETCH] Mutation operation (${method}) failed or timed out on NAS: ${errMsg}. Low-level replay rejected to protect database integrity.`);
@@ -24865,13 +24920,27 @@ function reinitSupabaseClients() {
         persistSession: false
       }
     }) : null;
+    const hasCf = Boolean(config2.cfAccessClientId && config2.cfAccessClientSecret);
     const lastWorking = failoverEngine.getLastWorkingNasUrl();
-    const defaultNasCandidate = lastWorking || config2.nasTunnelUrl || config2.nasLocalUrl || config2.nasUrl || "https://db.lenas.me";
+    const isLastWorkingValid = lastWorking && (!lastWorking.startsWith("https://") || hasCf);
+    let defaultNasCandidate;
+    if (isLastWorkingValid) {
+      defaultNasCandidate = lastWorking;
+    } else if (config2.nasUrl) {
+      defaultNasCandidate = config2.nasUrl;
+    } else if (config2.nasLocalUrl && config2.nasLocalUrl !== "http://192.168.1.14:3001") {
+      defaultNasCandidate = config2.nasLocalUrl;
+    } else if (hasCf && config2.nasTunnelUrl) {
+      defaultNasCandidate = config2.nasTunnelUrl;
+    } else {
+      defaultNasCandidate = "http://100.88.85.6:3001";
+    }
     recreateNasClient(defaultNasCandidate);
     failoverEngine.registerClients({
       nas: nasClient,
       supabase: supabaseClient,
-      supabaseAdmin
+      supabaseAdmin,
+      onRecreateNasClient: recreateNasClient
     });
     try {
       const { TelemetryEngine: TelemetryEngine2 } = (init_TelemetryEngine(), __toCommonJS(TelemetryEngine_exports));
@@ -24881,14 +24950,16 @@ function reinitSupabaseClients() {
       });
     } catch {
     }
-    const getCandidates = () => ({
-      localUrl: config2.nasLocalUrl || "http://192.168.1.14:3001",
-      tunnelUrl: config2.nasTunnelUrl || "https://db.lenas.me",
-      publicUrl: config2.nasUrl || "http://100.88.85.6:3001",
-      cfHeaders: getCfAccessHeaders()
-    });
-    dbReadyPromise = Promise.resolve(true);
-    failoverEngine.checkNasConnectivity(getCandidates()).then((online) => {
+    const getCandidates = () => {
+      const hasCfAccess = Boolean(config2.cfAccessClientId && config2.cfAccessClientSecret);
+      return {
+        localUrl: config2.nasLocalUrl || "http://192.168.1.14:3001",
+        publicUrl: config2.nasUrl || "http://100.88.85.6:3001",
+        tunnelUrl: hasCfAccess ? config2.nasTunnelUrl || "https://db.lenas.me" : void 0,
+        cfHeaders: getCfAccessHeaders()
+      };
+    };
+    dbReadyPromise = failoverEngine.checkNasConnectivity(getCandidates()).then((online) => {
       const status = failoverEngine.getStatus();
       isNasOnline = status.isNasReachable;
       connectionState = status.connectionTier;

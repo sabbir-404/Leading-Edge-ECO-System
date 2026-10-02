@@ -113,6 +113,7 @@ export class DatabaseFailoverEngine {
     private nasClient: SupabaseClient | null = null;
     private supabaseClient: SupabaseClient | null = null;
     private supabaseAdmin: SupabaseClient | null = null;
+    private onRecreateNasClient?: (url: string) => void;
 
     private circuitState: CircuitBreakerState = 'healthy';
     private connectionTier: ConnectionTier = 'supabase';
@@ -231,10 +232,14 @@ export class DatabaseFailoverEngine {
         nas: SupabaseClient | null;
         supabase: SupabaseClient | null;
         supabaseAdmin: SupabaseClient | null;
+        onRecreateNasClient?: (url: string) => void;
     }): void {
         this.nasClient = clients.nas;
         this.supabaseClient = clients.supabase;
         this.supabaseAdmin = clients.supabaseAdmin;
+        if (clients.onRecreateNasClient) {
+            this.onRecreateNasClient = clients.onRecreateNasClient;
+        }
     }
 
     public getActiveClient(): SupabaseClient {
@@ -391,8 +396,8 @@ export class DatabaseFailoverEngine {
 
         const cfHeaders = candidates.cfHeaders || {};
         const local = candidates.localUrl || 'http://192.168.1.14:3001';
-        const tunnel = candidates.tunnelUrl || 'https://db.lenas.me';
         const pub = candidates.publicUrl || 'http://100.88.85.6:3001';
+        const tunnel = candidates.tunnelUrl;
 
         // 1. Fast check: If last working URL is known, test it first with tight timeout (800ms)
         if (this.lastWorkingNasUrl) {
@@ -401,17 +406,17 @@ export class DatabaseFailoverEngine {
             const alive = await this.pingUrl(this.lastWorkingNasUrl, 800, headers);
             if (alive) {
                 const latency = Date.now() - t0;
-                this.handleNasReachable(this.lastWorkingNasUrl, this.deriveTier(this.lastWorkingNasUrl, local, tunnel, pub), latency);
+                this.handleNasReachable(this.lastWorkingNasUrl, this.deriveTier(this.lastWorkingNasUrl, local, tunnel || '', pub), latency);
                 this.isProbing = false;
                 return true;
             }
         }
 
-        // 2. Parallel race across all candidate endpoints with bounded timeout (max 1200ms)
+        // 2. Parallel race across candidate endpoints with bounded timeout (max 1200ms)
         const tests = [
             { url: local, tier: 'nas_local' as ConnectionTier, headers: {}, timeout: 600 },
             { url: pub, tier: 'nas_public' as ConnectionTier, headers: {}, timeout: 1000 },
-            { url: tunnel, tier: 'nas_tunnel' as ConnectionTier, headers: cfHeaders, timeout: 1200 }
+            ...(tunnel ? [{ url: tunnel, tier: 'nas_tunnel' as ConnectionTier, headers: cfHeaders, timeout: 1200 }] : [])
         ];
 
         try {
@@ -437,7 +442,7 @@ export class DatabaseFailoverEngine {
 
     private deriveTier(url: string, local: string, tunnel: string, pub: string): ConnectionTier {
         if (url === local) return 'nas_local';
-        if (url === tunnel) return 'nas_tunnel';
+        if (tunnel && url === tunnel) return 'nas_tunnel';
         return 'nas_public';
     }
 
@@ -448,6 +453,15 @@ export class DatabaseFailoverEngine {
         this.connectionTier = tier;
         this.lastHealthCheckTime = Date.now();
         this.saveNasConnectionState();
+
+        // Immediately update nasClient to the newly reachable candidate URL before verifying recovery
+        if (this.onRecreateNasClient) {
+            try {
+                this.onRecreateNasClient(url);
+            } catch (e: any) {
+                console.warn('[DB:FAILOVER] Error updating nasClient to reachable URL:', e.message);
+            }
+        }
 
         const wasDegraded = this.circuitState === 'degraded' || this.circuitState === 'offline';
         this.consecutiveFailures = 0;
@@ -479,17 +493,48 @@ export class DatabaseFailoverEngine {
     /**
      * Verifies NAS recovery with an actual real database query, reconciles pending fallback
      * writes, and restores NAS as primary.
+     * Probes make_products first as the authoritative MAKE table, with fallback to companies.
      */
     public async verifyAndRecoverNas(): Promise<boolean> {
         if (!this.nasClient) return false;
         try {
             console.log('[DB:RECOVERY] Verifying NAS with real lightweight query...');
             const t0 = Date.now();
-            const { error } = await this.nasClient.from('companies').select('id').limit(1);
-            if (error) {
-                console.warn('[DB:RECOVERY] NAS real query failed:', error.message);
+
+            let queryError: any = null;
+            let success = false;
+
+            // 1. Try make_products first as authoritative MAKE table
+            try {
+                const res = await this.nasClient.from('make_products')?.select?.('id')?.limit?.(1);
+                if (res && !res.error && res.data) {
+                    success = true;
+                } else if (res?.error) {
+                    queryError = res.error;
+                }
+            } catch (err: any) {
+                queryError = err;
+            }
+
+            // 2. Fallback check on companies
+            if (!success) {
+                try {
+                    const res = await this.nasClient.from('companies')?.select?.('id')?.limit?.(1);
+                    if (res && !res.error && res.data) {
+                        success = true;
+                    } else if (res?.error) {
+                        queryError = res.error;
+                    }
+                } catch (err: any) {
+                    queryError = err;
+                }
+            }
+
+            if (!success) {
+                console.warn('[DB:RECOVERY] NAS real query failed:', queryError?.message || 'unknown error');
                 return false;
             }
+
             const duration = Date.now() - t0;
             console.log(`[DB:RECOVERY] NAS verified healthy in ${duration}ms.`);
             this.recordNasSuccess(duration);
@@ -590,6 +635,15 @@ export class DatabaseFailoverEngine {
         const backoffStep = Math.min(4, Math.max(0, this.consecutiveFailures - 1));
         this.cooldownDurationMs = Math.min(120_000, 30_000 * Math.pow(1.5, backoffStep));
         this.cooldownUntil = Date.now() + this.cooldownDurationMs;
+
+        // Invalidate stale tunnel URL if failure was due to an HTML proxy block
+        if (err?.message && (err.message.includes('HTML response') || err.message.includes('proxy/gateway'))) {
+            if (this.lastWorkingNasUrl && this.lastWorkingNasUrl.startsWith('https://')) {
+                console.warn('[DB:FAILOVER] Invalidating blocked tunnel URL from lastWorkingNasUrl cache:', this.lastWorkingNasUrl);
+                this.lastWorkingNasUrl = null;
+                this.saveNasConnectionState();
+            }
+        }
 
         if (this.consecutiveFailures >= this.MAX_CONSECUTIVE_FAILURES || isNetworkErr) {
             if (this.circuitState === 'healthy' || this.circuitState === 'recovering') {
