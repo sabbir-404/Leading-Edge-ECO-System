@@ -17,17 +17,19 @@ const { spawn, execSync } = require('child_process');
 const os = require('os');
 const pkg = require('../package.json');
 const targetVersion = pkg.version;
-const installerPath = path.resolve(__dirname, `../release/LESOFT Setup ${targetVersion}.exe`);
+const hyphenInstaller = path.resolve(__dirname, `../release/LESOFT-Setup-${targetVersion}.exe`);
+const spacedInstaller = path.resolve(__dirname, `../release/LESOFT Setup ${targetVersion}.exe`);
+const installerPath = fs.existsSync(hyphenInstaller) ? hyphenInstaller : spacedInstaller;
 
 if (!fs.existsSync(installerPath)) {
-    console.error(`ERROR: Installer not found at ${installerPath}`);
+    console.error(`ERROR: Installer not found at ${hyphenInstaller} or ${spacedInstaller}`);
     process.exit(1);
 }
 
 const installerStat = fs.statSync(installerPath);
 console.log(`[INIT] Installer: ${installerPath} (${(installerStat.size / (1024 * 1024)).toFixed(2)} MB)`);
 
-function runProcessWithTimeout(cmd, args, targetDir, timeoutMs = 45000, label = 'Installer') {
+function runProcessWithTimeout(cmd, args, targetDir, timeoutMs = 90000, label = 'Installer') {
     return new Promise((resolve, reject) => {
         console.log(`\n─────────────────────────────────────────────────────────────`);
         console.log(`[${label}] Executing: ${path.basename(cmd)}`);

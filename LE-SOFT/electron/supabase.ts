@@ -431,16 +431,50 @@ export let dbReadyPromise: Promise<boolean> | null = null;
 export let supabaseAdmin: SupabaseClient | null = null;
 export let nasClient: SupabaseClient | null = null;
 export let supabaseClient: SupabaseClient | null = null;
+export let authClient: SupabaseClient | null = null;
 export let isNasOnline = false;
 export let connectionState: 'supabase' | 'nas_local' | 'nas_tunnel' | 'nas_public' = 'supabase';
 export let activeNasUrl: string | null = null;
+
+/**
+ * Safely inspects the JWT issuer from an Authorization header without printing or leaking token contents.
+ * Used for safe diagnostic telemetry.
+ */
+export function inspectJwtIssuerSafely(authHeader: string | null | undefined): { present: boolean; issuer: string } {
+    if (!authHeader || typeof authHeader !== 'string' || !authHeader.startsWith('Bearer ')) {
+        return { present: false, issuer: 'none' };
+    }
+    try {
+        const token = authHeader.slice(7).trim();
+        const parts = token.split('.');
+        if (parts.length === 3) {
+            const payloadJson = Buffer.from(parts[1], 'base64url').toString('utf8');
+            const payload = JSON.parse(payloadJson);
+            return { present: true, issuer: payload.iss || 'unknown' };
+        }
+    } catch {}
+    return { present: true, issuer: 'unparseable' };
+}
+
+/**
+ * Returns the canonical Supabase Auth client.
+ * Guarantees all authentication and session lifecycle operations communicate
+ * strictly with Supabase Cloud GoTrue, never NAS PostgREST.
+ */
+export function getAuthClient(): SupabaseClient {
+    if (!supabaseClient) {
+        throw new Error('[AUTH] Supabase Auth client is not initialized.');
+    }
+    return supabaseClient;
+}
 
 // Proxy wrapper for the default export/standard client so external modules
 // always reference the authoritative active client determined by failoverEngine.
 export const supabase = new Proxy({} as SupabaseClient, {
     get(target, prop, receiver) {
-        if (prop === 'auth' && supabaseClient) {
-            return supabaseClient.auth;
+        if (prop === 'auth') {
+            if (supabaseClient) return supabaseClient.auth;
+            throw new Error('[AUTH] Supabase Auth client is not initialized.');
         }
         const active = failoverEngine.getActiveClient();
         return Reflect.get(active, prop, active);
@@ -517,7 +551,27 @@ function recreateNasClient(url: string) {
                 relativePath = reqUrl;
             }
 
-            // PostgREST URL path normalization for NAS
+            // ARCHITECTURAL HARD SEPARATION:
+            // nasFetch is exclusively a DATABASE transport for NAS PostgREST.
+            // Under no circumstances may Auth traffic (/auth/v1/*) be routed to NAS PostgREST or
+            // recorded as a database failure in DatabaseFailoverEngine.
+            // If an auth request ever reaches nasFetch, bypass NAS completely and forward directly
+            // to the authoritative Supabase Cloud Auth service endpoint without modifying headers or recording NAS failure.
+            if (relativePath.includes('/auth/v1/')) {
+                const authTargetBase = config.url || 'https://ildkkgjrolcjijwfokek.supabase.co';
+                const cleanAuthPath = relativePath.startsWith('/') ? relativePath : '/' + relativePath;
+                const targetAuthUrl = new URL(cleanAuthPath, authTargetBase).toString();
+
+                const authHeader = (init?.headers instanceof Headers)
+                    ? init.headers.get('Authorization')
+                    : (init?.headers as any)?.Authorization || (init?.headers as any)?.authorization;
+                const jwtInfo = inspectJwtIssuerSafely(authHeader);
+
+                console.warn(`[NAS:FETCH:AUTH_ISOLATION] Intercepted Auth service request to '${relativePath}'. Routing cleanly to Supabase Auth endpoint (${authTargetBase}). TokenPresent: ${jwtInfo.present}, Issuer: ${jwtInfo.issuer}`);
+                return fetch(targetAuthUrl, init);
+            }
+
+            // PostgREST URL path normalization for NAS database queries
             let nasTargetUrl = reqUrl;
             if (nasTargetUrl.includes('/rest/v1/')) {
                 nasTargetUrl = nasTargetUrl.replace('/rest/v1/', '/');
@@ -629,7 +683,8 @@ function recreateNasClient(url: string) {
         nasClient = createClient(url, config.nasAnonKey || config.anonKey || 'placeholder', {
             auth: {
                 persistSession: false,
-                autoRefreshToken: true
+                autoRefreshToken: false,
+                detectSessionInUrl: false
             },
             global: {
                 fetch: nasFetch,
@@ -640,17 +695,18 @@ function recreateNasClient(url: string) {
             }
         });
 
-        // Sync current session to the new nasClient if user is logged in
-        if (supabaseClient) {
-            supabaseClient.auth.getSession().then(({ data: { session } }) => {
-                if (session && nasClient) {
-                    nasClient.auth.setSession({
-                        access_token: session.access_token,
-                        refresh_token: session.refresh_token || '',
-                    });
+        // Guard: nasClient is exclusively a PostgREST database query client.
+        // It must NOT be treated as an Auth client. Delegate any access to .auth to the
+        // canonical Supabase Cloud Auth client (supabaseClient.auth).
+        Object.defineProperty(nasClient, 'auth', {
+            get() {
+                if (supabaseClient) {
+                    return supabaseClient.auth;
                 }
-            }).catch(() => {});
-        }
+                throw new Error('[AUTH] nasClient does not provide authentication services. Use authClient.');
+            },
+            configurable: true
+        });
 
         // Register updated client with failover engine
         failoverEngine.registerClients({
@@ -682,18 +738,7 @@ export function reinitSupabaseClients(): void {
                 },
             },
         });
-
-        // Sync auth state changes to nasClient
-        supabaseClient.auth.onAuthStateChange((event, session) => {
-            if (nasClient) {
-                if (session) {
-                    nasClient.auth.setSession({
-                        access_token: session.access_token,
-                        refresh_token: session.refresh_token || '',
-                    });
-                }
-            }
-        });
+        authClient = supabaseClient;
         
         supabaseAdmin = config.serviceRoleKey ? createClient(config.url, config.serviceRoleKey, {
             auth: {

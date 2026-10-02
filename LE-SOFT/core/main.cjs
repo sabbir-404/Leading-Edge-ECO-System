@@ -24404,17 +24404,20 @@ MCowBQYDK2VwAyEAN1VUr6FWOFsJI5xKtlVlLJg167CVtx8d7+tgebClPxI=
 var supabase_exports = {};
 __export(supabase_exports, {
   activeNasUrl: () => activeNasUrl,
+  authClient: () => authClient,
   bootstrapPublicClientConfig: () => bootstrapPublicClientConfig,
   connectionState: () => connectionState,
   dbReadyPromise: () => dbReadyPromise,
   decryptEmbeddedCredentials: () => decryptEmbeddedCredentials,
   default: () => supabase_default,
   failoverEngine: () => failoverEngine,
+  getAuthClient: () => getAuthClient,
   getCfAccessHeaders: () => getCfAccessHeaders,
   getDbClients: () => getDbClients,
   getNasStorageCandidates: () => getNasStorageCandidates,
   getNasStorageUrl: () => getNasStorageUrl,
   hasSupabaseConfig: () => hasSupabaseConfig,
+  inspectJwtIssuerSafely: () => inspectJwtIssuerSafely,
   isNasOnline: () => isNasOnline,
   loadConfig: () => loadConfig,
   nasClient: () => nasClient,
@@ -24717,6 +24720,28 @@ function decryptEmbeddedCredentials() {
     return false;
   }
 }
+function inspectJwtIssuerSafely(authHeader) {
+  if (!authHeader || typeof authHeader !== "string" || !authHeader.startsWith("Bearer ")) {
+    return { present: false, issuer: "none" };
+  }
+  try {
+    const token = authHeader.slice(7).trim();
+    const parts = token.split(".");
+    if (parts.length === 3) {
+      const payloadJson = Buffer.from(parts[1], "base64url").toString("utf8");
+      const payload = JSON.parse(payloadJson);
+      return { present: true, issuer: payload.iss || "unknown" };
+    }
+  } catch {
+  }
+  return { present: true, issuer: "unparseable" };
+}
+function getAuthClient() {
+  if (!supabaseClient) {
+    throw new Error("[AUTH] Supabase Auth client is not initialized.");
+  }
+  return supabaseClient;
+}
 function getDbClients() {
   const status = failoverEngine.getStatus();
   isNasOnline = status.isNasReachable;
@@ -24775,6 +24800,15 @@ function recreateNasClient(url2) {
         relativePath = parsed.pathname + parsed.search;
       } catch {
         relativePath = reqUrl;
+      }
+      if (relativePath.includes("/auth/v1/")) {
+        const authTargetBase = config2.url || "https://ildkkgjrolcjijwfokek.supabase.co";
+        const cleanAuthPath = relativePath.startsWith("/") ? relativePath : "/" + relativePath;
+        const targetAuthUrl = new URL(cleanAuthPath, authTargetBase).toString();
+        const authHeader = init?.headers instanceof Headers ? init.headers.get("Authorization") : init?.headers?.Authorization || init?.headers?.authorization;
+        const jwtInfo = inspectJwtIssuerSafely(authHeader);
+        console.warn(`[NAS:FETCH:AUTH_ISOLATION] Intercepted Auth service request to '${relativePath}'. Routing cleanly to Supabase Auth endpoint (${authTargetBase}). TokenPresent: ${jwtInfo.present}, Issuer: ${jwtInfo.issuer}`);
+        return fetch(targetAuthUrl, init);
       }
       let nasTargetUrl = reqUrl;
       if (nasTargetUrl.includes("/rest/v1/")) {
@@ -24859,7 +24893,8 @@ function recreateNasClient(url2) {
     nasClient = createClient(url2, config2.nasAnonKey || config2.anonKey || "placeholder", {
       auth: {
         persistSession: false,
-        autoRefreshToken: true
+        autoRefreshToken: false,
+        detectSessionInUrl: false
       },
       global: {
         fetch: nasFetch,
@@ -24869,17 +24904,15 @@ function recreateNasClient(url2) {
         }
       }
     });
-    if (supabaseClient) {
-      supabaseClient.auth.getSession().then(({ data: { session: session2 } }) => {
-        if (session2 && nasClient) {
-          nasClient.auth.setSession({
-            access_token: session2.access_token,
-            refresh_token: session2.refresh_token || ""
-          });
+    Object.defineProperty(nasClient, "auth", {
+      get() {
+        if (supabaseClient) {
+          return supabaseClient.auth;
         }
-      }).catch(() => {
-      });
-    }
+        throw new Error("[AUTH] nasClient does not provide authentication services. Use authClient.");
+      },
+      configurable: true
+    });
     failoverEngine.registerClients({
       nas: nasClient,
       supabase: supabaseClient,
@@ -24904,16 +24937,7 @@ function reinitSupabaseClients() {
         }
       }
     });
-    supabaseClient.auth.onAuthStateChange((event, session2) => {
-      if (nasClient) {
-        if (session2) {
-          nasClient.auth.setSession({
-            access_token: session2.access_token,
-            refresh_token: session2.refresh_token || ""
-          });
-        }
-      }
-    });
+    authClient = supabaseClient;
     supabaseAdmin = config2.serviceRoleKey ? createClient(config2.url, config2.serviceRoleKey, {
       auth: {
         autoRefreshToken: false,
@@ -24988,7 +25012,7 @@ function getNasStorageCandidates() {
   ].filter(Boolean);
   return Array.from(new Set(candidates));
 }
-var import_electron5, import_path5, import_fs5, import_crypto5, CREDENTIAL_SALT, EMPTY_DEFAULTS, failoverEngine, dbReadyPromise, supabaseAdmin, nasClient, supabaseClient, isNasOnline, connectionState, activeNasUrl, supabase, supabase_default;
+var import_electron5, import_path5, import_fs5, import_crypto5, CREDENTIAL_SALT, EMPTY_DEFAULTS, failoverEngine, dbReadyPromise, supabaseAdmin, nasClient, supabaseClient, authClient, isNasOnline, connectionState, activeNasUrl, supabase, supabase_default;
 var init_supabase = __esm({
   "electron/supabase.ts"() {
     "use strict";
@@ -25021,13 +25045,15 @@ var init_supabase = __esm({
     supabaseAdmin = null;
     nasClient = null;
     supabaseClient = null;
+    authClient = null;
     isNasOnline = false;
     connectionState = "supabase";
     activeNasUrl = null;
     supabase = new Proxy({}, {
       get(target, prop2, receiver) {
-        if (prop2 === "auth" && supabaseClient) {
-          return supabaseClient.auth;
+        if (prop2 === "auth") {
+          if (supabaseClient) return supabaseClient.auth;
+          throw new Error("[AUTH] Supabase Auth client is not initialized.");
         }
         const active = failoverEngine.getActiveClient();
         return Reflect.get(active, prop2, active);
@@ -136211,13 +136237,54 @@ function registerHandlers() {
 init_supabase();
 init_MediaProtocolService();
 MediaProtocolService.registerSchemeAsPrivileged();
-function setupAutoUpdater() {
+function sanitizeUpdaterLog(msg) {
+  if (typeof msg !== "string") {
+    try {
+      msg = JSON.stringify(msg);
+    } catch {
+      msg = String(msg);
+    }
+  }
+  return msg.replace(/(bearer\s+)[a-zA-Z0-9_\-\.]+/gi, "$1[REDACTED]").replace(/(gh[pousr]_[a-zA-Z0-9_]{20,})/gi, "[REDACTED_GH_TOKEN]").replace(/([?&](?:token|key|secret|password|access_token)=)[^&]+/gi, "$1[REDACTED]").replace(/(authorization:\s*)[^\r\n]+/gi, "$1[REDACTED]");
+}
+function appendUpdaterLog(msg) {
   try {
-    import_electron_updater2.autoUpdater.logger = null;
+    const logPath = import_path16.default.join(import_electron18.app.getPath("userData"), "app.log");
+    import_fs16.default.appendFileSync(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
+`);
+  } catch {
+  }
+}
+function setupAutoUpdater() {
+  const updaterLogger = {
+    info: (msg) => {
+      const clean = sanitizeUpdaterLog(msg);
+      console.log(`[Updater] ${clean}`);
+      appendUpdaterLog(`[Updater] ${clean}`);
+    },
+    warn: (msg) => {
+      const clean = sanitizeUpdaterLog(msg);
+      console.warn(`[Updater] ${clean}`);
+      appendUpdaterLog(`[Updater WARN] ${clean}`);
+    },
+    error: (msg) => {
+      const clean = sanitizeUpdaterLog(msg);
+      console.error(`[Updater] ${clean}`);
+      appendUpdaterLog(`[Updater ERROR] ${clean}`);
+    },
+    debug: (msg) => {
+      if (!import_electron18.app.isPackaged) {
+        console.log(`[Updater DEBUG] ${sanitizeUpdaterLog(msg)}`);
+      }
+    }
+  };
+  try {
+    import_electron_updater2.autoUpdater.logger = updaterLogger;
     import_electron_updater2.autoUpdater.autoDownload = false;
     import_electron_updater2.autoUpdater.autoInstallOnAppQuit = true;
   } catch (e2) {
     console.warn("Failed to configure autoUpdater:", e2);
+    appendUpdaterLog(`[Updater ERROR] Failed to configure autoUpdater: ${sanitizeUpdaterLog(e2.message)}`);
   }
   const broadcast = (data2) => {
     import_electron18.BrowserWindow.getAllWindows().forEach((win) => {
@@ -136225,15 +136292,30 @@ function setupAutoUpdater() {
     });
   };
   if (import_electron18.app.isPackaged) {
-    import_electron_updater2.autoUpdater.on("checking-for-update", () => broadcast({ status: "checking" }));
-    import_electron_updater2.autoUpdater.on("update-not-available", () => broadcast({ status: "up-to-date" }));
-    import_electron_updater2.autoUpdater.on("update-available", (info) => broadcast({ status: "available", info }));
-    import_electron_updater2.autoUpdater.on("error", (err) => {
-      console.error("[Updater] Error:", err.message);
-      broadcast({ status: "error", message: err.message });
+    import_electron_updater2.autoUpdater.on("checking-for-update", () => {
+      updaterLogger.info("Checking for update at provider feed...");
+      broadcast({ status: "checking" });
     });
-    import_electron_updater2.autoUpdater.on("download-progress", (prog) => broadcast({ status: "downloading", progress: prog }));
-    import_electron_updater2.autoUpdater.on("update-downloaded", (info) => broadcast({ status: "ready", info }));
+    import_electron_updater2.autoUpdater.on("update-not-available", (info) => {
+      updaterLogger.info(`Update check complete: application is up-to-date (v${import_electron18.app.getVersion()})`);
+      broadcast({ status: "up-to-date", info });
+    });
+    import_electron_updater2.autoUpdater.on("update-available", (info) => {
+      updaterLogger.info(`Update available: v${info?.version} (current: v${import_electron18.app.getVersion()})`);
+      broadcast({ status: "available", info });
+    });
+    import_electron_updater2.autoUpdater.on("error", (err) => {
+      const cleanMsg = sanitizeUpdaterLog(err.message);
+      updaterLogger.error(`Updater error: ${cleanMsg}`);
+      broadcast({ status: "error", message: cleanMsg });
+    });
+    import_electron_updater2.autoUpdater.on("download-progress", (prog) => {
+      broadcast({ status: "downloading", progress: prog });
+    });
+    import_electron_updater2.autoUpdater.on("update-downloaded", (info) => {
+      updaterLogger.info(`Update downloaded successfully: v${info?.version}. Ready for install.`);
+      broadcast({ status: "ready", info });
+    });
   }
   const performManualMacCheck = async () => {
     try {
@@ -136267,7 +136349,7 @@ function setupAutoUpdater() {
         }
       }
     } catch (err) {
-      console.error("Manual fallback fetch failed", err);
+      updaterLogger.error(`Manual fallback fetch failed: ${sanitizeUpdaterLog(err?.message)}`);
     }
   };
   import_electron18.ipcMain.handle("check-for-update", async () => {
@@ -136275,6 +136357,7 @@ function setupAutoUpdater() {
       return { status: "up-to-date" };
     }
     try {
+      updaterLogger.info("check-for-update requested via IPC");
       await import_electron_updater2.autoUpdater.checkForUpdates();
       return { status: "checking" };
     } catch (e2) {
@@ -136282,33 +136365,46 @@ function setupAutoUpdater() {
         await performManualMacCheck();
         return { status: "checking" };
       }
-      return { status: "error", message: e2.message };
+      const cleanMsg = sanitizeUpdaterLog(e2.message);
+      updaterLogger.error(`Check for update failed: ${cleanMsg}`);
+      return { status: "error", message: cleanMsg };
     }
   });
   import_electron18.ipcMain.handle("download-update", async () => {
     if (!import_electron18.app.isPackaged) return { status: "idle" };
     try {
+      updaterLogger.info("download-update requested via IPC");
       await import_electron_updater2.autoUpdater.downloadUpdate();
       return { status: "downloading" };
     } catch (e2) {
-      return { status: "error", message: e2.message };
+      const cleanMsg = sanitizeUpdaterLog(e2.message);
+      updaterLogger.error(`Download update failed: ${cleanMsg}`);
+      broadcast({ status: "error", message: cleanMsg, phase: "download" });
+      return { status: "error", message: cleanMsg, phase: "download" };
     }
   });
   import_electron18.ipcMain.handle("install-update", async () => {
     if (!import_electron18.app.isPackaged) return { status: "idle" };
     try {
+      updaterLogger.info("install-update requested via IPC \u2014 calling quitAndInstall");
       import_electron_updater2.autoUpdater.quitAndInstall(false, true);
       return { status: "installing" };
     } catch (e2) {
-      return { status: "error", message: e2.message };
+      const cleanMsg = sanitizeUpdaterLog(e2.message);
+      updaterLogger.error(`Install update failed: ${cleanMsg}`);
+      broadcast({ status: "error", message: cleanMsg, phase: "install" });
+      return { status: "error", message: cleanMsg, phase: "install" };
     }
   });
   import_electron18.ipcMain.handle("get-app-version", () => import_electron18.app.getVersion());
   if (import_electron18.app.isPackaged) {
     setTimeout(() => {
+      updaterLogger.info("Running automated 5s startup update check...");
       import_electron_updater2.autoUpdater.checkForUpdates().catch((e2) => {
         if (process.platform === "darwin") {
           performManualMacCheck();
+        } else {
+          updaterLogger.error(`Startup update check error: ${sanitizeUpdaterLog(e2?.message)}`);
         }
       });
     }, 5e3);

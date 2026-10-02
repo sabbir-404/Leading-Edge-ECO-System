@@ -25,7 +25,8 @@ const UpdateBanner: React.FC = () => {
             } else if (data.status === 'ready') {
                 setUpdateStatus('ready');
             } else if (data.status === 'error') {
-                // Don't show error banner — too noisy
+                // If download errored, revert to available so user can retry rather than staying stuck at 0%
+                setUpdateStatus(prev => prev === 'downloading' ? 'available' : prev);
             }
         });
         return () => cleanup?.();
@@ -70,7 +71,10 @@ const UpdateBanner: React.FC = () => {
                                 setUpdateStatus('downloading');
                                 setDownloadProgress(0);
                                 // @ts-ignore
-                                await window.electron.downloadUpdate();
+                                const res = await window.electron.downloadUpdate();
+                                if (res?.status === 'error') {
+                                    setUpdateStatus('available');
+                                }
                             }}
                             style={{
                                 padding: '4px 14px',

@@ -92,12 +92,15 @@ jobs:
             }
           }
 
-          $exe = (Get-ChildItem release -Filter '*.exe' | Select-Object -First 1).FullName
-          $blockmap = (Get-ChildItem release -Filter '*.exe.blockmap' | Select-Object -First 1).FullName
+          $exe = (Get-ChildItem release -Filter 'LESOFT-Setup-*.exe' | Select-Object -First 1).FullName
+          if (-not $exe) {
+            $exe = (Get-ChildItem release -Filter '*.exe' | Where-Object { $_.Name -notlike '*uninstaller*' } | Select-Object -First 1).FullName
+          }
+          $blockmap = (Get-ChildItem release -Filter '*.blockmap' | Select-Object -First 1).FullName
           $latest = (Get-ChildItem release -Filter 'latest.yml' | Select-Object -First 1).FullName
 
-          gh release upload $tag $exe $blockmap $latest --repo $env:RELEASE_REPO --clobber
-          gh release edit $tag --draft=false --repo $env:RELEASE_REPO
+          gh release upload "$tag" "$exe" "$blockmap" "$latest" --repo "$env:RELEASE_REPO" --clobber
+          gh release edit "$tag" --draft=false --repo "$env:RELEASE_REPO"
 
       - name: Upload Installer Artifact
         uses: actions/upload-artifact@v4

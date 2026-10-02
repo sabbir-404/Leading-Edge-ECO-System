@@ -18,17 +18,58 @@ MediaProtocolService.registerSchemeAsPrivileged();
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Auto-Updater
-//  Checks GitHub Releases for latest.yml (Windows) / latest-mac.yml (macOS)
 //  Only runs in production (app.isPackaged). Push status to renderer via IPC.
 // ─────────────────────────────────────────────────────────────────────────────
-function setupAutoUpdater() {
-    // Silence console noise — log to app.log instead
+// Sanitizer to guarantee no tokens, headers, or secrets leak to logs
+function sanitizeUpdaterLog(msg: any): string {
+    if (typeof msg !== 'string') {
+        try { msg = JSON.stringify(msg); } catch { msg = String(msg); }
+    }
+    return msg
+        .replace(/(bearer\s+)[a-zA-Z0-9_\-\.]+/gi, '$1[REDACTED]')
+        .replace(/(gh[pousr]_[a-zA-Z0-9_]{20,})/gi, '[REDACTED_GH_TOKEN]')
+        .replace(/([?&](?:token|key|secret|password|access_token)=)[^&]+/gi, '$1[REDACTED]')
+        .replace(/(authorization:\s*)[^\r\n]+/gi, '$1[REDACTED]');
+}
+
+function appendUpdaterLog(msg: string) {
     try {
-        autoUpdater.logger = null;
+        const logPath = path.join(app.getPath('userData'), 'app.log');
+        fs.appendFileSync(logPath, `[${new Date().toISOString()}] ${msg}\n`);
+    } catch {}
+}
+
+function setupAutoUpdater() {
+    const updaterLogger = {
+        info: (msg: any) => {
+            const clean = sanitizeUpdaterLog(msg);
+            console.log(`[Updater] ${clean}`);
+            appendUpdaterLog(`[Updater] ${clean}`);
+        },
+        warn: (msg: any) => {
+            const clean = sanitizeUpdaterLog(msg);
+            console.warn(`[Updater] ${clean}`);
+            appendUpdaterLog(`[Updater WARN] ${clean}`);
+        },
+        error: (msg: any) => {
+            const clean = sanitizeUpdaterLog(msg);
+            console.error(`[Updater] ${clean}`);
+            appendUpdaterLog(`[Updater ERROR] ${clean}`);
+        },
+        debug: (msg: any) => {
+            if (!app.isPackaged) {
+                console.log(`[Updater DEBUG] ${sanitizeUpdaterLog(msg)}`);
+            }
+        }
+    };
+
+    try {
+        autoUpdater.logger = updaterLogger;
         autoUpdater.autoDownload = false;       // Let the user decide to download
         autoUpdater.autoInstallOnAppQuit = true; // Install silently on next quit
-    } catch (e) {
+    } catch (e: any) {
         console.warn('Failed to configure autoUpdater:', e);
+        appendUpdaterLog(`[Updater ERROR] Failed to configure autoUpdater: ${sanitizeUpdaterLog(e.message)}`);
     }
 
     const broadcast = (data: object) => {
@@ -38,15 +79,30 @@ function setupAutoUpdater() {
     };
 
     if (app.isPackaged) {
-        autoUpdater.on('checking-for-update',  () => broadcast({ status: 'checking' }));
-        autoUpdater.on('update-not-available', () => broadcast({ status: 'up-to-date' }));
-        autoUpdater.on('update-available',  info => broadcast({ status: 'available', info }));
-        autoUpdater.on('error', err => {
-            console.error('[Updater] Error:', err.message);
-            broadcast({ status: 'error', message: err.message });
+        autoUpdater.on('checking-for-update',  () => {
+            updaterLogger.info('Checking for update at provider feed...');
+            broadcast({ status: 'checking' });
         });
-        autoUpdater.on('download-progress', prog => broadcast({ status: 'downloading', progress: prog }));
-        autoUpdater.on('update-downloaded',  info => broadcast({ status: 'ready', info }));
+        autoUpdater.on('update-not-available', (info) => {
+            updaterLogger.info(`Update check complete: application is up-to-date (v${app.getVersion()})`);
+            broadcast({ status: 'up-to-date', info });
+        });
+        autoUpdater.on('update-available',  info => {
+            updaterLogger.info(`Update available: v${info?.version} (current: v${app.getVersion()})`);
+            broadcast({ status: 'available', info });
+        });
+        autoUpdater.on('error', err => {
+            const cleanMsg = sanitizeUpdaterLog(err.message);
+            updaterLogger.error(`Updater error: ${cleanMsg}`);
+            broadcast({ status: 'error', message: cleanMsg });
+        });
+        autoUpdater.on('download-progress', prog => {
+            broadcast({ status: 'downloading', progress: prog });
+        });
+        autoUpdater.on('update-downloaded',  info => {
+            updaterLogger.info(`Update downloaded successfully: v${info?.version}. Ready for install.`);
+            broadcast({ status: 'ready', info });
+        });
     }
 
     // Helper: fallback update check for unsigned macOS builds
@@ -78,7 +134,7 @@ function setupAutoUpdater() {
                     broadcast({ status: 'up-to-date' });
                 }
             }
-        } catch (err) { console.error('Manual fallback fetch failed', err); }
+        } catch (err: any) { updaterLogger.error(`Manual fallback fetch failed: ${sanitizeUpdaterLog(err?.message)}`); }
     };
 
     // IPC: renderer calls these
@@ -87,6 +143,7 @@ function setupAutoUpdater() {
             return { status: 'up-to-date' };
         }
         try { 
+            updaterLogger.info('check-for-update requested via IPC');
             await autoUpdater.checkForUpdates(); 
             return { status: 'checking' }; 
         } catch (e: any) { 
@@ -94,27 +151,37 @@ function setupAutoUpdater() {
                 await performManualMacCheck();
                 return { status: 'checking' };
             }
-            return { status: 'error', message: e.message }; 
+            const cleanMsg = sanitizeUpdaterLog(e.message);
+            updaterLogger.error(`Check for update failed: ${cleanMsg}`);
+            return { status: 'error', message: cleanMsg }; 
         }
     });
 
     ipcMain.handle('download-update', async () => {
         if (!app.isPackaged) return { status: 'idle' };
         try { 
+            updaterLogger.info('download-update requested via IPC');
             await autoUpdater.downloadUpdate(); 
             return { status: 'downloading' }; 
         } catch (e: any) { 
-            return { status: 'error', message: e.message }; 
+            const cleanMsg = sanitizeUpdaterLog(e.message);
+            updaterLogger.error(`Download update failed: ${cleanMsg}`);
+            broadcast({ status: 'error', message: cleanMsg, phase: 'download' });
+            return { status: 'error', message: cleanMsg, phase: 'download' }; 
         }
     });
     
     ipcMain.handle('install-update', async () => {
         if (!app.isPackaged) return { status: 'idle' };
         try {
+            updaterLogger.info('install-update requested via IPC — calling quitAndInstall');
             autoUpdater.quitAndInstall(false, true); // isSilent=false, isForceRunAfter=true
             return { status: 'installing' };
-        } catch (e: any) {
-            return { status: 'error', message: e.message };
+        } catch (e: any) { 
+            const cleanMsg = sanitizeUpdaterLog(e.message);
+            updaterLogger.error(`Install update failed: ${cleanMsg}`);
+            broadcast({ status: 'error', message: cleanMsg, phase: 'install' });
+            return { status: 'error', message: cleanMsg, phase: 'install' }; 
         }
     });
     
@@ -123,9 +190,12 @@ function setupAutoUpdater() {
     // Check for updates 5 s after launch
     if (app.isPackaged) {
         setTimeout(() => {
+            updaterLogger.info('Running automated 5s startup update check...');
             autoUpdater.checkForUpdates().catch((e: any) => {
                 if (process.platform === 'darwin') {
                     performManualMacCheck();
+                } else {
+                    updaterLogger.error(`Startup update check error: ${sanitizeUpdaterLog(e?.message)}`);
                 }
             });
         }, 5000);

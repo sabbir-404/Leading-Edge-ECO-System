@@ -1473,7 +1473,7 @@ const Settings: React.FC = () => {
                                             </a>
                                         )}
                                         {updateStatus === 'available' && !updateInfo?.isManual && (
-                                            <button onClick={async () => { setUpdateStatus('downloading'); await window.electron.downloadUpdate?.(); }} style={{ padding: '0.6rem 1.2rem', borderRadius: '8px', border: 'none', background: 'var(--accent-color)', color: 'white', cursor: 'pointer', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                            <button onClick={async () => { setUpdateStatus('downloading'); const r = await window.electron.downloadUpdate?.(); if (r?.status === 'error') setUpdateStatus('error'); }} style={{ padding: '0.6rem 1.2rem', borderRadius: '8px', border: 'none', background: 'var(--accent-color)', color: 'white', cursor: 'pointer', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                                                 <Download size={15} /> Download Update
                                             </button>
                                         )}
