@@ -13,7 +13,7 @@ export default defineConfig({
         port: 5173,
         strictPort: true,
         watch: {
-            ignored: ['**/release/**', '**/dist/**']
+            ignored: ['**/release/**', '**/dist/**', '**/scratch/**']
         }
     }
 })

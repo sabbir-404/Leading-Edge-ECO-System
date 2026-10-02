@@ -24823,6 +24823,9 @@ function recreateNasClient(url2) {
       if (["POST", "PATCH", "PUT"].includes(method) && !headers.has("Content-Type")) {
         headers.set("Content-Type", "application/json");
       }
+      const nasDbKey = config2.nasAnonKey || config2.anonKey || PUBLIC_SUPABASE_ANON_KEY;
+      headers.set("apikey", nasDbKey);
+      headers.set("Authorization", `Bearer ${nasDbKey}`);
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 2e3);
       if (init?.signal) {
@@ -24890,12 +24893,14 @@ function recreateNasClient(url2) {
         throw err;
       }
     };
-    nasClient = createClient(url2, config2.nasAnonKey || config2.anonKey || "placeholder", {
+    const nasKey = config2.nasAnonKey || config2.anonKey || PUBLIC_SUPABASE_ANON_KEY;
+    nasClient = createClient(url2, nasKey, {
       auth: {
         persistSession: false,
         autoRefreshToken: false,
         detectSessionInUrl: false
       },
+      accessToken: async () => nasKey,
       global: {
         fetch: nasFetch,
         headers: {
@@ -24903,15 +24908,6 @@ function recreateNasClient(url2) {
           ...cfHeaders
         }
       }
-    });
-    Object.defineProperty(nasClient, "auth", {
-      get() {
-        if (supabaseClient) {
-          return supabaseClient.auth;
-        }
-        throw new Error("[AUTH] nasClient does not provide authentication services. Use authClient.");
-      },
-      configurable: true
     });
     failoverEngine.registerClients({
       nas: nasClient,
@@ -24926,7 +24922,7 @@ function reinitSupabaseClients() {
   try {
     const config2 = loadConfig();
     failoverEngine.stopBackgroundMonitoring();
-    supabaseClient = createClient(config2.url || "https://placeholder.supabase.co", config2.anonKey || "placeholder", {
+    supabaseClient = createClient(config2.url || PUBLIC_SUPABASE_URL || "https://placeholder.supabase.co", config2.anonKey || PUBLIC_SUPABASE_ANON_KEY || "placeholder", {
       auth: {
         persistSession: false,
         autoRefreshToken: true
@@ -25027,11 +25023,11 @@ var init_supabase = __esm({
     init_license_manager();
     CREDENTIAL_SALT = "LE-SOFT-CREDENTIAL-ENCRYPT-SALT-v1-2026";
     EMPTY_DEFAULTS = {
-      url: process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "",
-      anonKey: process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || "",
+      url: process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || PUBLIC_SUPABASE_URL || "",
+      anonKey: process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || PUBLIC_SUPABASE_ANON_KEY || "",
       serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || "",
       nasUrl: process.env.NAS_URL || "http://100.88.85.6:3001",
-      nasAnonKey: process.env.NAS_ANON_KEY || "",
+      nasAnonKey: process.env.NAS_ANON_KEY || PUBLIC_SUPABASE_ANON_KEY || "",
       nasStorageUrl: process.env.NAS_STORAGE_URL || "http://100.88.85.6:8081",
       nasLocalUrl: process.env.NAS_LOCAL_URL || "http://192.168.1.14:3001",
       nasLocalStorageUrl: process.env.NAS_LOCAL_STORAGE_URL || "http://192.168.1.14:8081",

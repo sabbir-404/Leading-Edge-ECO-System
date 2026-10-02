@@ -361,9 +361,114 @@ describe('Auth & Database Transport Separation Suite (Tests A - I)', () => {
         expect(noAuth.present).toBe(false);
         expect(noAuth.issuer).toBe('none');
 
-        // Accessing nasClient.auth delegates cleanly to supabaseClient.auth
+        // nasClient is strictly database-only: calling auth.getSession() is blocked by SupabaseClient
         if (nasClient) {
-            expect(nasClient.auth).toBe(supabaseClient?.auth);
+            expect(() => (nasClient as any).auth.getSession()).toThrow(/accessToken option/);
         }
+    });
+
+    it('Test J: NAS PostgREST query NEVER inherits Supabase Cloud user JWT when user is logged in', async () => {
+        reinitSupabaseClients();
+        const activeAuthClient = getAuthClient();
+
+        // 1. Mock user login on Auth Client
+        vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const urlStr = typeof input === 'string' ? input : input.toString();
+
+            if (urlStr.includes('/auth/v1/user')) {
+                return new Response(JSON.stringify(validSupabaseSession.user), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' }
+                });
+            }
+
+            return new Response('[]', { status: 200 });
+        });
+
+        await activeAuthClient.auth.setSession({
+            access_token: mockAccessToken,
+            refresh_token: mockRefreshToken
+        });
+
+        // Verify authClient has active session
+        const { data: sessionData } = await activeAuthClient.auth.getSession();
+        expect(sessionData.session?.access_token).toBe(mockAccessToken);
+
+        // 2. Spy on fetch to inspect the headers sent to NAS PostgREST
+        let capturedNasHeaders: Headers | null = null;
+        vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const urlStr = typeof input === 'string' ? input : input.toString();
+
+            if (urlStr.includes(':3001/make_products')) {
+                capturedNasHeaders = new Headers(init?.headers);
+                return new Response(JSON.stringify([{ id: 101, name: 'Executive Chair' }]), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' }
+                });
+            }
+
+            return new Response('[]', { status: 200 });
+        });
+
+        // 3. Execute query on nasClient
+        expect(nasClient).toBeDefined();
+        const res = await nasClient!.from('make_products').select('id, name');
+        expect(res.error).toBeNull();
+        expect(res.data).toBeDefined();
+
+        // 4. Verify Authorization header sent to NAS PostgREST:
+        // Must NEVER contain the user's Supabase Cloud JWT!
+        expect(capturedNasHeaders).not.toBeNull();
+        const authHeader = capturedNasHeaders!.get('Authorization');
+        expect(authHeader).toBeDefined();
+        expect(authHeader).not.toBe(`Bearer ${mockAccessToken}`);
+        expect(authHeader).toBe(`Bearer ${PUBLIC_SUPABASE_ANON_KEY}`);
+
+        const apiKeyHeader = capturedNasHeaders!.get('apikey');
+        expect(apiKeyHeader).toBe(PUBLIC_SUPABASE_ANON_KEY);
+    });
+
+    it('Test K: verifyAndRecoverNas succeeds and sends NAS database credential even with active user session', async () => {
+        reinitSupabaseClients();
+        const activeAuthClient = getAuthClient();
+
+        // Establish user session
+        vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL) => {
+            const urlStr = typeof input === 'string' ? input : input.toString();
+            if (urlStr.includes('/auth/v1/user')) {
+                return new Response(JSON.stringify(validSupabaseSession.user), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' }
+                });
+            }
+            return new Response('[]', { status: 200 });
+        });
+
+        await activeAuthClient.auth.setSession({
+            access_token: mockAccessToken,
+            refresh_token: mockRefreshToken
+        });
+
+        // Spy on NAS health probe
+        let capturedProbeAuth: string | null = null;
+        vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const urlStr = typeof input === 'string' ? input : input.toString();
+
+            if (urlStr.includes(':3001/make_products')) {
+                const h = new Headers(init?.headers);
+                capturedProbeAuth = h.get('Authorization');
+                return new Response(JSON.stringify([{ id: 1 }]), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' }
+                });
+            }
+
+            return new Response('[]', { status: 200 });
+        });
+
+        const recovered = await failoverEngine.verifyAndRecoverNas();
+        expect(recovered).toBe(true);
+        expect(capturedProbeAuth).toBe(`Bearer ${PUBLIC_SUPABASE_ANON_KEY}`);
+        expect(capturedProbeAuth).not.toBe(`Bearer ${mockAccessToken}`);
     });
 });

@@ -91,11 +91,11 @@ interface SupabaseConfig {
 // All keys must come from the on-disk config file written during first-time setup or environment variables.
 // If the config file is absent, the app redirects to /setup via hasSupabaseConfig().
 const EMPTY_DEFAULTS: SupabaseConfig = {
-    url: process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '',
-    anonKey: process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || '',
+    url: process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || PUBLIC_SUPABASE_URL || '',
+    anonKey: process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || PUBLIC_SUPABASE_ANON_KEY || '',
     serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || '',
     nasUrl: process.env.NAS_URL || 'http://100.88.85.6:3001',
-    nasAnonKey: process.env.NAS_ANON_KEY || '',
+    nasAnonKey: process.env.NAS_ANON_KEY || PUBLIC_SUPABASE_ANON_KEY || '',
     nasStorageUrl: process.env.NAS_STORAGE_URL || 'http://100.88.85.6:8081',
     nasLocalUrl: process.env.NAS_LOCAL_URL || 'http://192.168.1.14:3001',
     nasLocalStorageUrl: process.env.NAS_LOCAL_STORAGE_URL || 'http://192.168.1.14:8081',
@@ -587,6 +587,14 @@ function recreateNasClient(url: string) {
                 headers.set('Content-Type', 'application/json');
             }
 
+            // CRITICAL DATABASE AUTHENTICATION CONTRACT:
+            // Requests sent to NAS PostgREST must ALWAYS use the configured NAS database anon key.
+            // Under no circumstances may a user's Supabase Cloud Auth JWT be attached to a NAS PostgREST request,
+            // as NAS PostgREST only verifies signatures against the NAS database secret.
+            const nasDbKey = config.nasAnonKey || config.anonKey || PUBLIC_SUPABASE_ANON_KEY;
+            headers.set('apikey', nasDbKey);
+            headers.set('Authorization', `Bearer ${nasDbKey}`);
+
             // Bounded 2000ms timeout for NAS requests to prevent TCP SYN hang on Windows
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 2000);
@@ -680,12 +688,14 @@ function recreateNasClient(url: string) {
             }
         };
 
-        nasClient = createClient(url, config.nasAnonKey || config.anonKey || 'placeholder', {
+        const nasKey = config.nasAnonKey || config.anonKey || PUBLIC_SUPABASE_ANON_KEY;
+        nasClient = createClient(url, nasKey, {
             auth: {
                 persistSession: false,
                 autoRefreshToken: false,
                 detectSessionInUrl: false
             },
+            accessToken: async () => nasKey,
             global: {
                 fetch: nasFetch,
                 headers: {
@@ -693,19 +703,6 @@ function recreateNasClient(url: string) {
                     ...cfHeaders,
                 }
             }
-        });
-
-        // Guard: nasClient is exclusively a PostgREST database query client.
-        // It must NOT be treated as an Auth client. Delegate any access to .auth to the
-        // canonical Supabase Cloud Auth client (supabaseClient.auth).
-        Object.defineProperty(nasClient, 'auth', {
-            get() {
-                if (supabaseClient) {
-                    return supabaseClient.auth;
-                }
-                throw new Error('[AUTH] nasClient does not provide authentication services. Use authClient.');
-            },
-            configurable: true
         });
 
         // Register updated client with failover engine
@@ -727,7 +724,7 @@ export function reinitSupabaseClients(): void {
         failoverEngine.stopBackgroundMonitoring();
         
         // Initialize Supabase Client
-        supabaseClient = createClient(config.url || 'https://placeholder.supabase.co', config.anonKey || 'placeholder', {
+        supabaseClient = createClient(config.url || PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co', config.anonKey || PUBLIC_SUPABASE_ANON_KEY || 'placeholder', {
             auth: {
                 persistSession: false,
                 autoRefreshToken: true,
