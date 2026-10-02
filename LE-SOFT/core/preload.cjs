@@ -286,6 +286,8 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
     return import_electron.ipcRenderer.invoke("make-get-version-diff", payload);
   },
   makeUpdateProductionStage: (data) => import_electron.ipcRenderer.invoke("make-update-production-stage", data),
+  makeSearchCustomers: (query) => import_electron.ipcRenderer.invoke("make-search-customers", query),
+  makeGetCustomerDetails: (customerId) => import_electron.ipcRenderer.invoke("make-get-customer-details", customerId),
   // License — Cloud
   checkLicenseCloud: () => import_electron.ipcRenderer.invoke("check-license-cloud"),
   activateLicenseCloud: (data) => import_electron.ipcRenderer.invoke("activate-license-cloud", data),
@@ -414,7 +416,23 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   createSupplierSettlement: (settlement) => import_electron.ipcRenderer.invoke("create-supplier-settlement", settlement),
   getSupplierLedgerDetail: (id) => import_electron.ipcRenderer.invoke("get-supplier-ledger-detail", id),
   // ─── ERROR & DIAGNOSTICS TELEMETRY ───
-  reportClientError: (payload) => import_electron.ipcRenderer.invoke("report-client-error", payload),
+  reportClientError: (payload) => {
+    try {
+      const sanitized = JSON.parse(JSON.stringify(payload, (_key, val) => {
+        if (typeof val === "function" || val instanceof Event || val && typeof val === "object" && (val.nodeType || val.window === val)) {
+          return void 0;
+        }
+        if (val instanceof Error) {
+          return { message: val.message, stack: val.stack, name: val.name };
+        }
+        return val;
+      }));
+      return import_electron.ipcRenderer.invoke("report-client-error", sanitized);
+    } catch {
+      const msg = String(payload?.error?.message || payload?.error || payload?.message || payload || "");
+      return import_electron.ipcRenderer.invoke("report-client-error", { error: { message: msg } });
+    }
+  },
   getTelemetryStatus: () => import_electron.ipcRenderer.invoke("get-telemetry-status"),
   setTelemetryEnabled: (enabled) => import_electron.ipcRenderer.invoke("set-telemetry-enabled", enabled),
   sendDiagnosticTest: () => import_electron.ipcRenderer.invoke("send-diagnostic-test"),

@@ -1513,4 +1513,127 @@ export function registerMakeHandlers(): void {
             return { success: false, error: err.message };
         }
     });
+
+    // ── 22. Customer Autocomplete & Search for Place Order ────────────────────
+    ipcMain.handle('make-search-customers', async (_e, rawQuery: string) => {
+        try {
+            requireSession();
+            const trimmed = (rawQuery || '').trim();
+            if (!trimmed || trimmed.length < 2) {
+                return { success: true, customers: [] };
+            }
+
+            // Extract numeric digits for phone and ID searches
+            const digits = trimmed.replace(/\D/g, '');
+            const isNumeric = /^\d+$/.test(trimmed);
+
+            // Construct safe PostgREST OR conditions
+            const conditions: string[] = [
+                `name.ilike.%${trimmed}%`,
+                `phone.ilike.%${trimmed}%`,
+                `email.ilike.%${trimmed}%`
+            ];
+
+            if (digits.length >= 3 && digits !== trimmed) {
+                conditions.push(`phone.ilike.%${digits}%`);
+            }
+            if (isNumeric && Number(trimmed) > 0 && Number(trimmed) < 2147483647) {
+                conditions.push(`id.eq.${Number(trimmed)}`);
+            }
+
+            const orFilter = conditions.join(',');
+            const { data, error } = await supabase
+                .from('billing_customers')
+                .select('id, name, phone, email, address, company')
+                .or(orFilter)
+                .order('name')
+                .limit(15);
+
+            if (error) {
+                console.error('[MAKE IPC] make-search-customers database error:', error);
+                return { success: false, error: error.message, customers: [] };
+            }
+
+            const decrypted = decryptRows(data || []);
+            return {
+                success: true,
+                customers: decrypted.map(c => ({
+                    id: c.id,
+                    name: c.name || '',
+                    phone: c.phone || null,
+                    email: c.email || null,
+                    address: c.address || null,
+                    company: c.company || null
+                }))
+            };
+        } catch (err: any) {
+            console.error('[MAKE IPC] make-search-customers error:', err);
+            return { success: false, error: err.message, customers: [] };
+        }
+    });
+
+    // ── 23. Customer Authoritative Details for Place Order ────────────────────
+    ipcMain.handle('make-get-customer-details', async (_e, customerId: number | string) => {
+        try {
+            requireSession();
+            const cId = Number(customerId);
+            if (!cId || isNaN(cId)) {
+                return { success: false, error: 'Invalid customer ID' };
+            }
+
+            const { data: customer, error: custError } = await supabase
+                .from('billing_customers')
+                .select('id, name, phone, email, address, company')
+                .eq('id', cId)
+                .maybeSingle();
+
+            if (custError) {
+                console.error('[MAKE IPC] make-get-customer-details error:', custError);
+                return { success: false, error: custError.message };
+            }
+            if (!customer) {
+                return { success: false, error: 'Customer not found' };
+            }
+
+            const decrypted = decryptObject(customer, ['address']);
+
+            // Optionally look up most recent make_orders delivery record for this customer
+            let recentDelivery: any = null;
+            try {
+                const { data: latestOrder } = await supabase
+                    .from('make_orders')
+                    .select('delivery_address, location_landmark, receiver_name, receiver_phone')
+                    .eq('customer_id', cId)
+                    .order('created_at', { ascending: false })
+                    .limit(1)
+                    .maybeSingle();
+
+                if (latestOrder) {
+                    recentDelivery = latestOrder;
+                }
+            } catch (e) {
+                console.warn('[MAKE IPC] Optional recent delivery lookup failed:', e);
+            }
+
+            return {
+                success: true,
+                customer: {
+                    id: decrypted.id,
+                    name: decrypted.name || '',
+                    phone: decrypted.phone || null,
+                    email: decrypted.email || null,
+                    address: decrypted.address || null,
+                    company: decrypted.company || null,
+                    delivery_address: recentDelivery?.delivery_address || decrypted.address || null,
+                    location_landmark: recentDelivery?.location_landmark || null,
+                    receiver_name: recentDelivery?.receiver_name || decrypted.name || null,
+                    receiver_phone: recentDelivery?.receiver_phone || decrypted.phone || null
+                }
+            };
+        } catch (err: any) {
+            console.error('[MAKE IPC] make-get-customer-details error:', err);
+            return { success: false, error: err.message };
+        }
+    });
 }
+

@@ -202,6 +202,7 @@ const TrackOrders: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<Order[] | null>(null);
+  const searchSeqRef = React.useRef(0);
   
   // Designer pricing form state per order
   const [costPrices, setCostPrices] = useState<Record<number, string>>({});
@@ -274,7 +275,7 @@ const TrackOrders: React.FC = () => {
     try {
       // @ts-ignore
       const data = await window.electron.getMakeOrders();
-      setOrders(data || []);
+      setOrders(Array.isArray(data) ? data : ((data as any)?.orders || []));
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   };
@@ -290,6 +291,7 @@ const TrackOrders: React.FC = () => {
       return;
     }
 
+    const currentSeq = ++searchSeqRef.current;
     setIsSearching(true);
     const timeout = setTimeout(async () => {
       try {
@@ -300,7 +302,9 @@ const TrackOrders: React.FC = () => {
             query: trimmed,
             status: statusFilter !== 'All' ? statusFilter : undefined
           });
-          setSearchResults(Array.isArray(results) ? results : []);
+          if (currentSeq === searchSeqRef.current) {
+            setSearchResults(Array.isArray(results) ? results : []);
+          }
         } else {
           const lower = trimmed.toLowerCase();
           const local = orders.filter(o => 
@@ -310,12 +314,16 @@ const TrackOrders: React.FC = () => {
             (o.customer_phone || '').toLowerCase().includes(lower) ||
             (o.shipping_address || '').toLowerCase().includes(lower)
           );
-          setSearchResults(local);
+          if (currentSeq === searchSeqRef.current) {
+            setSearchResults(local);
+          }
         }
       } catch (err) {
         console.error('[TrackOrders] Order search failed:', err);
       } finally {
-        setIsSearching(false);
+        if (currentSeq === searchSeqRef.current) {
+          setIsSearching(false);
+        }
       }
     }, 250);
 
@@ -955,7 +963,7 @@ const TrackOrders: React.FC = () => {
                         <div style={{ padding: '24px' }}>
 
                           {/* ── TOP ROW: LOGISTICS & ORDER SPECS SUMMARY ── */}
-                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '16px', marginBottom: '20px' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 1fr))', gap: '16px', marginBottom: '20px' }}>
                             
                             {/* Customer & Delivery Logistics Card */}
                             <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '16px' }}>
@@ -1499,7 +1507,7 @@ const TrackOrders: React.FC = () => {
                           })()}
 
                           {/* Lower Grid: Timeline + Update Status */}
-                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
+                          <div className="make-responsive-grid-2" style={{ gap: '24px' }}>
 
                             {/* Left: Timeline */}
                             <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '16px' }}>
@@ -1765,7 +1773,8 @@ const TrackOrders: React.FC = () => {
           <div style={{ position: 'fixed', inset: 0, zIndex: 1200, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1.5rem' }}
             onClick={(e) => { if (e.target === e.currentTarget) setDiffModalOrder(null); }}>
             <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
-              style={{ background: 'var(--card-bg)', borderRadius: '16px', border: '1px solid var(--border-color)', width: '100%', maxWidth: '900px', maxHeight: '90vh', overflowY: 'auto', padding: '24px', boxShadow: '0 24px 64px rgba(0,0,0,0.3)' }}>
+              className="make-modal-container"
+              style={{ background: 'var(--card-bg)', borderRadius: '16px', border: '1px solid var(--border-color)', width: '100%', maxWidth: 'min(900px, calc(100vw - 32px))', maxHeight: '90vh', overflowY: 'auto', padding: '24px', boxSizing: 'border-box', boxShadow: '0 24px 64px rgba(0,0,0,0.3)' }}>
               
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '14px' }}>
                 <div>

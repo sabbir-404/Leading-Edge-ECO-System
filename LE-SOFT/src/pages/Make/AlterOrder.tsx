@@ -224,9 +224,10 @@ const AlterOrder: React.FC<Props> = ({ order, onClose, onSaved }) => {
           borderRadius: '16px',
           padding: '2rem',
           width: '100%',
-          maxWidth: '560px',
+          maxWidth: 'min(560px, calc(100vw - 32px))',
           maxHeight: '90vh',
           overflowY: 'auto',
+          boxSizing: 'border-box',
           boxShadow: '0 24px 64px rgba(0,0,0,0.2)'
         }}
       >
@@ -359,7 +360,7 @@ const AlterOrder: React.FC<Props> = ({ order, onClose, onSaved }) => {
             />
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+          <div className="make-responsive-grid-2" style={{ gap: '1rem' }}>
             <div>
               <label style={labelStyle}>Quantity *</label>
               <input

@@ -324,6 +324,8 @@ contextBridge.exposeInMainWorld('electron', {
         return ipcRenderer.invoke('make-get-version-diff', payload);
     },
     makeUpdateProductionStage: (data: any) => ipcRenderer.invoke('make-update-production-stage', data),
+    makeSearchCustomers: (query: string) => ipcRenderer.invoke('make-search-customers', query),
+    makeGetCustomerDetails: (customerId: number | string) => ipcRenderer.invoke('make-get-customer-details', customerId),
     // License — Cloud
     checkLicenseCloud: () => ipcRenderer.invoke('check-license-cloud'),
     activateLicenseCloud: (data: any) => ipcRenderer.invoke('activate-license-cloud', data),
@@ -479,7 +481,23 @@ contextBridge.exposeInMainWorld('electron', {
     getSupplierLedgerDetail: (id: number) => ipcRenderer.invoke('get-supplier-ledger-detail', id),
 
     // ─── ERROR & DIAGNOSTICS TELEMETRY ───
-    reportClientError: (payload: any) => ipcRenderer.invoke('report-client-error', payload),
+    reportClientError: (payload: any) => {
+      try {
+        const sanitized = JSON.parse(JSON.stringify(payload, (_key, val) => {
+          if (typeof val === 'function' || val instanceof Event || (val && typeof val === 'object' && (val.nodeType || val.window === val))) {
+            return undefined;
+          }
+          if (val instanceof Error) {
+            return { message: val.message, stack: val.stack, name: val.name };
+          }
+          return val;
+        }));
+        return ipcRenderer.invoke('report-client-error', sanitized);
+      } catch {
+        const msg = String(payload?.error?.message || payload?.error || payload?.message || payload || '');
+        return ipcRenderer.invoke('report-client-error', { error: { message: msg } });
+      }
+    },
     getTelemetryStatus: () => ipcRenderer.invoke('get-telemetry-status'),
     setTelemetryEnabled: (enabled: boolean) => ipcRenderer.invoke('set-telemetry-enabled', enabled),
     sendDiagnosticTest: () => ipcRenderer.invoke('send-diagnostic-test'),

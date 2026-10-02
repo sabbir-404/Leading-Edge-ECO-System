@@ -442,6 +442,8 @@ export interface ElectronAPI {
     makeGetOrderVersions: (orderId: number | string) => Promise<any[]>;
     makeGetVersionDiff: (orderIdOrData: any, fromVersion?: number, toVersion?: number) => Promise<any>;
     makeUpdateProductionStage: (data: any) => Promise<any>;
+    makeSearchCustomers?: (query: string) => Promise<{ success: boolean; customers: any[]; error?: string }>;
+    makeGetCustomerDetails?: (customerId: number | string) => Promise<{ success: boolean; customer?: any; error?: string }>;
 
     // Window Controls
     setTheme: (theme: string) => Promise<void>;

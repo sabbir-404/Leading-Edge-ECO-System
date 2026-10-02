@@ -43,6 +43,15 @@ export interface PlaceOrderDraftData {
   selectedSalesmanId?: string;
   
   // Customer & Delivery info
+  selectedCustomerId?: number | null;
+  selectedCustomerInfo?: {
+    id: number;
+    name: string;
+    phone?: string | null;
+    email?: string | null;
+    company?: string | null;
+    address?: string | null;
+  } | null;
   customerName?: string;
   customerPhone?: string;
   customerEmail?: string;

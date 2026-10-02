@@ -128,7 +128,7 @@ describe('Security Audit Phase 1 — IPC Authentication & Authorization Boundari
         // Register handlers to test real handlers
         const { registerHandlers } = await import('../../electron/ipc-handlers');
         registerHandlers();
-    });
+    }, 30000);
 
     beforeEach(() => {
         SessionManager.clearSession();

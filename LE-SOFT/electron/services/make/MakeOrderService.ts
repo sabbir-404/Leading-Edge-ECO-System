@@ -230,10 +230,10 @@ export class MakeOrderService {
         }
 
         // Deterministically resolve customer
-        let resolvedCustId = input.customer_id || null;
-        if (!resolvedCustId && (input.customer_phone || input.customer_name)) {
+        let resolvedCustId: number | null = null;
+        if (input.customer_id || input.customer_phone || input.customer_name) {
             const resolved = await this.resolveOrCreateCustomer({
-                customerId: input.customer_id,
+                customerId: input.customer_id ? Number(input.customer_id) : undefined,
                 customerName: input.customer_name,
                 customerPhone: input.customer_phone,
                 customerEmail: input.customer_email,

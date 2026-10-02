@@ -496,18 +496,18 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
       <div className="main-content">
         <header className="top-bar">
           {/* Left Side: Title */}
-          <div className="top-bar-left" style={{ display: 'flex', alignItems: 'center', gap: '1rem', WebkitAppRegion: 'no-drag' } as any}>
-            <button className="mobile-menu-btn" onClick={() => setSidebarOpen(!isSidebarOpen)}>
+          <div className="top-bar-left" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', minWidth: 0, flex: 1, overflow: 'hidden', WebkitAppRegion: 'no-drag' } as any}>
+            <button className="mobile-menu-btn" onClick={() => setSidebarOpen(!isSidebarOpen)} style={{ flexShrink: 0 }}>
               <Menu size={22} />
             </button>
-            <div className="page-title" style={{ WebkitAppRegion: 'drag' } as any}>
-              <h1 style={{ fontSize: '1.2rem', fontWeight: 600 }}>{title}</h1>
-              <p className="breadcrumb" style={{ fontSize: '0.8rem', opacity: 0.6 }}>Leading Edge Software / {title}</p>
+            <div className="page-title" style={{ minWidth: 0, flex: 1, overflow: 'hidden', WebkitAppRegion: 'drag' } as any}>
+              <h1 style={{ fontSize: '1.15rem', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', margin: 0 }}>{title}</h1>
+              <p className="breadcrumb" style={{ fontSize: '0.75rem', opacity: 0.6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', margin: 0 }}>Leading Edge Software / {title}</p>
             </div>
           </div>
 
           {/* Right Side: Tools & Profile */}
-          <div className="top-bar-right" style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', WebkitAppRegion: 'no-drag' } as any}>
+          <div className="top-bar-right" style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexShrink: 0, WebkitAppRegion: 'no-drag' } as any}>
             
             {/* Live Clock */}
             <div className="topbar-clock" style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '6px 14px', background: 'rgba(0,0,0,0.04)', borderRadius: '10px' }}>

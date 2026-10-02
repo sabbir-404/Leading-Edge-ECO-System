@@ -154,7 +154,7 @@
 .top-bar {
     height: 64px;
     min-height: 64px;
-    padding: 0 160px 0 32px;
+    padding: 0 152px 0 24px;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -162,6 +162,19 @@
     background: var(--topbar-bg, var(--card-bg));
     gap: 1rem;
     -webkit-app-region: drag;
+    overflow: hidden;
+}
+
+.top-bar-left {
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+}
+
+.page-title {
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
 }
 
 .window-controls {
@@ -203,6 +216,9 @@
     font-weight: 600;
     margin: 0;
     color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .page-title p {
@@ -210,6 +226,9 @@
     opacity: 0.6;
     margin: 0;
     color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 /* Live clock */
@@ -1082,31 +1101,47 @@
    ═══════════════════════════════════════ */
 .make-responsive-grid-2 {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 1rem;
 }
 
 .make-responsive-grid-3 {
     display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 1rem;
 }
 
 .make-responsive-grid-4 {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 1rem;
 }
 
 @media (max-width: 1024px) {
+    .top-bar {
+        padding: 0 144px 0 16px;
+        gap: 0.75rem;
+    }
+    .content-area {
+        padding: 16px;
+    }
     .make-responsive-grid-4 {
-        grid-template-columns: repeat(2, 1fr);
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 }
 
 @media (max-width: 900px) {
+    .top-bar {
+        padding: 0 140px 0 12px;
+    }
+    .topbar-clock span:last-child {
+        display: none;
+    }
+    .top-bar-right {
+        gap: 0.75rem !important;
+    }
     .make-responsive-grid-3 {
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
     .make-card-flex {
         flex-direction: column !important;
@@ -1118,7 +1153,7 @@
     .make-responsive-grid-2,
     .make-responsive-grid-3,
     .make-responsive-grid-4 {
-        grid-template-columns: 1fr !important;
+        grid-template-columns: minmax(0, 1fr) !important;
     }
     .make-table-container {
         overflow-x: auto;
@@ -1128,7 +1163,7 @@
 
 .make-modal-container {
     width: 100%;
-    max-width: 680px;
+    max-width: min(680px, calc(100vw - 32px));
     max-height: 90vh;
     overflow-y: auto;
     border-radius: 12px;
@@ -1137,7 +1172,7 @@
 
 @media (max-width: 900px) {
     .make-modal-container {
-        max-width: 95vw;
+        max-width: calc(100vw - 24px);
         padding: 1rem !important;
     }
 }
@@ -1174,4 +1209,89 @@
         grid-column: span 1 !important;
     }
 }
+
+/* ═══════════════════════════════════════
+   MAKE Product Catalog Half-Screen Grid
+   ═══════════════════════════════════════ */
+.make-catalog-grid {
+    display: grid;
+    grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
+    gap: 1.25rem;
+    align-items: start;
+    width: 100%;
+    min-width: 0;
+}
+
+@media (max-width: 1100px) {
+    .make-catalog-grid {
+        grid-template-columns: minmax(240px, 280px) minmax(0, 1fr);
+        gap: 1rem;
+    }
+}
+
+@media (max-width: 860px) {
+    .make-catalog-grid {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 1rem;
+    }
+}
+
+.make-catalog-list-panel {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    padding: 1.25rem;
+    height: calc(100vh - 200px);
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    box-sizing: border-box;
+}
+
+.make-catalog-detail-panel {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    padding: 1.25rem;
+    min-height: calc(100vh - 200px);
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    box-sizing: border-box;
+}
+
+/* ═══════════════════════════════════════
+   Customer Autocomplete Dropdown
+   ═══════════════════════════════════════ */
+.make-customer-dropdown {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.2);
+    max-height: 280px;
+    overflow-y: auto;
+    z-index: 1000;
+    box-sizing: border-box;
+}
+
+.make-customer-dropdown-item {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border-color);
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.make-customer-dropdown-item:last-child {
+    border-bottom: none;
+}
+
+.make-customer-dropdown-item:hover,
+.make-customer-dropdown-item.highlighted {
+    background: rgba(59, 130, 246, 0.08);
+}
+
 

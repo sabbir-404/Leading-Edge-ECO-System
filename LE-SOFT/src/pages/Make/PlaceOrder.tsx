@@ -56,33 +56,69 @@ const PlaceOrder: React.FC = () => {
   const [showProductCreateModal, setShowProductCreateModal] = useState(false);
   const [autoOrderNumber, setAutoOrderNumber] = useState<string>('');
 
+  // Initial draft loaded synchronously to prevent any asynchronous typing wipes
+  const initialDraft = React.useMemo(() => {
+    try {
+      return loadPlaceOrderDraft() || {};
+    } catch {
+      return {};
+    }
+  }, []);
+
   // Order Header state
-  const [priority, setPriority] = useState('Normal');
-  const [targetDeliveryDate, setTargetDeliveryDate] = useState('');
-  const [requestedDeliveryDate, setRequestedDeliveryDate] = useState('');
+  const [priority, setPriority] = useState(() => initialDraft.priority || 'Normal');
+  const [targetDeliveryDate, setTargetDeliveryDate] = useState(() => initialDraft.targetDeliveryDate || '');
+  const [requestedDeliveryDate, setRequestedDeliveryDate] = useState(() => initialDraft.requestedDeliveryDate || '');
   const [salesmen, setSalesmen] = useState<any[]>([]);
-  const [selectedSalesmanId, setSelectedSalesmanId] = useState<string>('');
-  
+  const [selectedSalesmanId, setSelectedSalesmanId] = useState(() => initialDraft.selectedSalesmanId || '');
+
+  // Customer selection & Autocomplete
+  const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(() => initialDraft.selectedCustomerId ?? null);
+  const [selectedCustomerInfo, setSelectedCustomerInfo] = useState<any | null>(() => initialDraft.selectedCustomerInfo ?? null);
+  const [customerSearchQuery, setCustomerSearchQuery] = useState('');
+  const [customerSuggestions, setCustomerSuggestions] = useState<any[]>([]);
+  const [isSearchingCustomer, setIsSearchingCustomer] = useState(false);
+  const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
+  const [highlightedCustomerIndex, setHighlightedCustomerIndex] = useState(-1);
+  const customerSearchSeqRef = React.useRef(0);
+  const customerSearchInputRef = React.useRef<HTMLInputElement | null>(null);
+  const customerDropdownContainerRef = React.useRef<HTMLDivElement | null>(null);
+
   // Customer & Delivery info
-  const [customerName, setCustomerName] = useState('');
-  const [customerPhone, setCustomerPhone] = useState('');
-  const [customerEmail, setCustomerEmail] = useState('');
-  const [shippingAddress, setShippingAddress] = useState('');
-  const [locationLandmark, setLocationLandmark] = useState('');
-  const [receiverName, setReceiverName] = useState('');
-  const [receiverPhone, setReceiverPhone] = useState('');
-  const [specialInstructions, setSpecialInstructions] = useState('');
+  const [customerName, setCustomerName] = useState(() => initialDraft.customerName || '');
+  const [customerPhone, setCustomerPhone] = useState(() => initialDraft.customerPhone || '');
+  const [customerEmail, setCustomerEmail] = useState(() => initialDraft.customerEmail || '');
+  const [shippingAddress, setShippingAddress] = useState(() => initialDraft.shippingAddress || '');
+  const [locationLandmark, setLocationLandmark] = useState(() => initialDraft.locationLandmark || '');
+  const [receiverName, setReceiverName] = useState(() => initialDraft.receiverName || '');
+  const [receiverPhone, setReceiverPhone] = useState(() => initialDraft.receiverPhone || '');
+  const [specialInstructions, setSpecialInstructions] = useState(() => initialDraft.specialInstructions || '');
 
   // Catalog data for item picker
   const [catalogProducts, setCatalogProducts] = useState<any[]>([]);
-  const [selectedProduct, setSelectedProduct] = useState<any | null>(null);
-  const [selectedSpec, setSelectedSpec] = useState<any | null>(null);
-  const [selectedSize, setSelectedSize] = useState<any | null>(null);
-  const [selectedColor, setSelectedColor] = useState<any | null>(null);
-  const [itemQuantity, setItemQuantity] = useState<number>(1);
-  const [itemCostPrice, setItemCostPrice] = useState<number | string>('');
-  const [itemSalePrice, setItemSalePrice] = useState<number | string>('');
-  const [itemRemarks, setItemRemarks] = useState<string>('');
+  const [selectedProduct, setSelectedProduct] = useState<any | null>(() => initialDraft.selectedProduct || null);
+  const [selectedSpec, setSelectedSpec] = useState<any | null>(() => {
+    if (initialDraft.selectedSpecId && initialDraft.selectedProduct?.specifications) {
+      return initialDraft.selectedProduct.specifications.find((s: any) => s.id === initialDraft.selectedSpecId) || null;
+    }
+    return null;
+  });
+  const [selectedSize, setSelectedSize] = useState<any | null>(() => {
+    if (initialDraft.selectedSizeId && initialDraft.selectedProduct?.sizes) {
+      return initialDraft.selectedProduct.sizes.find((s: any) => s.id === initialDraft.selectedSizeId) || null;
+    }
+    return null;
+  });
+  const [selectedColor, setSelectedColor] = useState<any | null>(() => {
+    if (initialDraft.selectedColorId && initialDraft.selectedProduct?.colors) {
+      return initialDraft.selectedProduct.colors.find((c: any) => c.id === initialDraft.selectedColorId) || null;
+    }
+    return null;
+  });
+  const [itemQuantity, setItemQuantity] = useState<number>(() => initialDraft.itemQuantity ?? 1);
+  const [itemCostPrice, setItemCostPrice] = useState<number | string>(() => initialDraft.itemCostPrice ?? '');
+  const [itemSalePrice, setItemSalePrice] = useState<number | string>(() => initialDraft.itemSalePrice ?? '');
+  const [itemRemarks, setItemRemarks] = useState<string>(() => initialDraft.itemRemarks || '');
 
   // Per-item Invoice Attachment / CAD Drawing
   const [attachedFile, setAttachedFile] = useState<{
@@ -130,36 +166,37 @@ const PlaceOrder: React.FC = () => {
   };
 
   // Custom Size toggle & state for catalog products
-  const [isCustomSize, setIsCustomSize] = useState(false);
-  const [customShape, setCustomShape] = useState<'rect' | 'round'>('rect');
-  const [customLength, setCustomLength] = useState('');
-  const [customWidth, setCustomWidth] = useState('');
-  const [customHeight, setCustomHeight] = useState('');
-  const [customDiameter, setCustomDiameter] = useState('');
-  const [customUnit, setCustomUnit] = useState('mm');
+  const [isCustomSize, setIsCustomSize] = useState(() => initialDraft.isCustomSize ?? false);
+  const [customShape, setCustomShape] = useState<'rect' | 'round'>(() => initialDraft.customShape || 'rect');
+  const [customLength, setCustomLength] = useState(() => initialDraft.customLength || '');
+  const [customWidth, setCustomWidth] = useState(() => initialDraft.customWidth || '');
+  const [customHeight, setCustomHeight] = useState(() => initialDraft.customHeight || '');
+  const [customDiameter, setCustomDiameter] = useState(() => initialDraft.customDiameter || '');
+  const [customUnit, setCustomUnit] = useState(() => initialDraft.customUnit || 'mm');
 
   // Custom Specification toggle & state for catalog products
-  const [isCustomSpec, setIsCustomSpec] = useState(false);
-  const [customSpecName, setCustomSpecName] = useState('');
+  const [isCustomSpec, setIsCustomSpec] = useState(() => initialDraft.isCustomSpec ?? false);
+  const [customSpecName, setCustomSpecName] = useState(() => initialDraft.customSpecName || '');
 
   // Custom Color toggle & state for catalog products
-  const [isCustomColor, setIsCustomColor] = useState(false);
-  const [customColorName, setCustomColorName] = useState('');
+  const [isCustomColor, setIsCustomColor] = useState(() => initialDraft.isCustomColor ?? false);
+  const [customColorName, setCustomColorName] = useState(() => initialDraft.customColorName || '');
 
   // Manual/Custom non-catalog item fallback mode
-  const [isCustomItemMode, setIsCustomItemMode] = useState(false);
-  const [customItemName, setCustomItemName] = useState('');
-  const [customItemSpec, setCustomItemSpec] = useState('');
+  const [isCustomItemMode, setIsCustomItemMode] = useState(() => initialDraft.isCustomItemMode ?? false);
+  const [customItemName, setCustomItemName] = useState(() => initialDraft.customItemName || '');
+  const [customItemSpec, setCustomItemSpec] = useState(() => initialDraft.customItemSpec || '');
 
   // Multi-item Cart
-  const [cartItems, setCartItems] = useState<CartItem[]>([]);
+  const [cartItems, setCartItems] = useState<CartItem[]>(() => (Array.isArray(initialDraft.cartItems) ? initialDraft.cartItems : []) as any);
 
   // Search state
   const [productSearch, setProductSearch] = useState('');
   const [searchResults, setSearchResults] = useState<any[]>([]);
+  const productSearchSeqRef = React.useRef(0);
 
   // Invoice Attachments
-  const [invoiceAttachments, setInvoiceAttachments] = useState<{ name: string; url: string }[]>([]);
+  const [invoiceAttachments, setInvoiceAttachments] = useState<{ name: string; url: string }[]>(() => Array.isArray(initialDraft.invoiceAttachments) ? initialDraft.invoiceAttachments : []);
   const [uploadingInvoice, setUploadingInvoice] = useState(false);
 
   // Submission & Feedback
@@ -167,79 +204,122 @@ const PlaceOrder: React.FC = () => {
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
 
-
   const designerName = localStorage.getItem('user_name') || 'Unknown';
-  const isDraftRestoredRef = React.useRef(false);
+  const isDraftRestoredRef = React.useRef(true);
 
-  // Restore draft on initial mount
+  // Close customer dropdown on click outside
   useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (customerDropdownContainerRef.current && !customerDropdownContainerRef.current.contains(e.target as Node)) {
+        setShowCustomerDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Debounced customer search
+  const performCustomerSearch = React.useCallback(async (query: string) => {
+    const trimmed = (query || '').trim();
+    if (!trimmed || trimmed.length < 2) {
+      setCustomerSuggestions([]);
+      setIsSearchingCustomer(false);
+      setShowCustomerDropdown(false);
+      return;
+    }
+
+    const currentSeq = ++customerSearchSeqRef.current;
+    setIsSearchingCustomer(true);
+
     try {
-      const draft = loadPlaceOrderDraft();
-      if (draft && Object.keys(draft).length > 0) {
-        if (draft.priority) setPriority(draft.priority);
-        if (draft.targetDeliveryDate) setTargetDeliveryDate(draft.targetDeliveryDate);
-        if (draft.requestedDeliveryDate) setRequestedDeliveryDate(draft.requestedDeliveryDate);
-        if (draft.selectedSalesmanId) setSelectedSalesmanId(draft.selectedSalesmanId);
-
-        if (draft.customerName) setCustomerName(draft.customerName);
-        if (draft.customerPhone) setCustomerPhone(draft.customerPhone);
-        if (draft.customerEmail) setCustomerEmail(draft.customerEmail);
-        if (draft.shippingAddress) setShippingAddress(draft.shippingAddress);
-        if (draft.locationLandmark) setLocationLandmark(draft.locationLandmark);
-        if (draft.receiverName) setReceiverName(draft.receiverName);
-        if (draft.receiverPhone) setReceiverPhone(draft.receiverPhone);
-        if (draft.specialInstructions) setSpecialInstructions(draft.specialInstructions);
-
-        if (draft.selectedProduct) setSelectedProduct(draft.selectedProduct);
-        if (draft.selectedSpecId && draft.selectedProduct?.specifications) {
-          const sp = draft.selectedProduct.specifications.find((s: any) => s.id === draft.selectedSpecId);
-          if (sp) setSelectedSpec(sp);
-        }
-        if (draft.selectedSizeId && draft.selectedProduct?.sizes) {
-          const sz = draft.selectedProduct.sizes.find((s: any) => s.id === draft.selectedSizeId);
-          if (sz) setSelectedSize(sz);
-        }
-        if (draft.selectedColorId && draft.selectedProduct?.colors) {
-          const cl = draft.selectedProduct.colors.find((c: any) => c.id === draft.selectedColorId);
-          if (cl) setSelectedColor(cl);
-        }
-
-        if (draft.itemQuantity !== undefined) setItemQuantity(draft.itemQuantity);
-        if (draft.itemCostPrice !== undefined) setItemCostPrice(draft.itemCostPrice);
-        if (draft.itemSalePrice !== undefined) setItemSalePrice(draft.itemSalePrice);
-        if (draft.itemRemarks !== undefined) setItemRemarks(draft.itemRemarks);
-
-        if (draft.isCustomSize !== undefined) setIsCustomSize(draft.isCustomSize);
-        if (draft.customShape) setCustomShape(draft.customShape);
-        if (draft.customLength) setCustomLength(draft.customLength);
-        if (draft.customWidth) setCustomWidth(draft.customWidth);
-        if (draft.customHeight) setCustomHeight(draft.customHeight);
-        if (draft.customDiameter) setCustomDiameter(draft.customDiameter);
-        if (draft.customUnit) setCustomUnit(draft.customUnit);
-
-        if (draft.isCustomSpec !== undefined) setIsCustomSpec(draft.isCustomSpec);
-        if (draft.customSpecName) setCustomSpecName(draft.customSpecName);
-
-        if (draft.isCustomColor !== undefined) setIsCustomColor(draft.isCustomColor);
-        if (draft.customColorName) setCustomColorName(draft.customColorName);
-
-        if (draft.isCustomItemMode !== undefined) setIsCustomItemMode(draft.isCustomItemMode);
-        if (draft.customItemName) setCustomItemName(draft.customItemName);
-        if (draft.customItemSpec) setCustomItemSpec(draft.customItemSpec);
-
-        if (Array.isArray(draft.cartItems) && draft.cartItems.length > 0) {
-          setCartItems(draft.cartItems as any);
-        }
-        if (Array.isArray(draft.invoiceAttachments) && draft.invoiceAttachments.length > 0) {
-          setInvoiceAttachments(draft.invoiceAttachments);
+      // @ts-ignore
+      if (window.electron?.makeSearchCustomers) {
+        // @ts-ignore
+        const res = await window.electron.makeSearchCustomers(trimmed);
+        if (currentSeq === customerSearchSeqRef.current) {
+          if (res?.success && Array.isArray(res.customers)) {
+            setCustomerSuggestions(res.customers);
+            setShowCustomerDropdown(res.customers.length > 0);
+          } else {
+            setCustomerSuggestions([]);
+            setShowCustomerDropdown(false);
+          }
         }
       }
-    } catch (e) {
-      console.warn('[PlaceOrder] Error restoring draft:', e);
+    } catch (err) {
+      console.error('[PlaceOrder] Customer search error:', err);
     } finally {
-      isDraftRestoredRef.current = true;
+      if (currentSeq === customerSearchSeqRef.current) {
+        setIsSearchingCustomer(false);
+      }
     }
   }, []);
+
+  useEffect(() => {
+    if (!customerSearchQuery || customerSearchQuery.trim().length < 2) {
+      setCustomerSuggestions([]);
+      setIsSearchingCustomer(false);
+      setShowCustomerDropdown(false);
+      return;
+    }
+    const timer = setTimeout(() => {
+      performCustomerSearch(customerSearchQuery);
+    }, 280);
+    return () => clearTimeout(timer);
+  }, [customerSearchQuery, performCustomerSearch]);
+
+  const handleSelectCustomer = async (cust: any) => {
+    setShowCustomerDropdown(false);
+    setHighlightedCustomerIndex(-1);
+    setCustomerSearchQuery('');
+
+    try {
+      let authoritative = cust;
+      // @ts-ignore
+      if (window.electron?.makeGetCustomerDetails) {
+        // @ts-ignore
+        const res = await window.electron.makeGetCustomerDetails(cust.id);
+        if (res?.success && res.customer) {
+          authoritative = res.customer;
+        }
+      }
+
+      setSelectedCustomerId(authoritative.id);
+      setSelectedCustomerInfo({
+        id: authoritative.id,
+        name: authoritative.name,
+        phone: authoritative.phone,
+        email: authoritative.email,
+        company: authoritative.company,
+        address: authoritative.address
+      });
+
+      if (authoritative.name) setCustomerName(authoritative.name);
+      if (authoritative.phone) setCustomerPhone(authoritative.phone);
+      if (authoritative.email) setCustomerEmail(authoritative.email);
+      if (authoritative.delivery_address || authoritative.address) {
+        setShippingAddress(authoritative.delivery_address || authoritative.address);
+      }
+      if (authoritative.location_landmark) setLocationLandmark(authoritative.location_landmark);
+      if (authoritative.receiver_name) setReceiverName(authoritative.receiver_name);
+      else if (authoritative.name) setReceiverName(authoritative.name);
+      if (authoritative.receiver_phone) setReceiverPhone(authoritative.receiver_phone);
+      else if (authoritative.phone) setReceiverPhone(authoritative.phone);
+    } catch (e) {
+      console.error('[PlaceOrder] Failed to load authoritative customer details:', e);
+      setSelectedCustomerId(cust.id);
+      setSelectedCustomerInfo(cust);
+      if (cust.name) setCustomerName(cust.name);
+      if (cust.phone) setCustomerPhone(cust.phone);
+      if (cust.email) setCustomerEmail(cust.email);
+      if (cust.address) setShippingAddress(cust.address);
+    }
+  };
+
+  const handleUnlinkCustomer = () => {
+    setSelectedCustomerId(null);
+    setSelectedCustomerInfo(null);
+  };
 
   // Auto-persist draft changes across page navigation
   useEffect(() => {
@@ -250,6 +330,8 @@ const PlaceOrder: React.FC = () => {
         targetDeliveryDate,
         requestedDeliveryDate,
         selectedSalesmanId,
+        selectedCustomerId,
+        selectedCustomerInfo,
         customerName,
         customerPhone,
         customerEmail,
@@ -287,6 +369,7 @@ const PlaceOrder: React.FC = () => {
     return () => clearTimeout(timer);
   }, [
     priority, targetDeliveryDate, requestedDeliveryDate, selectedSalesmanId,
+    selectedCustomerId, selectedCustomerInfo,
     customerName, customerPhone, customerEmail, shippingAddress, locationLandmark,
     receiverName, receiverPhone, specialInstructions, selectedProduct, selectedSpec,
     selectedSize, selectedColor, itemQuantity, itemCostPrice, itemSalePrice, itemRemarks,
@@ -317,6 +400,10 @@ const PlaceOrder: React.FC = () => {
     }
 
     clearPlaceOrderDraft();
+    setSelectedCustomerId(null);
+    setSelectedCustomerInfo(null);
+    setCustomerSearchQuery('');
+    setCustomerSuggestions([]);
     setCustomerName('');
     setCustomerPhone('');
     setCustomerEmail('');
@@ -369,8 +456,11 @@ const PlaceOrder: React.FC = () => {
 
     // Fetch next auto-generated order number for display
     if (window.electron?.makeGetNextOrderNumber) {
-      window.electron.makeGetNextOrderNumber().then((num: string) => {
-        if (num) setAutoOrderNumber(num);
+      window.electron.makeGetNextOrderNumber().then((num: any) => {
+        if (num) {
+          const str = typeof num === 'string' ? num : (num.orderNumber || num.order_number || String(num));
+          setAutoOrderNumber(str);
+        }
       }).catch(() => {});
     }
   }, []);
@@ -396,24 +486,30 @@ const PlaceOrder: React.FC = () => {
       setSearchResults([]);
       return;
     }
+    const currentSeq = ++productSearchSeqRef.current;
     const timer = setTimeout(async () => {
       try {
+        let results: any[] = [];
         if (window.electron?.makeSearchProducts) {
           const res = await window.electron.makeSearchProducts({ query: productSearch, activeOnly: true });
-          setSearchResults(Array.isArray(res) ? res : []);
+          results = Array.isArray(res) ? res : [];
         } else {
           const lower = productSearch.toLowerCase();
-          const filtered = (catalogProducts || []).filter(p =>
+          results = (catalogProducts || []).filter(p =>
             p.product_name?.toLowerCase().includes(lower) ||
             p.product_code?.toLowerCase().includes(lower) ||
             p.description?.toLowerCase().includes(lower) ||
             p.category?.toLowerCase().includes(lower)
           );
-          setSearchResults(Array.isArray(filtered) ? filtered : []);
+        }
+        if (currentSeq === productSearchSeqRef.current) {
+          setSearchResults(results);
         }
       } catch (err) {
         console.error('Search products failed:', err);
-        setSearchResults([]);
+        if (currentSeq === productSearchSeqRef.current) {
+          setSearchResults([]);
+        }
       }
     }, 250);
     return () => clearTimeout(timer);
@@ -689,6 +785,7 @@ const PlaceOrder: React.FC = () => {
         target_delivery_date: targetDeliveryDate,
         requested_delivery_date: requestedDeliveryDate || null,
         salesman_id: selectedSalesmanId ? parseInt(selectedSalesmanId) : null,
+        customer_id: selectedCustomerId || null,
         customer_name: customerName.trim(),
         customer_phone: customerPhone.trim(),
         customer_email: customerEmail.trim(),
@@ -746,6 +843,10 @@ const PlaceOrder: React.FC = () => {
 
       setSuccess(true);
       clearPlaceOrderDraft();
+      setSelectedCustomerId(null);
+      setSelectedCustomerInfo(null);
+      setCustomerSearchQuery('');
+      setCustomerSuggestions([]);
       setCartItems([]);
       setCustomerName(''); setCustomerPhone(''); setCustomerEmail(''); setShippingAddress('');
       setLocationLandmark(''); setReceiverName(''); setReceiverPhone(''); setSpecialInstructions('');
@@ -855,6 +956,8 @@ const PlaceOrder: React.FC = () => {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '10px',
             fontSize: '0.82rem'
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -896,37 +999,195 @@ const PlaceOrder: React.FC = () => {
 
             {/* ── 1. CUSTOMER & DELIVERY INFO ────────────────────────────── */}
             <div data-tutorial="make-place-order">
-              <p style={sectionTitle}><User size={18} color="var(--accent-color)" /> Customer &amp; Delivery Logistics</p>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '10px' }}>
+                <p style={{ ...sectionTitle, margin: 0, border: 'none', padding: 0 }}>
+                  <User size={18} color="var(--accent-color)" /> Customer &amp; Delivery Logistics
+                </p>
+                {selectedCustomerId && selectedCustomerInfo && (
+                  <div id="place-order-linked-customer-badge" style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.3)', borderRadius: '8px', padding: '4px 10px', fontSize: '0.8rem', color: '#059669' }}>
+                    <span style={{ fontWeight: 700 }}>✓ Linked Existing Customer:</span>
+                    <span style={{ fontWeight: 600 }}>{selectedCustomerInfo.name}</span>
+                    {selectedCustomerInfo.phone && <span style={{ opacity: 0.8 }}>({selectedCustomerInfo.phone})</span>}
+                    <button type="button" onClick={handleUnlinkCustomer} style={{ background: 'none', border: 'none', color: '#dc2626', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 700, padding: '2px 4px', textDecoration: 'underline' }}>
+                      Change / Unlink
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Customer Intelligent Autocomplete Search Bar */}
+              <div ref={customerDropdownContainerRef} style={{ position: 'relative', marginBottom: '1.25rem' }}>
+                <label style={labelStyle}>
+                  Intelligent Customer Autocomplete (Search by Name, Phone, Email, Company, ID)
+                </label>
+                <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                  <Search size={15} color="var(--text-secondary)" style={{ position: 'absolute', left: '12px', pointerEvents: 'none' }} />
+                  <input
+                    ref={customerSearchInputRef}
+                    id="place-order-customer-search-input"
+                    placeholder="Search existing customers by name, phone, email, or company..."
+                    value={customerSearchQuery}
+                    onChange={e => {
+                      setCustomerSearchQuery(e.target.value);
+                      setShowCustomerDropdown(true);
+                    }}
+                    onFocus={() => {
+                      if (customerSuggestions.length > 0) setShowCustomerDropdown(true);
+                    }}
+                    onKeyDown={e => {
+                      if (e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        setHighlightedCustomerIndex(prev => Math.min(prev + 1, customerSuggestions.length - 1));
+                      } else if (e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        setHighlightedCustomerIndex(prev => Math.max(prev - 1, 0));
+                      } else if (e.key === 'Enter') {
+                        if (highlightedCustomerIndex >= 0 && customerSuggestions[highlightedCustomerIndex]) {
+                          e.preventDefault();
+                          handleSelectCustomer(customerSuggestions[highlightedCustomerIndex]);
+                        }
+                      } else if (e.key === 'Escape') {
+                        setShowCustomerDropdown(false);
+                      }
+                    }}
+                    style={{ ...inputStyle, paddingLeft: '36px', paddingRight: (customerSearchQuery || isSearchingCustomer) ? '36px' : '12px' }}
+                  />
+                  {isSearchingCustomer && (
+                    <div style={{ position: 'absolute', right: '12px', fontSize: '0.75rem', color: 'var(--text-secondary)', pointerEvents: 'none' }}>
+                      Searching...
+                    </div>
+                  )}
+                  {!isSearchingCustomer && customerSearchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCustomerSearchQuery('');
+                        setShowCustomerDropdown(false);
+                      }}
+                      style={{ position: 'absolute', right: '10px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}
+                      aria-label="Clear customer search"
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+
+                {/* Dropdown Suggestions */}
+                {showCustomerDropdown && customerSuggestions.length > 0 && (
+                  <div id="place-order-customer-dropdown" className="make-customer-dropdown">
+                    {customerSuggestions.map((cust, idx) => (
+                      <div
+                        key={cust.id}
+                        className={`make-customer-dropdown-item ${highlightedCustomerIndex === idx ? 'highlighted' : ''}`}
+                        onClick={() => handleSelectCustomer(cust)}
+                        onMouseEnter={() => setHighlightedCustomerIndex(idx)}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ fontWeight: 700, fontSize: '0.88rem', color: 'var(--text-primary)' }}>
+                            {cust.name}
+                          </span>
+                          <span style={{ fontSize: '0.72rem', background: 'rgba(99,102,241,0.1)', color: 'var(--accent-color)', padding: '2px 6px', borderRadius: '4px', fontWeight: 600 }}>
+                            ID #{cust.id}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '3px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                          {cust.company && <span>🏢 {cust.company}</span>}
+                          {cust.phone && <span>📞 {cust.phone}</span>}
+                          {cust.email && <span>✉️ {cust.email}</span>}
+                          {cust.address && <span>📍 {cust.address}</span>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Customer Inputs Grid */}
               <div className="make-responsive-grid-2" style={{ gap: '1rem' }}>
                 <div>
                   <label style={labelStyle}>Customer Name *</label>
-                  <input placeholder="e.g. Acme Corp / John Doe" value={customerName} onChange={e => setCustomerName(e.target.value)} required style={inputStyle} />
+                  <input
+                    id="place-order-customer-name"
+                    placeholder="e.g. Acme Corp / John Doe"
+                    value={customerName}
+                    onChange={e => {
+                      setCustomerName(e.target.value);
+                      if (!selectedCustomerId && e.target.value.length >= 2) {
+                        setCustomerSearchQuery(e.target.value);
+                      }
+                    }}
+                    required
+                    style={inputStyle}
+                  />
                 </div>
                 <div>
                   <label style={labelStyle}>Customer Phone (Optional)</label>
-                  <input placeholder="e.g. +880 1700 000000" value={customerPhone} onChange={e => setCustomerPhone(e.target.value)} style={inputStyle} />
+                  <input
+                    id="place-order-customer-phone"
+                    placeholder="e.g. +880 1700 000000"
+                    value={customerPhone}
+                    onChange={e => {
+                      setCustomerPhone(e.target.value);
+                      if (!selectedCustomerId && e.target.value.length >= 4) {
+                        setCustomerSearchQuery(e.target.value);
+                      }
+                    }}
+                    style={inputStyle}
+                  />
                 </div>
                 <div>
                   <label style={labelStyle}>Customer Email</label>
-                  <input type="email" placeholder="e.g. customer@example.com" value={customerEmail} onChange={e => setCustomerEmail(e.target.value)} style={inputStyle} />
+                  <input
+                    id="place-order-customer-email"
+                    type="email"
+                    placeholder="e.g. customer@example.com"
+                    value={customerEmail}
+                    onChange={e => setCustomerEmail(e.target.value)}
+                    style={inputStyle}
+                  />
                 </div>
                 <div>
                   <label style={labelStyle}>Receiver Name (If different from customer)</label>
-                  <input placeholder="e.g. Site Manager / Receptionist" value={receiverName} onChange={e => setReceiverName(e.target.value)} style={inputStyle} />
+                  <input
+                    id="place-order-receiver-name"
+                    placeholder="e.g. Site Manager / Receptionist"
+                    value={receiverName}
+                    onChange={e => setReceiverName(e.target.value)}
+                    style={inputStyle}
+                  />
                 </div>
                 <div className="make-grid-span-2">
                   <label style={labelStyle}>Receiver Phone (If different from customer)</label>
-                  <input placeholder="e.g. +880 1800 000000" value={receiverPhone} onChange={e => setReceiverPhone(e.target.value)} style={inputStyle} />
+                  <input
+                    id="place-order-receiver-phone"
+                    placeholder="e.g. +880 1800 000000"
+                    value={receiverPhone}
+                    onChange={e => setReceiverPhone(e.target.value)}
+                    style={inputStyle}
+                  />
                 </div>
                 <div className="make-grid-span-2">
                   <label style={labelStyle}>Full Shipping / Delivery Address</label>
-                  <textarea rows={2} placeholder="House, Road, Area, City..." value={shippingAddress} onChange={e => setShippingAddress(e.target.value)} style={{ ...inputStyle, resize: 'vertical' }} />
+                  <textarea
+                    id="place-order-shipping-address"
+                    rows={2}
+                    placeholder="House, Road, Area, City..."
+                    value={shippingAddress}
+                    onChange={e => setShippingAddress(e.target.value)}
+                    style={{ ...inputStyle, resize: 'vertical' }}
+                  />
                 </div>
                 <div className="make-grid-span-2">
                   <label style={labelStyle}>
                     <MapPin size={13} style={{ display: 'inline', marginRight: '4px' }} /> Location Landmark
                   </label>
-                  <input placeholder="e.g. Near City Center Gate 3 / Behind Police Box" value={locationLandmark} onChange={e => setLocationLandmark(e.target.value)} style={inputStyle} />
+                  <input
+                    id="place-order-location-landmark"
+                    placeholder="e.g. Near City Center Gate 3 / Behind Police Box"
+                    value={locationLandmark}
+                    onChange={e => setLocationLandmark(e.target.value)}
+                    style={inputStyle}
+                  />
                 </div>
               </div>
             </div>
@@ -1124,7 +1385,7 @@ const PlaceOrder: React.FC = () => {
 
                   {/* 3. Dimensions & Colors */}
                   {selectedProduct && (
-                    <div style={{ display: 'grid', gridTemplateColumns: isCustomSize ? '1fr' : '1.5fr 1.5fr', gap: '1rem' }}>
+                    <div className={isCustomSize ? '' : 'make-responsive-grid-2'} style={{ display: 'grid', gridTemplateColumns: isCustomSize ? '1fr' : undefined, gap: '1rem' }}>
                       {/* Dimensions / Sizes Section */}
                       {!isCustomSize ? (
                         <div>
@@ -1173,7 +1434,7 @@ const PlaceOrder: React.FC = () => {
                             </button>
                           </div>
                           
-                          <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr 1fr 1fr 80px', gap: '8px', alignItems: 'flex-end' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: '8px', alignItems: 'flex-end' }}>
                             <div>
                               <label style={{ ...labelStyle, fontSize: '0.72rem' }}>Shape</label>
                               <select value={customShape} onChange={e => setCustomShape(e.target.value as any)} style={{ ...inputStyle, padding: '8px 10px', fontSize: '0.82rem' }}>
@@ -1274,7 +1535,7 @@ const PlaceOrder: React.FC = () => {
                   )}
 
                   {/* Clean, Normal Pricing Fields */}
-                  <div style={{ display: 'grid', gridTemplateColumns: pricingPerms.canViewCostPrice ? '1fr 1fr' : '1fr', gap: '1rem' }}>
+                  <div className="make-responsive-grid-2" style={{ gap: '1rem' }}>
                     {/* Cost Price: Strictly Designer / Admin only */}
                     {pricingPerms.canViewCostPrice && (
                       <div>
@@ -1370,17 +1631,17 @@ const PlaceOrder: React.FC = () => {
                   </div>
 
                   {/* Quantity & Item Remarks */}
-                  <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr auto', gap: '1rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-                    <div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', alignItems: 'flex-end' }}>
+                    <div style={{ minWidth: '100px', flex: '1 1 120px' }}>
                       <label style={labelStyle}>Quantity</label>
                       <input type="number" min={1} value={itemQuantity} onChange={e => setItemQuantity(Number(e.target.value))} style={inputStyle} />
                     </div>
-                    <div>
+                    <div style={{ minWidth: '180px', flex: '2 1 200px' }}>
                       <label style={labelStyle}>Custom Item Remarks / Notes</label>
                       <input placeholder="e.g. Reinforced base, matte finish" value={itemRemarks} onChange={e => setItemRemarks(e.target.value)} style={inputStyle} />
                     </div>
                     <button type="button" onClick={handleAddItemToOrder} disabled={!selectedProduct}
-                      style={{ padding: '10px 20px', background: 'var(--accent-color)', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 700, cursor: !selectedProduct ? 'not-allowed' : 'pointer', opacity: !selectedProduct ? 0.6 : 1, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      style={{ padding: '10px 20px', background: 'var(--accent-color)', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 700, cursor: !selectedProduct ? 'not-allowed' : 'pointer', opacity: !selectedProduct ? 0.6 : 1, display: 'flex', alignItems: 'center', gap: '6px', flex: '0 0 auto' }}>
                       <Plus size={16} /> Add Item
                     </button>
                   </div>
@@ -1495,17 +1756,17 @@ const PlaceOrder: React.FC = () => {
                     )}
                   </div>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr auto', gap: '1rem', alignItems: 'flex-end' }}>
-                    <div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', alignItems: 'flex-end' }}>
+                    <div style={{ minWidth: '100px', flex: '1 1 120px' }}>
                       <label style={labelStyle}>Quantity</label>
                       <input type="number" min={1} value={itemQuantity} onChange={e => setItemQuantity(Number(e.target.value))} style={inputStyle} />
                     </div>
-                    <div>
+                    <div style={{ minWidth: '180px', flex: '2 1 200px' }}>
                       <label style={labelStyle}>Custom Item Remarks / Notes</label>
                       <input placeholder="e.g. Client requested 32mm top thickness" value={itemRemarks} onChange={e => setItemRemarks(e.target.value)} style={inputStyle} />
                     </div>
                     <button type="button" onClick={handleAddItemToOrder}
-                      style={{ padding: '10px 20px', background: 'var(--accent-color)', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      style={{ padding: '10px 20px', background: 'var(--accent-color)', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', flex: '0 0 auto' }}>
                       <Plus size={16} /> Add Item
                     </button>
                   </div>
@@ -1609,7 +1870,7 @@ const PlaceOrder: React.FC = () => {
             {/* ── 3. ORDER METADATA & APPROVAL ASSIGNMENT ──────────────────── */}
             <div>
               <p style={sectionTitle}><Tag size={18} color="var(--accent-color)" /> Order Logistics &amp; Assignment</p>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '1rem' }}>
+              <div className="make-responsive-grid-4" style={{ gap: '1rem' }}>
                 <div>
                   <label style={labelStyle}>Priority</label>
                   <select value={priority} onChange={e => setPriority(e.target.value)} style={inputStyle}>

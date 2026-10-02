@@ -174,23 +174,33 @@ const MakeProductCatalog: React.FC = () => {
     }
   };
 
-  const fetchCatalog = async () => {
+  const catalogSeqRef = React.useRef(0);
+  const isFirstMountRef = React.useRef(true);
+
+  const fetchCatalog = async (customSearch?: string) => {
+    const currentSeq = ++catalogSeqRef.current;
+    const query = customSearch !== undefined ? customSearch : search;
     setLoading(true);
     try {
       // @ts-ignore
-      const data = await window.electron.makeGetCatalogProducts({ search });
+      const data = await window.electron.makeGetCatalogProducts({ search: query });
+      if (currentSeq !== catalogSeqRef.current) return;
       setProducts(data || []);
       if (selectedProduct) {
         const updated = (data || []).find((p: any) => p.id === selectedProduct.id);
-        setSelectedProduct(updated || null);
+        setSelectedProduct(updated || (data && data.length > 0 ? data[0] : null));
       } else if (data && data.length > 0) {
         setSelectedProduct(data[0]);
       }
     } catch (e: any) {
-      console.error(e);
-      setMsg({ type: 'error', text: 'Failed to load product catalog' });
+      if (currentSeq === catalogSeqRef.current) {
+        console.error(e);
+        setMsg({ type: 'error', text: 'Failed to load product catalog' });
+      }
     } finally {
-      setLoading(false);
+      if (currentSeq === catalogSeqRef.current) {
+        setLoading(false);
+      }
     }
   };
 
@@ -227,8 +237,16 @@ const MakeProductCatalog: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchCatalog();
-    fetchGlobalAttributes();
+    if (isFirstMountRef.current) {
+      isFirstMountRef.current = false;
+      fetchCatalog(search);
+      fetchGlobalAttributes();
+      return;
+    }
+    const timer = setTimeout(() => {
+      fetchCatalog(search);
+    }, 250);
+    return () => clearTimeout(timer);
   }, [search]);
 
   useEffect(() => {
@@ -639,17 +657,17 @@ const MakeProductCatalog: React.FC = () => {
 
   return (
     <DashboardLayout title="Customized Product Catalog">
-      <div style={{ padding: '1.5rem', maxWidth: '1440px', margin: '0 auto' }}>
+      <div style={{ padding: '0.25rem 0', maxWidth: '1440px', margin: '0 auto', width: '100%', minWidth: 0, boxSizing: 'border-box' }}>
         
         {/* Header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '12px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '12px' }}>
           <div>
-            <h1 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 800 }}>MAKE Product Catalog</h1>
+            <h1 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 800 }}>MAKE Product Catalog</h1>
             <p style={{ margin: '4px 0 0', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
               Define customized furniture templates, manage specs &amp; finishes, and track complete purchasing &amp; sales history
             </p>
           </div>
-          <div style={{ display: 'flex', gap: '10px' }}>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
             <button 
               onClick={() => { fetchCatalog(); fetchGlobalAttributes(); if (selectedProduct?.id) fetchProductHistory(selectedProduct.id); }}
               style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '8px', cursor: 'pointer', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
@@ -671,7 +689,7 @@ const MakeProductCatalog: React.FC = () => {
         </div>
 
         {/* Top View Selector: Products Catalog vs Global Attributes */}
-        <div data-tutorial="make-product-catalog" style={{ display: 'flex', gap: '8px', marginBottom: '1.5rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem' }}>
+        <div data-tutorial="make-product-catalog" style={{ display: 'flex', gap: '8px', marginBottom: '1.25rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem', flexWrap: 'wrap' }}>
           <button
             onClick={() => {
               setCatalogMainView('products');
@@ -721,10 +739,10 @@ const MakeProductCatalog: React.FC = () => {
 
         {/* Main 2-Panel Layout */}
         {catalogMainView === 'products' ? (
-          <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: '1.5rem', alignItems: 'start' }}>
+          <div className="make-catalog-grid">
           
           {/* Left Panel: Products List */}
-          <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '14px', padding: '1.25rem', height: 'calc(100vh - 200px)', display: 'flex', flexDirection: 'column' }}>
+          <div className="make-catalog-list-panel">
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
               <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <Package size={17} color="#3b82f6" /> Products ({products.length})
@@ -732,7 +750,7 @@ const MakeProductCatalog: React.FC = () => {
             </div>
 
             <div style={{ position: 'relative', marginBottom: '1rem' }}>
-              <Search size={15} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
+              <Search size={15} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', pointerEvents: 'none' }} />
               <input 
                 type="text" 
                 placeholder="Search products..." 
@@ -830,7 +848,7 @@ const MakeProductCatalog: React.FC = () => {
           </div>
 
           {/* Right Panel: Selected Product, Specifications, Sizes, Colors & Purchase History */}
-          <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '14px', padding: '1.5rem', minHeight: 'calc(100vh - 200px)', display: 'flex', flexDirection: 'column' }}>
+          <div className="make-catalog-detail-panel">
             {!selectedProduct ? (
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, color: 'var(--text-secondary)', fontSize: '0.9rem', textAlign: 'center', padding: '3rem' }}>
                 Select a product from the left or click &quot;New Product&quot; to begin
@@ -838,15 +856,15 @@ const MakeProductCatalog: React.FC = () => {
             ) : (
               <div>
                 {/* Product Overview Header Card */}
-                <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '1.25rem', marginBottom: '1.5rem' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
-                    <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-start' }}>
+                <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '1.25rem', marginBottom: '1.25rem', width: '100%', minWidth: 0, boxSizing: 'border-box' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '14px', width: '100%', minWidth: 0 }}>
+                    <div style={{ display: 'flex', gap: '14px', alignItems: 'flex-start', flex: '1 1 260px', minWidth: 0 }}>
                       {selectedProduct.main_image && !imageErrors[selectedProduct.id!] ? (() => {
                         const resolved = resolveImageSrc(selectedProduct.main_image);
                         const resolvedType = resolved.startsWith('app-media://nas/') ? 'nas_storage' : resolved.startsWith('app-media://local/') ? 'local_file' : resolved.startsWith('data:') ? 'data_url' : resolved.startsWith('http') ? 'remote_http' : 'other';
                         const startTime = performance.now();
                         return (
-                          <div style={{ position: 'relative' }}>
+                          <div style={{ position: 'relative', flexShrink: 0 }}>
                             <img 
                               src={resolved} 
                               alt={selectedProduct.product_name} 
@@ -867,7 +885,7 @@ const MakeProductCatalog: React.FC = () => {
                                 setImageErrors(prev => ({ ...prev, [selectedProduct.id!]: true })); 
                                 handleImageLoadError(e, selectedProduct.main_image); 
                               }} 
-                              style={{ width: '90px', height: '90px', borderRadius: '10px', objectFit: 'cover', border: '1px solid var(--border-color)', boxShadow: '0 4px 10px rgba(0,0,0,0.1)' }} 
+                              style={{ width: '80px', height: '80px', borderRadius: '10px', objectFit: 'cover', border: '1px solid var(--border-color)', boxShadow: '0 4px 10px rgba(0,0,0,0.1)' }} 
                             />
                           </div>
                         );
@@ -877,14 +895,14 @@ const MakeProductCatalog: React.FC = () => {
                           data-diagnostic-field-name="main_image"
                           data-diagnostic-value-exists={!!selectedProduct.main_image}
                           data-diagnostic-status="fallback"
-                          style={{ width: '90px', height: '90px', borderRadius: '10px', background: 'rgba(59,130,246,0.1)', border: '1.5px dashed #3b82f6', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '4px', color: '#3b82f6' }}>
-                          <ImageIcon size={24} />
+                          style={{ width: '80px', height: '80px', flexShrink: 0, borderRadius: '10px', background: 'rgba(59,130,246,0.1)', border: '1.5px dashed #3b82f6', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '4px', color: '#3b82f6' }}>
+                          <ImageIcon size={22} />
                           <span style={{ fontSize: '0.65rem', fontWeight: 600 }}>No Image</span>
                         </div>
                       )}
 
-                      <div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                           <span style={{ background: '#3b82f6', color: '#fff', padding: '2px 8px', borderRadius: '6px', fontSize: '0.75rem', fontWeight: 700, letterSpacing: '0.04em' }}>
                             {selectedProduct.product_code}
                           </span>
@@ -895,29 +913,29 @@ const MakeProductCatalog: React.FC = () => {
                             <ShoppingCart size={12} /> {historyData?.totalQuantity || selectedProduct.purchased_count || 0} Units Purchased
                           </span>
                         </div>
-                        <h2 style={{ margin: '6px 0 4px', fontSize: '1.35rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+                        <h2 style={{ margin: '6px 0 4px', fontSize: '1.25rem', fontWeight: 800, color: 'var(--text-primary)', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
                           {selectedProduct.product_name}
                         </h2>
-                        <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.85rem', maxWidth: '650px' }}>
+                        <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.85rem', maxWidth: '650px', wordBreak: 'break-word' }}>
                           {selectedProduct.description || 'No description provided.'}
                         </p>
                       </div>
                     </div>
 
-                    <div style={{ display: 'flex', gap: '8px' }}>
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', flexShrink: 0 }}>
                       <button 
                         onClick={() => setActiveTab('history')}
-                        style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 14px', background: activeTab === 'history' ? '#059669' : 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.3)', borderRadius: '8px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 700, color: activeTab === 'history' ? '#fff' : '#059669' }}>
+                        style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 12px', background: activeTab === 'history' ? '#059669' : 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.3)', borderRadius: '8px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 700, color: activeTab === 'history' ? '#fff' : '#059669', whiteSpace: 'nowrap' }}>
                         <HistoryIcon size={14} /> Purchase History ({historyData?.totalQuantity || selectedProduct.purchased_count || 0})
                       </button>
                       <button 
                         onClick={() => handleOpenEditProduct(selectedProduct)}
-                        style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 12px', background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '8px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                        style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 12px', background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '8px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
                         <Edit2 size={13} /> Edit Product
                       </button>
                       <button 
                         onClick={() => selectedProduct.id && handleDeleteProduct(selectedProduct.id)}
-                        style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 12px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '8px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600, color: '#ef4444' }}>
+                        style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 12px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '8px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600, color: '#ef4444', whiteSpace: 'nowrap' }}>
                         <Trash2 size={13} /> Delete
                       </button>
                     </div>
@@ -925,49 +943,49 @@ const MakeProductCatalog: React.FC = () => {
                 </div>
 
                 {/* Filter Navigation Tabs */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '10px', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '10px' }}>
-                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '10px', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '10px', width: '100%', minWidth: 0 }}>
+                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', minWidth: 0 }}>
                     <button 
                       onClick={() => { setActiveTab('all'); saveProductCatalogDraft({ activeTab: 'all' }); }}
-                      style={{ padding: '6px 14px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '0.82rem', fontWeight: 600, background: activeTab === 'all' ? '#3b82f6' : 'var(--bg-secondary)', color: activeTab === 'all' ? '#fff' : 'var(--text-secondary)' }}>
+                      style={{ padding: '6px 12px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600, background: activeTab === 'all' ? '#3b82f6' : 'var(--bg-secondary)', color: activeTab === 'all' ? '#fff' : 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
                       All Overview
                     </button>
                     <button 
                       onClick={() => { setActiveTab('specs'); saveProductCatalogDraft({ activeTab: 'specs' }); }}
-                      style={{ padding: '6px 14px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '0.82rem', fontWeight: 600, background: activeTab === 'specs' ? '#8b5cf6' : 'var(--bg-secondary)', color: activeTab === 'specs' ? '#fff' : 'var(--text-secondary)' }}>
+                      style={{ padding: '6px 12px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600, background: activeTab === 'specs' ? '#8b5cf6' : 'var(--bg-secondary)', color: activeTab === 'specs' ? '#fff' : 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
                       📋 Specifications ({selectedProduct.specifications?.length || 0})
                     </button>
                     <button 
                       onClick={() => { setActiveTab('sizes'); saveProductCatalogDraft({ activeTab: 'sizes' }); }}
-                      style={{ padding: '6px 14px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '0.82rem', fontWeight: 600, background: activeTab === 'sizes' ? '#10b981' : 'var(--bg-secondary)', color: activeTab === 'sizes' ? '#fff' : 'var(--text-secondary)' }}>
+                      style={{ padding: '6px 12px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600, background: activeTab === 'sizes' ? '#10b981' : 'var(--bg-secondary)', color: activeTab === 'sizes' ? '#fff' : 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
                       📏 Sizes &amp; Dimensions ({selectedProduct.sizes?.length || 0})
                     </button>
                     <button 
                       onClick={() => { setActiveTab('colors'); saveProductCatalogDraft({ activeTab: 'colors' }); }}
-                      style={{ padding: '6px 14px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '0.82rem', fontWeight: 600, background: activeTab === 'colors' ? '#f59e0b' : 'var(--bg-secondary)', color: activeTab === 'colors' ? '#fff' : 'var(--text-secondary)' }}>
+                      style={{ padding: '6px 12px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600, background: activeTab === 'colors' ? '#f59e0b' : 'var(--bg-secondary)', color: activeTab === 'colors' ? '#fff' : 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
                       🎨 Colors &amp; Finishes ({selectedProduct.colors?.length || 0})
                     </button>
                     <button 
                       onClick={() => { setActiveTab('history'); saveProductCatalogDraft({ activeTab: 'history' }); }}
-                      style={{ padding: '6px 14px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '0.82rem', fontWeight: 700, background: activeTab === 'history' ? '#059669' : 'rgba(16,185,129,0.1)', color: activeTab === 'history' ? '#fff' : '#059669', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      style={{ padding: '6px 12px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 700, background: activeTab === 'history' ? '#059669' : 'rgba(16,185,129,0.1)', color: activeTab === 'history' ? '#fff' : '#059669', display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}>
                       <ShoppingCart size={14} /> Purchase History ({historyData?.totalQuantity || selectedProduct.purchased_count || 0})
                     </button>
                   </div>
 
-                  <div style={{ display: 'flex', gap: '6px' }}>
+                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                     <button 
                       onClick={() => { setEditingSpec({ is_active: true }); setShowSpecModal(true); }}
-                      style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 10px', background: '#8b5cf6', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>
+                      style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 10px', background: '#8b5cf6', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600, whiteSpace: 'nowrap' }}>
                       <Plus size={13} /> Add Spec
                     </button>
                     <button 
                       onClick={() => { setEditingSize({ unit: 'mm', is_active: true }); setShowSizeModal(true); }}
-                      style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 10px', background: '#10b981', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>
+                      style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 10px', background: '#10b981', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600, whiteSpace: 'nowrap' }}>
                       <Plus size={13} /> Add Size
                     </button>
                     <button 
                       onClick={() => { setEditingColor({ is_active: true }); setShowColorModal(true); }}
-                      style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 10px', background: '#f59e0b', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>
+                      style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 10px', background: '#f59e0b', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600, whiteSpace: 'nowrap' }}>
                       <Plus size={13} /> Add Color
                     </button>
                   </div>
@@ -990,8 +1008,8 @@ const MakeProductCatalog: React.FC = () => {
                         </div>
 
                         {/* History Search */}
-                        <div style={{ position: 'relative', minWidth: '220px' }}>
-                          <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
+                        <div style={{ position: 'relative', minWidth: '200px' }}>
+                          <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', pointerEvents: 'none' }} />
                           <input 
                             type="text" 
                             placeholder="Filter order history..." 
@@ -1535,7 +1553,7 @@ const MakeProductCatalog: React.FC = () => {
         {/* Modal: Create/Edit Category */}
         {showCategoryModal && (
           <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
-            <div style={{ background: 'var(--card-bg)', borderRadius: '16px', width: '100%', maxWidth: '450px', padding: '1.5rem', boxShadow: '0 20px 50px rgba(0,0,0,0.3)', border: '1px solid var(--border-color)' }}>
+            <div className="make-modal-container" style={{ background: 'var(--card-bg)', borderRadius: '16px', width: '100%', maxWidth: 'min(450px, calc(100vw - 32px))', maxHeight: '90vh', overflowY: 'auto', padding: '1.5rem', boxShadow: '0 20px 50px rgba(0,0,0,0.3)', border: '1px solid var(--border-color)', boxSizing: 'border-box' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
                 <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 800 }}>{editingCategory.id ? 'Edit Category' : 'New Category'}</h3>
                 <button onClick={() => setShowCategoryModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}><X size={18} /></button>
@@ -1593,7 +1611,7 @@ const MakeProductCatalog: React.FC = () => {
         {/* Modal: Create/Edit Spec */}
         {showSpecModal && (
           <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
-            <div style={{ background: 'var(--card-bg)', borderRadius: '16px', width: '100%', maxWidth: '450px', padding: '1.5rem', boxShadow: '0 20px 50px rgba(0,0,0,0.3)', border: '1px solid var(--border-color)' }}>
+            <div className="make-modal-container" style={{ background: 'var(--card-bg)', borderRadius: '16px', width: '100%', maxWidth: 'min(450px, calc(100vw - 32px))', maxHeight: '90vh', overflowY: 'auto', padding: '1.5rem', boxShadow: '0 20px 50px rgba(0,0,0,0.3)', border: '1px solid var(--border-color)', boxSizing: 'border-box' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
                 <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 800 }}>{editingSpec.id ? 'Edit Specification' : 'New Specification'}</h3>
                 <button onClick={() => setShowSpecModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}><X size={18} /></button>
@@ -1647,7 +1665,7 @@ const MakeProductCatalog: React.FC = () => {
         {/* Modal: Create/Edit Size */}
         {showSizeModal && (
           <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
-            <div style={{ background: 'var(--card-bg)', borderRadius: '16px', width: '100%', maxWidth: '450px', padding: '1.5rem', boxShadow: '0 20px 50px rgba(0,0,0,0.3)', border: '1px solid var(--border-color)' }}>
+            <div className="make-modal-container" style={{ background: 'var(--card-bg)', borderRadius: '16px', width: '100%', maxWidth: 'min(450px, calc(100vw - 32px))', maxHeight: '90vh', overflowY: 'auto', padding: '1.5rem', boxShadow: '0 20px 50px rgba(0,0,0,0.3)', border: '1px solid var(--border-color)', boxSizing: 'border-box' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
                 <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 800 }}>{editingSize.id ? 'Edit Dimensions' : 'Add Dimensions'}</h3>
                 <button onClick={() => setShowSizeModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}><X size={18} /></button>
@@ -1708,7 +1726,7 @@ const MakeProductCatalog: React.FC = () => {
         {/* Modal: Create/Edit Color */}
         {showColorModal && (
           <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
-            <div style={{ background: 'var(--card-bg)', borderRadius: '16px', width: '100%', maxWidth: '420px', padding: '1.5rem', boxShadow: '0 20px 50px rgba(0,0,0,0.3)', border: '1px solid var(--border-color)' }}>
+            <div className="make-modal-container" style={{ background: 'var(--card-bg)', borderRadius: '16px', width: '100%', maxWidth: 'min(420px, calc(100vw - 32px))', maxHeight: '90vh', overflowY: 'auto', padding: '1.5rem', boxShadow: '0 20px 50px rgba(0,0,0,0.3)', border: '1px solid var(--border-color)', boxSizing: 'border-box' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
                 <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 800 }}>{editingColor.id ? 'Edit Color / Finish' : 'Add Color / Finish'}</h3>
                 <button onClick={() => setShowColorModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}><X size={18} /></button>

@@ -94,46 +94,61 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
     }
   }, [isOpen, initialGlobalAttrs]);
 
-  // Sync initial product data on modal open
-  useEffect(() => {
-    if (!isOpen) return;
+  const prevOpenRef = React.useRef(false);
+  const prevProductIdRef = React.useRef<any>(null);
 
-    if (initialProduct) {
-      setFormData({
-        id: initialProduct.id,
-        product_code: initialProduct.product_code || '',
-        product_name: initialProduct.product_name || '',
-        description: initialProduct.description || '',
-        category_id: initialProduct.category_id || null,
-        category: initialProduct.category || null,
-        main_image: initialProduct.main_image || '',
-        is_active: initialProduct.is_active !== undefined ? initialProduct.is_active : true
-      });
-      const catIds = Array.isArray(initialProduct.category_ids) && initialProduct.category_ids.length > 0
-        ? initialProduct.category_ids
-        : (initialProduct.category_id ? [initialProduct.category_id] : []);
-      setSelectedCategoryIds(catIds);
-      setSelectedSpecIds((initialProduct.specifications || []).map((s: any) => s.id));
-      setSelectedSizeIds((initialProduct.sizes || []).map((s: any) => s.id));
-      setSelectedColorIds((initialProduct.colors || []).map((c: any) => c.id));
-    } else {
-      setFormData({
-        product_code: '',
-        product_name: '',
-        description: '',
-        category_id: null,
-        category: null,
-        main_image: '',
-        is_active: true
-      });
-      setSelectedCategoryIds([]);
-      setSelectedSpecIds([]);
-      setSelectedSizeIds([]);
-      setSelectedColorIds([]);
+  // Sync initial product data strictly on modal open or when product ID changes
+  useEffect(() => {
+    if (!isOpen) {
+      prevOpenRef.current = false;
+      return;
     }
-    setErrorMessage(null);
-    setInlineNewAttrType(null);
-  }, [isOpen, initialProduct]);
+
+    const justOpened = !prevOpenRef.current;
+    const currentId = initialProduct?.id ?? null;
+    const productChanged = currentId !== prevProductIdRef.current;
+
+    if (justOpened || productChanged) {
+      prevOpenRef.current = true;
+      prevProductIdRef.current = currentId;
+
+      if (initialProduct) {
+        setFormData({
+          id: initialProduct.id,
+          product_code: initialProduct.product_code || '',
+          product_name: initialProduct.product_name || '',
+          description: initialProduct.description || '',
+          category_id: initialProduct.category_id || null,
+          category: initialProduct.category || null,
+          main_image: initialProduct.main_image || '',
+          is_active: initialProduct.is_active !== undefined ? initialProduct.is_active : true
+        });
+        const catIds = Array.isArray(initialProduct.category_ids) && initialProduct.category_ids.length > 0
+          ? initialProduct.category_ids
+          : (initialProduct.category_id ? [initialProduct.category_id] : []);
+        setSelectedCategoryIds(catIds);
+        setSelectedSpecIds((initialProduct.specifications || []).map((s: any) => s.id));
+        setSelectedSizeIds((initialProduct.sizes || []).map((s: any) => s.id));
+        setSelectedColorIds((initialProduct.colors || []).map((c: any) => c.id));
+      } else {
+        setFormData({
+          product_code: '',
+          product_name: '',
+          description: '',
+          category_id: null,
+          category: null,
+          main_image: '',
+          is_active: true
+        });
+        setSelectedCategoryIds([]);
+        setSelectedSpecIds([]);
+        setSelectedSizeIds([]);
+        setSelectedColorIds([]);
+      }
+      setErrorMessage(null);
+      setInlineNewAttrType(null);
+    }
+  }, [isOpen, initialProduct?.id]);
 
   // Notify parent of draft updates (only when drafting a new product)
   const notifyDraftUpdate = (updatedForm: any, catIds: any[], specIds: any[], sizeIds: any[], colorIds: any[]) => {
@@ -151,13 +166,19 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
     }
   };
 
+  // Local immediate state update for flawless typing without re-render interruptions
   const handleFieldChange = (field: string, value: any) => {
-    setFormData((prev: any) => {
-      const next = { ...prev, [field]: value };
-      notifyDraftUpdate(next, selectedCategoryIds, selectedSpecIds, selectedSizeIds, selectedColorIds);
-      return next;
-    });
+    setFormData((prev: any) => ({ ...prev, [field]: value }));
   };
+
+  // Debounce draft storage and parent notifications outside of typing keystroke cycle
+  useEffect(() => {
+    if (!isOpen || initialProduct?.id || !isDraftManaged) return;
+    const timer = setTimeout(() => {
+      notifyDraftUpdate(formData, selectedCategoryIds, selectedSpecIds, selectedSizeIds, selectedColorIds);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [formData, selectedCategoryIds, selectedSpecIds, selectedSizeIds, selectedColorIds, isOpen, initialProduct?.id, isDraftManaged]);
 
   const handlePickAndUploadImage = async () => {
     setUploadingImage(true);
@@ -348,7 +369,7 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
-      <div className="make-modal-container" style={{ background: 'var(--card-bg)', borderRadius: '16px', width: '100%', maxWidth: '560px', maxHeight: '90vh', overflowY: 'auto', padding: '1.5rem', boxShadow: '0 20px 50px rgba(0,0,0,0.3)', border: '1px solid var(--border-color)' }}>
+      <div className="make-modal-container" style={{ background: 'var(--card-bg)', borderRadius: '16px', width: '100%', maxWidth: 'min(560px, calc(100vw - 32px))', maxHeight: '90vh', overflowY: 'auto', padding: '1.5rem', boxShadow: '0 20px 50px rgba(0,0,0,0.3)', border: '1px solid var(--border-color)', boxSizing: 'border-box' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
           <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 800 }}>
             {formData.id ? 'Edit Product' : 'New Product'}
