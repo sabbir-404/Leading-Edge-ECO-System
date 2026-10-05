@@ -34,12 +34,28 @@ class LEMakeAdminSettings {
     }
 
     public function register_settings() {
-        register_setting('le_make_settings_group', 'le_make_nas_tunnel_url');
-        register_setting('le_make_settings_group', 'le_make_cf_client_id');
-        register_setting('le_make_settings_group', 'le_make_cf_client_secret');
-        register_setting('le_make_settings_group', 'le_make_supabase_url');
-        register_setting('le_make_settings_group', 'le_make_anon_key');
-        register_setting('le_make_settings_group', 'le_make_supabase_service_key');
+        register_setting('le_make_settings_group', 'le_make_nas_tunnel_url', 'esc_url_raw');
+        register_setting('le_make_settings_group', 'le_make_cf_client_id', 'sanitize_text_field');
+        register_setting('le_make_settings_group', 'le_make_cf_client_secret', array($this, 'sanitize_cf_secret'));
+        register_setting('le_make_settings_group', 'le_make_supabase_url', 'esc_url_raw');
+        register_setting('le_make_settings_group', 'le_make_anon_key', 'sanitize_textarea_field');
+        register_setting('le_make_settings_group', 'le_make_supabase_service_key', array($this, 'sanitize_service_key'));
+    }
+
+    public function sanitize_cf_secret($input) {
+        $input = is_string($input) ? trim($input) : '';
+        if ($input === '') {
+            return get_option('le_make_cf_client_secret', '');
+        }
+        return sanitize_text_field($input);
+    }
+
+    public function sanitize_service_key($input) {
+        $input = is_string($input) ? trim($input) : '';
+        if ($input === '') {
+            return get_option('le_make_supabase_service_key', '');
+        }
+        return sanitize_text_field($input);
     }
 
     public function render_settings_page() {
@@ -178,7 +194,13 @@ class LEMakeAdminSettings {
                     <tr>
                         <th scope="row" style="font-weight: 600;">CF Service Token Client Secret</th>
                         <td>
-                            <input type="password" name="le_make_cf_client_secret" value="<?php echo esc_attr(get_option('le_make_cf_client_secret', '')); ?>" class="regular-text" style="width: 100%; max-width: 500px;" placeholder="Enter Cloudflare Access Client Secret" autocomplete="new-password" />
+                            <?php $has_cf_secret = !empty(get_option('le_make_cf_client_secret')) || (defined('LE_MAKE_CF_CLIENT_SECRET') && LE_MAKE_CF_CLIENT_SECRET); ?>
+                            <input type="password" name="le_make_cf_client_secret" value="" class="regular-text" style="width: 100%; max-width: 500px;" placeholder="<?php echo $has_cf_secret ? '•••••••••••••••• (Secret configured — leave blank to keep)' : 'Enter Cloudflare Access Client Secret'; ?>" autocomplete="new-password" />
+                            <?php if ($has_cf_secret): ?>
+                                <div style="margin-top: 5px; color: #059669; font-size: 12px; font-weight: 600;">✓ Secret is securely stored server-side (never exposed in HTML)</div>
+                            <?php else: ?>
+                                <div style="margin-top: 5px; color: #64748b; font-size: 12px;">Not configured yet.</div>
+                            <?php endif; ?>
                             <p class="description">Cloudflare Access header <code>CF-Access-Client-Secret</code>. Can also be defined via <code>LE_MAKE_CF_CLIENT_SECRET</code> constant in <code>wp-config.php</code>.</p>
                         </td>
                     </tr>
@@ -206,7 +228,13 @@ class LEMakeAdminSettings {
                     <tr>
                         <th scope="row" style="font-weight: 600;">Service Role Key (Optional)</th>
                         <td>
-                            <input type="password" name="le_make_supabase_service_key" value="<?php echo esc_attr(get_option('le_make_supabase_service_key', '')); ?>" class="regular-text" style="width: 100%; max-width: 500px;" placeholder="Enter Supabase Service Role Key" autocomplete="new-password" />
+                            <?php $has_sb_key = !empty(get_option('le_make_supabase_service_key')) || (defined('LE_MAKE_SUPABASE_SERVICE_KEY') && LE_MAKE_SUPABASE_SERVICE_KEY); ?>
+                            <input type="password" name="le_make_supabase_service_key" value="" class="regular-text" style="width: 100%; max-width: 500px;" placeholder="<?php echo $has_sb_key ? '•••••••••••••••• (Key configured — leave blank to keep)' : 'Enter Supabase Service Role Key'; ?>" autocomplete="new-password" />
+                            <?php if ($has_sb_key): ?>
+                                <div style="margin-top: 5px; color: #059669; font-size: 12px; font-weight: 600;">✓ Service role key is securely stored server-side (never exposed in HTML)</div>
+                            <?php else: ?>
+                                <div style="margin-top: 5px; color: #64748b; font-size: 12px;">Optional. Leave blank if not required.</div>
+                            <?php endif; ?>
                             <p class="description">Supabase privileged service-role key for backend storage management. Can also be defined via <code>LE_MAKE_SUPABASE_SERVICE_KEY</code> in <code>wp-config.php</code>.</p>
                         </td>
                     </tr>

@@ -160,6 +160,7 @@ export const CatalogSpecSchema = z.object({
     spec_code: z.string().max(50).nullable().optional(),
     spec_name: z.string().min(1).max(255),
     spec_details: z.string().nullable().optional(),
+    image_url: z.string().nullable().optional(),
     is_active: z.boolean().default(true)
 });
 
@@ -208,8 +209,56 @@ export const GlobalAttributeSchema = z.object({
     image_url: z.string().nullable().optional(),
     is_active: z.boolean().default(true)
 }).refine(data => {
-    return !!(data.name || data.spec_name || data.size_label || data.color_name || data.category_name);
+    if (data.type === 'size') {
+        const hasLabel = !!(data.size_label?.trim() || data.name?.trim());
+        const hasDimensions = (data.length !== undefined && data.length !== null && data.length !== '') ||
+                              (data.width !== undefined && data.width !== null && data.width !== '') ||
+                              (data.height !== undefined && data.height !== null && data.height !== '') ||
+                              (data.diameter !== undefined && data.diameter !== null && data.diameter !== '');
+        return hasLabel || hasDimensions;
+    }
+    return !!(data.name || data.spec_name || data.color_name || data.category_name);
 }, { message: 'Attribute name/label is required' });
+
+/**
+ * Robustly normalizes raw global attribute inputs before validation.
+ * - Handles size_label: if null, undefined, empty string, or whitespace-only, removes it so Zod treats it as omitted/undefined.
+ * - Non-string types (numbers, booleans, objects, arrays) are preserved as-is so Zod rejects them cleanly with invalid_type.
+ * - String values are trimmed.
+ * - Literal strings "null" and "undefined" are treated as omitted.
+ */
+export function normalizeGlobalAttributePayload(raw: any): any {
+    if (!raw || typeof raw !== 'object') return raw;
+    const payload = { ...raw };
+
+    // Normalize size_label
+    if (payload.size_label === null || payload.size_label === undefined) {
+        delete payload.size_label;
+    } else if (typeof payload.size_label === 'string') {
+        const trimmed = payload.size_label.trim();
+        if (trimmed.length === 0 || trimmed.toLowerCase() === 'null' || trimmed.toLowerCase() === 'undefined') {
+            delete payload.size_label;
+        } else {
+            payload.size_label = trimmed;
+        }
+    }
+
+    // Normalize other name/label string fields
+    for (const key of ['name', 'spec_name', 'color_name', 'category_name'] as const) {
+        if (typeof payload[key] === 'string') {
+            const trimmed = payload[key].trim();
+            if (trimmed.length === 0) {
+                delete payload[key];
+            } else {
+                payload[key] = trimmed;
+            }
+        } else if (payload[key] === null) {
+            delete payload[key];
+        }
+    }
+
+    return payload;
+}
 
 export const AssignProductAttributesSchema = z.object({
     productId: z.union([z.string(), z.number()]),

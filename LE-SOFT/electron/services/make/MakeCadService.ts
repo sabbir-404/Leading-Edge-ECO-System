@@ -13,6 +13,7 @@
 import { BrowserWindow, dialog, app, shell } from 'electron';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { supabase, getCfAccessHeaders } from '../../supabase';
 
 export interface FileValidationResult {
@@ -47,13 +48,15 @@ export class MakeCadService {
      */
     private static getNasStorageUrl(): string | null {
         try {
-            const configPath = path.join(app.getPath('userData'), 'supabase-config.json');
+            const configPath = path.join(app?.getPath ? app.getPath('userData') : process.cwd(), 'supabase-config.json');
             if (fs.existsSync(configPath)) {
                 const cfg = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
                 if (cfg.storageUrl) return cfg.storageUrl;
+                if (cfg.nasStorageUrl) return cfg.nasStorageUrl;
             }
         } catch { }
-        return 'https://storage.lenas.me';
+        if (process.env.NAS_STORAGE_URL) return process.env.NAS_STORAGE_URL;
+        return 'http://100.88.85.6:8081';
     }
 
     /**

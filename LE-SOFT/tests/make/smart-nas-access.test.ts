@@ -116,11 +116,11 @@ describe('Smart NAS / Tailscale Database Access — Issue 2 Fixes', () => {
         });
     });
 
-    describe('2. Bounded 2000ms Query Timeout & Immediate Failover', () => {
-        it('falls back to Supabase Cloud when NAS query times out past 2000ms', async () => {
-            // Mock NAS query that hangs longer than 2000ms
+    describe('2. Bounded 6000ms Query Timeout & Failover After Consecutive Failures', () => {
+        it('falls back to Supabase Cloud when NAS query times out past 6000ms', { timeout: 20000 }, async () => {
+            // Mock NAS query that hangs longer than 6000ms
             const nasQueryPromise = vi.fn().mockImplementation(() => new Promise((resolve) => {
-                setTimeout(() => resolve({ data: [{ id: 1, name: 'Late Result' }], error: null }), 3000);
+                setTimeout(() => resolve({ data: [{ id: 1, name: 'Late Result' }], error: null }), 7000);
             }));
 
             const supabaseQueryPromise = vi.fn().mockResolvedValue({
@@ -128,16 +128,25 @@ describe('Smart NAS / Tailscale Database Access — Issue 2 Fixes', () => {
                 error: null
             });
 
-            const res = await engine.executeRead(async (client) => {
+            // First timeout: NAS gets the failure recorded but circuit stays healthy
+            const res1 = await engine.executeRead(async (client) => {
                 if (client === mockNasClient) return nasQueryPromise();
                 return supabaseQueryPromise();
             }, 'products-read');
 
-            expect(res.databaseUsed).toBe('supabase');
-            expect(res.data).toEqual([{ id: 1, name: 'Cloud Fallback Product' }]);
-            expect(res.error).toBeNull();
+            // After first timeout, engine falls back for THIS query but circuit is not yet degraded
+            expect(res1.databaseUsed).toBe('supabase');
+            expect(res1.data).toEqual([{ id: 1, name: 'Cloud Fallback Product' }]);
+            expect(res1.error).toBeNull();
 
-            // Circuit breaker tripped to degraded
+            // Second timeout: NOW circuit breaker trips to degraded
+            const res2 = await engine.executeRead(async (client) => {
+                if (client === mockNasClient) return nasQueryPromise();
+                return supabaseQueryPromise();
+            }, 'products-read-2');
+
+            expect(res2.databaseUsed).toBe('supabase');
+
             const status = engine.getStatus();
             expect(status.circuitState).toBe('degraded');
             expect(status.activeTarget).toBe('supabase');
@@ -145,7 +154,8 @@ describe('Smart NAS / Tailscale Database Access — Issue 2 Fixes', () => {
         });
 
         it('immediately routes query to Supabase (0ms wait) during active cooldown', async () => {
-            // Trip the circuit breaker
+            // Trip the circuit breaker — requires 2 consecutive timeout failures
+            engine.recordNasFailure(new Error('ETIMEDOUT'));
             engine.recordNasFailure(new Error('ETIMEDOUT'));
             expect(engine.getStatus().circuitState).toBe('degraded');
 
@@ -170,15 +180,18 @@ describe('Smart NAS / Tailscale Database Access — Issue 2 Fixes', () => {
 
     describe('3. Adaptive Cooldown on Flapping (30s to 120s)', () => {
         it('increases cooldown duration on repeated/flapping NAS failures up to 120s max', () => {
-            // 1st failure: 30s base
+            // 1st failure: timeout/transient does NOT trip circuit with only 1 failure
             engine.recordNasFailure(new Error('fetch failed'));
             let status = engine.getStatus();
+            // Circuit is still healthy after 1 transient failure
+            expect(status.circuitState).toBe('healthy');
             expect(status.latencyStats?.cooldownRemainingMs).toBeGreaterThan(25000);
             expect(status.latencyStats?.cooldownRemainingMs).toBeLessThanOrEqual(30000);
 
-            // 2nd failure: 30 * 1.5 = 45s
+            // 2nd failure: now trips to degraded
             engine.recordNasFailure(new Error('fetch failed'));
             status = engine.getStatus();
+            expect(status.circuitState).toBe('degraded');
             expect(status.latencyStats?.cooldownRemainingMs).toBeGreaterThan(40000);
             expect(status.latencyStats?.cooldownRemainingMs).toBeLessThanOrEqual(45000);
 
@@ -193,6 +206,7 @@ describe('Smart NAS / Tailscale Database Access — Issue 2 Fixes', () => {
 
         it('resets cooldown to 0 on verified NAS success', () => {
             engine.recordNasFailure(new Error('fetch failed'));
+            engine.recordNasFailure(new Error('fetch failed'));
             expect(engine.getStatus().latencyStats?.cooldownRemainingMs).toBeGreaterThan(0);
 
             engine.recordNasSuccess(45);
@@ -205,7 +219,8 @@ describe('Smart NAS / Tailscale Database Access — Issue 2 Fixes', () => {
 
     describe('4. Real Query Verification & Recovery', () => {
         it('verifies NAS health with a real query before restoring primary state', async () => {
-            // Put engine into degraded state
+            // Put engine into degraded state — requires 2 consecutive failures for transient errors
+            engine.recordNasFailure(new Error('network outage'));
             engine.recordNasFailure(new Error('network outage'));
             expect(engine.getStatus().circuitState).toBe('degraded');
 
@@ -227,6 +242,7 @@ describe('Smart NAS / Tailscale Database Access — Issue 2 Fixes', () => {
         });
 
         it('refuses to restore primary state if real verification query fails', async () => {
+            engine.recordNasFailure(new Error('network outage'));
             engine.recordNasFailure(new Error('network outage'));
             expect(engine.getStatus().circuitState).toBe('degraded');
 
@@ -304,13 +320,15 @@ describe('Smart NAS / Tailscale Database Access — Issue 2 Fixes', () => {
             expect(supabaseWriteCalled).toBe(false);
             expect(res.data).toBeNull();
 
-            // Circuit breaker tripped to degraded to guard subsequent operations
-            expect(engine.getStatus().circuitState).toBe('degraded');
+            // Single write timeout does NOT trip circuit breaker (requires 2 consecutive failures)
+            // But the write is protected from duplication
+            const status = engine.getStatus();
+            expect(status.circuitState).toBe('healthy');
         });
 
         it('D. NAS genuinely offline before write -> safe Supabase fallback', async () => {
-            // Pre-condition: NAS is already known to be degraded/offline
-            engine.recordNasFailure(new Error('connection refused'));
+            // Pre-condition: NAS is already known to be degraded/offline — ECONNREFUSED trips immediately
+            engine.recordNasFailure(new Error('ECONNREFUSED'));
             expect(engine.getStatus().circuitState).toBe('degraded');
 
             let nasCalled = false;
@@ -345,8 +363,8 @@ describe('Smart NAS / Tailscale Database Access — Issue 2 Fixes', () => {
         });
 
         it('E. Product creation during fallback -> journaled -> NAS reconciliation', async () => {
-            // Set degraded state
-            engine.recordNasFailure(new Error('WAN link down'));
+            // Set degraded state — ECONNREFUSED is a hard failure, trips immediately
+            engine.recordNasFailure(new Error('ECONNREFUSED'));
 
             const offlineOrder = { id: 801, order_number: 'MAKE-2026-OFFLINE-801' };
             const writeFn = vi.fn().mockImplementation(async (client) => {
@@ -389,8 +407,8 @@ describe('Smart NAS / Tailscale Database Access — Issue 2 Fixes', () => {
         });
 
         it('F. Network recovery -> NAS verified and becomes primary again', async () => {
-            // Start in degraded state
-            engine.recordNasFailure(new Error('temporary glitch'));
+            // Start in degraded state — ECONNREFUSED is a hard failure, trips immediately
+            engine.recordNasFailure(new Error('ECONNREFUSED'));
             expect(engine.getStatus().circuitState).toBe('degraded');
             expect(engine.getStatus().activeTarget).toBe('supabase');
 

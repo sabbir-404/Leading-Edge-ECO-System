@@ -17,6 +17,7 @@ import {
 import { SessionManager, UserSession } from '../../electron/session-manager';
 import { ipcMain } from 'electron';
 import { registerMakeHandlers } from '../../electron/ipc/handlers/make';
+import { supabase } from '../../electron/supabase';
 
 // Mock electron ipcMain and BrowserWindow
 const mockIpcHandlers: Record<string, Function> = {};
@@ -392,6 +393,200 @@ describe('MAKE Feature Set — Product Catalog & Place Order Enhancements', () =
         product_id: null,
         color_name: 'Global Walnut Color'
       })).rejects.toThrow('manage_global_product_attributes');
+    });
+
+    // ══════════════════════════════════════════════════════════════════════════════
+    // REGRESSION SUITE: Global Attribute size_label handling for Furniture Designer
+    // ══════════════════════════════════════════════════════════════════════════════
+    describe('Global Attribute Creation & size_label Regression Tests (Yousuf / Furniture Designer)', () => {
+      beforeEach(() => {
+        registerMakeHandlers();
+      });
+
+      const designerSession: UserSession = {
+        userId: 101,
+        username: 'yousuf',
+        role: 'furniture_designer',
+        fullName: 'Yousuf',
+        permissions: {
+          write_make_catalog: true,
+          manage_global_product_attributes: true
+        },
+        authExpiresAt: Date.now() + 3600000
+      };
+
+      it('A. Furniture Designer creates a normal Global Attribute with no size_label (or null) -> succeeds and writes SQL NULL', async () => {
+        vi.spyOn(SessionManager, 'getSession').mockReturnValue(designerSession);
+        const saveGlobalAttrHandler = mockIpcHandlers['make-save-global-attribute'];
+
+        // Simulate renderer sending payload where size_label was null or omitted, with dimensions provided
+        const payloadWithNull = {
+          type: 'size',
+          size_label: null,
+          length: 1800,
+          width: 900,
+          height: 750,
+          unit: 'mm',
+          is_active: true
+        };
+
+        const res = await saveGlobalAttrHandler({}, payloadWithNull);
+        expect(res.success).toBe(true);
+        expect(res.error).toBeUndefined();
+
+        // Verify DB payload written: size_label must be strictly primitive null (never "null" string)
+        const chain = (supabase.from as any)('make_product_sizes');
+        const lastInsert = chain.insert.mock.calls[chain.insert.mock.calls.length - 1][0];
+        expect(lastInsert.size_label).toBeNull();
+        expect(lastInsert.size_label).not.toBe('null');
+        expect(lastInsert.size_label).not.toBe('undefined');
+        expect(lastInsert.length).toBe(1800);
+        expect(lastInsert.width).toBe(900);
+        expect(lastInsert.height).toBe(750);
+
+        // Also test with completely omitted size_label
+        const payloadOmitted = {
+          type: 'size',
+          length: 2000,
+          width: 1000,
+          height: 750,
+          unit: 'mm',
+          is_active: true
+        };
+        const res2 = await saveGlobalAttrHandler({}, payloadOmitted);
+        expect(res2.success).toBe(true);
+
+        const lastInsert2 = chain.insert.mock.calls[chain.insert.mock.calls.length - 1][0];
+        expect(lastInsert2.size_label).toBeNull();
+        expect(lastInsert2.size_label).not.toBe('null');
+      });
+
+      it('B. Furniture Designer creates a Global Attribute with a valid size_label -> succeeds', async () => {
+        vi.spyOn(SessionManager, 'getSession').mockReturnValue(designerSession);
+        const saveGlobalAttrHandler = mockIpcHandlers['make-save-global-attribute'];
+
+        const payload = {
+          type: 'size',
+          size_label: 'Standard King Bed',
+          length: 2000,
+          width: 1800,
+          height: 1100,
+          unit: 'mm',
+          is_active: true
+        };
+
+        const res = await saveGlobalAttrHandler({}, payload);
+        expect(res.success).toBe(true);
+        expect(res.attribute).toBeDefined();
+      });
+
+      it('C. Invalid non-string size_label is rejected cleanly with validation error', async () => {
+        vi.spyOn(SessionManager, 'getSession').mockReturnValue(designerSession);
+        const saveGlobalAttrHandler = mockIpcHandlers['make-save-global-attribute'];
+
+        // Number size_label
+        const resNum = await saveGlobalAttrHandler({}, {
+          type: 'size',
+          size_label: 12345,
+          length: 2000,
+          width: 1800
+        });
+        expect(resNum.success).toBe(false);
+        expect(resNum.error).toContain('expected string');
+
+        // Object size_label
+        const resObj = await saveGlobalAttrHandler({}, {
+          type: 'size',
+          size_label: { label: 'invalid' },
+          length: 2000
+        });
+        expect(resObj.success).toBe(false);
+        expect(resObj.error).toContain('expected string');
+      });
+
+      it('D. Unauthorized roles remain strictly blocked from saving global attributes', async () => {
+        const saveGlobalAttrHandler = mockIpcHandlers['make-save-global-attribute'];
+
+        // 1. Salesperson role
+        vi.spyOn(SessionManager, 'getSession').mockReturnValue({
+          userId: 200,
+          username: 'sales_user',
+          role: 'salesperson',
+          fullName: 'Sales Person',
+          permissions: { read_make: true },
+          authExpiresAt: Date.now() + 3600000
+        });
+        const resSales = await saveGlobalAttrHandler({}, {
+          type: 'size',
+          size_label: 'Hacked Size',
+          length: 1000
+        });
+        expect(resSales.success).toBe(false);
+        expect(resSales.error).toContain('manage_global_product_attributes');
+
+        // 2. Designer WITHOUT manage_global_product_attributes permission
+        vi.spyOn(SessionManager, 'getSession').mockReturnValue({
+          userId: 201,
+          username: 'designer_restricted',
+          role: 'furniture_designer',
+          fullName: 'Restricted Designer',
+          permissions: { write_make_catalog: true },
+          authExpiresAt: Date.now() + 3600000
+        });
+        const resDesignerRestricted = await saveGlobalAttrHandler({}, {
+          type: 'size',
+          length: 1200
+        });
+        expect(resDesignerRestricted.success).toBe(false);
+        expect(resDesignerRestricted.error).toContain('manage_global_product_attributes');
+      });
+
+      it('E. Editing an existing Global Attribute does not regress', async () => {
+        vi.spyOn(SessionManager, 'getSession').mockReturnValue(designerSession);
+        const saveGlobalAttrHandler = mockIpcHandlers['make-save-global-attribute'];
+
+        // Edit size (with id: 50)
+        const updateSizePayload = {
+          type: 'size',
+          id: 50,
+          size_label: 'Updated Executive Desk',
+          length: 2200,
+          width: 1100,
+          height: 750,
+          unit: 'mm',
+          is_active: true
+        };
+        const resSize = await saveGlobalAttrHandler({}, updateSizePayload);
+        expect(resSize.success).toBe(true);
+
+        // Edit category (with id: 10)
+        const updateCatPayload = {
+          type: 'category',
+          id: 10,
+          name: 'Updated Category Name',
+          code: 'CAT-UPD'
+        };
+        const resCat = await saveGlobalAttrHandler({}, updateCatPayload);
+        expect(resCat.success).toBe(true);
+
+        // Edit spec (with id: 25)
+        const updateSpecPayload = {
+          type: 'spec',
+          id: 25,
+          spec_name: 'Updated Specification'
+        };
+        const resSpec = await saveGlobalAttrHandler({}, updateSpecPayload);
+        expect(resSpec.success).toBe(true);
+
+        // Edit color (with id: 35)
+        const updateColorPayload = {
+          type: 'color',
+          id: 35,
+          color_name: 'Updated Color'
+        };
+        const resColor = await saveGlobalAttrHandler({}, updateColorPayload);
+        expect(resColor.success).toBe(true);
+      });
     });
   });
 });

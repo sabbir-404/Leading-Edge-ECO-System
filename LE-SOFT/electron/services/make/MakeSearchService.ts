@@ -124,7 +124,22 @@ export class MakeSearchService {
                 baseQuery = baseQuery.ilike('category', `%${params.category}%`);
             }
 
-            const { data } = await baseQuery;
+            let { data, error } = await baseQuery;
+
+            // Graceful fallback if make_product_images doesn't exist (Cloud PGRST200)
+            if (error?.code === 'PGRST200' && error?.message?.includes('make_product_images')) {
+                let q2 = supabase.from('make_products').select(`
+                    *,
+                    specifications:make_product_specifications(*),
+                    sizes:make_product_sizes(*),
+                    colors:make_product_colors(*)
+                `).order('product_name', { ascending: true }).limit(limit);
+                if (activeOnly) q2 = q2.eq('is_active', true);
+                if (params.category) q2 = q2.ilike('category', `%${params.category}%`);
+                const fallback = await q2;
+                data = fallback.data;
+                if (data) data.forEach((p: any) => { p.images = []; });
+            }
             const decrypted = decryptRows(data || []);
             return decrypted.map(p => ({
                 id: p.id,
@@ -160,14 +175,29 @@ export class MakeSearchService {
             allCatsMap = this.cache.allCatsMap;
         } else {
             // Fetch catalog products and their attributes (both direct and junction links)
-            const [productsRes, specLinksRes, sizeLinksRes, colorLinksRes, catLinksRes, allSpecsRes, allSizesRes, allColorsRes, allCatsRes] = await Promise.all([
-                supabase.from('make_products').select(`
+            const productsRes = await (async () => {
+                const fullQuery = supabase.from('make_products').select(`
                     *,
                     specifications:make_product_specifications(*),
                     sizes:make_product_sizes(*),
                     colors:make_product_colors(*),
                     images:make_product_images(*)
-                `),
+                `);
+                const res = await fullQuery;
+                // Graceful fallback if make_product_images doesn't exist (Cloud PGRST200)
+                if (res.error?.code === 'PGRST200' && res.error?.message?.includes('make_product_images')) {
+                    const fallback = await supabase.from('make_products').select(`
+                        *,
+                        specifications:make_product_specifications(*),
+                        sizes:make_product_sizes(*),
+                        colors:make_product_colors(*)
+                    `);
+                    if (fallback.data) fallback.data.forEach((p: any) => { p.images = []; });
+                    return fallback;
+                }
+                return res;
+            })();
+            const [specLinksRes, sizeLinksRes, colorLinksRes, catLinksRes, allSpecsRes, allSizesRes, allColorsRes, allCatsRes] = await Promise.all([
                 supabase.from('make_product_specification_links').select('*'),
                 supabase.from('make_product_size_links').select('*'),
                 supabase.from('make_product_color_links').select('*'),

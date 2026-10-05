@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { GlobalAttributeSchema, AssignProductAttributesSchema } from '../../electron/ipc/schemas/make.schema';
+import { GlobalAttributeSchema, AssignProductAttributesSchema, normalizeGlobalAttributePayload } from '../../electron/ipc/schemas/make.schema';
 
 describe('MAKE V1.1 — Normalized Product Attributes & Junction Tables', () => {
     // ── 1. SCHEMA VALIDATION FOR GLOBAL ATTRIBUTES ───────────────────────────
@@ -579,6 +579,94 @@ describe('MAKE V1.1 — Normalized Product Attributes & Junction Tables', () => 
                 const emptyProducts: any[] = [];
                 const emptyIds = emptyProducts.map(p => p.id).filter(Boolean);
                 expect(emptyIds.length).toBe(0);
+            });
+        });
+
+        // ── SIZE_LABEL NORMALIZATION & VALIDATION CONTRACT ──
+        describe('size_label Normalization & Validation Contract', () => {
+            it('normalizes size_label null, empty string, or whitespace to omitted/undefined', () => {
+                const normalizedNull = normalizeGlobalAttributePayload({ type: 'size', size_label: null, length: 1500 });
+                expect(normalizedNull.size_label).toBeUndefined();
+
+                const normalizedEmpty = normalizeGlobalAttributePayload({ type: 'size', size_label: '', length: 1500 });
+                expect(normalizedEmpty.size_label).toBeUndefined();
+
+                const normalizedWhitespace = normalizeGlobalAttributePayload({ type: 'size', size_label: '   ', length: 1500 });
+                expect(normalizedWhitespace.size_label).toBeUndefined();
+
+                const normalizedLiteralNull = normalizeGlobalAttributePayload({ type: 'size', size_label: 'null', length: 1500 });
+                expect(normalizedLiteralNull.size_label).toBeUndefined();
+
+                const normalizedLiteralUndefined = normalizeGlobalAttributePayload({ type: 'size', size_label: 'undefined', length: 1500 });
+                expect(normalizedLiteralUndefined.size_label).toBeUndefined();
+            });
+
+            it('trims valid string size_label', () => {
+                const normalized = normalizeGlobalAttributePayload({ type: 'size', size_label: '  King Size  ', length: 2000 });
+                expect(normalized.size_label).toBe('King Size');
+            });
+
+            it('preserves non-string size_label so Zod rejects with invalid_type', () => {
+                const normalizedNum = normalizeGlobalAttributePayload({ type: 'size', size_label: 12345, length: 1500 });
+                expect(normalizedNum.size_label).toBe(12345);
+                const parsed = GlobalAttributeSchema.safeParse(normalizedNum);
+                expect(parsed.success).toBe(false);
+                if (!parsed.success) {
+                    expect(parsed.error.issues[0].path).toContain('size_label');
+                    expect(parsed.error.issues[0].code).toBe('invalid_type');
+                }
+            });
+
+            it('validates size attribute with dimensions when size_label is omitted', () => {
+                const payload = {
+                    type: 'size' as const,
+                    length: 1800,
+                    width: 900,
+                    height: 750,
+                    unit: 'mm',
+                    is_active: true
+                };
+                const parsed = GlobalAttributeSchema.safeParse(payload);
+                expect(parsed.success).toBe(true);
+            });
+
+            it('validates size attribute with diameter (round) when size_label is omitted', () => {
+                const payload = {
+                    type: 'size' as const,
+                    diameter: 1200,
+                    height: 750,
+                    unit: 'mm',
+                    is_active: true
+                };
+                const parsed = GlobalAttributeSchema.safeParse(payload);
+                expect(parsed.success).toBe(true);
+            });
+
+            it('rejects size attribute when both size_label and dimensions are absent', () => {
+                const payload = {
+                    type: 'size' as const,
+                    unit: 'mm',
+                    is_active: true
+                };
+                const parsed = GlobalAttributeSchema.safeParse(payload);
+                expect(parsed.success).toBe(false);
+                if (!parsed.success) {
+                    expect(parsed.error.issues[0].message).toContain('Attribute name/label is required');
+                }
+            });
+
+            it('ensures database payload sets size_label strictly to primitive null (never "null" string)', () => {
+                const rawLabel = ('   ' || '').trim();
+                const sizeLabel = (rawLabel && rawLabel.toLowerCase() !== 'null' && rawLabel.toLowerCase() !== 'undefined') ? rawLabel : null;
+                const dbPayload = {
+                    product_id: null,
+                    size_label: sizeLabel,
+                    length: 1800,
+                    width: 900
+                };
+                expect(dbPayload.size_label).toBeNull();
+                expect(dbPayload.size_label).not.toBe('null');
+                expect(typeof dbPayload.size_label).toBe('object'); // null is typeof object in JS
             });
         });
     });

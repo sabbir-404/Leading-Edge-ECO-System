@@ -23036,8 +23036,14 @@ var init_DatabaseFailoverEngine = __esm({
       connectionStatePath;
       isNasReachable = false;
       consecutiveFailures = 0;
-      MAX_CONSECUTIVE_FAILURES = 1;
-      // Trip immediately on verified failure to avoid waiting
+      MAX_CONSECUTIVE_FAILURES = 2;
+      // Require 2 consecutive failures before degrading to avoid false-positive on single transient timeout
+      // Session-level guard to prevent endless bootstrap storms on client installations
+      lastBootstrapAttemptTime = 0;
+      BOOTSTRAP_THROTTLE_MS = 36e5;
+      // 1 hour minimum between bootstrap attempts
+      isBackgroundBootstrap = false;
+      // When true, NAS read failures are not recorded as health failures
       lastHealthCheckTime = 0;
       lastLatencyMs = 0;
       avgLatencyMs = 0;
@@ -23328,8 +23334,10 @@ var init_DatabaseFailoverEngine = __esm({
         } else if (this.circuitState === "healthy") {
           this.activeTarget = "nas";
         }
-        this.checkAndBootstrapFallbackIfEmpty().catch(() => {
-        });
+        if (this.supabaseAdmin) {
+          this.checkAndBootstrapFallbackIfEmpty().catch(() => {
+          });
+        }
       }
       /**
        * Verifies NAS recovery with an actual real database query, reconciles pending fallback
@@ -23433,9 +23441,14 @@ var init_DatabaseFailoverEngine = __esm({
       }
       // ── Circuit Breaker Actions ──────────────────────────────────────────────────
       recordNasFailure(err) {
+        if (this.isBackgroundBootstrap) {
+          console.warn("[DB:FAILOVER] Ignoring NAS failure during background bootstrap (not penalizing primary health):", err?.message || "unknown");
+          return;
+        }
         this.consecutiveFailures++;
         this.metrics.failedNasQueries++;
-        const isNetworkErr = err?.message && (err.message.includes("fetch failed") || err.message.includes("ECONNREFUSED") || err.message.includes("ETIMEDOUT") || err.message.includes("network") || err.message.includes("timeout") || err.message.includes("502") || err.message.includes("503") || err.message.includes("504"));
+        const isHardFailure = err?.message && (err.message.includes("ECONNREFUSED") || err.message.includes("HTML response") || err.message.includes("proxy/gateway") || err.message.includes("authorization rejected") || err.message.includes("502") || err.message.includes("503") || err.message.includes("504"));
+        const isTimeoutOrTransient = err?.message && (err.message.includes("fetch failed") || err.message.includes("ETIMEDOUT") || err.message.includes("network") || err.message.includes("timeout") || err.message.includes("Connection")) || err?.code === "PGRST000";
         const backoffStep = Math.min(4, Math.max(0, this.consecutiveFailures - 1));
         this.cooldownDurationMs = Math.min(12e4, 3e4 * Math.pow(1.5, backoffStep));
         this.cooldownUntil = Date.now() + this.cooldownDurationMs;
@@ -23446,7 +23459,8 @@ var init_DatabaseFailoverEngine = __esm({
             this.saveNasConnectionState();
           }
         }
-        if (this.consecutiveFailures >= this.MAX_CONSECUTIVE_FAILURES || isNetworkErr) {
+        const shouldTrip = isHardFailure || this.consecutiveFailures >= this.MAX_CONSECUTIVE_FAILURES && (isTimeoutOrTransient || !err?.message);
+        if (shouldTrip) {
           if (this.circuitState === "healthy" || this.circuitState === "recovering") {
             console.warn(`[DB:FAILOVER] Circuit breaker tripped to DEGRADED_FALLBACK (failures: ${this.consecutiveFailures}, cooldown: ${Math.round(this.cooldownDurationMs / 1e3)}s, reason: ${err?.message || "unknown"}).`);
             this.circuitState = "degraded";
@@ -23492,19 +23506,19 @@ var init_DatabaseFailoverEngine = __esm({
       }
       // ── Query Execution with Automatic Failover ──────────────────────────────────
       /**
-       * Executes a read query. If NAS is eligible, attempts on NAS with bounded timeout (2000ms).
+       * Executes a read query. If NAS is eligible, attempts on NAS with bounded timeout (6000ms).
        * If degraded, offline, in cooldown, or on failure/timeout, automatically falls back to Supabase.
        */
       async executeRead(queryFn, queryDesc = "read") {
         this.metrics.totalQueries++;
         const t0 = Date.now();
         const isCooldownActive = Date.now() < this.cooldownUntil;
-        const canTryNas = this.nasClient && (this.circuitState === "healthy" || this.circuitState === "recovering") && !isCooldownActive;
+        const canTryNas = this.nasClient && (this.circuitState === "healthy" || this.circuitState === "recovering" && !isCooldownActive);
         if (canTryNas && this.nasClient) {
           this.metrics.nasQueries++;
           try {
             const timeoutPromise = new Promise(
-              (_, reject) => setTimeout(() => reject(new Error(`NAS read timeout (2000ms) on ${queryDesc}`)), 2e3)
+              (_, reject) => setTimeout(() => reject(new Error(`NAS read timeout (6000ms) on ${queryDesc}`)), 6e3)
             );
             const res = await Promise.race([queryFn(this.nasClient), timeoutPromise]);
             const duration3 = Date.now() - t0;
@@ -23546,7 +23560,7 @@ var init_DatabaseFailoverEngine = __esm({
         this.metrics.totalQueries++;
         const t0 = Date.now();
         const isCooldownActive = Date.now() < this.cooldownUntil;
-        const canTryNas = this.nasClient && (this.circuitState === "healthy" || this.circuitState === "recovering") && !isCooldownActive;
+        const canTryNas = this.nasClient && (this.circuitState === "healthy" || this.circuitState === "recovering" && !isCooldownActive);
         if (canTryNas && this.nasClient) {
           this.metrics.nasQueries++;
           let res;
@@ -23724,17 +23738,28 @@ var init_DatabaseFailoverEngine = __esm({
       }
       /**
        * Checks if Supabase Cloud fallback has 0 products and automatically populates it.
+       *
+       * GUARD: Only executes when supabaseAdmin is available (privileged service-role key).
+       * Client installations with only anonKey cannot upsert to Cloud due to RLS, so
+       * attempting bootstrap would create an endless retry storm every 10 seconds.
+       * Additionally throttled to at most once per BOOTSTRAP_THROTTLE_MS (1 hour).
        */
       async checkAndBootstrapFallbackIfEmpty() {
         if (!this.nasClient || !this.isNasReachable || this.isBootstrapping) {
           return false;
         }
-        const cloudClient = this.supabaseAdmin || this.supabaseClient;
-        if (!cloudClient) return false;
+        if (!this.supabaseAdmin) {
+          return false;
+        }
+        const now = Date.now();
+        if (this.lastBootstrapAttemptTime > 0 && now - this.lastBootstrapAttemptTime < this.BOOTSTRAP_THROTTLE_MS) {
+          return false;
+        }
         try {
-          const { count, error: error51 } = await cloudClient.from("make_products").select("id", { count: "exact", head: true });
+          const { count, error: error51 } = await this.supabaseAdmin.from("make_products").select("id", { count: "exact", head: true });
           if (!error51 && (count === 0 || count === null)) {
             console.log("[DB:BOOTSTRAP] Supabase Cloud fallback is empty. Initiating automatic bootstrap from authoritative NAS...");
+            this.lastBootstrapAttemptTime = now;
             await this.bootstrapFallbackDataset();
             return true;
           }
@@ -23755,6 +23780,7 @@ var init_DatabaseFailoverEngine = __esm({
           return { success: false, syncedTables: {}, error: "Supabase Cloud client is not configured" };
         }
         this.isBootstrapping = true;
+        this.isBackgroundBootstrap = true;
         const syncedTables = {};
         try {
           console.log("[DB:BOOTSTRAP] Starting full fallback dataset synchronization from NAS master...");
@@ -23811,6 +23837,7 @@ var init_DatabaseFailoverEngine = __esm({
           this.freshnessData.storageUsageMb = Number((estBytes / (1024 * 1024)).toFixed(2));
           this.persistFreshness();
           this.isBootstrapping = false;
+          this.isBackgroundBootstrap = false;
           this.broadcastStatus();
           this.logDiagnostic({
             event: "BOOTSTRAP",
@@ -23822,6 +23849,7 @@ var init_DatabaseFailoverEngine = __esm({
         } catch (err) {
           console.error("[DB:BOOTSTRAP] Bootstrap synchronization failed:", err.message);
           this.isBootstrapping = false;
+          this.isBackgroundBootstrap = false;
           return { success: false, syncedTables, error: err.message };
         }
       }
@@ -24827,7 +24855,7 @@ function recreateNasClient(url2) {
       headers.set("apikey", nasDbKey);
       headers.set("Authorization", `Bearer ${nasDbKey}`);
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2e3);
+      const timeoutId = setTimeout(() => controller.abort(), 6e3);
       if (init?.signal) {
         init.signal.addEventListener("abort", () => controller.abort());
       }
@@ -24865,7 +24893,7 @@ function recreateNasClient(url2) {
         clearTimeout(timeoutId);
         const isTimeout = controller.signal.aborted || err?.name === "AbortError" || err?.message?.includes("aborted");
         const isConnRefused = err?.message?.includes("ECONNREFUSED");
-        const errMsg = isTimeout ? "Database connection timeout (2000ms)" : isConnRefused ? "Database connection refused" : err?.message || "Database connection failed";
+        const errMsg = isTimeout ? "Database connection timeout (6000ms)" : isConnRefused ? "Database connection refused" : err?.message || "Database connection failed";
         failoverEngine.recordNasFailure(new Error(errMsg));
         if (!isRead) {
           throw new Error(`[NAS:FETCH] Mutation operation (${method}) failed or timed out on NAS: ${errMsg}. Low-level replay rejected to protect database integrity.`);
@@ -36848,22 +36876,22 @@ var require_crypto2 = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.NodeCrypto = void 0;
-    var crypto11 = require("crypto");
+    var crypto12 = require("crypto");
     var NodeCrypto = class {
       async sha256DigestBase64(str) {
-        return crypto11.createHash("sha256").update(str).digest("base64");
+        return crypto12.createHash("sha256").update(str).digest("base64");
       }
       randomBytesBase64(count) {
-        return crypto11.randomBytes(count).toString("base64");
+        return crypto12.randomBytes(count).toString("base64");
       }
       async verify(pubkey, data2, signature) {
-        const verifier = crypto11.createVerify("RSA-SHA256");
+        const verifier = crypto12.createVerify("RSA-SHA256");
         verifier.update(data2);
         verifier.end();
         return verifier.verify(pubkey, signature, "base64");
       }
       async sign(privateKey, data2) {
-        const signer = crypto11.createSign("RSA-SHA256");
+        const signer = crypto12.createSign("RSA-SHA256");
         signer.update(data2);
         signer.end();
         return signer.sign(privateKey, "base64");
@@ -36881,7 +36909,7 @@ var require_crypto2 = __commonJS({
        *   string in hexadecimal encoding.
        */
       async sha256DigestHex(str) {
-        return crypto11.createHash("sha256").update(str).digest("hex");
+        return crypto12.createHash("sha256").update(str).digest("hex");
       }
       /**
        * Computes the HMAC hash of a message using the provided crypto key and the
@@ -36893,7 +36921,7 @@ var require_crypto2 = __commonJS({
        */
       async signWithHmacSha256(key, msg) {
         const cryptoKey = typeof key === "string" ? key : toBuffer(key);
-        return toArrayBuffer(crypto11.createHmac("sha256", cryptoKey).update(msg).digest());
+        return toArrayBuffer(crypto12.createHmac("sha256", cryptoKey).update(msg).digest());
       }
     };
     exports2.NodeCrypto = NodeCrypto;
@@ -37806,10 +37834,10 @@ var require_oauth2client = __commonJS({
        * https://github.com/googleapis/google-auth-library-nodejs/blob/main/samples/oauth2-codeVerifier.js
        */
       async generateCodeVerifierAsync() {
-        const crypto11 = (0, crypto_1.createCrypto)();
-        const randomString2 = crypto11.randomBytesBase64(96);
+        const crypto12 = (0, crypto_1.createCrypto)();
+        const randomString2 = crypto12.randomBytesBase64(96);
         const codeVerifier = randomString2.replace(/\+/g, "~").replace(/=/g, "_").replace(/\//g, "-");
-        const unencodedCodeChallenge = await crypto11.sha256DigestBase64(codeVerifier);
+        const unencodedCodeChallenge = await crypto12.sha256DigestBase64(codeVerifier);
         const codeChallenge = unencodedCodeChallenge.split("=")[0].replace(/\+/g, "-").replace(/\//g, "_");
         return { codeVerifier, codeChallenge };
       }
@@ -38250,7 +38278,7 @@ var require_oauth2client = __commonJS({
        * @return Returns a promise resolving to LoginTicket on verification.
        */
       async verifySignedJwtWithCertsAsync(jwt2, certs, requiredAudience, issuers, maxExpiry) {
-        const crypto11 = (0, crypto_1.createCrypto)();
+        const crypto12 = (0, crypto_1.createCrypto)();
         if (!maxExpiry) {
           maxExpiry = _OAuth2Client.DEFAULT_MAX_TOKEN_LIFETIME_SECS_;
         }
@@ -38263,7 +38291,7 @@ var require_oauth2client = __commonJS({
         let envelope;
         let payload;
         try {
-          envelope = JSON.parse(crypto11.decodeBase64StringUtf8(segments[0]));
+          envelope = JSON.parse(crypto12.decodeBase64StringUtf8(segments[0]));
         } catch (err) {
           if (err instanceof Error) {
             err.message = `Can't parse token envelope: ${segments[0]}': ${err.message}`;
@@ -38274,7 +38302,7 @@ var require_oauth2client = __commonJS({
           throw new Error("Can't parse token envelope: " + segments[0]);
         }
         try {
-          payload = JSON.parse(crypto11.decodeBase64StringUtf8(segments[1]));
+          payload = JSON.parse(crypto12.decodeBase64StringUtf8(segments[1]));
         } catch (err) {
           if (err instanceof Error) {
             err.message = `Can't parse token payload '${segments[0]}`;
@@ -38291,7 +38319,7 @@ var require_oauth2client = __commonJS({
         if (envelope.alg === "ES256") {
           signature = formatEcdsa.joseToDer(signature, "ES256").toString("base64");
         }
-        const verified = await crypto11.verify(cert, signed, signature);
+        const verified = await crypto12.verify(cert, signed, signature);
         if (!verified) {
           throw new Error("Invalid token signature: " + jwt2);
         }
@@ -38666,14 +38694,14 @@ var require_buffer_equal_constant_time = __commonJS({
 var require_jwa = __commonJS({
   "node_modules/jwa/index.js"(exports2, module2) {
     var Buffer4 = require_safe_buffer().Buffer;
-    var crypto11 = require("crypto");
+    var crypto12 = require("crypto");
     var formatEcdsa = require_ecdsa_sig_formatter();
     var util = require("util");
     var MSG_INVALID_ALGORITHM = '"%s" is not a valid algorithm.\n  Supported algorithms are:\n  "HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512" and "none".';
     var MSG_INVALID_SECRET = "secret must be a string or buffer";
     var MSG_INVALID_VERIFIER_KEY = "key must be a string or a buffer";
     var MSG_INVALID_SIGNER_KEY = "key must be a string, a buffer or an object";
-    var supportsKeyObjects = typeof crypto11.createPublicKey === "function";
+    var supportsKeyObjects = typeof crypto12.createPublicKey === "function";
     if (supportsKeyObjects) {
       MSG_INVALID_VERIFIER_KEY += " or a KeyObject";
       MSG_INVALID_SECRET += "or a KeyObject";
@@ -38763,17 +38791,17 @@ var require_jwa = __commonJS({
       return function sign(thing, secret) {
         checkIsSecretKey(secret);
         thing = normalizeInput(thing);
-        var hmac = crypto11.createHmac("sha" + bits, secret);
+        var hmac = crypto12.createHmac("sha" + bits, secret);
         var sig = (hmac.update(thing), hmac.digest("base64"));
         return fromBase64(sig);
       };
     }
     var bufferEqual;
-    var timingSafeEqual = "timingSafeEqual" in crypto11 ? function timingSafeEqual2(a, b) {
+    var timingSafeEqual = "timingSafeEqual" in crypto12 ? function timingSafeEqual2(a, b) {
       if (a.byteLength !== b.byteLength) {
         return false;
       }
-      return crypto11.timingSafeEqual(a, b);
+      return crypto12.timingSafeEqual(a, b);
     } : function timingSafeEqual2(a, b) {
       if (!bufferEqual) {
         bufferEqual = require_buffer_equal_constant_time();
@@ -38790,7 +38818,7 @@ var require_jwa = __commonJS({
       return function sign(thing, privateKey) {
         checkIsPrivateKey(privateKey);
         thing = normalizeInput(thing);
-        var signer = crypto11.createSign("RSA-SHA" + bits);
+        var signer = crypto12.createSign("RSA-SHA" + bits);
         var sig = (signer.update(thing), signer.sign(privateKey, "base64"));
         return fromBase64(sig);
       };
@@ -38800,7 +38828,7 @@ var require_jwa = __commonJS({
         checkIsPublicKey(publicKey);
         thing = normalizeInput(thing);
         signature = toBase64(signature);
-        var verifier = crypto11.createVerify("RSA-SHA" + bits);
+        var verifier = crypto12.createVerify("RSA-SHA" + bits);
         verifier.update(thing);
         return verifier.verify(publicKey, signature, "base64");
       };
@@ -38809,11 +38837,11 @@ var require_jwa = __commonJS({
       return function sign(thing, privateKey) {
         checkIsPrivateKey(privateKey);
         thing = normalizeInput(thing);
-        var signer = crypto11.createSign("RSA-SHA" + bits);
+        var signer = crypto12.createSign("RSA-SHA" + bits);
         var sig = (signer.update(thing), signer.sign({
           key: privateKey,
-          padding: crypto11.constants.RSA_PKCS1_PSS_PADDING,
-          saltLength: crypto11.constants.RSA_PSS_SALTLEN_DIGEST
+          padding: crypto12.constants.RSA_PKCS1_PSS_PADDING,
+          saltLength: crypto12.constants.RSA_PSS_SALTLEN_DIGEST
         }, "base64"));
         return fromBase64(sig);
       };
@@ -38823,12 +38851,12 @@ var require_jwa = __commonJS({
         checkIsPublicKey(publicKey);
         thing = normalizeInput(thing);
         signature = toBase64(signature);
-        var verifier = crypto11.createVerify("RSA-SHA" + bits);
+        var verifier = crypto12.createVerify("RSA-SHA" + bits);
         verifier.update(thing);
         return verifier.verify({
           key: publicKey,
-          padding: crypto11.constants.RSA_PKCS1_PSS_PADDING,
-          saltLength: crypto11.constants.RSA_PSS_SALTLEN_DIGEST
+          padding: crypto12.constants.RSA_PKCS1_PSS_PADDING,
+          saltLength: crypto12.constants.RSA_PSS_SALTLEN_DIGEST
         }, signature, "base64");
       };
     }
@@ -41404,14 +41432,14 @@ var require_awsrequestsigner = __commonJS({
       }
     };
     exports2.AwsRequestSigner = AwsRequestSigner;
-    async function sign(crypto11, key, msg) {
-      return await crypto11.signWithHmacSha256(key, msg);
+    async function sign(crypto12, key, msg) {
+      return await crypto12.signWithHmacSha256(key, msg);
     }
-    async function getSigningKey(crypto11, key, dateStamp, region, serviceName) {
-      const kDate = await sign(crypto11, `AWS4${key}`, dateStamp);
-      const kRegion = await sign(crypto11, kDate, region);
-      const kService = await sign(crypto11, kRegion, serviceName);
-      const kSigning = await sign(crypto11, kService, "aws4_request");
+    async function getSigningKey(crypto12, key, dateStamp, region, serviceName) {
+      const kDate = await sign(crypto12, `AWS4${key}`, dateStamp);
+      const kRegion = await sign(crypto12, kDate, region);
+      const kService = await sign(crypto12, kRegion, serviceName);
+      const kSigning = await sign(crypto12, kService, "aws4_request");
       return kSigning;
     }
     async function generateAuthenticationHeaderMap(options) {
@@ -42377,7 +42405,7 @@ var require_gdchclient = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.GdchClient = exports2.GDCH_SERVICE_ACCOUNT_TYPE = void 0;
-    var crypto11 = require("crypto");
+    var crypto12 = require("crypto");
     var fs18 = require("fs");
     var https2 = require("https");
     var oauth2client_1 = require_oauth2client();
@@ -42568,7 +42596,7 @@ var require_gdchclient = __commonJS({
         const encodedHeader = this.base64UrlEncode(JSON.stringify(header));
         const encodedPayload = this.base64UrlEncode(JSON.stringify(payload));
         const signingInput = `${encodedHeader}.${encodedPayload}`;
-        const signature = crypto11.sign("sha256", Buffer.from(signingInput), {
+        const signature = crypto12.sign("sha256", Buffer.from(signingInput), {
           key: this.privateKey,
           dsaEncoding: "ieee-p1363"
         });
@@ -43429,24 +43457,24 @@ var require_googleauth = __commonJS({
           const signed = await client.sign(data2);
           return signed.signedBlob;
         }
-        const crypto11 = (0, crypto_1.createCrypto)();
+        const crypto12 = (0, crypto_1.createCrypto)();
         if (client instanceof jwtclient_1.JWT && client.key) {
-          const sign = await crypto11.sign(client.key, data2);
+          const sign = await crypto12.sign(client.key, data2);
           return sign;
         }
         const creds = await this.getCredentials();
         if (!creds.client_email) {
           throw new Error("Cannot sign data without `client_email`.");
         }
-        return this.signBlob(crypto11, creds.client_email, data2, endpoint);
+        return this.signBlob(crypto12, creds.client_email, data2, endpoint);
       }
-      async signBlob(crypto11, emailOrUniqueId, data2, endpoint) {
+      async signBlob(crypto12, emailOrUniqueId, data2, endpoint) {
         const url2 = new URL(endpoint + `${emailOrUniqueId}:signBlob`);
         const res = await this.request({
           method: "POST",
           url: url2.href,
           data: {
-            payload: crypto11.encodeBase64StringUtf8(data2)
+            payload: crypto12.encodeBase64StringUtf8(data2)
           },
           retry: true,
           retryConfig: {
@@ -63647,13 +63675,13 @@ var init_node = __esm({
       }
     };
     uuid4Internal = function() {
-      const { crypto: crypto11 } = globalThis;
-      if (crypto11 === null || crypto11 === void 0 ? void 0 : crypto11.randomUUID) {
-        uuid4Internal = crypto11.randomUUID.bind(crypto11);
-        return crypto11.randomUUID();
+      const { crypto: crypto12 } = globalThis;
+      if (crypto12 === null || crypto12 === void 0 ? void 0 : crypto12.randomUUID) {
+        uuid4Internal = crypto12.randomUUID.bind(crypto12);
+        return crypto12.randomUUID();
       }
       const u8 = new Uint8Array(1);
-      const randomByte = crypto11 ? () => crypto11.getRandomValues(u8)[0] : () => Math.random() * 255 & 255;
+      const randomByte = crypto12 ? () => crypto12.getRandomValues(u8)[0] : () => Math.random() * 255 & 255;
       return "10000000-1000-4000-8000-100000000000".replace(/[018]/g, (c) => (+c ^ randomByte() & 15 >> +c / 4).toString(16));
     };
     uuid42 = () => uuid4Internal();
@@ -98625,8 +98653,8 @@ var require_snapshot_utils = __commonJS({
         match: new Set(matchHeaders.map((header) => caseSensitive ? header : header.toLowerCase()))
       };
     }
-    var crypto11 = runtimeFeatures.has("crypto") ? require("node:crypto") : null;
-    var hashId = crypto11?.hash ? (value) => crypto11.hash("sha256", value, "base64url") : (value) => Buffer.from(value).toString("base64url");
+    var crypto12 = runtimeFeatures.has("crypto") ? require("node:crypto") : null;
+    var hashId = crypto12?.hash ? (value) => crypto12.hash("sha256", value, "base64url") : (value) => Buffer.from(value).toString("base64url");
     function isUndiciHeaders(headers) {
       return Array.isArray(headers) && (headers.length & 1) === 0;
     }
@@ -105155,10 +105183,10 @@ var require_subresource_integrity = __commonJS({
     var assert2 = require("node:assert");
     var { runtimeFeatures } = require_runtime_features();
     var validSRIHashAlgorithmTokenSet = /* @__PURE__ */ new Map([["sha256", 0], ["sha384", 1], ["sha512", 2]]);
-    var crypto11;
+    var crypto12;
     if (runtimeFeatures.has("crypto")) {
-      crypto11 = require("node:crypto");
-      const cryptoHashes = crypto11.getHashes();
+      crypto12 = require("node:crypto");
+      const cryptoHashes = crypto12.getHashes();
       if (cryptoHashes.length === 0) {
         validSRIHashAlgorithmTokenSet.clear();
       }
@@ -105248,7 +105276,7 @@ var require_subresource_integrity = __commonJS({
       return result;
     }
     var applyAlgorithmToBytes = (algorithm, bytes) => {
-      return crypto11.hash(algorithm, bytes, "base64");
+      return crypto12.hash(algorithm, bytes, "base64");
     };
     function caseSensitiveMatch(actualValue, expectedValue) {
       let actualValueLength = actualValue.length;
@@ -108231,7 +108259,7 @@ var require_connection = __commonJS({
     var { WebsocketFrameSend } = require_frame();
     var assert2 = require("node:assert");
     var { runtimeFeatures } = require_runtime_features();
-    var crypto11 = runtimeFeatures.has("crypto") ? require("node:crypto") : null;
+    var crypto12 = runtimeFeatures.has("crypto") ? require("node:crypto") : null;
     var warningEmitted = false;
     function establishWebSocketConnection(url2, protocols, client, handler, options) {
       const requestURL = url2;
@@ -108251,7 +108279,7 @@ var require_connection = __commonJS({
         const headersList = getHeadersList(new Headers3(options.headers));
         request.headersList = headersList;
       }
-      const keyValue = crypto11.randomBytes(16).toString("base64");
+      const keyValue = crypto12.randomBytes(16).toString("base64");
       request.headersList.append("sec-websocket-key", keyValue, true);
       request.headersList.append("sec-websocket-version", "13", true);
       for (const protocol2 of protocols) {
@@ -108291,7 +108319,7 @@ var require_connection = __commonJS({
             return;
           }
           const secWSAccept = response.headersList.get("Sec-WebSocket-Accept");
-          const digest = crypto11.hash("sha1", keyValue + uid, "base64");
+          const digest = crypto12.hash("sha1", keyValue + uid, "base64");
           if (secWSAccept !== digest) {
             failWebsocketConnection(handler, 1002, "Incorrect hash received in Sec-WebSocket-Accept header.");
             return;
@@ -111019,14 +111047,14 @@ var MediaProtocolService_exports = {};
 __export(MediaProtocolService_exports, {
   MediaProtocolService: () => MediaProtocolService
 });
-var import_electron16, import_fs14, import_path14, import_crypto9, import_url, MIME_MAP, MediaProtocolService;
+var import_electron16, import_fs14, import_path14, import_crypto10, import_url, MIME_MAP, MediaProtocolService;
 var init_MediaProtocolService = __esm({
   "electron/services/media/MediaProtocolService.ts"() {
     "use strict";
     import_electron16 = require("electron");
     import_fs14 = __toESM(require("fs"), 1);
     import_path14 = __toESM(require("path"), 1);
-    import_crypto9 = __toESM(require("crypto"), 1);
+    import_crypto10 = __toESM(require("crypto"), 1);
     import_url = require("url");
     init_supabase();
     MIME_MAP = {
@@ -111167,7 +111195,7 @@ var init_MediaProtocolService = __esm({
         const cleanSubPath = isNas ? decodeURIComponent(rawPath).replace(/^\//, "") : "";
         const ext = import_path14.default.extname(isNas ? cleanSubPath : new URL(targetUrl).pathname).toLowerCase() || ".webp";
         const cacheKey = isNas ? `nas:${cleanSubPath}` : targetUrl;
-        const cacheHash = import_crypto9.default.createHash("sha256").update(cacheKey).digest("hex").slice(0, 32);
+        const cacheHash = import_crypto10.default.createHash("sha256").update(cacheKey).digest("hex").slice(0, 32);
         const cacheFile = import_path14.default.join(this.cacheDir, `${cacheHash}${ext}`);
         if (import_fs14.default.existsSync(cacheFile)) {
           try {
@@ -111294,7 +111322,7 @@ var init_MediaProtocolService = __esm({
               const cleanSub = decodeURIComponent(u.pathname).replace(/^\//, "");
               const cacheKey = `nas:${cleanSub}`;
               const ext = import_path14.default.extname(cleanSub).toLowerCase() || ".webp";
-              const cacheHash = import_crypto9.default.createHash("sha256").update(cacheKey).digest("hex").slice(0, 32);
+              const cacheHash = import_crypto10.default.createHash("sha256").update(cacheKey).digest("hex").slice(0, 32);
               const cacheFile = import_path14.default.join(this.cacheDir, `${cacheHash}${ext}`);
               if (import_fs14.default.existsSync(cacheFile) && import_fs14.default.statSync(cacheFile).size > 0) {
                 return {
@@ -111609,7 +111637,7 @@ var import_electron17 = require("electron");
 var import_path15 = __toESM(require("path"), 1);
 var import_fs15 = __toESM(require("fs"), 1);
 var import_os5 = __toESM(require("os"), 1);
-var import_crypto10 = __toESM(require("crypto"), 1);
+var import_crypto11 = __toESM(require("crypto"), 1);
 var import_bcryptjs2 = __toESM(require("bcryptjs"), 1);
 init_supabase();
 var import_promise = __toESM(require("mysql2/promise"), 1);
@@ -112971,7 +112999,22 @@ var MakeSearchService = class {
       if (params.category) {
         baseQuery = baseQuery.ilike("category", `%${params.category}%`);
       }
-      const { data: data2 } = await baseQuery;
+      let { data: data2, error: error51 } = await baseQuery;
+      if (error51?.code === "PGRST200" && error51?.message?.includes("make_product_images")) {
+        let q2 = supabase.from("make_products").select(`
+                    *,
+                    specifications:make_product_specifications(*),
+                    sizes:make_product_sizes(*),
+                    colors:make_product_colors(*)
+                `).order("product_name", { ascending: true }).limit(limit);
+        if (activeOnly) q2 = q2.eq("is_active", true);
+        if (params.category) q2 = q2.ilike("category", `%${params.category}%`);
+        const fallback = await q2;
+        data2 = fallback.data;
+        if (data2) data2.forEach((p) => {
+          p.images = [];
+        });
+      }
       const decrypted = decryptRows(data2 || []);
       return decrypted.map((p) => ({
         id: p.id,
@@ -113003,14 +113046,30 @@ var MakeSearchService = class {
       categoryIdsByProd = this.cache.categoryIdsByProd;
       allCatsMap = this.cache.allCatsMap;
     } else {
-      const [productsRes, specLinksRes, sizeLinksRes, colorLinksRes, catLinksRes, allSpecsRes, allSizesRes, allColorsRes, allCatsRes] = await Promise.all([
-        supabase.from("make_products").select(`
+      const productsRes = await (async () => {
+        const fullQuery = supabase.from("make_products").select(`
                     *,
                     specifications:make_product_specifications(*),
                     sizes:make_product_sizes(*),
                     colors:make_product_colors(*),
                     images:make_product_images(*)
-                `),
+                `);
+        const res = await fullQuery;
+        if (res.error?.code === "PGRST200" && res.error?.message?.includes("make_product_images")) {
+          const fallback = await supabase.from("make_products").select(`
+                        *,
+                        specifications:make_product_specifications(*),
+                        sizes:make_product_sizes(*),
+                        colors:make_product_colors(*)
+                    `);
+          if (fallback.data) fallback.data.forEach((p) => {
+            p.images = [];
+          });
+          return fallback;
+        }
+        return res;
+      })();
+      const [specLinksRes, sizeLinksRes, colorLinksRes, catLinksRes, allSpecsRes, allSizesRes, allColorsRes, allCatsRes] = await Promise.all([
         supabase.from("make_product_specification_links").select("*"),
         supabase.from("make_product_size_links").select("*"),
         supabase.from("make_product_color_links").select("*"),
@@ -114369,6 +114428,7 @@ var MakeProductionService = class {
 var import_electron13 = require("electron");
 var import_fs11 = __toESM(require("fs"), 1);
 var import_path12 = __toESM(require("path"), 1);
+var import_crypto9 = __toESM(require("crypto"), 1);
 init_supabase();
 var ALLOWED_CAD_EXTENSIONS = /* @__PURE__ */ new Set([
   "pdf",
@@ -114407,14 +114467,16 @@ var MakeCadService = class {
    */
   static getNasStorageUrl() {
     try {
-      const configPath = import_path12.default.join(import_electron13.app.getPath("userData"), "supabase-config.json");
+      const configPath = import_path12.default.join(import_electron13.app?.getPath ? import_electron13.app.getPath("userData") : process.cwd(), "supabase-config.json");
       if (import_fs11.default.existsSync(configPath)) {
         const cfg = JSON.parse(import_fs11.default.readFileSync(configPath, "utf-8"));
         if (cfg.storageUrl) return cfg.storageUrl;
+        if (cfg.nasStorageUrl) return cfg.nasStorageUrl;
       }
     } catch {
     }
-    return "https://storage.lenas.me";
+    if (process.env.NAS_STORAGE_URL) return process.env.NAS_STORAGE_URL;
+    return "http://100.88.85.6:8081";
   }
   /**
    * Resolves Cloudflare Access Service Token Headers
@@ -114579,7 +114641,7 @@ var MakeCadService = class {
    */
   static async uploadValidatedBuffer(buffer, fileName, mimeType, subfolder) {
     const timestamp = Date.now();
-    const randomToken = crypto.randomBytes(4).toString("hex");
+    const randomToken = import_crypto9.default.randomBytes(4).toString("hex");
     const storageFileName = `${timestamp}_${randomToken}_${fileName}`;
     const storagePath = `${subfolder}/${storageFileName}`;
     const nasStorageUrl = this.getNasStorageUrl();
@@ -129285,6 +129347,7 @@ var CatalogSpecSchema = external_exports.object({
   spec_code: external_exports.string().max(50).nullable().optional(),
   spec_name: external_exports.string().min(1).max(255),
   spec_details: external_exports.string().nullable().optional(),
+  image_url: external_exports.string().nullable().optional(),
   is_active: external_exports.boolean().default(true)
 });
 var CatalogSizeSchema = external_exports.object({
@@ -129330,8 +129393,40 @@ var GlobalAttributeSchema = external_exports.object({
   image_url: external_exports.string().nullable().optional(),
   is_active: external_exports.boolean().default(true)
 }).refine((data2) => {
-  return !!(data2.name || data2.spec_name || data2.size_label || data2.color_name || data2.category_name);
+  if (data2.type === "size") {
+    const hasLabel = !!(data2.size_label?.trim() || data2.name?.trim());
+    const hasDimensions = data2.length !== void 0 && data2.length !== null && data2.length !== "" || data2.width !== void 0 && data2.width !== null && data2.width !== "" || data2.height !== void 0 && data2.height !== null && data2.height !== "" || data2.diameter !== void 0 && data2.diameter !== null && data2.diameter !== "";
+    return hasLabel || hasDimensions;
+  }
+  return !!(data2.name || data2.spec_name || data2.color_name || data2.category_name);
 }, { message: "Attribute name/label is required" });
+function normalizeGlobalAttributePayload(raw) {
+  if (!raw || typeof raw !== "object") return raw;
+  const payload = { ...raw };
+  if (payload.size_label === null || payload.size_label === void 0) {
+    delete payload.size_label;
+  } else if (typeof payload.size_label === "string") {
+    const trimmed = payload.size_label.trim();
+    if (trimmed.length === 0 || trimmed.toLowerCase() === "null" || trimmed.toLowerCase() === "undefined") {
+      delete payload.size_label;
+    } else {
+      payload.size_label = trimmed;
+    }
+  }
+  for (const key of ["name", "spec_name", "color_name", "category_name"]) {
+    if (typeof payload[key] === "string") {
+      const trimmed = payload[key].trim();
+      if (trimmed.length === 0) {
+        delete payload[key];
+      } else {
+        payload[key] = trimmed;
+      }
+    } else if (payload[key] === null) {
+      delete payload[key];
+    }
+  }
+  return payload;
+}
 var AssignProductAttributesSchema = external_exports.object({
   productId: external_exports.union([external_exports.string(), external_exports.number()]),
   specIds: external_exports.array(external_exports.union([external_exports.number(), external_exports.string()])).optional(),
@@ -129708,7 +129803,21 @@ function registerMakeHandlers() {
       let q = client.from("make_products").select("*, specifications:make_product_specifications(*), sizes:make_product_sizes(*), colors:make_product_colors(*), images:make_product_images(*)").order("created_at", { ascending: false });
       if (activeOnly) q = q.eq("is_active", true);
       if (search2) q = q.or(`product_name.ilike.%${search2}%,product_code.ilike.%${search2}%`);
-      return await q;
+      const res = await q;
+      if (res.error?.code === "PGRST200" && res.error?.message?.includes("make_product_images")) {
+        console.warn("[make-get-catalog-products] make_product_images relationship missing (Cloud fallback), retrying without images join.");
+        let q2 = client.from("make_products").select("*, specifications:make_product_specifications(*), sizes:make_product_sizes(*), colors:make_product_colors(*)").order("created_at", { ascending: false });
+        if (activeOnly) q2 = q2.eq("is_active", true);
+        if (search2) q2 = q2.or(`product_name.ilike.%${search2}%,product_code.ilike.%${search2}%`);
+        const fallbackRes = await q2;
+        if (fallbackRes.data) {
+          for (const p of fallbackRes.data) {
+            p.images = [];
+          }
+        }
+        return fallbackRes;
+      }
+      return res;
     };
     const { data: data2, error: error51, databaseUsed } = await failoverEngine.executeRead(queryFn, "make-get-catalog-products");
     if (error51) {
@@ -130271,7 +130380,8 @@ function registerMakeHandlers() {
       if (!canManageGlobalProductAttributes(session2)) {
         return { success: false, error: 'Forbidden: Global attribute management requires "manage_global_product_attributes" permission.' };
       }
-      const parsed = GlobalAttributeSchema.parse(rawPayload);
+      const normalized = normalizeGlobalAttributePayload(rawPayload);
+      const parsed = GlobalAttributeSchema.parse(normalized);
       const db2 = supabase;
       if (parsed.type === "category") {
         const categoryName = (parsed.category_name || parsed.name || "").trim();
@@ -130312,31 +130422,36 @@ function registerMakeHandlers() {
           spec_name: specName,
           spec_code: parsed.spec_code || parsed.code || null,
           spec_details: parsed.spec_details || parsed.details || null,
-          image_url: parsed.image_url || null,
           is_active: parsed.is_active !== void 0 ? parsed.is_active : true
         };
-        if (parsed.id) {
-          const { data: data2, error: error51 } = await db2.from("make_product_specifications").update(payload).eq("id", parsed.id).select().single();
-          if (error51) throw error51;
-          MakeSearchService.invalidateCache();
-          if (supabaseAdmin && data2) {
-            supabaseAdmin.from("make_product_specifications").upsert(data2).catch((e2) => console.warn("[SYNC] Cloud spec sync:", e2.message));
+        const specImageUrl = parsed.image_url || null;
+        const writeSpec = async (body) => {
+          const q = db2.from("make_product_specifications");
+          return parsed.id ? await q.update(body).eq("id", parsed.id).select().single() : await q.insert(body).select().single();
+        };
+        const isMissingImageColumn = (e2) => !!e2 && (e2.code === "PGRST204" || e2.code === "42703") && /image_url/i.test(String(e2.message || ""));
+        const result = await writeSpec(specImageUrl ? { ...payload, image_url: specImageUrl } : payload);
+        if (result.error) {
+          if (specImageUrl && isMissingImageColumn(result.error)) {
+            return {
+              success: false,
+              error: "Saving specification with an image requires database migration 066 (image_url column). Please contact your administrator."
+            };
           }
-          return { success: true, attribute: data2 };
-        } else {
-          const { data: data2, error: error51 } = await db2.from("make_product_specifications").insert(payload).select().single();
-          if (error51) throw error51;
-          MakeSearchService.invalidateCache();
-          if (supabaseAdmin && data2) {
-            supabaseAdmin.from("make_product_specifications").upsert(data2).catch((e2) => console.warn("[SYNC] Cloud spec sync:", e2.message));
-          }
-          return { success: true, attribute: data2 };
+          throw result.error;
         }
+        const data2 = result.data;
+        MakeSearchService.invalidateCache();
+        if (supabaseAdmin && data2) {
+          supabaseAdmin.from("make_product_specifications").upsert(data2).catch((e2) => console.warn("[SYNC] Cloud spec sync:", e2.message));
+        }
+        return { success: true, attribute: data2 };
       } else if (parsed.type === "size") {
-        const sizeLabel = (parsed.size_label || parsed.name || "").trim();
+        const rawLabel = (parsed.size_label || parsed.name || "").trim();
+        const sizeLabel = rawLabel && rawLabel.toLowerCase() !== "null" && rawLabel.toLowerCase() !== "undefined" ? rawLabel : null;
         const payload = {
           product_id: null,
-          size_label: sizeLabel || null,
+          size_label: sizeLabel,
           length: parsed.length ? parseFloat(String(parsed.length)) : null,
           width: parsed.width ? parseFloat(String(parsed.width)) : null,
           height: parsed.height ? parseFloat(String(parsed.height)) : null,
@@ -130773,7 +130888,7 @@ async function checkLowStockForProduct(productId) {
 }
 function generateFirstTimePassword() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%";
-  const bytes = import_crypto10.default.randomBytes(16);
+  const bytes = import_crypto11.default.randomBytes(16);
   return Array.from(bytes).map((b) => chars[b % chars.length]).join("");
 }
 async function checkAndSeedSuperAdmin() {
@@ -135418,8 +135533,8 @@ function registerHandlers() {
     }
     const VERIFICATION_SALT2 = "LE-SOFT-2026-VERIFY-SALT-xK9mQ2";
     const id = machineId.trim();
-    const prefix = import_crypto10.default.createHmac("sha256", VERIFICATION_SALT2).update(id).digest("hex").substring(0, 8).toUpperCase();
-    const body = import_crypto10.default.createHmac("sha256", GENERATION_SECRET).update(id).digest("hex").substring(0, 24).toUpperCase();
+    const prefix = import_crypto11.default.createHmac("sha256", VERIFICATION_SALT2).update(id).digest("hex").substring(0, 8).toUpperCase();
+    const body = import_crypto11.default.createHmac("sha256", GENERATION_SECRET).update(id).digest("hex").substring(0, 24).toUpperCase();
     const formatted = (prefix + body).match(/.{1,4}/g).join("-");
     return { success: true, key: formatted };
   });

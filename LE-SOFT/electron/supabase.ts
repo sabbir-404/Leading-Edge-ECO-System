@@ -595,9 +595,9 @@ function recreateNasClient(url: string) {
             headers.set('apikey', nasDbKey);
             headers.set('Authorization', `Bearer ${nasDbKey}`);
 
-            // Bounded 2000ms timeout for NAS requests to prevent TCP SYN hang on Windows
+            // Bounded 6000ms timeout for NAS requests to accommodate Tailscale WAN latency
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 2000);
+            const timeoutId = setTimeout(() => controller.abort(), 6000);
 
             if (init?.signal) {
                 init.signal.addEventListener('abort', () => controller.abort());
@@ -643,7 +643,7 @@ function recreateNasClient(url: string) {
                 const isTimeout = controller.signal.aborted || err?.name === 'AbortError' || err?.message?.includes('aborted');
                 const isConnRefused = err?.message?.includes('ECONNREFUSED');
                 const errMsg = isTimeout
-                    ? 'Database connection timeout (2000ms)'
+                    ? 'Database connection timeout (6000ms)'
                     : isConnRefused
                     ? 'Database connection refused'
                     : (err?.message || 'Database connection failed');

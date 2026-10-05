@@ -161,10 +161,23 @@ describe('DatabaseFailoverEngine — Dual Database Architecture & Reliability', 
       expect(status.metrics.failoverQueries).toBeGreaterThanOrEqual(1);
     });
 
-    it('trips circuit breaker to DEGRADED state after consecutive NAS failures', () => {
+    it('trips circuit breaker to DEGRADED state after 2 consecutive transient NAS failures', () => {
       expect(engine.getStatus().circuitState).toBe('healthy');
 
+      // First transient failure: circuit stays healthy
       engine.recordNasFailure(new Error('fetch failed: ETIMEDOUT'));
+      expect(engine.getStatus().circuitState).toBe('healthy');
+
+      // Second consecutive transient failure: NOW trips to degraded
+      engine.recordNasFailure(new Error('fetch failed: ETIMEDOUT'));
+      expect(engine.getStatus().circuitState).toBe('degraded');
+      expect(engine.getStatus().activeTarget).toBe('supabase');
+    });
+
+    it('trips circuit breaker IMMEDIATELY on hard failure (ECONNREFUSED)', () => {
+      expect(engine.getStatus().circuitState).toBe('healthy');
+
+      engine.recordNasFailure(new Error('ECONNREFUSED'));
       expect(engine.getStatus().circuitState).toBe('degraded');
       expect(engine.getStatus().activeTarget).toBe('supabase');
     });

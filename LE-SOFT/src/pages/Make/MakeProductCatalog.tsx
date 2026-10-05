@@ -509,24 +509,45 @@ const MakeProductCatalog: React.FC = () => {
   // Size Actions
   const handleSaveSize = async (e: React.FormEvent) => {
     e.preventDefault();
+    const sizeLabel = editingSize.size_label?.trim();
+    const hasDimensions = Boolean(
+      (editingSize.length !== undefined && editingSize.length !== null && String(editingSize.length).trim() !== '') ||
+      (editingSize.width !== undefined && editingSize.width !== null && String(editingSize.width).trim() !== '') ||
+      (editingSize.height !== undefined && editingSize.height !== null && String(editingSize.height).trim() !== '') ||
+      (editingSize.diameter !== undefined && editingSize.diameter !== null && String(editingSize.diameter).trim() !== '')
+    );
+
+    if (!sizeLabel && !hasDimensions) {
+      showFeedback('error', 'Size label or at least one dimension (length, width, height, or diameter) is required.');
+      return;
+    }
+
     try {
       if (selectedProduct?.id && catalogMainView === 'products') {
         // @ts-ignore
-        await window.electron.makeSaveSize({ ...editingSize, product_id: selectedProduct.id });
+        await window.electron.makeSaveSize({
+          ...editingSize,
+          size_label: sizeLabel || undefined,
+          product_id: selectedProduct.id
+        });
         if (catalogMainView === 'products') fetchCatalog();
       } else {
-        // @ts-ignore
-        const res = await window.electron.makeSaveGlobalAttribute({
+        const payload: any = {
           type: 'size',
           id: editingSize.id,
-          size_label: editingSize.size_label?.trim() || null,
-          length: editingSize.length,
-          width: editingSize.width,
-          height: editingSize.height,
-          diameter: editingSize.diameter,
+          length: editingSize.length ? parseFloat(String(editingSize.length)) : undefined,
+          width: editingSize.width ? parseFloat(String(editingSize.width)) : undefined,
+          height: editingSize.height ? parseFloat(String(editingSize.height)) : undefined,
+          diameter: editingSize.diameter ? parseFloat(String(editingSize.diameter)) : undefined,
           unit: editingSize.unit || 'mm',
           is_active: editingSize.is_active !== undefined ? editingSize.is_active : true
-        });
+        };
+        if (sizeLabel) {
+          payload.size_label = sizeLabel;
+        }
+
+        // @ts-ignore
+        const res = await window.electron.makeSaveGlobalAttribute(payload);
         if (res && res.error) {
           showFeedback('error', res.error);
           return;
@@ -1426,6 +1447,11 @@ const MakeProductCatalog: React.FC = () => {
                         {s.spec_code && <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#8b5cf6', background: 'rgba(139,92,246,0.1)', padding: '2px 6px', borderRadius: '4px' }}>{s.spec_code}</span>}
                         <h4 style={{ margin: '6px 0 2px', fontSize: '0.92rem', fontWeight: 700 }}>{s.spec_name}</h4>
                         {s.spec_details && <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--text-secondary)' }}>{s.spec_details}</p>}
+                        {s.image_url && (
+                          <div style={{ marginTop: '8px' }}>
+                            <img src={resolveImageSrc(s.image_url)} alt={s.spec_name} onError={e => handleImageLoadError(e, s.image_url)} style={{ width: '100%', height: '80px', objectFit: 'cover', borderRadius: '6px', border: '1px solid var(--border-color)' }} />
+                          </div>
+                        )}
                       </div>
                       {canManageGlobal && (
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px', borderTop: '1px solid var(--border-color)', paddingTop: '8px' }}>
@@ -1497,7 +1523,9 @@ const MakeProductCatalog: React.FC = () => {
                     <div key={c.id} style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '14px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                          {c.color_code ? (
+                          {c.image_url ? (
+                            <img src={resolveImageSrc(c.image_url)} alt={c.color_name} onError={e => handleImageLoadError(e, c.image_url)} style={{ width: '28px', height: '28px', borderRadius: '6px', objectFit: 'cover', border: '1px solid var(--border-color)' }} />
+                          ) : c.color_code ? (
                             <div style={{ width: '28px', height: '28px', borderRadius: '6px', background: c.color_code, border: '1px solid rgba(0,0,0,0.2)' }} />
                           ) : (
                             <Palette size={24} color="var(--text-secondary)" />

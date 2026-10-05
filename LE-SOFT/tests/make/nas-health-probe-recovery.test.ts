@@ -91,12 +91,12 @@ describe('NAS Health Probe & False-Negative Recovery Tests (v1.8.6)', () => {
     });
 
     // 2. NAS actual database query times out: failover activates correctly
-    it('2. NAS actual database query times out -> failover activates to Supabase Cloud', async () => {
-        // NAS times out
+    it('2. NAS actual database query times out -> failover activates to Supabase Cloud', { timeout: 20000 }, async () => {
+        // NAS times out (exceeds 6000ms executeRead timeout)
         mockNasClient.from.mockImplementation(() => {
             return {
                 select: vi.fn().mockReturnValue({
-                    order: vi.fn().mockImplementation(() => new Promise((resolve) => setTimeout(resolve, 3000)))
+                    order: vi.fn().mockImplementation(() => new Promise((resolve) => setTimeout(resolve, 7000)))
                 })
             };
         });
@@ -111,18 +111,28 @@ describe('NAS Health Probe & False-Negative Recovery Tests (v1.8.6)', () => {
             };
         });
 
-        const res = await engine.executeRead(async (client) => {
+        // First timeout: falls back but circuit stays healthy (1 transient failure)
+        const res1 = await engine.executeRead(async (client) => {
             return client.from('make_products').select('*').order('created_at', { ascending: false });
         }, 'make-get-catalog-products');
 
-        expect(res.databaseUsed).toBe('supabase');
-        expect(res.data).toEqual(fallbackData);
+        expect(res1.databaseUsed).toBe('supabase');
+        expect(res1.data).toEqual(fallbackData);
+        // Circuit not yet degraded after single timeout
+        expect(engine.getStatus().circuitState).toBe('healthy');
+
+        // Second timeout: NOW trips circuit breaker to degraded
+        const res2 = await engine.executeRead(async (client) => {
+            return client.from('make_products').select('*').order('created_at', { ascending: false });
+        }, 'make-get-catalog-products');
+
+        expect(res2.databaseUsed).toBe('supabase');
         expect(engine.getStatus().circuitState).toBe('degraded');
     });
 
     // 3. NAS returns genuine database/API failure: failover activates correctly
     it('3. NAS returns genuine database/API failure -> failover activates to Supabase', async () => {
-        // NAS returns connection error
+        // NAS returns connection error (PGRST000 is treated as connection failure)
         mockNasClient.from.mockImplementation(() => {
             return {
                 select: vi.fn().mockReturnValue({
@@ -143,12 +153,20 @@ describe('NAS Health Probe & False-Negative Recovery Tests (v1.8.6)', () => {
             };
         });
 
-        const res = await engine.executeRead(async (client) => {
+        // First call: falls back but circuit not yet degraded (1 transient failure)
+        const res1 = await engine.executeRead(async (client) => {
             return client.from('make_products').select('*').order('created_at', { ascending: false });
         }, 'make-get-catalog-products');
 
-        expect(res.databaseUsed).toBe('supabase');
-        expect(res.data).toEqual(fallbackData);
+        expect(res1.databaseUsed).toBe('supabase');
+        expect(res1.data).toEqual(fallbackData);
+
+        // Second call: now trips to degraded
+        const res2 = await engine.executeRead(async (client) => {
+            return client.from('make_products').select('*').order('created_at', { ascending: false });
+        }, 'make-get-catalog-products');
+
+        expect(res2.databaseUsed).toBe('supabase');
         expect(engine.getStatus().circuitState).toBe('degraded');
     });
 

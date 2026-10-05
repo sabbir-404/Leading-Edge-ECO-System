@@ -57,12 +57,6 @@ class LEMakeSalesPortalPlugin {
         $this->register_roles_and_caps();
 
         // Set default options if not exists
-        if (!get_option('le_make_nas_url')) {
-            update_option('le_make_nas_url', 'http://100.88.85.6:3001');
-        }
-        if (!get_option('le_make_nas_local_url')) {
-            update_option('le_make_nas_local_url', 'http://192.168.1.14:3001');
-        }
         if (!get_option('le_make_nas_tunnel_url')) {
             update_option('le_make_nas_tunnel_url', 'https://db.lenas.me');
         }
@@ -145,6 +139,7 @@ class LEMakeSalesPortalPlugin {
     public function register_shortcodes() {
         add_shortcode('make_sales_portal', array($this, 'render_sales_portal_shortcode'));
         add_shortcode('le_make_portal', array($this, 'render_sales_portal_shortcode'));
+        add_shortcode('le_make_sales_portal', array($this, 'render_sales_portal_shortcode'));
     }
 
     public function filter_script_loader_tag($tag, $handle) {

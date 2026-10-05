@@ -183,9 +183,9 @@ describe('Simplified Image UI & NAS Performance Audit', () => {
             expect(supabaseSource).toContain('Low-level replay rejected to protect database integrity');
         });
 
-        it('Bounded NAS Fetch Timeout: PostgREST fetch timeout is set to 2000ms', () => {
+        it('Bounded NAS Fetch Timeout: PostgREST fetch timeout is set to 6000ms', () => {
             const supabaseSource = fs.readFileSync(path.resolve(__dirname, '../../electron/supabase.ts'), 'utf-8');
-            expect(supabaseSource).toContain('setTimeout(() => controller.abort(), 2000)');
+            expect(supabaseSource).toContain('setTimeout(() => controller.abort(), 6000)');
         });
 
         it('Bounded Connectivity Probe: Failover probe timeout is bounded to <= 1200ms', () => {

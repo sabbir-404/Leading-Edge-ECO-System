@@ -34,6 +34,7 @@ import {
     CatalogSizeSchema,
     CatalogColorSchema,
     GlobalAttributeSchema,
+    normalizeGlobalAttributePayload,
     AssignProductAttributesSchema,
     SearchCatalogProductsSchema
 } from '../schemas/make.schema';
@@ -524,7 +525,27 @@ export function registerMakeHandlers(): void {
             if (activeOnly) q = q.eq('is_active', true);
             if (search) q = q.or(`product_name.ilike.%${search}%,product_code.ilike.%${search}%`);
 
-            return await q;
+            const res = await q;
+
+            // If the images join fails (PGRST200: missing relationship on Cloud), retry without images
+            if (res.error?.code === 'PGRST200' && res.error?.message?.includes('make_product_images')) {
+                console.warn('[make-get-catalog-products] make_product_images relationship missing (Cloud fallback), retrying without images join.');
+                let q2 = client.from('make_products')
+                    .select('*, specifications:make_product_specifications(*), sizes:make_product_sizes(*), colors:make_product_colors(*)')
+                    .order('created_at', { ascending: false });
+                if (activeOnly) q2 = q2.eq('is_active', true);
+                if (search) q2 = q2.or(`product_name.ilike.%${search}%,product_code.ilike.%${search}%`);
+                const fallbackRes = await q2;
+                // Ensure products have empty images array for consistent shape
+                if (fallbackRes.data) {
+                    for (const p of fallbackRes.data) {
+                        (p as any).images = [];
+                    }
+                }
+                return fallbackRes;
+            }
+
+            return res;
         };
 
         const { data, error, databaseUsed } = await failoverEngine.executeRead(queryFn, 'make-get-catalog-products');
@@ -1176,7 +1197,8 @@ export function registerMakeHandlers(): void {
                 return { success: false, error: 'Forbidden: Global attribute management requires "manage_global_product_attributes" permission.' };
             }
 
-            const parsed = GlobalAttributeSchema.parse(rawPayload);
+            const normalized = normalizeGlobalAttributePayload(rawPayload);
+            const parsed = GlobalAttributeSchema.parse(normalized);
             const db = supabase; // Operational MAKE Master (NAS)
 
             if (parsed.type === 'category') {
@@ -1219,31 +1241,42 @@ export function registerMakeHandlers(): void {
                     spec_name: specName,
                     spec_code: parsed.spec_code || parsed.code || null,
                     spec_details: parsed.spec_details || parsed.details || null,
-                    image_url: parsed.image_url || null,
                     is_active: parsed.is_active !== undefined ? parsed.is_active : true
                 };
-                if (parsed.id) {
-                    const { data, error } = await db.from('make_product_specifications').update(payload).eq('id', parsed.id).select().single();
-                    if (error) throw error;
-                    MakeSearchService.invalidateCache();
-                    if (supabaseAdmin && data) {
-                        supabaseAdmin.from('make_product_specifications').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud spec sync:', e.message));
+                // image_url is an optional column on make_product_specifications (see migration 066).
+                // Only send it when provided so databases without the column keep working for specs without images.
+                const specImageUrl = parsed.image_url || null;
+                const writeSpec = async (body: any) => {
+                    const q = db.from('make_product_specifications');
+                    return parsed.id
+                        ? await q.update(body).eq('id', parsed.id).select().single()
+                        : await q.insert(body).select().single();
+                };
+                const isMissingImageColumn = (e: any) =>
+                    !!e && (e.code === 'PGRST204' || e.code === '42703') && /image_url/i.test(String(e.message || ''));
+
+                const result = await writeSpec(specImageUrl ? { ...payload, image_url: specImageUrl } : payload);
+                if (result.error) {
+                    if (specImageUrl && isMissingImageColumn(result.error)) {
+                        return {
+                            success: false,
+                            error: 'Saving specification with an image requires database migration 066 (image_url column). Please contact your administrator.'
+                        };
                     }
-                    return { success: true, attribute: data };
-                } else {
-                    const { data, error } = await db.from('make_product_specifications').insert(payload).select().single();
-                    if (error) throw error;
-                    MakeSearchService.invalidateCache();
-                    if (supabaseAdmin && data) {
-                        supabaseAdmin.from('make_product_specifications').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud spec sync:', e.message));
-                    }
-                    return { success: true, attribute: data };
+                    throw result.error;
                 }
+                const data = result.data;
+                MakeSearchService.invalidateCache();
+                if (supabaseAdmin && data) {
+                    supabaseAdmin.from('make_product_specifications').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud spec sync:', e.message));
+                }
+                return { success: true, attribute: data };
             } else if (parsed.type === 'size') {
-                const sizeLabel = (parsed.size_label || parsed.name || '').trim();
+                const rawLabel = (parsed.size_label || parsed.name || '').trim();
+                const sizeLabel = (rawLabel && rawLabel.toLowerCase() !== 'null' && rawLabel.toLowerCase() !== 'undefined') ? rawLabel : null;
                 const payload: any = {
                     product_id: null,
-                    size_label: sizeLabel || null,
+                    size_label: sizeLabel,
                     length: parsed.length ? parseFloat(String(parsed.length)) : null,
                     width: parsed.width ? parseFloat(String(parsed.width)) : null,
                     height: parsed.height ? parseFloat(String(parsed.height)) : null,

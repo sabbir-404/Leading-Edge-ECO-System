@@ -124,7 +124,12 @@ export class DatabaseFailoverEngine {
 
     private isNasReachable = false;
     private consecutiveFailures = 0;
-    private readonly MAX_CONSECUTIVE_FAILURES = 1; // Trip immediately on verified failure to avoid waiting
+    private readonly MAX_CONSECUTIVE_FAILURES = 2; // Require 2 consecutive failures before degrading to avoid false-positive on single transient timeout
+
+    // Session-level guard to prevent endless bootstrap storms on client installations
+    private lastBootstrapAttemptTime = 0;
+    private readonly BOOTSTRAP_THROTTLE_MS = 3600_000; // 1 hour minimum between bootstrap attempts
+    private isBackgroundBootstrap = false; // When true, NAS read failures are not recorded as health failures
 
     private lastHealthCheckTime = 0;
     private lastLatencyMs = 0;
@@ -486,8 +491,10 @@ export class DatabaseFailoverEngine {
             this.activeTarget = 'nas';
         }
 
-        // Check if Supabase Cloud fallback needs initial bootstrap
-        this.checkAndBootstrapFallbackIfEmpty().catch(() => {});
+        // Check if Supabase Cloud fallback needs initial bootstrap (only when supabaseAdmin is available)
+        if (this.supabaseAdmin) {
+            this.checkAndBootstrapFallbackIfEmpty().catch(() => {});
+        }
     }
 
     /**
@@ -617,19 +624,33 @@ export class DatabaseFailoverEngine {
 
     // ── Circuit Breaker Actions ──────────────────────────────────────────────────
     public recordNasFailure(err: any): void {
+        // GUARD: Background bootstrap reads must not degrade primary NAS health
+        if (this.isBackgroundBootstrap) {
+            console.warn('[DB:FAILOVER] Ignoring NAS failure during background bootstrap (not penalizing primary health):', err?.message || 'unknown');
+            return;
+        }
+
         this.consecutiveFailures++;
         this.metrics.failedNasQueries++;
 
-        const isNetworkErr = err?.message && (
-            err.message.includes('fetch failed') ||
+        // Classify failure type: hard failures trip immediately, timeouts require consecutive threshold
+        const isHardFailure = err?.message && (
             err.message.includes('ECONNREFUSED') ||
-            err.message.includes('ETIMEDOUT') ||
-            err.message.includes('network') ||
-            err.message.includes('timeout') ||
+            err.message.includes('HTML response') ||
+            err.message.includes('proxy/gateway') ||
+            err.message.includes('authorization rejected') ||
             err.message.includes('502') ||
             err.message.includes('503') ||
             err.message.includes('504')
         );
+
+        const isTimeoutOrTransient = (err?.message && (
+            err.message.includes('fetch failed') ||
+            err.message.includes('ETIMEDOUT') ||
+            err.message.includes('network') ||
+            err.message.includes('timeout') ||
+            err.message.includes('Connection')
+        )) || err?.code === 'PGRST000';
 
         // Adaptive cooldown (30s to 120s) preventing dead connection stall on flapping
         const backoffStep = Math.min(4, Math.max(0, this.consecutiveFailures - 1));
@@ -645,7 +666,12 @@ export class DatabaseFailoverEngine {
             }
         }
 
-        if (this.consecutiveFailures >= this.MAX_CONSECUTIVE_FAILURES || isNetworkErr) {
+        // CIRCUIT BREAKER DECISION:
+        // Hard failures (ECONNREFUSED, proxy block, 5xx) trip immediately on the first occurrence.
+        // Timeouts/transient errors require consecutiveFailures >= MAX_CONSECUTIVE_FAILURES (2).
+        const shouldTrip = isHardFailure || (this.consecutiveFailures >= this.MAX_CONSECUTIVE_FAILURES && (isTimeoutOrTransient || !err?.message));
+
+        if (shouldTrip) {
             if (this.circuitState === 'healthy' || this.circuitState === 'recovering') {
                 console.warn(`[DB:FAILOVER] Circuit breaker tripped to DEGRADED_FALLBACK (failures: ${this.consecutiveFailures}, cooldown: ${Math.round(this.cooldownDurationMs / 1000)}s, reason: ${err?.message || 'unknown'}).`);
                 this.circuitState = 'degraded';
@@ -695,7 +721,7 @@ export class DatabaseFailoverEngine {
 
     // ── Query Execution with Automatic Failover ──────────────────────────────────
     /**
-     * Executes a read query. If NAS is eligible, attempts on NAS with bounded timeout (2000ms).
+     * Executes a read query. If NAS is eligible, attempts on NAS with bounded timeout (6000ms).
      * If degraded, offline, in cooldown, or on failure/timeout, automatically falls back to Supabase.
      */
     public async executeRead<T>(
@@ -707,15 +733,14 @@ export class DatabaseFailoverEngine {
 
         const isCooldownActive = Date.now() < this.cooldownUntil;
         const canTryNas = this.nasClient &&
-            (this.circuitState === 'healthy' || this.circuitState === 'recovering') &&
-            !isCooldownActive;
+            (this.circuitState === 'healthy' || (this.circuitState === 'recovering' && !isCooldownActive));
 
-        // 1. If NAS is eligible, attempt on NAS first with bounded timeout (2000ms)
+        // 1. If NAS is eligible, attempt on NAS first with bounded timeout (6000ms)
         if (canTryNas && this.nasClient) {
             this.metrics.nasQueries++;
             try {
                 const timeoutPromise = new Promise<{ data: null; error: any }>((_, reject) =>
-                    setTimeout(() => reject(new Error(`NAS read timeout (2000ms) on ${queryDesc}`)), 2000)
+                    setTimeout(() => reject(new Error(`NAS read timeout (6000ms) on ${queryDesc}`)), 6000)
                 );
 
                 const res = await Promise.race([queryFn(this.nasClient), timeoutPromise]);
@@ -779,8 +804,7 @@ export class DatabaseFailoverEngine {
 
         const isCooldownActive = Date.now() < this.cooldownUntil;
         const canTryNas = this.nasClient &&
-            (this.circuitState === 'healthy' || this.circuitState === 'recovering') &&
-            !isCooldownActive;
+            (this.circuitState === 'healthy' || (this.circuitState === 'recovering' && !isCooldownActive));
 
         // 1. Primary path: NAS is eligible
         if (canTryNas && this.nasClient) {
@@ -997,19 +1021,35 @@ export class DatabaseFailoverEngine {
 
     /**
      * Checks if Supabase Cloud fallback has 0 products and automatically populates it.
+     *
+     * GUARD: Only executes when supabaseAdmin is available (privileged service-role key).
+     * Client installations with only anonKey cannot upsert to Cloud due to RLS, so
+     * attempting bootstrap would create an endless retry storm every 10 seconds.
+     * Additionally throttled to at most once per BOOTSTRAP_THROTTLE_MS (1 hour).
      */
     public async checkAndBootstrapFallbackIfEmpty(): Promise<boolean> {
         if (!this.nasClient || !this.isNasReachable || this.isBootstrapping) {
             return false;
         }
 
-        const cloudClient = this.supabaseAdmin || this.supabaseClient;
-        if (!cloudClient) return false;
+        // CRITICAL: Only bootstrap when supabaseAdmin (service-role) client is configured.
+        // Client workstations with only anonKey will have every upsert rejected by RLS,
+        // causing productCount to remain 0 and triggering re-bootstrap every 10 seconds.
+        if (!this.supabaseAdmin) {
+            return false;
+        }
+
+        // Session/freshness throttle: prevent repeated bootstrap attempts
+        const now = Date.now();
+        if (this.lastBootstrapAttemptTime > 0 && (now - this.lastBootstrapAttemptTime) < this.BOOTSTRAP_THROTTLE_MS) {
+            return false;
+        }
 
         try {
-            const { count, error } = await cloudClient.from('make_products').select('id', { count: 'exact', head: true });
+            const { count, error } = await this.supabaseAdmin.from('make_products').select('id', { count: 'exact', head: true });
             if (!error && (count === 0 || count === null)) {
                 console.log('[DB:BOOTSTRAP] Supabase Cloud fallback is empty. Initiating automatic bootstrap from authoritative NAS...');
+                this.lastBootstrapAttemptTime = now;
                 await this.bootstrapFallbackDataset();
                 return true;
             }
@@ -1037,6 +1077,7 @@ export class DatabaseFailoverEngine {
         }
 
         this.isBootstrapping = true;
+        this.isBackgroundBootstrap = true; // Prevent internal NAS reads from penalizing primary health
         const syncedTables: Record<string, number> = {};
 
         try {
@@ -1106,6 +1147,7 @@ export class DatabaseFailoverEngine {
 
             this.persistFreshness();
             this.isBootstrapping = false;
+            this.isBackgroundBootstrap = false;
             this.broadcastStatus();
 
             this.logDiagnostic({
@@ -1119,6 +1161,7 @@ export class DatabaseFailoverEngine {
         } catch (err: any) {
             console.error('[DB:BOOTSTRAP] Bootstrap synchronization failed:', err.message);
             this.isBootstrapping = false;
+            this.isBackgroundBootstrap = false;
             return { success: false, syncedTables, error: err.message };
         }
     }

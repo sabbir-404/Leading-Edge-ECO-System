@@ -245,13 +245,11 @@ async function realKeyboardType(win, text, delayBetweenKeys) {
 }
 
 async function realKeyboardClear(win) {
-  // Ctrl+A then Delete
-  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'a', modifiers: ['control'] });
-  win.webContents.sendInputEvent({ type: 'char', keyCode: 'a', modifiers: ['control'] });
-  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'a', modifiers: ['control'] });
+  // Select all in active input and clear with Backspace
+  win.webContents.selectAll();
   await new Promise(r => setTimeout(r, 30));
-  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Delete' });
-  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Delete' });
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Backspace' });
+  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Backspace' });
   await new Promise(r => setTimeout(r, 30));
 }
 
@@ -851,7 +849,7 @@ app.whenReady().then(async () => {
     var rectKeys = Object.keys(placeOrderRects);
     for (var rki = 0; rki < rectKeys.length; rki++) {
       var rk = rectKeys[rki];
-      results.rectangles['placeOrder_' + rk] = assertRect('PlaceOrder ' + rk, placeOrderRects[rk]);
+      results.rectangles['placeOrder_' + rk] = assertRect('PlaceOrder ' + rk, placeOrderRects[rk], true);
     }
 
     // FINALIZE
