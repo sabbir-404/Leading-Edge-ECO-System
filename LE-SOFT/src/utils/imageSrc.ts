@@ -33,9 +33,9 @@ export function resolveImageSrc(imagePath?: string | null): string {
         return trimmed;
     }
 
-    // 3. TrueNAS Cloudflare Tunnel Storage URL or Port 8081 Storage URL -> route through app-media://nas/
-    if (/^https?:\/\/(storage\.lenas\.me|[0-9\.]+:8081)\//i.test(trimmed)) {
-        const subPath = trimmed.replace(/^https?:\/\/(storage\.lenas\.me|[0-9\.]+:8081)\/?/i, '');
+    // 3. TrueNAS Cloudflare Tunnel Storage URL or legacy LAN storage ports (8080/8081) -> app-media://nas/
+    if (/^https?:\/\/(storage\.lenas\.me|[0-9\.]+:(?:8080|8081))\//i.test(trimmed)) {
+        const subPath = trimmed.replace(/^https?:\/\/(storage\.lenas\.me|[0-9\.]+:(?:8080|8081))\/?/i, '');
         const cleanSub = decodeURIComponent(subPath).replace(/^\//, '');
         return `app-media://nas/${encodeURI(cleanSub)}`;
     }

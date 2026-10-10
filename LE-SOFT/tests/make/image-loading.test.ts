@@ -47,6 +47,11 @@ describe('Image Loading & Protocol Resolution — Issue 1 Fixes', () => {
             expect(resolved).toBe('app-media://nas/invoices/inv-1001.pdf');
         });
 
+        it('routes legacy :8080 MAKE invoice URLs through the NAS media resolver', () => {
+            const legacyUrl = 'http://100.88.85.6:8080/files/make-order-files/invoices/1791550487683_89a8e45a_invoice_receipt_2026.png';
+            expect(resolveImageSrc(legacyUrl)).toBe('app-media://nas/files/make-order-files/invoices/1791550487683_89a8e45a_invoice_receipt_2026.png');
+        });
+
         it('preserves public Supabase and external HTTP/HTTPS URLs untouched', () => {
             const supabaseUrl = 'https://my-project.supabase.co/storage/v1/object/public/products/chair.jpg';
             expect(resolveImageSrc(supabaseUrl)).toBe(supabaseUrl);
@@ -172,6 +177,31 @@ describe('Image Loading & Protocol Resolution — Issue 1 Fixes', () => {
 
             expect(fs.existsSync(cacheFile)).toBe(true);
             expect(fs.statSync(cacheFile).size).toBeGreaterThan(0);
+        });
+
+        it('I3. Legacy :8080 invoice URL diagnosis routes through NAS candidate endpoints without hitting port 8080', async () => {
+            const requestedUrls: string[] = [];
+            const netMock = vi.fn().mockImplementation((url: string) => {
+                requestedUrls.push(url);
+                if (url.includes(':8081')) {
+                    return Promise.resolve({ ok: true, status: 200, statusText: 'OK' });
+                }
+                return Promise.resolve({ ok: false, status: 502, statusText: 'Bad Gateway' });
+            });
+            const electron = await import('electron');
+            (electron as any).net = { fetch: netMock };
+
+            const legacyUrl = 'http://100.88.85.6:8080/files/make-order-files/invoices/1791550487683_89a8e45a_invoice_receipt_2026.png';
+            const diag = await service.diagnoseImage(legacyUrl);
+
+            expect(diag.sourceType).toBe('nas_storage');
+            expect(diag.exists).toBe(true);
+            expect(diag.httpStatus).toBe(200);
+
+            // Confirm that port :8080 was NEVER queried
+            expect(requestedUrls.some(u => u.includes(':8080'))).toBe(false);
+            // Confirm that candidate port :8081 WAS queried
+            expect(requestedUrls.some(u => u.includes(':8081'))).toBe(true);
         });
     });
 });

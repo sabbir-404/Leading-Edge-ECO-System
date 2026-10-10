@@ -393,6 +393,11 @@ export class MediaProtocolService {
 
         // 3. Remote URL (http / https)
         if (/^https?:\/\//i.test(trimmed)) {
+            if (trimmed.includes(':8080')) {
+                const subPath = trimmed.replace(/^https?:\/\/[^\/]+:(?:8080|8081)\/?/i, '');
+                const cleanSub = decodeURIComponent(subPath).replace(/^\//, '');
+                return this.diagnoseImage(`app-media://nas/${encodeURI(cleanSub)}`);
+            }
             const isNas = trimmed.includes('storage.lenas.me') || trimmed.includes(':8081');
             const isSupabase = trimmed.includes('.supabase.co/storage');
             const sourceType = isNas ? 'nas_storage' : (isSupabase ? 'supabase_storage' : 'remote_http');

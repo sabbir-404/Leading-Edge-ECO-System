@@ -71,6 +71,7 @@ export interface PlaceOrderDraftData {
   itemCostPrice?: number | string;
   itemSalePrice?: number | string;
   itemRemarks?: string;
+  selectedItemAttachedFile?: { name: string; url?: string; type: string } | null;
 
   // Custom size/spec/color toggles
   isCustomSize?: boolean;
@@ -98,6 +99,146 @@ export interface PlaceOrderDraftData {
 
   updatedAt?: number;
 }
+
+
+export interface SavedPlaceOrderDraft {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  data: PlaceOrderDraftData;
+}
+
+function getSavedPlaceOrderDraftsStorageKey(): string {
+  return getPlaceOrderDraftStorageKey().replace(
+    /^make_place_order_draft_/,
+    'make_place_order_saved_drafts_'
+  );
+}
+
+function getPersistentAttachmentReference(url?: string | null): string | undefined {
+  const value = typeof url === 'string' ? url.trim() : '';
+  if (!value || /^(data:|blob:)/i.test(value)) return undefined;
+  if (/^(https?:\/\/|app-media:\/\/|file:\/\/)/i.test(value)) return value;
+  if (/^[a-z]:[\\/]/i.test(value) || /^\/(?!\/)/.test(value)) return value;
+  return undefined;
+}
+
+/** Load all user-scoped, explicitly saved order drafts (newest first). */
+export function loadSavedPlaceOrderDrafts(): SavedPlaceOrderDraft[] {
+  try {
+    const raw = localStorage.getItem(getSavedPlaceOrderDraftsStorageKey());
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item: any) => item && typeof item.id === 'string' && item.data && typeof item.data === 'object')
+      .sort((a: SavedPlaceOrderDraft, b: SavedPlaceOrderDraft) => b.updatedAt - a.updatedAt);
+  } catch (err) {
+    console.warn('[PlaceOrderDraft] Failed to load saved drafts:', err);
+    return [];
+  }
+}
+
+/**
+ * Save or update one named draft. Ephemeral blob/data URLs and raw file bytes
+ * are deliberately excluded so a draft cannot exhaust localStorage or retain
+ * an attachment that will not survive an app restart.
+ */
+export function saveNamedPlaceOrderDraft(
+  data: PlaceOrderDraftData,
+  title: string,
+  draftId?: string
+): { draft: SavedPlaceOrderDraft; omittedAttachmentCount: number } {
+  const existing = loadSavedPlaceOrderDrafts();
+  const current = draftId ? existing.find(item => item.id === draftId) : undefined;
+  const now = Date.now();
+  let omittedAttachmentCount = 0;
+
+  const cartItems = Array.isArray(data.cartItems)
+    ? data.cartItems.map((item: any) => {
+        if (!item?.attachedFile) return item;
+        const url = getPersistentAttachmentReference(item.attachedFile.url);
+        if (!url) {
+          omittedAttachmentCount += 1;
+          return { ...item, attachedFile: null };
+        }
+        return {
+          ...item,
+          attachedFile: {
+            name: item.attachedFile.name,
+            type: item.attachedFile.type,
+            url
+          }
+        };
+      })
+    : data.cartItems;
+
+  const invoiceAttachments = Array.isArray(data.invoiceAttachments)
+    ? data.invoiceAttachments.flatMap((attachment: any) => {
+        const url = getPersistentAttachmentReference(attachment?.url);
+        if (!url) {
+          omittedAttachmentCount += 1;
+          return [];
+        }
+        return [{ name: attachment.name || 'Attachment', url }];
+      })
+    : data.invoiceAttachments;
+
+  let selectedItemAttachedFile = data.selectedItemAttachedFile;
+  if (selectedItemAttachedFile) {
+    const url = getPersistentAttachmentReference(selectedItemAttachedFile.url);
+    if (!url) {
+      omittedAttachmentCount += 1;
+      selectedItemAttachedFile = null;
+    } else {
+      selectedItemAttachedFile = {
+        name: selectedItemAttachedFile.name,
+        type: selectedItemAttachedFile.type,
+        url
+      };
+    }
+  }
+
+  const cleanedData: PlaceOrderDraftData = {
+    ...data,
+    cartItems,
+    invoiceAttachments,
+    selectedItemAttachedFile
+  };
+
+  const saved: SavedPlaceOrderDraft = {
+    id: current?.id || ('draft_' + now + '_' + Math.random().toString(36).slice(2, 8)),
+    title: (title || '').trim() || 'Untitled order',
+    createdAt: current?.createdAt || now,
+    updatedAt: now,
+    data: cleanedData
+  };
+
+  const next = current
+    ? existing.map(item => item.id === current.id ? saved : item)
+    : [saved, ...existing];
+
+  try {
+    localStorage.setItem(getSavedPlaceOrderDraftsStorageKey(), JSON.stringify(next));
+  } catch (err) {
+    console.warn('[PlaceOrderDraft] Failed to save named draft:', err);
+    throw err;
+  }
+
+  return { draft: saved, omittedAttachmentCount };
+}
+
+/** Remove one explicitly saved draft without touching the current form autosave. */
+export function deleteSavedPlaceOrderDraft(draftId: string): void {
+  try {
+    const next = loadSavedPlaceOrderDrafts().filter(item => item.id !== draftId);
+    localStorage.setItem(getSavedPlaceOrderDraftsStorageKey(), JSON.stringify(next));
+  } catch (err) {
+    console.warn('[PlaceOrderDraft] Failed to delete saved draft:', err);
+  }
+}
+
 
 /**
  * Derives a storage key safely scoped to the currently authenticated user.

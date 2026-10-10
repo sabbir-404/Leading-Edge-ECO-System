@@ -212,6 +212,7 @@ export class MakeCadService {
         const extWithDot = path.extname(rawFileName).toLowerCase();
         const baseWithoutExt = path.basename(rawFileName, extWithDot);
         // Strip illegal filename characters (/ \ ? * : | " < > and control chars)
+        // eslint-disable-next-line no-control-regex
         const cleaned = baseWithoutExt.replace(/[\/\\:*?"<>|\x00-\x1F\x7F]/g, '_').trim() || 'attachment';
         return `${cleaned}${extWithDot}`;
     }
