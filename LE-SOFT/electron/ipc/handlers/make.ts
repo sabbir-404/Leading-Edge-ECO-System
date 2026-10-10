@@ -13,7 +13,9 @@
  */
 
 import { ipcMain, BrowserWindow } from 'electron';
-import { supabase, supabaseAdmin, failoverEngine, getNasStorageCandidates } from '../../supabase';
+import * as path from 'path';
+import * as fs from 'fs';
+import { supabase, supabaseAdmin, failoverEngine, getNasStorageCandidates, getCfAccessHeaders } from '../../supabase';
 import { SessionManager, UserSession } from '../../session-manager';
 import { MakeOrderService } from '../../services/make/MakeOrderService';
 import { MakePricingService } from '../../services/make/MakePricingService';
@@ -38,6 +40,269 @@ import {
     AssignProductAttributesSchema,
     SearchCatalogProductsSchema
 } from '../schemas/make.schema';
+
+export interface ValidatedDownloadUrlResult {
+    isValid: boolean;
+    error?: string;
+    subPath?: string;
+    candidates: string[];
+}
+
+/**
+ * Validates whether a hostname and port correspond to an approved NAS storage endpoint.
+ */
+export function isApprovedNasHost(hostname: string, port?: string): boolean {
+    if (!hostname || typeof hostname !== 'string') return false;
+    const lowerHost = hostname.toLowerCase();
+
+    const runtimeCandidates = typeof getNasStorageCandidates === 'function'
+        ? getNasStorageCandidates()
+        : ['http://100.88.85.6:8081', 'https://storage.lenas.me'];
+
+    const approvedHosts = new Set<string>(['storage.lenas.me', '100.88.85.6', '192.168.1.14']);
+    for (const c of runtimeCandidates) {
+        try {
+            const u = new URL(c);
+            approvedHosts.add(u.hostname.toLowerCase());
+        } catch {}
+    }
+
+    if (!approvedHosts.has(lowerHost)) {
+        return false;
+    }
+
+    if (port !== undefined) {
+        return isApprovedNasPort(hostname, port);
+    }
+
+    return true;
+}
+
+/**
+ * Validates whether a port is allowed on an approved NAS host.
+ */
+export function isApprovedNasPort(hostname: string, port?: string): boolean {
+    if (!port || port === '') return true;
+    const lowerHost = (hostname || '').toLowerCase();
+
+    const runtimeCandidates = typeof getNasStorageCandidates === 'function'
+        ? getNasStorageCandidates()
+        : ['http://100.88.85.6:8081', 'https://storage.lenas.me'];
+
+    if (lowerHost === 'storage.lenas.me') {
+        return port === '443';
+    }
+
+    if (lowerHost === '100.88.85.6' || lowerHost === '192.168.1.14') {
+        if (port === '8080' || port === '8081') return true;
+        for (const c of runtimeCandidates) {
+            try {
+                const u = new URL(c);
+                if (u.hostname.toLowerCase() === lowerHost && u.port === port) return true;
+            } catch {}
+        }
+        return false;
+    }
+
+    return true;
+}
+
+/**
+ * Strictly validates download URLs against approved hosts/protocols and normalizes candidates.
+ */
+export function validateAndNormalizeDownloadUrl(rawUrl: string): ValidatedDownloadUrlResult {
+    if (!rawUrl || typeof rawUrl !== 'string') {
+        return { isValid: false, error: 'URL must be a non-empty string', candidates: [] };
+    }
+
+    const trimmed = rawUrl.trim();
+
+    // Guard against directory traversal in raw URL
+    if (trimmed.includes('../') || trimmed.includes('..\\') || trimmed.includes('/..') || trimmed.includes('\\..')) {
+        return { isValid: false, error: 'Path traversal is not permitted in URL path', candidates: [] };
+    }
+
+    const candidateBases = typeof getNasStorageCandidates === 'function'
+        ? getNasStorageCandidates()
+        : ['http://100.88.85.6:8081', 'https://storage.lenas.me'];
+
+    // 1. app-media://nas/...
+    if (/^app-media:\/\/nas\//i.test(trimmed)) {
+        const sub = trimmed.replace(/^app-media:\/\/nas\/?/i, '');
+        const cleanSub = decodeURIComponent(sub).replace(/^\/+/, '');
+        if (cleanSub.includes('..')) {
+            return { isValid: false, error: 'Path traversal is not permitted in URL path', candidates: [] };
+        }
+        const candidates = candidateBases.map(b => `${b.replace(/\/$/, '')}/${encodeURI(cleanSub)}`);
+        return { isValid: true, subPath: cleanSub, candidates };
+    }
+
+    // 2. Reject unsupported protocols
+    if (!/^https?:\/\//i.test(trimmed)) {
+        const proto = trimmed.split(':')[0] || 'unknown';
+        return { isValid: false, error: `Unsupported protocol "${proto}:". Only HTTP, HTTPS, and app-media are permitted.`, candidates: [] };
+    }
+
+    // 3. HTTP / HTTPS URL parsing
+    let parsedUrl: URL;
+    try {
+        parsedUrl = new URL(trimmed);
+    } catch {
+        return { isValid: false, error: 'Malformed URL', candidates: [] };
+    }
+
+    if (!isApprovedNasHost(parsedUrl.hostname)) {
+        return { isValid: false, error: `Host "${parsedUrl.hostname}" is not an approved NAS storage endpoint.`, candidates: [] };
+    }
+
+    if (!isApprovedNasPort(parsedUrl.hostname, parsedUrl.port)) {
+        return { isValid: false, error: `Unapproved port: ${parsedUrl.port}`, candidates: [] };
+    }
+
+    // Extract subpath and guard against directory traversal
+    const cleanSub = decodeURIComponent(parsedUrl.pathname).replace(/^\/+/, '');
+    if (cleanSub.includes('..')) {
+        return { isValid: false, error: 'Path traversal is not permitted in URL path', candidates: [] };
+    }
+
+    // Normalize: even for legacy :8080 URLs, candidates route strictly through active candidate base URLs
+    const candidates = candidateBases.map(b => `${b.replace(/\/$/, '')}/${encodeURI(cleanSub)}`);
+
+    return { isValid: true, subPath: cleanSub, candidates };
+}
+
+/**
+ * Sanitizes the requested file name and guarantees it stays inside the temporary directory.
+ */
+export function sanitizeDownloadDestination(rawFileName: string, tempDir: string): { targetPath: string; fileName: string } {
+    const input = (typeof rawFileName === 'string' && rawFileName.trim()) ? rawFileName.trim() : 'document.pdf';
+    const forwardSlashed = input.replace(/\\/g, '/');
+    const base = path.basename(forwardSlashed);
+    // Strip illegal filename characters and control characters
+    // eslint-disable-next-line no-control-regex
+    const cleaned = base.replace(/[\/\\:*?"<>|\x00-\x1F\x7F]/g, '_').replace(/^\.+/, '').trim() || 'document.pdf';
+
+    const uniqueId = `${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    const finalFileName = `${uniqueId}_${cleaned}`;
+    const targetPath = path.resolve(tempDir, finalFileName);
+
+    const normalizedTemp = path.resolve(tempDir);
+    if (!targetPath.startsWith(normalizedTemp + path.sep)) {
+        throw new Error('Path traversal detected');
+    }
+
+    return { targetPath, fileName: finalFileName };
+}
+
+/**
+ * Downloads a file from NAS storage candidates with Cloudflare Access headers,
+ * redirect policy validation, timeout, and partial file cleanup.
+ */
+export async function downloadPdfFromNas(
+    url: string,
+    fileName: string,
+    tempDir: string
+): Promise<{ success: boolean; path?: string; error?: string }> {
+    const validation = validateAndNormalizeDownloadUrl(url);
+    if (!validation.isValid) {
+        return { success: false, error: validation.error || 'Invalid download URL' };
+    }
+
+    let targetPath: string;
+    try {
+        const dest = sanitizeDownloadDestination(fileName, tempDir);
+        targetPath = dest.targetPath;
+    } catch (err: any) {
+        return { success: false, error: err.message || 'Invalid filename' };
+    }
+
+    const { candidates } = validation;
+    const cfHeaders = typeof getCfAccessHeaders === 'function' ? getCfAccessHeaders() : {};
+
+    let lastError = 'No candidates available';
+
+    const cleanupTemp = () => {
+        try {
+            if (fs.existsSync(targetPath)) {
+                fs.unlinkSync(targetPath);
+            }
+        } catch {}
+    };
+
+    const electron = await import('electron').catch(() => null);
+    const fetchFn: typeof fetch = (electron as any)?.net?.fetch || globalThis.fetch;
+
+    for (const candidateUrl of candidates) {
+        try {
+            let currentUrl = candidateUrl;
+            let redirectCount = 0;
+            const maxRedirects = 3;
+            let res: Response | null = null;
+
+            while (redirectCount <= maxRedirects) {
+                const isTunnel = currentUrl.includes('storage.lenas.me');
+                const headers: Record<string, string> = isTunnel ? { ...cfHeaders } : {};
+
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 6000);
+
+                try {
+                    res = await fetchFn(currentUrl, {
+                        headers,
+                        signal: controller.signal,
+                        redirect: 'manual'
+                    });
+                } finally {
+                    clearTimeout(timeoutId);
+                }
+
+                if (res.status >= 300 && res.status < 400 && res.headers.has('location')) {
+                    const location = res.headers.get('location')!;
+                    const resolvedRedirect = new URL(location, currentUrl).href;
+
+                    const parsedRedirect = new URL(resolvedRedirect);
+                    if (!isApprovedNasHost(parsedRedirect.hostname, parsedRedirect.port)) {
+                        throw new Error(`Redirect to unapproved host "${parsedRedirect.hostname}" was blocked`);
+                    }
+
+                    currentUrl = resolvedRedirect;
+                    redirectCount++;
+                    continue;
+                }
+
+                break;
+            }
+
+            if (!res || !res.ok || res.status !== 200) {
+                lastError = `Candidate ${currentUrl} returned HTTP ${res?.status || 'no response'}`;
+                continue;
+            }
+
+            const arrayBuf = await res.arrayBuffer();
+            if (!arrayBuf || arrayBuf.byteLength === 0) {
+                throw new Error('Downloaded file is empty (0 bytes)');
+            }
+
+            await fs.promises.writeFile(targetPath, Buffer.from(arrayBuf));
+
+            const stat = await fs.promises.stat(targetPath);
+            if (stat.size === 0) {
+                throw new Error('Written file is empty');
+            }
+
+            return { success: true, path: targetPath };
+        } catch (err: any) {
+            cleanupTemp();
+            if (err.message && err.message.includes('Redirect to unapproved host')) {
+                return { success: false, error: err.message };
+            }
+            lastError = err.message || 'Fetch failed';
+        }
+    }
+
+    cleanupTemp();
+    return { success: false, error: `Failed to download file from NAS: ${lastError}` };
+}
 
 export function registerMakeHandlers(): void {
     /**
@@ -487,49 +752,13 @@ export function registerMakeHandlers(): void {
 
     ipcMain.handle('make-download-pdf', async (_e, { url, fileName }: { url: string; fileName: string }) => {
         try {
-            const https = await import('https');
-            const http = await import('http');
-            const path = await import('path');
-            const fs = await import('fs');
             const { app, shell } = await import('electron');
-            const tmpPath = path.join(app.getPath('temp'), fileName || 'download');
-
-            let fetchUrl = url;
-            // Normalize legacy :8080 URLs or app-media URLs to primary candidate NAS endpoint
-            if (/^https?:\/\/(storage\.lenas\.me|[a-zA-Z0-9\.\-]+:(?:8080|8081))\//i.test(fetchUrl)) {
-                const subPath = fetchUrl.replace(/^https?:\/\/(storage\.lenas\.me|[a-zA-Z0-9\.\-]+:(?:8080|8081))\/?/i, '');
-                const cleanSub = decodeURIComponent(subPath).replace(/^\//, '');
-                const candidates = typeof getNasStorageCandidates === 'function'
-                    ? getNasStorageCandidates()
-                    : ['http://100.88.85.6:8081', 'https://storage.lenas.me'];
-                fetchUrl = `${candidates[0].replace(/\/$/, '')}/${encodeURI(cleanSub)}`;
-            } else if (/^app-media:\/\/nas\//i.test(fetchUrl)) {
-                const subPath = fetchUrl.replace(/^app-media:\/\/nas\/?/i, '');
-                const cleanSub = decodeURIComponent(subPath).replace(/^\//, '');
-                const candidates = typeof getNasStorageCandidates === 'function'
-                    ? getNasStorageCandidates()
-                    : ['http://100.88.85.6:8081', 'https://storage.lenas.me'];
-                fetchUrl = `${candidates[0].replace(/\/$/, '')}/${encodeURI(cleanSub)}`;
+            const tempDir = app.getPath('temp');
+            const res = await downloadPdfFromNas(url, fileName, tempDir);
+            if (res.success && res.path) {
+                await shell.openPath(res.path);
             }
-
-            await new Promise<void>((resolve, reject) => {
-                const file = fs.createWriteStream(tmpPath);
-                const protocol = fetchUrl.startsWith('https') ? https : http;
-                protocol.get(fetchUrl, (res: any) => {
-                    if (res.statusCode && res.statusCode >= 400) {
-                        reject(new Error(`Download failed with HTTP ${res.statusCode}`));
-                        return;
-                    }
-                    res.pipe(file);
-                    file.on('finish', () => {
-                        file.close();
-                        resolve();
-                    });
-                }).on('error', reject);
-            });
-
-            await shell.openPath(tmpPath);
-            return { success: true, path: tmpPath };
+            return res;
         } catch (e: any) {
             console.error('[make-download-pdf] Download error:', e);
             return { success: false, error: e?.message || 'Download error' };
