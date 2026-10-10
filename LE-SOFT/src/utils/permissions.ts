@@ -110,6 +110,21 @@ export const isSalesperson = (): boolean => {
     );
 };
 
+/** True if user belongs to the Factory Manager group. */
+export const isFactoryManager = (): boolean => {
+    if (isSuperadmin() || isAdmin()) return false;
+    const u = getUser();
+    const role = (u.role || localStorage.getItem('user_role') || '').toLowerCase();
+    const groupName = (u.user_group_name || u.user_groups?.name || '').toLowerCase();
+    return (
+        role === 'factory_manager' ||
+        role === 'factory manager' ||
+        role === 'factory' ||
+        groupName.includes('factory manager') ||
+        groupName.includes('factory')
+    );
+};
+
 /**
  * Superadmin & Admin can modify ALL information as needed
  * (cost price, sale price, discounts, quantities, specifications, customer info, etc.).
@@ -120,34 +135,44 @@ export const canModifyAllInfo = (): boolean => {
 
 /**
  * True if the current user can view the Cost Price of products/orders:
- * Strictly only Superadmin, Admin, and Furniture Designer.
+ * Allowed for Superadmin, Admin, Furniture Designer, and Factory Manager.
  * Salespersons are strictly forbidden from viewing the cost price.
  */
 export const canViewCostPrice = (): boolean => {
     if (isSuperadmin() || isAdmin()) return true;
     if (isSalesperson()) return false;
-    return isFurnitureDesigner() || hasPerm('set_make_cost_price');
+    return isFurnitureDesigner() || isFactoryManager() || hasPerm('set_make_cost_price') || hasPerm('view_cost_price');
 };
 
 /**
  * True if the current user can enter/edit the Cost Price:
  * Strictly Superadmin, Admin, and Furniture Designer.
- * Salespersons cannot view or edit cost prices.
+ * Factory Manager and Salespersons cannot edit cost prices.
  */
 export const canEditCostPrice = (): boolean => {
     if (isSuperadmin() || isAdmin()) return true;
-    if (isSalesperson()) return false;
+    if (isSalesperson() || isFactoryManager()) return false;
     return isFurnitureDesigner() || hasPerm('set_make_cost_price');
+};
+
+/**
+ * True if the current user can view Sale Price:
+ * Strictly hidden for Factory Manager everywhere.
+ * Visible for Superadmin, Admin, Furniture Designer, and Salesperson.
+ */
+export const canViewSalePrice = (): boolean => {
+    if (isFactoryManager()) return false;
+    return true;
 };
 
 /**
  * True if the current user can enter/edit the Sale Price (Selling Price / Unit Price):
  * Furniture Designer, Admin, and Superadmin can enter sale price.
- * Salespersons cannot set sale prices directly.
+ * Factory Manager and Salespersons cannot set sale prices directly.
  */
 export const canEditSalePrice = (): boolean => {
     if (isSuperadmin() || isAdmin()) return true;
-    if (isSalesperson()) return false;
+    if (isSalesperson() || isFactoryManager()) return false;
     return isFurnitureDesigner() || hasPerm('set_make_sale_price');
 };
 
@@ -157,14 +182,17 @@ export const getUserPricingPermissions = () => {
     const admin = isAdmin();
     const designer = isFurnitureDesigner();
     const sales = isSalesperson();
+    const factory = isFactoryManager();
     const modifyAll = canModifyAllInfo();
     const viewCost = canViewCostPrice();
     const editCost = canEditCostPrice();
+    const viewSale = canViewSalePrice();
     const editSale = canEditSalePrice();
 
     let displayRoleName = 'User';
     if (isSuper) displayRoleName = 'Superadmin';
     else if (admin) displayRoleName = 'Admin';
+    else if (factory) displayRoleName = 'Factory Manager';
     else if (designer) displayRoleName = 'Furniture Designer';
     else if (sales) displayRoleName = 'Salesperson';
 
@@ -174,9 +202,11 @@ export const getUserPricingPermissions = () => {
         isFurnitureDesigner: designer,
         isDesigner: designer,
         isSalesperson: sales,
+        isFactoryManager: factory,
         canModifyAll: modifyAll,
         canViewCostPrice: viewCost,
         canEditCostPrice: editCost,
+        canViewSalePrice: viewSale,
         canEditSalePrice: editSale,
         displayRoleName,
     };
@@ -244,6 +274,7 @@ export const getCallerContext = (): CallerContext => {
  */
 export const canManageGlobalProductAttributes = (): boolean => {
     if (isSuperadmin() || isAdmin()) return true;
+    if (isFactoryManager() || isSalesperson()) return false;
     const u = getUser();
     const perms: Record<string, any> = typeof u.permissions === 'object' ? (u.permissions || {}) : {};
     return !!perms['manage_global_product_attributes'];
@@ -252,14 +283,35 @@ export const canManageGlobalProductAttributes = (): boolean => {
 /**
  * True if the current user can create or manage products in the MAKE catalog:
  * - Superadmin and Admin retain access.
+ * - Factory Manager and Salesperson are strictly denied.
  * - Users with 'write_make_catalog', 'manage_catalog', or 'make_admin' permissions.
  */
 export const canManageMakeCatalog = (): boolean => {
-    if (isSalesperson()) return false;
+    if (isSalesperson() || isFactoryManager()) return false;
     if (isSuperadmin() || isAdmin() || isFurnitureDesigner()) return true;
     const u = getUser();
     const perms: Record<string, any> = typeof u.permissions === 'object' ? (u.permissions || {}) : {};
     return !!(perms['write_make_catalog'] || perms['manage_catalog'] || perms['make_admin'] || perms['catalog_manage']);
+};
+
+/**
+ * True if the current user has permission to create products from Place Order:
+ * - Admin and Superadmin: always allowed.
+ * - Factory Manager: strictly denied.
+ * - Furniture Designer: configurable by permission (defaults true).
+ * - Salesperson: denied unless explicitly granted.
+ */
+export const canCreateProductFromPlaceOrder = (): boolean => {
+    if (isSuperadmin() || isAdmin()) return true;
+    if (isFactoryManager()) return false;
+    const u = getUser();
+    const perms: Record<string, any> = typeof u.permissions === 'object' ? (u.permissions || {}) : {};
+    if (perms['create_product_from_place_order'] !== undefined) {
+        return !!perms['create_product_from_place_order'];
+    }
+    if (isFurnitureDesigner()) return true;
+    if (isSalesperson()) return false;
+    return !!perms['create_product_from_place_order'];
 };
 
 

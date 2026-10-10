@@ -37,6 +37,7 @@ export interface CreateMakeOrderInput {
     sale_price?: number | string | null;
     customer_id?: number | null;
     invoice_attachment_urls?: string[];
+    invoice_attachments?: string[];
     reference_bill_no?: string | null;
     items: {
         product_id?: number | null;
@@ -46,14 +47,18 @@ export interface CreateMakeOrderInput {
         spec_details?: string | null;
         size_id?: number | null;
         dimensions_text?: string | null;
+        custom_size?: string | null;
         color_id?: number | null;
         color_name?: string | null;
+        custom_color?: string | null;
         quantity: number;
         item_cost_price?: number | string | null;
         item_sale_price?: number | string | null;
         is_customized?: boolean;
+        is_custom?: boolean;
         custom_dimensions?: string | null;
         designer_notes?: string | null;
+        custom_notes?: string | null;
     }[];
 }
 
@@ -251,7 +256,7 @@ export class MakeOrderService {
         const initialApprovalStatus = isApproved ? 'sales_approved' : 'awaiting_designer';
 
         // 2. Insert order header
-        const orderHeaderPayload = {
+        const orderHeaderPayload: Record<string, any> = {
             order_number: orderNumber,
             furniture_name: input.furniture_name.trim(),
             description: input.description || input.special_instructions || '',
@@ -264,8 +269,9 @@ export class MakeOrderService {
             requested_delivery_date: input.requested_delivery_date || null,
             salesman_id: input.salesman_id || null,
             customer_id: resolvedCustId,
-            reference_bill_no: input.reference_bill_no?.trim() || null,
-            invoice_attachment_urls: input.invoice_attachment_urls || [],
+            invoice_attachment_urls: (Array.isArray(input.invoice_attachment_urls) && input.invoice_attachment_urls.length > 0)
+                ? input.invoice_attachment_urls
+                : (Array.isArray((input as any).invoice_attachments) ? (input as any).invoice_attachments : []),
             is_approved: isApproved,
             customer_name: input.customer_name?.trim() || null,
             customer_phone: input.customer_phone?.trim() || null,
@@ -281,11 +287,28 @@ export class MakeOrderService {
             created_at: new Date().toISOString()
         };
 
-        const { data: createdOrder, error: orderErr } = await supabase
+        if (input.reference_bill_no && input.reference_bill_no.trim()) {
+            orderHeaderPayload.reference_bill_no = input.reference_bill_no.trim();
+        }
+
+        let { data: createdOrder, error: orderErr } = await supabase
             .from('make_orders')
             .insert(orderHeaderPayload)
             .select('id, order_number')
             .single();
+
+        // If insert failed due to reference_bill_no not existing on fallback schema, retry without it
+        if (orderErr && orderErr.message && orderErr.message.includes('reference_bill_no')) {
+            const fallbackPayload = { ...orderHeaderPayload };
+            delete fallbackPayload.reference_bill_no;
+            const retryRes = await supabase
+                .from('make_orders')
+                .insert(fallbackPayload)
+                .select('id, order_number')
+                .single();
+            createdOrder = retryRes.data;
+            orderErr = retryRes.error;
+        }
 
         if (orderErr || !createdOrder) {
             return { success: false, error: `Failed to create order header: ${orderErr?.message || 'Database error'}` };
@@ -302,8 +325,12 @@ export class MakeOrderService {
             color_id: item.color_id || null,
             product_name: item.product_name.trim(),
             spec_name: item.spec_name || null,
-            size_label: item.dimensions_text || null,
-            color_name: item.color_name || null,
+            spec_details: item.spec_details || null,
+            size_label: item.size_id ? (item.dimensions_text || (item as any).size_label || null) : ((item as any).size_label || null),
+            dimensions_text: item.dimensions_text || null,
+            custom_size: item.custom_size || (item.is_customized ? item.dimensions_text : null) || null,
+            custom_dimensions: item.custom_dimensions || (item.is_customized ? (item.custom_size || item.dimensions_text) : null) || null,
+            color_name: item.color_name || (item as any).custom_color || null,
             quantity: Number(item.quantity) || 1,
             item_cost_price: item.item_cost_price !== undefined && item.item_cost_price !== null && item.item_cost_price !== ''
                 ? Math.max(0, Number(item.item_cost_price))
@@ -311,15 +338,43 @@ export class MakeOrderService {
             item_sale_price: item.item_sale_price !== undefined && item.item_sale_price !== null && item.item_sale_price !== ''
                 ? Math.max(0, Number(item.item_sale_price))
                 : null,
-            is_customized: !!item.is_customized,
-            custom_dimensions: item.custom_dimensions || item.dimensions_text || null,
-            designer_notes: item.designer_notes || null
+            is_customized: !!(item.is_customized || (item as any).is_custom),
+            designer_notes: item.designer_notes || (item as any).custom_notes || null
         }));
 
-        const { data: insertedItems, error: itemsErr } = await supabase
+        let { data: insertedItems, error: itemsErr } = await supabase
             .from('make_order_items')
             .insert(itemsPayload)
             .select('id, product_name');
+
+        // Schema compatibility fallback:
+        // TrueNAS PostgREST has migration 057 columns (designer_notes, technical_drawing_url, pdf_urls),
+        // but Supabase Cloud lacks them (42703). If insert fails due to a missing column,
+        // sanitize and retry so order creation never breaks on schema differences.
+        if (itemsErr && (itemsErr.code === '42703' || (itemsErr.message && /column.*does not exist/i.test(itemsErr.message)))) {
+            console.warn('[MakeOrderService] Detected missing column on make_order_items insert:', itemsErr.message, 'Retrying with schema-compatible payload...');
+            const missingColMatch = itemsErr.message.match(/column (?:[a-zA-Z0-9_]+\.)?([a-zA-Z0-9_]+) does not exist/i);
+            const missingCol = missingColMatch ? missingColMatch[1] : null;
+
+            const compatiblePayload = itemsPayload.map(rawItem => {
+                const sanitized: any = { ...rawItem };
+                if (missingCol && missingCol in sanitized) {
+                    delete sanitized[missingCol];
+                } else {
+                    delete sanitized.designer_notes;
+                    delete sanitized.technical_drawing_url;
+                    delete sanitized.pdf_urls;
+                }
+                return sanitized;
+            });
+
+            const retryRes = await supabase
+                .from('make_order_items')
+                .insert(compatiblePayload)
+                .select('id, product_name');
+            insertedItems = retryRes.data;
+            itemsErr = retryRes.error;
+        }
 
         if (itemsErr) {
             // ATOMIC ROLLBACK: Remove orphaned order header
@@ -328,11 +383,22 @@ export class MakeOrderService {
             return { success: false, error: `Order creation rolled back due to item insertion error: ${itemsErr.message}` };
         }
 
-        // 4. Initial timeline update
+        // 4. Initial timeline update (preserve any item notes in timeline so they are never lost)
+        const collectedItemNotes = input.items
+            .map((it, idx) => {
+                const note = it.designer_notes || (it as any).custom_notes;
+                return note ? `Item #${idx + 1} (${it.product_name}): ${note}` : null;
+            })
+            .filter(Boolean);
+        const baseTimelineNote = input.salesman_id ? 'Order created, awaiting salesperson approval' : 'Order placed and approved';
+        const finalTimelineNote = collectedItemNotes.length > 0
+            ? `${baseTimelineNote} [Item Notes: ${collectedItemNotes.join('; ')}]`
+            : baseTimelineNote;
+
         await supabase.from('make_order_updates').insert({
             order_id: orderId,
             status: initialStatus,
-            note: input.salesman_id ? 'Order created, awaiting salesperson approval' : 'Order placed and approved',
+            note: finalTimelineNote,
             updated_by: `${actorSession.fullName || actorSession.username} (${actorSession.role})`
         });
 

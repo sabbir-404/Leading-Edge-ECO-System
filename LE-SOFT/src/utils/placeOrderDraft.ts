@@ -89,6 +89,7 @@ export interface PlaceOrderDraftData {
 
   isCustomItemMode?: boolean;
   customItemName?: string;
+  customItemSize?: string;
   customItemSpec?: string;
 
   // Cart & Attachments

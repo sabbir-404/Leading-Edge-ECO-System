@@ -22,11 +22,15 @@ describe('Smart NAS / Tailscale Database Access — Issue 2 Fixes', () => {
     const tempUserDir = path.join(process.cwd(), 'tests', 'fixtures', 'temp_userdata_nas');
     const connectionStatePath = path.join(tempUserDir, 'nas_connection.json');
     const journalPath = path.join(tempUserDir, 'fallback_write_journal.json');
+    const mirrorJournalPath = path.join(tempUserDir, 'mirror_retry_journal.json');
+    const freshnessPath = path.join(tempUserDir, 'freshness.json');
 
     const cleanTempFiles = () => {
         try {
             if (fs.existsSync(connectionStatePath)) fs.unlinkSync(connectionStatePath);
             if (fs.existsSync(journalPath)) fs.unlinkSync(journalPath);
+            if (fs.existsSync(mirrorJournalPath)) fs.unlinkSync(mirrorJournalPath);
+            if (fs.existsSync(freshnessPath)) fs.unlinkSync(freshnessPath);
             if (fs.existsSync(tempUserDir)) fs.rmdirSync(tempUserDir, { recursive: true });
         } catch {}
     };
@@ -36,16 +40,29 @@ describe('Smart NAS / Tailscale Database Access — Issue 2 Fixes', () => {
         (DatabaseFailoverEngine as any).instance = null;
         engine = DatabaseFailoverEngine.getInstance();
 
+        const createMockTable = () => ({
+            upsert: vi.fn().mockResolvedValue({ data: null, error: null }),
+            delete: vi.fn().mockReturnValue({
+                eq: vi.fn().mockResolvedValue({ data: null, error: null })
+            }),
+            select: vi.fn().mockReturnValue({
+                limit: vi.fn().mockResolvedValue({ data: [{ id: 1 }], error: null }),
+                eq: vi.fn().mockReturnValue({
+                    maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null })
+                })
+            })
+        });
+
         mockNasClient = {
-            from: vi.fn()
+            from: vi.fn().mockImplementation(() => createMockTable())
         };
 
         mockSupabaseClient = {
-            from: vi.fn()
+            from: vi.fn().mockImplementation(() => createMockTable())
         };
 
         mockSupabaseAdmin = {
-            from: vi.fn()
+            from: vi.fn().mockImplementation(() => createMockTable())
         };
 
         engine.registerClients({
@@ -264,9 +281,15 @@ describe('Smart NAS / Tailscale Database Access — Issue 2 Fixes', () => {
     });
 
     describe('5. Architectural Write Safety & Ambiguous Timeout Protection (Tests A-F)', () => {
-        it('A. NAS successful write: writes to NAS master and mirrors to Cloud', async () => {
+        it('A1. NAS successful write: writes to NAS master and successfully mirrors to Cloud', async () => {
             const product = { id: 501, product_code: 'TBL-EXEC-01', product_name: 'Executive Board Table' };
             const nasWriteFn = vi.fn().mockResolvedValue({ data: product, error: null });
+
+            const mockTable = {
+                upsert: vi.fn().mockResolvedValue({ data: product, error: null }),
+                delete: vi.fn()
+            };
+            mockSupabaseAdmin.from.mockReturnValue(mockTable);
 
             const res = await engine.executeWrite(
                 nasWriteFn,
@@ -283,6 +306,198 @@ describe('Smart NAS / Tailscale Database Access — Issue 2 Fixes', () => {
             expect(res.data).toEqual(product);
             expect(res.error).toBeNull();
             expect(nasWriteFn).toHaveBeenCalledWith(mockNasClient);
+
+            // Wait a small tick for the async cloud mirror promise to complete
+            await new Promise(r => setTimeout(r, 20));
+
+            expect(mockSupabaseAdmin.from).toHaveBeenCalledWith('make_products');
+            expect(mockTable.upsert).toHaveBeenCalledWith(product);
+        });
+
+        it('A2. NAS write succeeds but cloud mirror fails: safely journaled for retry without breaking NAS write', async () => {
+            const product = { id: 502, product_code: 'TBL-EXEC-02', product_name: 'Executive Side Table' };
+            const nasWriteFn = vi.fn().mockResolvedValue({ data: product, error: null });
+
+            const mockTable = {
+                upsert: vi.fn().mockResolvedValue({ data: null, error: { message: 'Cloud connection timeout' } }),
+                delete: vi.fn()
+            };
+            mockSupabaseAdmin.from.mockReturnValue(mockTable);
+
+            const res = await engine.executeWrite(
+                nasWriteFn,
+                {
+                    table: 'make_products',
+                    operation: 'insert',
+                    primaryKey: { name: 'id', value: 502 },
+                    data: product
+                },
+                'create-product-on-nas-mirror-fail'
+            );
+
+            // 1. NAS write returns successfully despite cloud mirror failure
+            expect(res.databaseUsed).toBe('nas');
+            expect(res.data).toEqual(product);
+            expect(res.error).toBeNull();
+
+            // Wait a small tick for the async cloud mirror promise to fail and journal
+            await new Promise(r => setTimeout(r, 20));
+
+            // 2. Failure safely recorded in mirror retry journal
+            const retryEntries = engine.getMirrorRetryEntries();
+            expect(retryEntries).toBeDefined();
+            const found = retryEntries.find(e => e.table === 'make_products' && (e.data as any)?.id === 502);
+            expect(found).toBeDefined();
+            expect(found?.operation).toBe('insert');
+        });
+
+        it('A3. Missing or malformed client configuration followed by explicit, observable failure handling', async () => {
+            // Case 1: Supabase client is completely missing (unregistered)
+            engine.registerClients({
+                nas: mockNasClient,
+                supabase: null as any,
+                supabaseAdmin: null as any
+            });
+
+            const productMissingClient = { id: 503, product_code: 'TBL-NO-CLIENT', product_name: 'No Client Table' };
+            const nasWriteFn1 = vi.fn().mockResolvedValue({ data: productMissingClient, error: null });
+
+            const res1 = await engine.executeWrite(
+                nasWriteFn1,
+                {
+                    table: 'make_products',
+                    operation: 'insert',
+                    primaryKey: { name: 'id', value: 503 },
+                    data: productMissingClient
+                },
+                'write-with-missing-client'
+            );
+
+            expect(res1.databaseUsed).toBe('nas');
+            expect(res1.data).toEqual(productMissingClient);
+            expect(res1.error).toBeNull();
+
+            // Wait small tick for mirror rejection to journal
+            await new Promise(r => setTimeout(r, 20));
+
+            let entries = engine.getMirrorRetryEntries();
+            const found1 = entries.find(e => (e.data as any)?.id === 503);
+            expect(found1).toBeDefined();
+
+            // Case 2: Supabase client is malformed (missing from() function)
+            engine.registerClients({
+                nas: mockNasClient,
+                supabase: {} as any,
+                supabaseAdmin: {} as any
+            });
+
+            const productMalformedClient = { id: 504, product_code: 'TBL-BAD-CLIENT', product_name: 'Bad Client Table' };
+            const nasWriteFn2 = vi.fn().mockResolvedValue({ data: productMalformedClient, error: null });
+
+            const res2 = await engine.executeWrite(
+                nasWriteFn2,
+                {
+                    table: 'make_products',
+                    operation: 'insert',
+                    primaryKey: { name: 'id', value: 504 },
+                    data: productMalformedClient
+                },
+                'write-with-malformed-client'
+            );
+
+            expect(res2.databaseUsed).toBe('nas');
+            expect(res2.data).toEqual(productMalformedClient);
+            expect(res2.error).toBeNull();
+
+            await new Promise(r => setTimeout(r, 20));
+
+            entries = engine.getMirrorRetryEntries();
+            const found2 = entries.find(e => (e.data as any)?.id === 504);
+            expect(found2).toBeDefined();
+
+            // Restore clients for subsequent tests
+            engine.registerClients({
+                nas: mockNasClient,
+                supabase: mockSupabaseClient,
+                supabaseAdmin: mockSupabaseAdmin
+            });
+        });
+
+        it('A4. Retry processing that eventually succeeds and removes the entry from the journal', async () => {
+            const product = { id: 505, product_code: 'TBL-RETRY-01', product_name: 'Retry Board Table' };
+
+            // 1. Add entry to mirror retry journal
+            engine.journalMirrorRetry({
+                table: 'make_products',
+                operation: 'insert',
+                primaryKey: { name: 'id', value: 505 },
+                data: product
+            });
+
+            expect(engine.getMirrorRetryEntries().some(e => (e.data as any)?.id === 505)).toBe(true);
+
+            // Test deduplication: calling journalMirrorRetry again for id: 505 updates in place without duplicating
+            const updatedProduct = { id: 505, product_code: 'TBL-RETRY-01', product_name: 'Updated Retry Board Table' };
+            engine.journalMirrorRetry({
+                table: 'make_products',
+                operation: 'update',
+                primaryKey: { name: 'id', value: 505 },
+                data: updatedProduct
+            });
+
+            const matchingEntries = engine.getMirrorRetryEntries().filter(e => (e.data as any)?.id === 505);
+            expect(matchingEntries.length).toBe(1); // exactly 1, no duplicate entries created!
+            expect(matchingEntries[0].data.product_name).toBe('Updated Retry Board Table');
+            expect(matchingEntries[0].operation).toBe('update');
+
+            // 2. Configure mock table with working upsert
+            const mockUpsert = vi.fn().mockResolvedValue({ data: updatedProduct, error: null });
+            mockSupabaseAdmin.from.mockReturnValue({
+                upsert: mockUpsert,
+                delete: vi.fn()
+            });
+
+            // 3. Process pending mirror retries
+            const retryRes = await engine.processPendingMirrorRetries();
+            expect(retryRes.succeeded).toBeGreaterThanOrEqual(1);
+            expect(retryRes.failed).toBe(0);
+            expect(mockUpsert).toHaveBeenCalledWith(updatedProduct);
+
+            // 4. Verify entry is cleanly removed from mirror retry journal
+            const remaining = engine.getMirrorRetryEntries();
+            expect(remaining.some(e => (e.data as any)?.id === 505)).toBe(false);
+        });
+
+        it('A5. Delete mirroring: mirrors deletion to Supabase via primaryKey or filter', async () => {
+            const mockDeleteEq = vi.fn().mockResolvedValue({ data: null, error: null });
+            const mockDelete = vi.fn().mockReturnValue({
+                eq: mockDeleteEq
+            });
+            mockSupabaseAdmin.from.mockReturnValue({
+                delete: mockDelete,
+                upsert: vi.fn()
+            });
+
+            // 1. Delete with primaryKey
+            const nasDeleteFn = vi.fn().mockResolvedValue({ data: null, error: null });
+            const res = await engine.executeWrite(
+                nasDeleteFn,
+                {
+                    table: 'make_products',
+                    operation: 'delete',
+                    primaryKey: { name: 'id', value: 506 }
+                },
+                'delete-product-on-nas'
+            );
+
+            expect(res.databaseUsed).toBe('nas');
+            expect(res.error).toBeNull();
+
+            await new Promise(r => setTimeout(r, 20));
+
+            expect(mockSupabaseAdmin.from).toHaveBeenCalledWith('make_products');
+            expect(mockDelete).toHaveBeenCalled();
+            expect(mockDeleteEq).toHaveBeenCalledWith('id', 506);
         });
 
         it('B & C. Ambiguous timeout: NAS write response times out -> operation is NOT duplicated on Supabase', async () => {
@@ -404,6 +619,67 @@ describe('Smart NAS / Tailscale Database Access — Issue 2 Fixes', () => {
             // Reconcile pending writes to NAS
             const result = await engine.reconcileFallbackWrites();
             expect(result.reconciled).toBeGreaterThanOrEqual(1);
+        });
+
+        it('E2. Idempotent reconciliation does not lose or duplicate orders or products during replay', async () => {
+            // Set degraded state
+            engine.recordNasFailure(new Error('ECONNREFUSED'));
+
+            const offlineProduct = { id: 901, product_code: 'RECON-PROD-901', product_name: 'Reconciled Product' };
+            const offlineOrder = { id: 902, order_number: 'MAKE-2026-RECON-902', customer_name: 'Reconciled Client' };
+
+            // Journal both a product and an order while offline
+            await engine.executeWrite(
+                async () => ({ data: offlineProduct, error: null }),
+                {
+                    table: 'make_products',
+                    operation: 'insert',
+                    primaryKey: { name: 'id', value: 901 },
+                    data: offlineProduct
+                },
+                'product-offline'
+            );
+
+            await engine.executeWrite(
+                async () => ({ data: offlineOrder, error: null }),
+                {
+                    table: 'make_orders',
+                    operation: 'insert',
+                    primaryKey: { name: 'id', value: 902 },
+                    data: offlineOrder
+                },
+                'order-offline'
+            );
+
+            // Mock NAS client accepting idempotent upserts
+            (engine as any).isNasReachable = true;
+            const upsertedTables: string[] = [];
+            const upsertedData: any[] = [];
+            mockNasClient.from.mockImplementation((tableName: string) => ({
+                select: vi.fn().mockReturnValue({
+                    eq: vi.fn().mockReturnValue({
+                        maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null })
+                    })
+                }),
+                upsert: vi.fn().mockImplementation(async (d: any) => {
+                    upsertedTables.push(tableName);
+                    upsertedData.push(d);
+                    return { data: d, error: null };
+                })
+            }));
+
+            // First reconciliation run: both pending items should be reconciled
+            const firstRun = await engine.reconcileFallbackWrites();
+            expect(firstRun.reconciled).toBe(2);
+            expect(firstRun.failed).toBe(0);
+            expect(upsertedTables).toContain('make_products');
+            expect(upsertedTables).toContain('make_orders');
+
+            // Second reconciliation run: journal is already empty/cleared, 0 items replayed, no duplicate writes
+            const secondRun = await engine.reconcileFallbackWrites();
+            expect(secondRun.reconciled).toBe(0);
+            expect(secondRun.failed).toBe(0);
+            expect(upsertedTables.length).toBe(2); // exactly 2 upserts total, no duplicates!
         });
 
         it('F. Network recovery -> NAS verified and becomes primary again', async () => {

@@ -463,13 +463,13 @@ function __disposeResources(env) {
   }
   return next2();
 }
-function __rewriteRelativeImportExtension(path18, preserveJsx) {
-  if (typeof path18 === "string" && /^\.\.?\//.test(path18)) {
-    return path18.replace(/\.(tsx)$|((?:\.d)?)((?:\.[^./]+?)?)\.([cm]?)ts$/i, function(m2, tsx, d, ext, cm) {
+function __rewriteRelativeImportExtension(path21, preserveJsx) {
+  if (typeof path21 === "string" && /^\.\.?\//.test(path21)) {
+    return path21.replace(/\.(tsx)$|((?:\.d)?)((?:\.[^./]+?)?)\.([cm]?)ts$/i, function(m2, tsx, d, ext, cm) {
       return tsx ? preserveJsx ? ".jsx" : ".js" : d && (!ext || !cm) ? m2 : d + ext + "." + cm.toLowerCase() + "js";
     });
   }
-  return path18;
+  return path21;
 }
 var extendStatics, __assign, __createBinding, __setModuleDefault, ownKeys, _SuppressedError, tslib_es6_default;
 var init_tslib_es6 = __esm({
@@ -10080,8 +10080,8 @@ var require_main2 = __commonJS({
 });
 
 // node_modules/iceberg-js/dist/index.mjs
-function buildUrl(baseUrl, path18, query) {
-  const url2 = new URL(path18, baseUrl);
+function buildUrl(baseUrl, path21, query) {
+  const url2 = new URL(path21, baseUrl);
   if (query) {
     for (const [key, value] of Object.entries(query)) {
       if (value !== void 0) {
@@ -10111,12 +10111,12 @@ function createFetchClient(options) {
   return {
     async request({
       method,
-      path: path18,
+      path: path21,
       query,
       body,
       headers
     }) {
-      const url2 = buildUrl(options.baseUrl, path18, query);
+      const url2 = buildUrl(options.baseUrl, path21, query);
       const authHeaders = await buildAuthHeaders(options.auth);
       const res = await fetchFn(url2, {
         method,
@@ -11014,7 +11014,7 @@ var init_dist3 = __esm({
       * @param path The relative file path. Should be of the format `folder/subfolder/filename.png`. The bucket must already exist before attempting to upload.
       * @param fileBody The body of the file to be stored in the bucket.
       */
-      async uploadOrUpdate(method, path18, fileBody, fileOptions) {
+      async uploadOrUpdate(method, path21, fileBody, fileOptions) {
         var _this = this;
         return _this.handleOperation(async () => {
           let body;
@@ -11038,7 +11038,7 @@ var init_dist3 = __esm({
             if ((typeof ReadableStream !== "undefined" && body instanceof ReadableStream || body && typeof body === "object" && "pipe" in body && typeof body.pipe === "function") && !options.duplex) options.duplex = "half";
           }
           if (fileOptions === null || fileOptions === void 0 ? void 0 : fileOptions.headers) for (const [key, value] of Object.entries(fileOptions.headers)) headers = setHeader(headers, key, value);
-          const cleanPath = _this._removeEmptyFolders(path18);
+          const cleanPath = _this._removeEmptyFolders(path21);
           const _path = _this._getFinalPath(cleanPath);
           const data2 = await (method == "PUT" ? put : post)(_this.fetch, `${_this.url}/object/${_path}`, body, _objectSpread22({ headers }, (options === null || options === void 0 ? void 0 : options.duplex) ? { duplex: options.duplex } : {}));
           return {
@@ -11115,8 +11115,8 @@ var init_dist3 = __esm({
       * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works
       * - For React Native, using either `Blob`, `File` or `FormData` does not work as intended. Upload file using `ArrayBuffer` from base64 file data instead, see example below.
       */
-      async upload(path18, fileBody, fileOptions) {
-        return this.uploadOrUpdate("POST", path18, fileBody, fileOptions);
+      async upload(path21, fileBody, fileOptions) {
+        return this.uploadOrUpdate("POST", path21, fileBody, fileOptions);
       }
       /**
       * Upload a file with a token generated from `createSignedUploadUrl`.
@@ -11156,9 +11156,9 @@ var init_dist3 = __esm({
       *   - `objects` table permissions: none
       * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works
       */
-      async uploadToSignedUrl(path18, token, fileBody, fileOptions) {
+      async uploadToSignedUrl(path21, token, fileBody, fileOptions) {
         var _this3 = this;
-        const cleanPath = _this3._removeEmptyFolders(path18);
+        const cleanPath = _this3._removeEmptyFolders(path21);
         const _path = _this3._getFinalPath(cleanPath);
         const url2 = new URL(_this3.url + `/object/upload/sign/${_path}`);
         url2.searchParams.set("token", token);
@@ -11227,10 +11227,10 @@ var init_dist3 = __esm({
       *   - `objects` table permissions: `insert`
       * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works
       */
-      async createSignedUploadUrl(path18, options) {
+      async createSignedUploadUrl(path21, options) {
         var _this4 = this;
         return _this4.handleOperation(async () => {
-          let _path = _this4._getFinalPath(path18);
+          let _path = _this4._getFinalPath(path21);
           const headers = _objectSpread22({}, _this4.headers);
           if (options === null || options === void 0 ? void 0 : options.upsert) headers["x-upsert"] = "true";
           const data2 = await post(_this4.fetch, `${_this4.url}/object/upload/sign/${_path}`, {}, { headers });
@@ -11239,7 +11239,7 @@ var init_dist3 = __esm({
           if (!token) throw new StorageError("No token returned by API");
           return {
             signedUrl: url2.toString(),
-            path: path18,
+            path: path21,
             token
           };
         });
@@ -11299,8 +11299,8 @@ var init_dist3 = __esm({
       * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works
       * - For React Native, using either `Blob`, `File` or `FormData` does not work as intended. Update file using `ArrayBuffer` from base64 file data instead, see example below.
       */
-      async update(path18, fileBody, fileOptions) {
-        return this.uploadOrUpdate("PUT", path18, fileBody, fileOptions);
+      async update(path21, fileBody, fileOptions) {
+        return this.uploadOrUpdate("PUT", path21, fileBody, fileOptions);
       }
       /**
       * Moves an existing file to a new path in the same bucket.
@@ -11451,10 +11451,10 @@ var init_dist3 = __esm({
       *   - `objects` table permissions: `select`
       * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works
       */
-      async createSignedUrl(path18, expiresIn, options) {
+      async createSignedUrl(path21, expiresIn, options) {
         var _this8 = this;
         return _this8.handleOperation(async () => {
-          let _path = _this8._getFinalPath(path18);
+          let _path = _this8._getFinalPath(path21);
           const hasTransform = typeof (options === null || options === void 0 ? void 0 : options.transform) === "object" && options.transform !== null && Object.keys(options.transform).length > 0;
           let data2 = await post(_this8.fetch, `${_this8.url}/object/sign/${_path}`, _objectSpread22({ expiresIn }, hasTransform ? { transform: options.transform } : {}), { headers: _this8.headers });
           const query = new URLSearchParams();
@@ -11590,13 +11590,13 @@ var init_dist3 = __esm({
       *   - `objects` table permissions: `select`
       * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works
       */
-      download(path18, options, parameters) {
+      download(path21, options, parameters) {
         const renderPath = typeof (options === null || options === void 0 ? void 0 : options.transform) === "object" && options.transform !== null && Object.keys(options.transform).length > 0 ? "render/image/authenticated" : "object";
         const query = new URLSearchParams();
         if (options === null || options === void 0 ? void 0 : options.transform) this.applyTransformOptsToQuery(query, options.transform);
         if ((options === null || options === void 0 ? void 0 : options.cacheNonce) != null) query.set("cacheNonce", String(options.cacheNonce));
         const queryString = query.toString();
-        const _path = this._getFinalPath(path18);
+        const _path = this._getFinalPath(path21);
         const downloadFn = () => get(this.fetch, `${this.url}/${renderPath}/${_path}${queryString ? `?${queryString}` : ""}`, {
           headers: this.headers,
           noResolveJson: true
@@ -11627,9 +11627,9 @@ var init_dist3 = __esm({
       * }
       * ```
       */
-      async info(path18) {
+      async info(path21) {
         var _this10 = this;
-        const _path = _this10._getFinalPath(path18);
+        const _path = _this10._getFinalPath(path21);
         return _this10.handleOperation(async () => {
           return recursiveToCamel(await get(_this10.fetch, `${_this10.url}/object/info/${_path}`, { headers: _this10.headers }));
         });
@@ -11650,9 +11650,9 @@ var init_dist3 = __esm({
       *   .exists('folder/avatar1.png')
       * ```
       */
-      async exists(path18) {
+      async exists(path21) {
         var _this11 = this;
-        const _path = _this11._getFinalPath(path18);
+        const _path = _this11._getFinalPath(path21);
         try {
           await head(_this11.fetch, `${_this11.url}/object/${_path}`, { headers: _this11.headers });
           return {
@@ -11731,8 +11731,8 @@ var init_dist3 = __esm({
       *   - `objects` table permissions: none
       * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works
       */
-      getPublicUrl(path18, options) {
-        const _path = this._getFinalPath(path18);
+      getPublicUrl(path21, options) {
+        const _path = this._getFinalPath(path21);
         const query = new URLSearchParams();
         if (options === null || options === void 0 ? void 0 : options.download) query.set("download", options.download === true ? "" : options.download);
         if (options === null || options === void 0 ? void 0 : options.transform) this.applyTransformOptsToQuery(query, options.transform);
@@ -11871,10 +11871,10 @@ var init_dist3 = __esm({
       *   - `objects` table permissions: `select`
       * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works
       */
-      async list(path18, options, parameters) {
+      async list(path21, options, parameters) {
         var _this13 = this;
         return _this13.handleOperation(async () => {
-          const body = _objectSpread22(_objectSpread22(_objectSpread22({}, DEFAULT_SEARCH_OPTIONS), options), {}, { prefix: path18 || "" });
+          const body = _objectSpread22(_objectSpread22(_objectSpread22({}, DEFAULT_SEARCH_OPTIONS), options), {}, { prefix: path21 || "" });
           return await post(_this13.fetch, `${_this13.url}/object/list/${_this13.bucketId}`, body, { headers: _this13.headers }, parameters);
         });
       }
@@ -11939,11 +11939,11 @@ var init_dist3 = __esm({
         if (typeof Buffer !== "undefined") return Buffer.from(data2).toString("base64");
         return btoa(data2);
       }
-      _getFinalPath(path18) {
-        return `${this.bucketId}/${path18.replace(/^\/+/, "")}`;
+      _getFinalPath(path21) {
+        return `${this.bucketId}/${path21.replace(/^\/+/, "")}`;
       }
-      _removeEmptyFolders(path18) {
-        return path18.replace(/^\/|\/$/g, "").replace(/\/+/g, "/");
+      _removeEmptyFolders(path21) {
+        return path21.replace(/^\/|\/$/g, "").replace(/\/+/g, "/");
       }
       /** Modifies the `query`, appending values the from `transform` */
       applyTransformOptsToQuery(query, transform2) {
@@ -23590,18 +23590,16 @@ var init_DatabaseFailoverEngine = __esm({
           if (!res.error) {
             this.recordNasSuccess(duration3);
             const cloudClient = this.supabaseAdmin || this.supabaseClient;
-            if (cloudClient) {
-              this.mirrorWriteToCloud(cloudClient, metadata, res.data || metadata.data).catch((e2) => {
-                console.warn(`[DB:SYNC] Async cloud mirror failed for ${metadata.table}, saving to mirror retry journal:`, e2.message);
-                this.journalMirrorRetry({
-                  table: metadata.table,
-                  operation: metadata.operation,
-                  primaryKey: metadata.primaryKey,
-                  data: res.data || metadata.data,
-                  filter: metadata.filter
-                });
+            this.mirrorWriteToCloud(cloudClient, metadata, res.data || metadata.data).catch((e2) => {
+              console.warn(`[DB:SYNC] Async cloud mirror failed for ${metadata.table}, saving to mirror retry journal:`, e2.message);
+              this.journalMirrorRetry({
+                table: metadata.table,
+                operation: metadata.operation,
+                primaryKey: metadata.primaryKey,
+                data: res.data || metadata.data,
+                filter: metadata.filter
               });
-            }
+            });
             return { data: res.data, error: null, databaseUsed: "nas" };
           }
           const isPgError = res.error?.code || res.error?.details || res.error?.hint;
@@ -23642,23 +23640,44 @@ var init_DatabaseFailoverEngine = __esm({
       }
       async mirrorWriteToCloud(client, meta3, savedData) {
         const { table, operation } = meta3;
+        if (!client) {
+          throw new Error(`Supabase cloud client is not configured for table "${table}".`);
+        }
+        if (typeof client.from !== "function") {
+          throw new Error(`Supabase client is malformed (missing from() method) for table "${table}".`);
+        }
+        const tableClient = client.from(table);
+        if (!tableClient) {
+          throw new Error(`Supabase client table builder returned undefined for table "${table}".`);
+        }
         if (operation === "insert" || operation === "update" || operation === "upsert") {
-          if (savedData) {
-            const { error: error51 } = await client.from(table).upsert(savedData);
-            if (error51) throw error51;
+          if (!savedData) {
+            throw new Error(`Mirror payload missing saved data for operation "${operation}" on table "${table}".`);
           }
+          if (typeof tableClient.upsert !== "function") {
+            throw new Error(`Table client for "${table}" does not support upsert.`);
+          }
+          const { error: error51 } = await tableClient.upsert(savedData);
+          if (error51) throw error51;
         } else if (operation === "delete") {
+          if (typeof tableClient.delete !== "function") {
+            throw new Error(`Table client for "${table}" does not support delete.`);
+          }
           if (meta3.primaryKey) {
-            const { error: error51 } = await client.from(table).delete().eq(meta3.primaryKey.name, meta3.primaryKey.value);
+            const { error: error51 } = await tableClient.delete().eq(meta3.primaryKey.name, meta3.primaryKey.value);
             if (error51) throw error51;
           } else if (meta3.filter && meta3.filter.length > 0) {
-            let q = client.from(table).delete();
+            let q = tableClient.delete();
             for (const f3 of meta3.filter) {
               q = q.eq(f3.column, f3.value);
             }
             const { error: error51 } = await q;
             if (error51) throw error51;
+          } else {
+            throw new Error(`Delete operation on table "${table}" requires primaryKey or filter.`);
           }
+        } else {
+          throw new Error(`Unsupported mirror operation "${operation}" on table "${table}".`);
         }
         this.freshnessData.lastSuccessfulMirrorTime = Date.now();
         this.persistFreshness();
@@ -23684,6 +23703,25 @@ var init_DatabaseFailoverEngine = __esm({
         }
       }
       journalMirrorRetry(entry) {
+        const pkField = entry.primaryKey?.name || (entry.data?.id ? "id" : entry.data?.product_code ? "product_code" : null);
+        const pkValue = entry.primaryKey?.value || (pkField && entry.data ? entry.data[pkField] : null);
+        if (pkField && pkValue !== null && pkValue !== void 0) {
+          const existing = this.mirrorRetryEntries.find((e2) => {
+            const ePkField = e2.primaryKey?.name || (e2.data?.id ? "id" : e2.data?.product_code ? "product_code" : null);
+            const ePkValue = e2.primaryKey?.value || (ePkField && e2.data ? e2.data[ePkField] : null);
+            return e2.table === entry.table && ePkValue === pkValue;
+          });
+          if (existing) {
+            existing.operation = entry.operation;
+            existing.data = entry.data;
+            existing.filter = entry.filter;
+            existing.primaryKey = entry.primaryKey || { name: pkField, value: pkValue };
+            existing.timestamp = Date.now();
+            this.persistMirrorJournal();
+            this.broadcastStatus();
+            return;
+          }
+        }
         const item = {
           id: `mr-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
           timestamp: Date.now(),
@@ -23693,6 +23731,9 @@ var init_DatabaseFailoverEngine = __esm({
         this.mirrorRetryEntries.push(item);
         this.persistMirrorJournal();
         this.broadcastStatus();
+      }
+      getMirrorRetryEntries() {
+        return [...this.mirrorRetryEntries];
       }
       async processPendingMirrorRetries() {
         const client = this.supabaseAdmin || this.supabaseClient;
@@ -32016,22 +32057,22 @@ var init_from = __esm({
     init_file();
     init_fetch_blob();
     ({ stat } = import_node_fs.promises);
-    blobFromSync = (path18, type) => fromBlob((0, import_node_fs.statSync)(path18), path18, type);
-    blobFrom = (path18, type) => stat(path18).then((stat3) => fromBlob(stat3, path18, type));
-    fileFrom = (path18, type) => stat(path18).then((stat3) => fromFile(stat3, path18, type));
-    fileFromSync = (path18, type) => fromFile((0, import_node_fs.statSync)(path18), path18, type);
-    fromBlob = (stat3, path18, type = "") => new fetch_blob_default([new BlobDataItem({
-      path: path18,
+    blobFromSync = (path21, type) => fromBlob((0, import_node_fs.statSync)(path21), path21, type);
+    blobFrom = (path21, type) => stat(path21).then((stat3) => fromBlob(stat3, path21, type));
+    fileFrom = (path21, type) => stat(path21).then((stat3) => fromFile(stat3, path21, type));
+    fileFromSync = (path21, type) => fromFile((0, import_node_fs.statSync)(path21), path21, type);
+    fromBlob = (stat3, path21, type = "") => new fetch_blob_default([new BlobDataItem({
+      path: path21,
       size: stat3.size,
       lastModified: stat3.mtimeMs,
       start: 0
     })], { type });
-    fromFile = (stat3, path18, type = "") => new file_default([new BlobDataItem({
-      path: path18,
+    fromFile = (stat3, path21, type = "") => new file_default([new BlobDataItem({
+      path: path21,
       size: stat3.size,
       lastModified: stat3.mtimeMs,
       start: 0
-    })], (0, import_node_path.basename)(path18), { type, lastModified: stat3.mtimeMs });
+    })], (0, import_node_path.basename)(path21), { type, lastModified: stat3.mtimeMs });
     BlobDataItem = class _BlobDataItem {
       #path;
       #start;
@@ -36876,22 +36917,22 @@ var require_crypto2 = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.NodeCrypto = void 0;
-    var crypto12 = require("crypto");
+    var crypto13 = require("crypto");
     var NodeCrypto = class {
       async sha256DigestBase64(str) {
-        return crypto12.createHash("sha256").update(str).digest("base64");
+        return crypto13.createHash("sha256").update(str).digest("base64");
       }
       randomBytesBase64(count) {
-        return crypto12.randomBytes(count).toString("base64");
+        return crypto13.randomBytes(count).toString("base64");
       }
       async verify(pubkey, data2, signature) {
-        const verifier = crypto12.createVerify("RSA-SHA256");
+        const verifier = crypto13.createVerify("RSA-SHA256");
         verifier.update(data2);
         verifier.end();
         return verifier.verify(pubkey, signature, "base64");
       }
       async sign(privateKey, data2) {
-        const signer = crypto12.createSign("RSA-SHA256");
+        const signer = crypto13.createSign("RSA-SHA256");
         signer.update(data2);
         signer.end();
         return signer.sign(privateKey, "base64");
@@ -36909,7 +36950,7 @@ var require_crypto2 = __commonJS({
        *   string in hexadecimal encoding.
        */
       async sha256DigestHex(str) {
-        return crypto12.createHash("sha256").update(str).digest("hex");
+        return crypto13.createHash("sha256").update(str).digest("hex");
       }
       /**
        * Computes the HMAC hash of a message using the provided crypto key and the
@@ -36921,7 +36962,7 @@ var require_crypto2 = __commonJS({
        */
       async signWithHmacSha256(key, msg) {
         const cryptoKey = typeof key === "string" ? key : toBuffer(key);
-        return toArrayBuffer(crypto12.createHmac("sha256", cryptoKey).update(msg).digest());
+        return toArrayBuffer(crypto13.createHmac("sha256", cryptoKey).update(msg).digest());
       }
     };
     exports2.NodeCrypto = NodeCrypto;
@@ -37210,9 +37251,9 @@ var require_util2 = __commonJS({
     exports2.removeUndefinedValuesInObject = removeUndefinedValuesInObject;
     exports2.isValidFile = isValidFile;
     exports2.getWellKnownCertificateConfigFileLocation = getWellKnownCertificateConfigFileLocation;
-    var fs18 = require("fs");
+    var fs21 = require("fs");
     var os6 = require("os");
-    var path18 = require("path");
+    var path21 = require("path");
     var WELL_KNOWN_CERTIFICATE_CONFIG_FILE = "certificate_config.json";
     var CLOUDSDK_CONFIG_DIRECTORY = "gcloud";
     function snakeToCamel(str) {
@@ -37298,15 +37339,15 @@ var require_util2 = __commonJS({
     }
     async function isValidFile(filePath) {
       try {
-        const stats = await fs18.promises.lstat(filePath);
+        const stats = await fs21.promises.lstat(filePath);
         return stats.isFile();
       } catch (e2) {
         return false;
       }
     }
     function getWellKnownCertificateConfigFileLocation() {
-      const configDir = process.env.CLOUDSDK_CONFIG || (_isWindows() ? path18.join(process.env.APPDATA || "", CLOUDSDK_CONFIG_DIRECTORY) : path18.join(process.env.HOME || "", ".config", CLOUDSDK_CONFIG_DIRECTORY));
-      return path18.join(configDir, WELL_KNOWN_CERTIFICATE_CONFIG_FILE);
+      const configDir = process.env.CLOUDSDK_CONFIG || (_isWindows() ? path21.join(process.env.APPDATA || "", CLOUDSDK_CONFIG_DIRECTORY) : path21.join(process.env.HOME || "", ".config", CLOUDSDK_CONFIG_DIRECTORY));
+      return path21.join(configDir, WELL_KNOWN_CERTIFICATE_CONFIG_FILE);
     }
     function _isWindows() {
       return os6.platform().startsWith("win");
@@ -37834,10 +37875,10 @@ var require_oauth2client = __commonJS({
        * https://github.com/googleapis/google-auth-library-nodejs/blob/main/samples/oauth2-codeVerifier.js
        */
       async generateCodeVerifierAsync() {
-        const crypto12 = (0, crypto_1.createCrypto)();
-        const randomString2 = crypto12.randomBytesBase64(96);
+        const crypto13 = (0, crypto_1.createCrypto)();
+        const randomString2 = crypto13.randomBytesBase64(96);
         const codeVerifier = randomString2.replace(/\+/g, "~").replace(/=/g, "_").replace(/\//g, "-");
-        const unencodedCodeChallenge = await crypto12.sha256DigestBase64(codeVerifier);
+        const unencodedCodeChallenge = await crypto13.sha256DigestBase64(codeVerifier);
         const codeChallenge = unencodedCodeChallenge.split("=")[0].replace(/\+/g, "-").replace(/\//g, "_");
         return { codeVerifier, codeChallenge };
       }
@@ -38278,7 +38319,7 @@ var require_oauth2client = __commonJS({
        * @return Returns a promise resolving to LoginTicket on verification.
        */
       async verifySignedJwtWithCertsAsync(jwt2, certs, requiredAudience, issuers, maxExpiry) {
-        const crypto12 = (0, crypto_1.createCrypto)();
+        const crypto13 = (0, crypto_1.createCrypto)();
         if (!maxExpiry) {
           maxExpiry = _OAuth2Client.DEFAULT_MAX_TOKEN_LIFETIME_SECS_;
         }
@@ -38291,7 +38332,7 @@ var require_oauth2client = __commonJS({
         let envelope;
         let payload;
         try {
-          envelope = JSON.parse(crypto12.decodeBase64StringUtf8(segments[0]));
+          envelope = JSON.parse(crypto13.decodeBase64StringUtf8(segments[0]));
         } catch (err) {
           if (err instanceof Error) {
             err.message = `Can't parse token envelope: ${segments[0]}': ${err.message}`;
@@ -38302,7 +38343,7 @@ var require_oauth2client = __commonJS({
           throw new Error("Can't parse token envelope: " + segments[0]);
         }
         try {
-          payload = JSON.parse(crypto12.decodeBase64StringUtf8(segments[1]));
+          payload = JSON.parse(crypto13.decodeBase64StringUtf8(segments[1]));
         } catch (err) {
           if (err instanceof Error) {
             err.message = `Can't parse token payload '${segments[0]}`;
@@ -38319,7 +38360,7 @@ var require_oauth2client = __commonJS({
         if (envelope.alg === "ES256") {
           signature = formatEcdsa.joseToDer(signature, "ES256").toString("base64");
         }
-        const verified = await crypto12.verify(cert, signed, signature);
+        const verified = await crypto13.verify(cert, signed, signature);
         if (!verified) {
           throw new Error("Invalid token signature: " + jwt2);
         }
@@ -38694,14 +38735,14 @@ var require_buffer_equal_constant_time = __commonJS({
 var require_jwa = __commonJS({
   "node_modules/jwa/index.js"(exports2, module2) {
     var Buffer4 = require_safe_buffer().Buffer;
-    var crypto12 = require("crypto");
+    var crypto13 = require("crypto");
     var formatEcdsa = require_ecdsa_sig_formatter();
     var util = require("util");
     var MSG_INVALID_ALGORITHM = '"%s" is not a valid algorithm.\n  Supported algorithms are:\n  "HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512" and "none".';
     var MSG_INVALID_SECRET = "secret must be a string or buffer";
     var MSG_INVALID_VERIFIER_KEY = "key must be a string or a buffer";
     var MSG_INVALID_SIGNER_KEY = "key must be a string, a buffer or an object";
-    var supportsKeyObjects = typeof crypto12.createPublicKey === "function";
+    var supportsKeyObjects = typeof crypto13.createPublicKey === "function";
     if (supportsKeyObjects) {
       MSG_INVALID_VERIFIER_KEY += " or a KeyObject";
       MSG_INVALID_SECRET += "or a KeyObject";
@@ -38791,17 +38832,17 @@ var require_jwa = __commonJS({
       return function sign(thing, secret) {
         checkIsSecretKey(secret);
         thing = normalizeInput(thing);
-        var hmac = crypto12.createHmac("sha" + bits, secret);
+        var hmac = crypto13.createHmac("sha" + bits, secret);
         var sig = (hmac.update(thing), hmac.digest("base64"));
         return fromBase64(sig);
       };
     }
     var bufferEqual;
-    var timingSafeEqual = "timingSafeEqual" in crypto12 ? function timingSafeEqual2(a, b) {
+    var timingSafeEqual = "timingSafeEqual" in crypto13 ? function timingSafeEqual2(a, b) {
       if (a.byteLength !== b.byteLength) {
         return false;
       }
-      return crypto12.timingSafeEqual(a, b);
+      return crypto13.timingSafeEqual(a, b);
     } : function timingSafeEqual2(a, b) {
       if (!bufferEqual) {
         bufferEqual = require_buffer_equal_constant_time();
@@ -38818,7 +38859,7 @@ var require_jwa = __commonJS({
       return function sign(thing, privateKey) {
         checkIsPrivateKey(privateKey);
         thing = normalizeInput(thing);
-        var signer = crypto12.createSign("RSA-SHA" + bits);
+        var signer = crypto13.createSign("RSA-SHA" + bits);
         var sig = (signer.update(thing), signer.sign(privateKey, "base64"));
         return fromBase64(sig);
       };
@@ -38828,7 +38869,7 @@ var require_jwa = __commonJS({
         checkIsPublicKey(publicKey);
         thing = normalizeInput(thing);
         signature = toBase64(signature);
-        var verifier = crypto12.createVerify("RSA-SHA" + bits);
+        var verifier = crypto13.createVerify("RSA-SHA" + bits);
         verifier.update(thing);
         return verifier.verify(publicKey, signature, "base64");
       };
@@ -38837,11 +38878,11 @@ var require_jwa = __commonJS({
       return function sign(thing, privateKey) {
         checkIsPrivateKey(privateKey);
         thing = normalizeInput(thing);
-        var signer = crypto12.createSign("RSA-SHA" + bits);
+        var signer = crypto13.createSign("RSA-SHA" + bits);
         var sig = (signer.update(thing), signer.sign({
           key: privateKey,
-          padding: crypto12.constants.RSA_PKCS1_PSS_PADDING,
-          saltLength: crypto12.constants.RSA_PSS_SALTLEN_DIGEST
+          padding: crypto13.constants.RSA_PKCS1_PSS_PADDING,
+          saltLength: crypto13.constants.RSA_PSS_SALTLEN_DIGEST
         }, "base64"));
         return fromBase64(sig);
       };
@@ -38851,12 +38892,12 @@ var require_jwa = __commonJS({
         checkIsPublicKey(publicKey);
         thing = normalizeInput(thing);
         signature = toBase64(signature);
-        var verifier = crypto12.createVerify("RSA-SHA" + bits);
+        var verifier = crypto13.createVerify("RSA-SHA" + bits);
         verifier.update(thing);
         return verifier.verify({
           key: publicKey,
-          padding: crypto12.constants.RSA_PKCS1_PSS_PADDING,
-          saltLength: crypto12.constants.RSA_PSS_SALTLEN_DIGEST
+          padding: crypto13.constants.RSA_PKCS1_PSS_PADDING,
+          saltLength: crypto13.constants.RSA_PSS_SALTLEN_DIGEST
         }, signature, "base64");
       };
     }
@@ -39252,11 +39293,11 @@ var require_getCredentials = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.getCredentials = getCredentials;
-    var path18 = require("path");
-    var fs18 = require("fs");
+    var path21 = require("path");
+    var fs21 = require("fs");
     var util_1 = require("util");
     var errorWithCode_1 = require_errorWithCode();
-    var readFile = fs18.readFile ? (0, util_1.promisify)(fs18.readFile) : async () => {
+    var readFile = fs21.readFile ? (0, util_1.promisify)(fs21.readFile) : async () => {
       throw new errorWithCode_1.ErrorWithCode("use key rather than keyFile.", "MISSING_CREDENTIALS");
     };
     var ExtensionFiles;
@@ -39324,7 +39365,7 @@ var require_getCredentials = __commonJS({
        * @returns An instance of a class that implements ICredentialsProvider.
        */
       static create(keyFilePath) {
-        const keyFileExtension = path18.extname(keyFilePath);
+        const keyFileExtension = path21.extname(keyFilePath);
         switch (keyFileExtension) {
           case ExtensionFiles.JSON:
             return new JsonCredentialsProvider(keyFilePath);
@@ -40933,12 +40974,12 @@ var require_filesubjecttokensupplier = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.FileSubjectTokenSupplier = void 0;
     var util_1 = require("util");
-    var fs18 = require("fs");
-    var readFile = (0, util_1.promisify)(fs18.readFile ?? (() => {
+    var fs21 = require("fs");
+    var readFile = (0, util_1.promisify)(fs21.readFile ?? (() => {
     }));
-    var realpath = (0, util_1.promisify)(fs18.realpath ?? (() => {
+    var realpath = (0, util_1.promisify)(fs21.realpath ?? (() => {
     }));
-    var lstat = (0, util_1.promisify)(fs18.lstat ?? (() => {
+    var lstat = (0, util_1.promisify)(fs21.lstat ?? (() => {
     }));
     var FileSubjectTokenSupplier = class {
       filePath;
@@ -41056,7 +41097,7 @@ var require_certificatesubjecttokensupplier = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.CertificateSubjectTokenSupplier = exports2.InvalidConfigurationError = exports2.CertificateSourceUnavailableError = exports2.CERTIFICATE_CONFIGURATION_ENV_VARIABLE = void 0;
     var util_1 = require_util2();
-    var fs18 = require("fs");
+    var fs21 = require("fs");
     var crypto_1 = require("crypto");
     var https2 = require("https");
     exports2.CERTIFICATE_CONFIGURATION_ENV_VARIABLE = "GOOGLE_API_CERTIFICATE_CONFIG";
@@ -41150,7 +41191,7 @@ var require_certificatesubjecttokensupplier = __commonJS({
         const configPath = this.certificateConfigPath;
         let fileContents;
         try {
-          fileContents = await fs18.promises.readFile(configPath, "utf8");
+          fileContents = await fs21.promises.readFile(configPath, "utf8");
         } catch (err) {
           throw new CertificateSourceUnavailableError(`Failed to read certificate config file at: ${configPath}`);
         }
@@ -41175,14 +41216,14 @@ var require_certificatesubjecttokensupplier = __commonJS({
       async #getKeyAndCert(certPath, keyPath) {
         let cert, key;
         try {
-          cert = await fs18.promises.readFile(certPath);
+          cert = await fs21.promises.readFile(certPath);
           new crypto_1.X509Certificate(cert);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           throw new CertificateSourceUnavailableError(`Failed to read certificate file at ${certPath}: ${message}`);
         }
         try {
-          key = await fs18.promises.readFile(keyPath);
+          key = await fs21.promises.readFile(keyPath);
           (0, crypto_1.createPrivateKey)(key);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
@@ -41201,7 +41242,7 @@ var require_certificatesubjecttokensupplier = __commonJS({
           return JSON.stringify([leafCert.raw.toString("base64")]);
         }
         try {
-          const chainPems = await fs18.promises.readFile(this.trustChainPath, "utf8");
+          const chainPems = await fs21.promises.readFile(this.trustChainPath, "utf8");
           const pemBlocks = chainPems.match(/-----BEGIN CERTIFICATE-----[^-]+-----END CERTIFICATE-----/g) ?? [];
           const chainCerts = pemBlocks.map((pem, index2) => {
             try {
@@ -41432,14 +41473,14 @@ var require_awsrequestsigner = __commonJS({
       }
     };
     exports2.AwsRequestSigner = AwsRequestSigner;
-    async function sign(crypto12, key, msg) {
-      return await crypto12.signWithHmacSha256(key, msg);
+    async function sign(crypto13, key, msg) {
+      return await crypto13.signWithHmacSha256(key, msg);
     }
-    async function getSigningKey(crypto12, key, dateStamp, region, serviceName) {
-      const kDate = await sign(crypto12, `AWS4${key}`, dateStamp);
-      const kRegion = await sign(crypto12, kDate, region);
-      const kService = await sign(crypto12, kRegion, serviceName);
-      const kSigning = await sign(crypto12, kService, "aws4_request");
+    async function getSigningKey(crypto13, key, dateStamp, region, serviceName) {
+      const kDate = await sign(crypto13, `AWS4${key}`, dateStamp);
+      const kRegion = await sign(crypto13, kDate, region);
+      const kService = await sign(crypto13, kRegion, serviceName);
+      const kSigning = await sign(crypto13, kService, "aws4_request");
       return kSigning;
     }
     async function generateAuthenticationHeaderMap(options) {
@@ -41903,7 +41944,7 @@ var require_pluggable_auth_handler = __commonJS({
     exports2.PluggableAuthHandler = exports2.ExecutableError = void 0;
     var executable_response_1 = require_executable_response();
     var childProcess = require("child_process");
-    var fs18 = require("fs");
+    var fs21 = require("fs");
     var ExecutableError = class extends Error {
       /**
        * The exit code returned by the executable.
@@ -41988,14 +42029,14 @@ var require_pluggable_auth_handler = __commonJS({
         }
         let filePath;
         try {
-          filePath = await fs18.promises.realpath(this.outputFile);
+          filePath = await fs21.promises.realpath(this.outputFile);
         } catch {
           return void 0;
         }
-        if (!(await fs18.promises.lstat(filePath)).isFile()) {
+        if (!(await fs21.promises.lstat(filePath)).isFile()) {
           return void 0;
         }
-        const responseString = await fs18.promises.readFile(filePath, {
+        const responseString = await fs21.promises.readFile(filePath, {
           encoding: "utf8"
         });
         if (responseString === "") {
@@ -42405,8 +42446,8 @@ var require_gdchclient = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.GdchClient = exports2.GDCH_SERVICE_ACCOUNT_TYPE = void 0;
-    var crypto12 = require("crypto");
-    var fs18 = require("fs");
+    var crypto13 = require("crypto");
+    var fs21 = require("fs");
     var https2 = require("https");
     var oauth2client_1 = require_oauth2client();
     var DEFAULT_LIFETIME_IN_SECONDS = 3600;
@@ -42596,7 +42637,7 @@ var require_gdchclient = __commonJS({
         const encodedHeader = this.base64UrlEncode(JSON.stringify(header));
         const encodedPayload = this.base64UrlEncode(JSON.stringify(payload));
         const signingInput = `${encodedHeader}.${encodedPayload}`;
-        const signature = crypto12.sign("sha256", Buffer.from(signingInput), {
+        const signature = crypto13.sign("sha256", Buffer.from(signingInput), {
           key: this.privateKey,
           dsaEncoding: "ieee-p1363"
         });
@@ -42629,7 +42670,7 @@ var require_gdchclient = __commonJS({
         const currentPath = this.caCertPath;
         this.caAgentPromise = (async () => {
           try {
-            const ca = await fs18.promises.readFile(currentPath);
+            const ca = await fs21.promises.readFile(currentPath);
             return new https2.Agent({ ca });
           } catch (err) {
             if (this.cachedCaCertPath === currentPath) {
@@ -42689,11 +42730,11 @@ var require_googleauth = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.GoogleAuth = exports2.GoogleAuthExceptionMessages = void 0;
     var child_process_1 = require("child_process");
-    var fs18 = require("fs");
+    var fs21 = require("fs");
     var gaxios_1 = require_src2();
     var gcpMetadata = require_src4();
     var os6 = require("os");
-    var path18 = require("path");
+    var path21 = require("path");
     var crypto_1 = require_crypto3();
     var computeclient_1 = require_computeclient();
     var idtokenclient_1 = require_idtokenclient();
@@ -42980,12 +43021,12 @@ var require_googleauth = __commonJS({
         } else {
           const home = process.env["HOME"];
           if (home) {
-            location2 = path18.join(home, ".config");
+            location2 = path21.join(home, ".config");
           }
         }
         if (location2) {
-          location2 = path18.join(location2, "gcloud", "application_default_credentials.json");
-          if (!fs18.existsSync(location2)) {
+          location2 = path21.join(location2, "gcloud", "application_default_credentials.json");
+          if (!fs21.existsSync(location2)) {
             location2 = null;
           }
         }
@@ -43006,8 +43047,8 @@ var require_googleauth = __commonJS({
           throw new Error("The file path is invalid.");
         }
         try {
-          filePath = fs18.realpathSync(filePath);
-          if (!fs18.lstatSync(filePath).isFile()) {
+          filePath = fs21.realpathSync(filePath);
+          if (!fs21.lstatSync(filePath).isFile()) {
             throw new Error();
           }
         } catch (err) {
@@ -43016,7 +43057,7 @@ var require_googleauth = __commonJS({
           }
           throw err;
         }
-        const readStream = fs18.createReadStream(filePath);
+        const readStream = fs21.createReadStream(filePath);
         return this.fromStream(readStream, options);
       }
       /**
@@ -43343,8 +43384,8 @@ var require_googleauth = __commonJS({
         if (this.jsonContent) {
           return this._cacheClientFromJSON(this.jsonContent, this.clientOptions);
         } else if (this.keyFilename) {
-          const filePath = path18.resolve(this.keyFilename);
-          const stream = fs18.createReadStream(filePath);
+          const filePath = path21.resolve(this.keyFilename);
+          const stream = fs21.createReadStream(filePath);
           return await this.fromStreamAsync(stream, this.clientOptions);
         } else if (this.apiKey) {
           const client = await this.fromAPIKey(this.apiKey, this.clientOptions);
@@ -43457,24 +43498,24 @@ var require_googleauth = __commonJS({
           const signed = await client.sign(data2);
           return signed.signedBlob;
         }
-        const crypto12 = (0, crypto_1.createCrypto)();
+        const crypto13 = (0, crypto_1.createCrypto)();
         if (client instanceof jwtclient_1.JWT && client.key) {
-          const sign = await crypto12.sign(client.key, data2);
+          const sign = await crypto13.sign(client.key, data2);
           return sign;
         }
         const creds = await this.getCredentials();
         if (!creds.client_email) {
           throw new Error("Cannot sign data without `client_email`.");
         }
-        return this.signBlob(crypto12, creds.client_email, data2, endpoint);
+        return this.signBlob(crypto13, creds.client_email, data2, endpoint);
       }
-      async signBlob(crypto12, emailOrUniqueId, data2, endpoint) {
+      async signBlob(crypto13, emailOrUniqueId, data2, endpoint) {
         const url2 = new URL(endpoint + `${emailOrUniqueId}:signBlob`);
         const res = await this.request({
           method: "POST",
           url: url2.href,
           data: {
-            payload: crypto12.encodeBase64StringUtf8(data2)
+            payload: crypto13.encodeBase64StringUtf8(data2)
           },
           retry: true,
           retryConfig: {
@@ -58303,13 +58344,13 @@ function getApiKeyFromEnv() {
   }
   return envGoogleApiKey || envGeminiApiKey || void 0;
 }
-var import_p_retry, import_google_auth_library, import_fs12, fs13, import_promises, import_node_stream3, import_promises2, path$1, _defaultBaseGeminiUrl, _defaultBaseVertexUrl, BaseModule, Language, Outcome, FunctionResponseScheduling, Type, Environment, AuthType, HttpElementLocation, ApiSpec, PhishBlockThreshold, Behavior, DynamicRetrievalConfigMode, FunctionCallingConfigMode, ThinkingLevel, PersonGeneration, ProminentPeople, HarmCategory, HarmBlockMethod, HarmBlockThreshold, FinishReason, HarmProbability, HarmSeverity, UrlRetrievalStatus, BlockedReason, TrafficType, Modality, ModelStage, MediaResolution, TuningMode, AdapterSize, JobState, TuningJobState, AggregationMetric, PairwiseChoice, TuningTask, DocumentState, PartMediaResolutionLevel, ToolType, ResourceScope, ServiceTier, FeatureSelectionPreference, EmbeddingApiType, SafetyFilterLevel, ImagePromptLanguage, MaskReferenceMode, ControlReferenceType, SubjectReferenceType, EditMode, SegmentMode, VideoGenerationReferenceType, VideoGenerationMaskMode, VideoCompressionQuality, ImageResizeMode, TuningMethod, FileState, FileSource, TurnCompleteReason, MediaModality, VadSignalType, VoiceActivityType, StartSensitivity, EndSensitivity, ActivityHandling, TurnCoverage, Scale, MusicGenerationMode, LiveMusicPlaybackControl, HttpResponse, GenerateContentResponse, EmbedContentResponse, GenerateImagesResponse, EditImageResponse, UpscaleImageResponse, RecontextImageResponse, SegmentImageResponse, ListModelsResponse, DeleteModelResponse, CountTokensResponse, ComputeTokensResponse, GenerateVideosOperation, ListTuningJobsResponse, CancelTuningJobResponse, DeleteCachedContentResponse, ListCachedContentsResponse, ListDocumentsResponse, ListFileSearchStoresResponse, UploadToFileSearchStoreResumableResponse, ImportFileOperation, ListFilesResponse, CreateFileResponse, DeleteFileResponse, RegisterFilesResponse, ListBatchJobsResponse, LiveServerMessage, LiveMusicServerMessage, UploadToFileSearchStoreOperation, PagedItem, Pager, Batches, Caches, Chats, Chat, ApiError, Files, CONTENT_TYPE_HEADER, SERVER_TIMEOUT_HEADER, USER_AGENT_HEADER, GOOGLE_API_CLIENT_HEADER, SDK_VERSION, LIBRARY_LABEL, VERTEX_AI_API_DEFAULT_VERSION, GOOGLE_AI_API_DEFAULT_VERSION, MULTI_REGIONAL_LOCATIONS, DEFAULT_RETRY_ATTEMPTS, DEFAULT_RETRY_HTTP_STATUS_CODES, ApiClient, MCP_LABEL, hasMcpToolUsageFromMcpToTool, McpCallableTool, LiveMusic, LiveMusicSession, FUNCTION_RESPONSE_REQUIRES_ID, Live, defaultLiveSendClientContentParamerters, Session, DEFAULT_MAX_REMOTE_CALLS, Models, Operations, Tokens, Documents, FileSearchStores, uuid4Internal, uuid42, castToError, GeminiNextGenAPIClientError, APIError, APIUserAbortError, APIConnectionError, APIConnectionTimeoutError, BadRequestError, AuthenticationError, PermissionDeniedError, NotFoundError, ConflictError, UnprocessableEntityError, RateLimitError, InternalServerError, startsWithSchemeRegexp, isAbsoluteURL, isArrayInternal, isArray, isReadonlyArrayInternal, isReadonlyArray, validatePositiveInteger, safeJSON, sleep$1, FallbackEncoder, VERSION, checkFileSupport, isAsyncIterable, isBlobLike, isFileLike, isResponseLike, APIResource, EMPTY, createPathTagFunction, path13, BaseInteractions, Interactions, BaseWebhooks, Webhooks, encodeUTF8_, decodeUTF8_, LineDecoder, levelNumbers, parseLogLevel, noopLogger, cachedLoggers, formatRequestDetails, Stream3, SSEDecoder, APIPromise, brand_privateNullableHeaders, buildHeaders, readEnv, _a3, BaseGeminiNextGenAPIClient, GeminiNextGenAPIClient, GOOGLE_API_KEY_HEADER, REQUIRED_VERTEX_AI_SCOPE, NodeAuth, NodeDownloader, NodeWebSocketFactory, NodeWebSocket, Tunings, MAX_CHUNK_SIZE, MAX_RETRY_COUNT, INITIAL_RETRY_DELAY_MS, DELAY_MULTIPLIER, X_GOOG_UPLOAD_STATUS_HEADER_FIELD, NodeUploader, NodeFiles, LANGUAGE_LABEL_PREFIX, GoogleGenAI;
+var import_p_retry, import_google_auth_library, import_fs15, fs16, import_promises, import_node_stream3, import_promises2, path$1, _defaultBaseGeminiUrl, _defaultBaseVertexUrl, BaseModule, Language, Outcome, FunctionResponseScheduling, Type, Environment, AuthType, HttpElementLocation, ApiSpec, PhishBlockThreshold, Behavior, DynamicRetrievalConfigMode, FunctionCallingConfigMode, ThinkingLevel, PersonGeneration, ProminentPeople, HarmCategory, HarmBlockMethod, HarmBlockThreshold, FinishReason, HarmProbability, HarmSeverity, UrlRetrievalStatus, BlockedReason, TrafficType, Modality, ModelStage, MediaResolution, TuningMode, AdapterSize, JobState, TuningJobState, AggregationMetric, PairwiseChoice, TuningTask, DocumentState, PartMediaResolutionLevel, ToolType, ResourceScope, ServiceTier, FeatureSelectionPreference, EmbeddingApiType, SafetyFilterLevel, ImagePromptLanguage, MaskReferenceMode, ControlReferenceType, SubjectReferenceType, EditMode, SegmentMode, VideoGenerationReferenceType, VideoGenerationMaskMode, VideoCompressionQuality, ImageResizeMode, TuningMethod, FileState, FileSource, TurnCompleteReason, MediaModality, VadSignalType, VoiceActivityType, StartSensitivity, EndSensitivity, ActivityHandling, TurnCoverage, Scale, MusicGenerationMode, LiveMusicPlaybackControl, HttpResponse, GenerateContentResponse, EmbedContentResponse, GenerateImagesResponse, EditImageResponse, UpscaleImageResponse, RecontextImageResponse, SegmentImageResponse, ListModelsResponse, DeleteModelResponse, CountTokensResponse, ComputeTokensResponse, GenerateVideosOperation, ListTuningJobsResponse, CancelTuningJobResponse, DeleteCachedContentResponse, ListCachedContentsResponse, ListDocumentsResponse, ListFileSearchStoresResponse, UploadToFileSearchStoreResumableResponse, ImportFileOperation, ListFilesResponse, CreateFileResponse, DeleteFileResponse, RegisterFilesResponse, ListBatchJobsResponse, LiveServerMessage, LiveMusicServerMessage, UploadToFileSearchStoreOperation, PagedItem, Pager, Batches, Caches, Chats, Chat, ApiError, Files, CONTENT_TYPE_HEADER, SERVER_TIMEOUT_HEADER, USER_AGENT_HEADER, GOOGLE_API_CLIENT_HEADER, SDK_VERSION, LIBRARY_LABEL, VERTEX_AI_API_DEFAULT_VERSION, GOOGLE_AI_API_DEFAULT_VERSION, MULTI_REGIONAL_LOCATIONS, DEFAULT_RETRY_ATTEMPTS, DEFAULT_RETRY_HTTP_STATUS_CODES, ApiClient, MCP_LABEL, hasMcpToolUsageFromMcpToTool, McpCallableTool, LiveMusic, LiveMusicSession, FUNCTION_RESPONSE_REQUIRES_ID, Live, defaultLiveSendClientContentParamerters, Session, DEFAULT_MAX_REMOTE_CALLS, Models, Operations, Tokens, Documents, FileSearchStores, uuid4Internal, uuid42, castToError, GeminiNextGenAPIClientError, APIError, APIUserAbortError, APIConnectionError, APIConnectionTimeoutError, BadRequestError, AuthenticationError, PermissionDeniedError, NotFoundError, ConflictError, UnprocessableEntityError, RateLimitError, InternalServerError, startsWithSchemeRegexp, isAbsoluteURL, isArrayInternal, isArray, isReadonlyArrayInternal, isReadonlyArray, validatePositiveInteger, safeJSON, sleep$1, FallbackEncoder, VERSION, checkFileSupport, isAsyncIterable, isBlobLike, isFileLike, isResponseLike, APIResource, EMPTY, createPathTagFunction, path16, BaseInteractions, Interactions, BaseWebhooks, Webhooks, encodeUTF8_, decodeUTF8_, LineDecoder, levelNumbers, parseLogLevel, noopLogger, cachedLoggers, formatRequestDetails, Stream3, SSEDecoder, APIPromise, brand_privateNullableHeaders, buildHeaders, readEnv, _a3, BaseGeminiNextGenAPIClient, GeminiNextGenAPIClient, GOOGLE_API_KEY_HEADER, REQUIRED_VERTEX_AI_SCOPE, NodeAuth, NodeDownloader, NodeWebSocketFactory, NodeWebSocket, Tunings, MAX_CHUNK_SIZE, MAX_RETRY_COUNT, INITIAL_RETRY_DELAY_MS, DELAY_MULTIPLIER, X_GOOG_UPLOAD_STATUS_HEADER_FIELD, NodeUploader, NodeFiles, LANGUAGE_LABEL_PREFIX, GoogleGenAI;
 var init_node = __esm({
   "node_modules/@google/genai/dist/node/index.mjs"() {
     import_p_retry = __toESM(require_p_retry(), 1);
     import_google_auth_library = __toESM(require_src5(), 1);
-    import_fs12 = require("fs");
-    fs13 = __toESM(require("fs/promises"), 1);
+    import_fs15 = require("fs");
+    fs16 = __toESM(require("fs/promises"), 1);
     import_promises = require("fs/promises");
     import_node_stream3 = require("node:stream");
     import_promises2 = require("node:stream/promises");
@@ -59395,7 +59436,7 @@ var init_node = __esm({
           params
         );
         const urlParams = body["_url"];
-        const path18 = formatMap2("{model}:batchGenerateContent", urlParams);
+        const path21 = formatMap2("{model}:batchGenerateContent", urlParams);
         const batch = body["batch"];
         const inputConfig = batch["inputConfig"];
         const requestsWrapper = inputConfig["requests"];
@@ -59416,7 +59457,7 @@ var init_node = __esm({
         delete body["config"];
         delete body["_url"];
         delete body["_query"];
-        return { path: path18, body };
+        return { path: path21, body };
       }
       // Helper function to get the first GCS URI
       getGcsUri(src) {
@@ -59472,16 +59513,16 @@ var init_node = __esm({
       async createInternal(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = createBatchJobParametersToVertex(this.apiClient, params);
-          path18 = formatMap2("batchPredictionJobs", body["_url"]);
+          path21 = formatMap2("batchPredictionJobs", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -59496,12 +59537,12 @@ var init_node = __esm({
           });
         } else {
           const body = createBatchJobParametersToMldev(this.apiClient, params);
-          path18 = formatMap2("{model}:batchGenerateContent", body["_url"]);
+          path21 = formatMap2("{model}:batchGenerateContent", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -59526,18 +59567,18 @@ var init_node = __esm({
       async createEmbeddingsInternal(params) {
         var _a8, _b;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = createEmbeddingsBatchJobParametersToMldev(this.apiClient, params);
-          path18 = formatMap2("{model}:asyncBatchEmbedContent", body["_url"]);
+          path21 = formatMap2("{model}:asyncBatchEmbedContent", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -59566,16 +59607,16 @@ var init_node = __esm({
       async get(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = getBatchJobParametersToVertex(this.apiClient, params);
-          path18 = formatMap2("batchPredictionJobs/{name}", body["_url"]);
+          path21 = formatMap2("batchPredictionJobs/{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -59590,12 +59631,12 @@ var init_node = __esm({
           });
         } else {
           const body = getBatchJobParametersToMldev(this.apiClient, params);
-          path18 = formatMap2("batches/{name}", body["_url"]);
+          path21 = formatMap2("batches/{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -59623,16 +59664,16 @@ var init_node = __esm({
        */
       async cancel(params) {
         var _a8, _b, _c, _d;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = cancelBatchJobParametersToVertex(this.apiClient, params);
-          path18 = formatMap2("batchPredictionJobs/{name}:cancel", body["_url"]);
+          path21 = formatMap2("batchPredictionJobs/{name}:cancel", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           await this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -59641,12 +59682,12 @@ var init_node = __esm({
           });
         } else {
           const body = cancelBatchJobParametersToMldev(this.apiClient, params);
-          path18 = formatMap2("batches/{name}:cancel", body["_url"]);
+          path21 = formatMap2("batches/{name}:cancel", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           await this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -59658,16 +59699,16 @@ var init_node = __esm({
       async listInternal(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = listBatchJobsParametersToVertex(params);
-          path18 = formatMap2("batchPredictionJobs", body["_url"]);
+          path21 = formatMap2("batchPredictionJobs", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -59690,12 +59731,12 @@ var init_node = __esm({
           });
         } else {
           const body = listBatchJobsParametersToMldev(params);
-          path18 = formatMap2("batches", body["_url"]);
+          path21 = formatMap2("batches", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -59732,16 +59773,16 @@ var init_node = __esm({
       async delete(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = deleteBatchJobParametersToVertex(this.apiClient, params);
-          path18 = formatMap2("batchPredictionJobs/{name}", body["_url"]);
+          path21 = formatMap2("batchPredictionJobs/{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "DELETE",
@@ -59762,12 +59803,12 @@ var init_node = __esm({
           });
         } else {
           const body = deleteBatchJobParametersToMldev(this.apiClient, params);
-          path18 = formatMap2("batches/{name}", body["_url"]);
+          path21 = formatMap2("batches/{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "DELETE",
@@ -59826,16 +59867,16 @@ var init_node = __esm({
       async create(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = createCachedContentParametersToVertex(this.apiClient, params);
-          path18 = formatMap2("cachedContents", body["_url"]);
+          path21 = formatMap2("cachedContents", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -59849,12 +59890,12 @@ var init_node = __esm({
           });
         } else {
           const body = createCachedContentParametersToMldev(this.apiClient, params);
-          path18 = formatMap2("cachedContents", body["_url"]);
+          path21 = formatMap2("cachedContents", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -59882,16 +59923,16 @@ var init_node = __esm({
       async get(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = getCachedContentParametersToVertex(this.apiClient, params);
-          path18 = formatMap2("{name}", body["_url"]);
+          path21 = formatMap2("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -59905,12 +59946,12 @@ var init_node = __esm({
           });
         } else {
           const body = getCachedContentParametersToMldev(this.apiClient, params);
-          path18 = formatMap2("{name}", body["_url"]);
+          path21 = formatMap2("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -59938,16 +59979,16 @@ var init_node = __esm({
       async delete(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = deleteCachedContentParametersToVertex(this.apiClient, params);
-          path18 = formatMap2("{name}", body["_url"]);
+          path21 = formatMap2("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "DELETE",
@@ -59970,12 +60011,12 @@ var init_node = __esm({
           });
         } else {
           const body = deleteCachedContentParametersToMldev(this.apiClient, params);
-          path18 = formatMap2("{name}", body["_url"]);
+          path21 = formatMap2("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "DELETE",
@@ -60015,16 +60056,16 @@ var init_node = __esm({
       async update(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = updateCachedContentParametersToVertex(this.apiClient, params);
-          path18 = formatMap2("{name}", body["_url"]);
+          path21 = formatMap2("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "PATCH",
@@ -60038,12 +60079,12 @@ var init_node = __esm({
           });
         } else {
           const body = updateCachedContentParametersToMldev(this.apiClient, params);
-          path18 = formatMap2("{name}", body["_url"]);
+          path21 = formatMap2("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "PATCH",
@@ -60060,16 +60101,16 @@ var init_node = __esm({
       async listInternal(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = listCachedContentsParametersToVertex(params);
-          path18 = formatMap2("cachedContents", body["_url"]);
+          path21 = formatMap2("cachedContents", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -60092,12 +60133,12 @@ var init_node = __esm({
           });
         } else {
           const body = listCachedContentsParametersToMldev(params);
-          path18 = formatMap2("cachedContents", body["_url"]);
+          path21 = formatMap2("cachedContents", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -60428,18 +60469,18 @@ var init_node = __esm({
       async listInternal(params) {
         var _a8, _b;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = listFilesParametersToMldev(params);
-          path18 = formatMap2("files", body["_url"]);
+          path21 = formatMap2("files", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -60465,18 +60506,18 @@ var init_node = __esm({
       async createInternal(params) {
         var _a8, _b;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = createFileParametersToMldev(params);
-          path18 = formatMap2("upload/v1beta/files", body["_url"]);
+          path21 = formatMap2("upload/v1beta/files", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -60511,18 +60552,18 @@ var init_node = __esm({
       async get(params) {
         var _a8, _b;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = getFileParametersToMldev(params);
-          path18 = formatMap2("files/{file}", body["_url"]);
+          path21 = formatMap2("files/{file}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -60552,18 +60593,18 @@ var init_node = __esm({
       async delete(params) {
         var _a8, _b;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = deleteFileParametersToMldev(params);
-          path18 = formatMap2("files/{file}", body["_url"]);
+          path21 = formatMap2("files/{file}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "DELETE",
@@ -60589,18 +60630,18 @@ var init_node = __esm({
       async registerFilesInternal(params) {
         var _a8, _b;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = internalRegisterFilesParametersToMldev(params);
-          path18 = formatMap2("files:register", body["_url"]);
+          path21 = formatMap2("files:register", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -60760,13 +60801,13 @@ var init_node = __esm({
           throw new Error("HTTP options are not correctly set.");
         }
       }
-      constructUrl(path18, httpOptions, prependProjectLocation) {
+      constructUrl(path21, httpOptions, prependProjectLocation) {
         const urlElement = [this.getRequestUrlInternal(httpOptions)];
         if (prependProjectLocation) {
           urlElement.push(this.getBaseResourcePath());
         }
-        if (path18 !== "") {
-          urlElement.push(path18);
+        if (path21 !== "") {
+          urlElement.push(path21);
         }
         const url2 = new URL(`${urlElement.join("/")}`);
         return url2;
@@ -61051,8 +61092,8 @@ var init_node = __esm({
           file: fileToUpload
         };
         const fileName = this.getFileName(file2);
-        const path18 = formatMap2("upload/v1beta/files", body["_url"]);
-        const uploadUrl = await this.fetchUploadUrl(path18, fileToUpload.sizeBytes, fileToUpload.mimeType, fileName, body, config2 === null || config2 === void 0 ? void 0 : config2.httpOptions);
+        const path21 = formatMap2("upload/v1beta/files", body["_url"]);
+        const uploadUrl = await this.fetchUploadUrl(path21, fileToUpload.sizeBytes, fileToUpload.mimeType, fileName, body, config2 === null || config2 === void 0 ? void 0 : config2.httpOptions);
         return uploader.upload(file2, uploadUrl, this);
       }
       /**
@@ -61076,13 +61117,13 @@ var init_node = __esm({
         if (mimeType === void 0 || mimeType === "") {
           throw new Error("Can not determine mimeType. Please provide mimeType in the config.");
         }
-        const path18 = `upload/v1beta/${fileSearchStoreName}:uploadToFileSearchStore`;
+        const path21 = `upload/v1beta/${fileSearchStoreName}:uploadToFileSearchStore`;
         const fileName = this.getFileName(file2);
         const body = {};
         if (config2 != null) {
           uploadToFileSearchStoreConfigToMldev(config2, body);
         }
-        const uploadUrl = await this.fetchUploadUrl(path18, sizeBytes, mimeType, fileName, body, config2 === null || config2 === void 0 ? void 0 : config2.httpOptions);
+        const uploadUrl = await this.fetchUploadUrl(path21, sizeBytes, mimeType, fileName, body, config2 === null || config2 === void 0 ? void 0 : config2.httpOptions);
         return uploader.uploadToFileSearchStore(file2, uploadUrl, this);
       }
       /**
@@ -61095,7 +61136,7 @@ var init_node = __esm({
         const downloader = this.clientOptions.downloader;
         await downloader.download(params, this);
       }
-      async fetchUploadUrl(path18, sizeBytes, mimeType, fileName, body, configHttpOptions) {
+      async fetchUploadUrl(path21, sizeBytes, mimeType, fileName, body, configHttpOptions) {
         var _a8;
         let httpOptions = {};
         if (configHttpOptions) {
@@ -61108,7 +61149,7 @@ var init_node = __esm({
           };
         }
         const httpResponse = await this.request({
-          path: path18,
+          path: path21,
           body: JSON.stringify(body),
           httpMethod: "POST",
           httpOptions
@@ -62085,16 +62126,16 @@ var init_node = __esm({
       async generateContentInternal(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = generateContentParametersToVertex(this.apiClient, params);
-          path18 = formatMap2("{model}:generateContent", body["_url"]);
+          path21 = formatMap2("{model}:generateContent", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -62117,12 +62158,12 @@ var init_node = __esm({
           });
         } else {
           const body = generateContentParametersToMldev(this.apiClient, params);
-          path18 = formatMap2("{model}:generateContent", body["_url"]);
+          path21 = formatMap2("{model}:generateContent", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -62148,17 +62189,17 @@ var init_node = __esm({
       async generateContentStreamInternal(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = generateContentParametersToVertex(this.apiClient, params);
-          path18 = formatMap2("{model}:streamGenerateContent?alt=sse", body["_url"]);
+          path21 = formatMap2("{model}:streamGenerateContent?alt=sse", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           const apiClient = this.apiClient;
           response = apiClient.requestStream({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -62194,13 +62235,13 @@ var init_node = __esm({
           });
         } else {
           const body = generateContentParametersToMldev(this.apiClient, params);
-          path18 = formatMap2("{model}:streamGenerateContent?alt=sse", body["_url"]);
+          path21 = formatMap2("{model}:streamGenerateContent?alt=sse", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           const apiClient = this.apiClient;
           response = apiClient.requestStream({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -62260,17 +62301,17 @@ var init_node = __esm({
       async embedContentInternal(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = embedContentParametersPrivateToVertex(this.apiClient, params, params);
           const endpointUrl = tIsVertexEmbedContentModel(params.model) ? "{model}:embedContent" : "{model}:predict";
-          path18 = formatMap2(endpointUrl, body["_url"]);
+          path21 = formatMap2(endpointUrl, body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -62293,12 +62334,12 @@ var init_node = __esm({
           });
         } else {
           const body = embedContentParametersPrivateToMldev(this.apiClient, params);
-          path18 = formatMap2("{model}:batchEmbedContents", body["_url"]);
+          path21 = formatMap2("{model}:batchEmbedContents", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -62327,16 +62368,16 @@ var init_node = __esm({
       async generateImagesInternal(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = generateImagesParametersToVertex(this.apiClient, params);
-          path18 = formatMap2("{model}:predict", body["_url"]);
+          path21 = formatMap2("{model}:predict", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -62359,12 +62400,12 @@ var init_node = __esm({
           });
         } else {
           const body = generateImagesParametersToMldev(this.apiClient, params);
-          path18 = formatMap2("{model}:predict", body["_url"]);
+          path21 = formatMap2("{model}:predict", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -62393,16 +62434,16 @@ var init_node = __esm({
       async editImageInternal(params) {
         var _a8, _b;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = editImageParametersInternalToVertex(this.apiClient, params);
-          path18 = formatMap2("{model}:predict", body["_url"]);
+          path21 = formatMap2("{model}:predict", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -62433,16 +62474,16 @@ var init_node = __esm({
       async upscaleImageInternal(params) {
         var _a8, _b;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = upscaleImageAPIParametersInternalToVertex(this.apiClient, params);
-          path18 = formatMap2("{model}:predict", body["_url"]);
+          path21 = formatMap2("{model}:predict", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -62494,16 +62535,16 @@ var init_node = __esm({
       async recontextImage(params) {
         var _a8, _b;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = recontextImageParametersToVertex(this.apiClient, params);
-          path18 = formatMap2("{model}:predict", body["_url"]);
+          path21 = formatMap2("{model}:predict", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -62545,16 +62586,16 @@ var init_node = __esm({
       async segmentImage(params) {
         var _a8, _b;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = segmentImageParametersToVertex(this.apiClient, params);
-          path18 = formatMap2("{model}:predict", body["_url"]);
+          path21 = formatMap2("{model}:predict", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -62584,16 +62625,16 @@ var init_node = __esm({
       async get(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = getModelParametersToVertex(this.apiClient, params);
-          path18 = formatMap2("{name}", body["_url"]);
+          path21 = formatMap2("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -62608,12 +62649,12 @@ var init_node = __esm({
           });
         } else {
           const body = getModelParametersToMldev(this.apiClient, params);
-          path18 = formatMap2("{name}", body["_url"]);
+          path21 = formatMap2("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -62631,16 +62672,16 @@ var init_node = __esm({
       async listInternal(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = listModelsParametersToVertex(this.apiClient, params);
-          path18 = formatMap2("{models_url}", body["_url"]);
+          path21 = formatMap2("{models_url}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -62663,12 +62704,12 @@ var init_node = __esm({
           });
         } else {
           const body = listModelsParametersToMldev(this.apiClient, params);
-          path18 = formatMap2("{models_url}", body["_url"]);
+          path21 = formatMap2("{models_url}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -62711,16 +62752,16 @@ var init_node = __esm({
       async update(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = updateModelParametersToVertex(this.apiClient, params);
-          path18 = formatMap2("{model}", body["_url"]);
+          path21 = formatMap2("{model}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "PATCH",
@@ -62735,12 +62776,12 @@ var init_node = __esm({
           });
         } else {
           const body = updateModelParametersToMldev(this.apiClient, params);
-          path18 = formatMap2("{name}", body["_url"]);
+          path21 = formatMap2("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "PATCH",
@@ -62769,16 +62810,16 @@ var init_node = __esm({
       async delete(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = deleteModelParametersToVertex(this.apiClient, params);
-          path18 = formatMap2("{name}", body["_url"]);
+          path21 = formatMap2("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "DELETE",
@@ -62801,12 +62842,12 @@ var init_node = __esm({
           });
         } else {
           const body = deleteModelParametersToMldev(this.apiClient, params);
-          path18 = formatMap2("{name}", body["_url"]);
+          path21 = formatMap2("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "DELETE",
@@ -62848,16 +62889,16 @@ var init_node = __esm({
       async countTokens(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = countTokensParametersToVertex(this.apiClient, params);
-          path18 = formatMap2("{model}:countTokens", body["_url"]);
+          path21 = formatMap2("{model}:countTokens", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -62880,12 +62921,12 @@ var init_node = __esm({
           });
         } else {
           const body = countTokensParametersToMldev(this.apiClient, params);
-          path18 = formatMap2("{model}:countTokens", body["_url"]);
+          path21 = formatMap2("{model}:countTokens", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -62929,16 +62970,16 @@ var init_node = __esm({
       async computeTokens(params) {
         var _a8, _b;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = computeTokensParametersToVertex(this.apiClient, params);
-          path18 = formatMap2("{model}:computeTokens", body["_url"]);
+          path21 = formatMap2("{model}:computeTokens", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -62969,16 +63010,16 @@ var init_node = __esm({
       async generateVideosInternal(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = generateVideosParametersToVertex(this.apiClient, params);
-          path18 = formatMap2("{model}:predictLongRunning", body["_url"]);
+          path21 = formatMap2("{model}:predictLongRunning", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -62995,12 +63036,12 @@ var init_node = __esm({
           });
         } else {
           const body = generateVideosParametersToMldev(this.apiClient, params);
-          path18 = formatMap2("{model}:predictLongRunning", body["_url"]);
+          path21 = formatMap2("{model}:predictLongRunning", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -63102,16 +63143,16 @@ var init_node = __esm({
       async getVideosOperationInternal(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = getOperationParametersToVertex(params);
-          path18 = formatMap2("{operationName}", body["_url"]);
+          path21 = formatMap2("{operationName}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -63123,12 +63164,12 @@ var init_node = __esm({
           return response;
         } else {
           const body = getOperationParametersToMldev(params);
-          path18 = formatMap2("{operationName}", body["_url"]);
+          path21 = formatMap2("{operationName}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -63143,16 +63184,16 @@ var init_node = __esm({
       async fetchPredictVideosOperationInternal(params) {
         var _a8, _b;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = fetchPredictOperationParametersToVertex(params);
-          path18 = formatMap2("{resourceName}:fetchPredictOperation", body["_url"]);
+          path21 = formatMap2("{resourceName}:fetchPredictOperation", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -63258,20 +63299,20 @@ var init_node = __esm({
       async create(params) {
         var _a8, _b;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("The client.tokens.create method is only supported by the Gemini Developer API.");
         } else {
           const body = createAuthTokenParametersToMldev(this.apiClient, params);
-          path18 = formatMap2("auth_tokens", body["_url"]);
+          path21 = formatMap2("auth_tokens", body["_url"]);
           queryParams = body["_query"];
           delete body["config"];
           delete body["_url"];
           delete body["_query"];
           const transformedBody = convertBidiSetupToTokenSetup(body, params.config);
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(transformedBody),
             httpMethod: "POST",
@@ -63303,18 +63344,18 @@ var init_node = __esm({
       async get(params) {
         var _a8, _b;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = getDocumentParametersToMldev(params);
-          path18 = formatMap2("{name}", body["_url"]);
+          path21 = formatMap2("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -63335,18 +63376,18 @@ var init_node = __esm({
        */
       async delete(params) {
         var _a8, _b;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = deleteDocumentParametersToMldev(params);
-          path18 = formatMap2("{name}", body["_url"]);
+          path21 = formatMap2("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           await this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "DELETE",
@@ -63358,18 +63399,18 @@ var init_node = __esm({
       async listInternal(params) {
         var _a8, _b;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = listDocumentsParametersToMldev(params);
-          path18 = formatMap2("{parent}/documents", body["_url"]);
+          path21 = formatMap2("{parent}/documents", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -63486,18 +63527,18 @@ var init_node = __esm({
       async create(params) {
         var _a8, _b;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = createFileSearchStoreParametersToMldev(this.apiClient, params);
-          path18 = formatMap2("fileSearchStores", body["_url"]);
+          path21 = formatMap2("fileSearchStores", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -63520,18 +63561,18 @@ var init_node = __esm({
       async get(params) {
         var _a8, _b;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = getFileSearchStoreParametersToMldev(params);
-          path18 = formatMap2("{name}", body["_url"]);
+          path21 = formatMap2("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -63552,18 +63593,18 @@ var init_node = __esm({
        */
       async delete(params) {
         var _a8, _b;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = deleteFileSearchStoreParametersToMldev(params);
-          path18 = formatMap2("{name}", body["_url"]);
+          path21 = formatMap2("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           await this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "DELETE",
@@ -63575,18 +63616,18 @@ var init_node = __esm({
       async listInternal(params) {
         var _a8, _b;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = listFileSearchStoresParametersToMldev(params);
-          path18 = formatMap2("fileSearchStores", body["_url"]);
+          path21 = formatMap2("fileSearchStores", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -63606,18 +63647,18 @@ var init_node = __esm({
       async uploadToFileSearchStoreInternal(params) {
         var _a8, _b;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = uploadToFileSearchStoreParametersToMldev(params);
-          path18 = formatMap2("upload/v1beta/{file_search_store_name}:uploadToFileSearchStore", body["_url"]);
+          path21 = formatMap2("upload/v1beta/{file_search_store_name}:uploadToFileSearchStore", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -63645,18 +63686,18 @@ var init_node = __esm({
       async importFile(params) {
         var _a8, _b;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = importFileParametersToMldev(params);
-          path18 = formatMap2("{file_search_store_name}:importFile", body["_url"]);
+          path21 = formatMap2("{file_search_store_name}:importFile", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -63675,13 +63716,13 @@ var init_node = __esm({
       }
     };
     uuid4Internal = function() {
-      const { crypto: crypto12 } = globalThis;
-      if (crypto12 === null || crypto12 === void 0 ? void 0 : crypto12.randomUUID) {
-        uuid4Internal = crypto12.randomUUID.bind(crypto12);
-        return crypto12.randomUUID();
+      const { crypto: crypto13 } = globalThis;
+      if (crypto13 === null || crypto13 === void 0 ? void 0 : crypto13.randomUUID) {
+        uuid4Internal = crypto13.randomUUID.bind(crypto13);
+        return crypto13.randomUUID();
       }
       const u8 = new Uint8Array(1);
-      const randomByte = crypto12 ? () => crypto12.getRandomValues(u8)[0] : () => Math.random() * 255 & 255;
+      const randomByte = crypto13 ? () => crypto13.getRandomValues(u8)[0] : () => Math.random() * 255 & 255;
       return "10000000-1000-4000-8000-100000000000".replace(/[018]/g, (c) => (+c ^ randomByte() & 15 >> +c / 4).toString(16));
     };
     uuid42 = () => uuid4Internal();
@@ -63849,12 +63890,12 @@ var init_node = __esm({
     };
     APIResource._key = [];
     EMPTY = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.create(null));
-    createPathTagFunction = (pathEncoder = encodeURIPath) => (function path18(statics, ...params) {
+    createPathTagFunction = (pathEncoder = encodeURIPath) => (function path21(statics, ...params) {
       if (statics.length === 1)
         return statics[0];
       let postPath = false;
       const invalidSegments = [];
-      const path19 = statics.reduce((previousValue, currentValue, index2) => {
+      const path22 = statics.reduce((previousValue, currentValue, index2) => {
         var _a8, _b, _c;
         if (/[?#]/.test(currentValue)) {
           postPath = true;
@@ -63872,7 +63913,7 @@ var init_node = __esm({
         }
         return previousValue + currentValue + (index2 === params.length ? "" : encoded);
       }, "");
-      const pathOnly = path19.split(/[?#]/, 1)[0];
+      const pathOnly = path22.split(/[?#]/, 1)[0];
       const invalidSegmentPattern = /(^|\/)(?:\.|%2e){1,2}(?=\/|$)/gi;
       let match;
       while ((match = invalidSegmentPattern.exec(pathOnly)) !== null) {
@@ -63896,12 +63937,12 @@ var init_node = __esm({
         }, "");
         throw new GeminiNextGenAPIClientError(`Path parameters result in path with invalid segments:
 ${invalidSegments.map((e2) => e2.error).join("\n")}
-${path19}
+${path22}
 ${underline}`);
       }
-      return path19;
+      return path22;
     });
-    path13 = /* @__PURE__ */ createPathTagFunction(encodeURIPath);
+    path16 = /* @__PURE__ */ createPathTagFunction(encodeURIPath);
     BaseInteractions = class extends APIResource {
       create(params, options) {
         var _a8;
@@ -63912,7 +63953,7 @@ ${underline}`);
         if ("agent" in body && "generation_config" in body) {
           throw new GeminiNextGenAPIClientError(`Invalid request: specified \`agent\` and \`generation_config\`. If specifying \`agent\`, use \`agent_config\`.`);
         }
-        return this._client.post(path13`/${api_version}/interactions`, Object.assign(Object.assign({ body }, options), { stream: (_a8 = params.stream) !== null && _a8 !== void 0 ? _a8 : false }));
+        return this._client.post(path16`/${api_version}/interactions`, Object.assign(Object.assign({ body }, options), { stream: (_a8 = params.stream) !== null && _a8 !== void 0 ? _a8 : false }));
       }
       /**
        * Deletes the interaction by id.
@@ -63926,7 +63967,7 @@ ${underline}`);
        */
       delete(id, params = {}, options) {
         const { api_version = this._client.apiVersion } = params !== null && params !== void 0 ? params : {};
-        return this._client.delete(path13`/${api_version}/interactions/${id}`, options);
+        return this._client.delete(path16`/${api_version}/interactions/${id}`, options);
       }
       /**
        * Cancels an interaction by id. This only applies to background interactions that
@@ -63941,12 +63982,12 @@ ${underline}`);
        */
       cancel(id, params = {}, options) {
         const { api_version = this._client.apiVersion } = params !== null && params !== void 0 ? params : {};
-        return this._client.post(path13`/${api_version}/interactions/${id}/cancel`, options);
+        return this._client.post(path16`/${api_version}/interactions/${id}/cancel`, options);
       }
       get(id, params = {}, options) {
         var _a8;
         const _b = params !== null && params !== void 0 ? params : {}, { api_version = this._client.apiVersion } = _b, query = __rest2(_b, ["api_version"]);
-        return this._client.get(path13`/${api_version}/interactions/${id}`, Object.assign(Object.assign({ query }, options), { stream: (_a8 = params === null || params === void 0 ? void 0 : params.stream) !== null && _a8 !== void 0 ? _a8 : false }));
+        return this._client.get(path16`/${api_version}/interactions/${id}`, Object.assign(Object.assign({ query }, options), { stream: (_a8 = params === null || params === void 0 ? void 0 : params.stream) !== null && _a8 !== void 0 ? _a8 : false }));
       }
     };
     BaseInteractions._key = Object.freeze(["interactions"]);
@@ -63958,49 +63999,49 @@ ${underline}`);
        */
       create(params, options) {
         const { api_version = this._client.apiVersion } = params, body = __rest2(params, ["api_version"]);
-        return this._client.post(path13`/${api_version}/webhooks`, Object.assign({ body }, options));
+        return this._client.post(path16`/${api_version}/webhooks`, Object.assign({ body }, options));
       }
       /**
        * Updates an existing Webhook.
        */
       update(id, params = {}, options) {
         const _a8 = params !== null && params !== void 0 ? params : {}, { api_version = this._client.apiVersion, update_mask } = _a8, body = __rest2(_a8, ["api_version", "update_mask"]);
-        return this._client.patch(path13`/${api_version}/webhooks/${id}`, Object.assign({ query: { update_mask }, body }, options));
+        return this._client.patch(path16`/${api_version}/webhooks/${id}`, Object.assign({ query: { update_mask }, body }, options));
       }
       /**
        * Lists all Webhooks.
        */
       list(params = {}, options) {
         const _a8 = params !== null && params !== void 0 ? params : {}, { api_version = this._client.apiVersion } = _a8, query = __rest2(_a8, ["api_version"]);
-        return this._client.get(path13`/${api_version}/webhooks`, Object.assign({ query }, options));
+        return this._client.get(path16`/${api_version}/webhooks`, Object.assign({ query }, options));
       }
       /**
        * Deletes a Webhook.
        */
       delete(id, params = {}, options) {
         const { api_version = this._client.apiVersion } = params !== null && params !== void 0 ? params : {};
-        return this._client.delete(path13`/${api_version}/webhooks/${id}`, options);
+        return this._client.delete(path16`/${api_version}/webhooks/${id}`, options);
       }
       /**
        * Gets a specific Webhook.
        */
       get(id, params = {}, options) {
         const { api_version = this._client.apiVersion } = params !== null && params !== void 0 ? params : {};
-        return this._client.get(path13`/${api_version}/webhooks/${id}`, options);
+        return this._client.get(path16`/${api_version}/webhooks/${id}`, options);
       }
       /**
        * Sends a ping event to a Webhook.
        */
       ping(id, params = void 0, options) {
         const { api_version = this._client.apiVersion, body } = params !== null && params !== void 0 ? params : {};
-        return this._client.post(path13`/${api_version}/webhooks/${id}:ping`, Object.assign({ body }, options));
+        return this._client.post(path16`/${api_version}/webhooks/${id}:ping`, Object.assign({ body }, options));
       }
       /**
        * Generates a new signing secret for a Webhook.
        */
       rotateSigningSecret(id, params = {}, options) {
         const _a8 = params !== null && params !== void 0 ? params : {}, { api_version = this._client.apiVersion } = _a8, body = __rest2(_a8, ["api_version"]);
-        return this._client.post(path13`/${api_version}/webhooks/${id}:rotateSigningSecret`, Object.assign({ body }, options));
+        return this._client.post(path16`/${api_version}/webhooks/${id}:rotateSigningSecret`, Object.assign({ body }, options));
       }
     };
     BaseWebhooks._key = Object.freeze(["webhooks"]);
@@ -64508,9 +64549,9 @@ ${underline}`);
       makeStatusError(status, error51, message, headers) {
         return APIError.generate(status, error51, message, headers);
       }
-      buildURL(path18, query, defaultBaseURL) {
+      buildURL(path21, query, defaultBaseURL) {
         const baseURL = !this.baseURLOverridden() && defaultBaseURL || this.baseURL;
-        const url2 = isAbsoluteURL(path18) ? new URL(path18) : new URL(baseURL + (baseURL.endsWith("/") && path18.startsWith("/") ? path18.slice(1) : path18));
+        const url2 = isAbsoluteURL(path21) ? new URL(path21) : new URL(baseURL + (baseURL.endsWith("/") && path21.startsWith("/") ? path21.slice(1) : path21));
         const defaultQuery = this.defaultQuery();
         const pathQuery = Object.fromEntries(url2.searchParams);
         if (!isEmptyObj(defaultQuery) || !isEmptyObj(pathQuery)) {
@@ -64539,24 +64580,24 @@ ${underline}`);
        */
       async prepareRequest(request, { url: url2, options }) {
       }
-      get(path18, opts) {
-        return this.methodRequest("get", path18, opts);
+      get(path21, opts) {
+        return this.methodRequest("get", path21, opts);
       }
-      post(path18, opts) {
-        return this.methodRequest("post", path18, opts);
+      post(path21, opts) {
+        return this.methodRequest("post", path21, opts);
       }
-      patch(path18, opts) {
-        return this.methodRequest("patch", path18, opts);
+      patch(path21, opts) {
+        return this.methodRequest("patch", path21, opts);
       }
-      put(path18, opts) {
-        return this.methodRequest("put", path18, opts);
+      put(path21, opts) {
+        return this.methodRequest("put", path21, opts);
       }
-      delete(path18, opts) {
-        return this.methodRequest("delete", path18, opts);
+      delete(path21, opts) {
+        return this.methodRequest("delete", path21, opts);
       }
-      methodRequest(method, path18, opts) {
+      methodRequest(method, path21, opts) {
         return this.request(Promise.resolve(opts).then((opts2) => {
-          return Object.assign({ method, path: path18 }, opts2);
+          return Object.assign({ method, path: path21 }, opts2);
         }));
       }
       request(options, remainingRetries = null) {
@@ -64730,8 +64771,8 @@ ${underline}`);
       async buildRequest(inputOptions, { retryCount = 0 } = {}) {
         var _b, _c, _d;
         const options = Object.assign({}, inputOptions);
-        const { method, path: path18, query, defaultBaseURL } = options;
-        const url2 = this.buildURL(path18, query, defaultBaseURL);
+        const { method, path: path21, query, defaultBaseURL } = options;
+        const url2 = this.buildURL(path21, query, defaultBaseURL);
         if ("timeout" in options)
           validatePositiveInteger("timeout", options.timeout);
         options.timeout = (_b = options.timeout) !== null && _b !== void 0 ? _b : this.timeout;
@@ -64863,7 +64904,7 @@ ${underline}`);
         if (params.downloadPath) {
           const response = await downloadFile(params, apiClient);
           if (response instanceof HttpResponse) {
-            const writer = (0, import_fs12.createWriteStream)(params.downloadPath);
+            const writer = (0, import_fs15.createWriteStream)(params.downloadPath);
             const body = import_node_stream3.Readable.fromWeb(response.responseInternal.body);
             body.pipe(writer);
             await (0, import_promises2.finished)(writer);
@@ -64957,16 +64998,16 @@ ${underline}`);
       async getInternal(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = getTuningJobParametersToVertex(params);
-          path18 = formatMap2("{name}", body["_url"]);
+          path21 = formatMap2("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -64987,12 +65028,12 @@ ${underline}`);
           });
         } else {
           const body = getTuningJobParametersToMldev(params);
-          path18 = formatMap2("{name}", body["_url"]);
+          path21 = formatMap2("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -65016,16 +65057,16 @@ ${underline}`);
       async listInternal(params) {
         var _a8, _b;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = listTuningJobsParametersToVertex(params);
-          path18 = formatMap2("tuningJobs", body["_url"]);
+          path21 = formatMap2("tuningJobs", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -65064,16 +65105,16 @@ ${underline}`);
       async cancel(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = cancelTuningJobParametersToVertex(params);
-          path18 = formatMap2("{name}:cancel", body["_url"]);
+          path21 = formatMap2("{name}:cancel", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -65096,12 +65137,12 @@ ${underline}`);
           });
         } else {
           const body = cancelTuningJobParametersToMldev(params);
-          path18 = formatMap2("{name}:cancel", body["_url"]);
+          path21 = formatMap2("{name}:cancel", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -65127,16 +65168,16 @@ ${underline}`);
       async tuneInternal(params) {
         var _a8, _b;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = createTuningJobParametersPrivateToVertex(params, params);
-          path18 = formatMap2("tuningJobs", body["_url"]);
+          path21 = formatMap2("tuningJobs", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -65162,18 +65203,18 @@ ${underline}`);
       async tuneMldevInternal(params) {
         var _a8, _b;
         let response;
-        let path18 = "";
+        let path21 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = createTuningJobParametersPrivateToMldev(params);
-          path18 = formatMap2("tunedModels", body["_url"]);
+          path21 = formatMap2("tunedModels", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path18,
+            path: path21,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -65204,7 +65245,7 @@ ${underline}`);
       async stat(file2) {
         const fileStat = { size: 0, type: void 0 };
         if (typeof file2 === "string") {
-          const originalStat = await fs13.stat(file2);
+          const originalStat = await fs16.stat(file2);
           fileStat.size = originalStat.size;
           fileStat.type = this.inferMimeType(file2);
           return fileStat;
@@ -65352,7 +65393,7 @@ ${underline}`);
         let fileHandle;
         const fileName = path$1.basename(file2);
         try {
-          fileHandle = await fs13.open(file2, "r");
+          fileHandle = await fs16.open(file2, "r");
           if (!fileHandle) {
             throw new Error(`Failed to open file`);
           }
@@ -86115,14 +86156,14 @@ var require_util3 = __commonJS({
         }
         const port = url2.port != null ? url2.port : url2.protocol === "https:" ? 443 : 80;
         let origin = url2.origin != null ? url2.origin : `${url2.protocol || ""}//${url2.hostname || ""}:${port}`;
-        let path18 = url2.path != null ? url2.path : `${url2.pathname || ""}${url2.search || ""}`;
+        let path21 = url2.path != null ? url2.path : `${url2.pathname || ""}${url2.search || ""}`;
         if (origin[origin.length - 1] === "/") {
           origin = origin.slice(0, origin.length - 1);
         }
-        if (path18 && path18[0] !== "/") {
-          path18 = `/${path18}`;
+        if (path21 && path21[0] !== "/") {
+          path21 = `/${path21}`;
         }
-        return new URL(`${origin}${path18}`);
+        return new URL(`${origin}${path21}`);
       }
       if (!isHttpOrHttpsPrefixed(url2.origin || url2.protocol)) {
         throw new InvalidArgumentError("Invalid URL protocol: the URL must start with `http:` or `https:`.");
@@ -86943,9 +86984,9 @@ var require_diagnostics = __commonJS({
         "undici:client:sendHeaders",
         (evt) => {
           const {
-            request: { method, path: path18, origin }
+            request: { method, path: path21, origin }
           } = evt;
-          debugLog("sending request to %s %s%s", method, origin, path18);
+          debugLog("sending request to %s %s%s", method, origin, path21);
         }
       );
     }
@@ -86963,14 +87004,14 @@ var require_diagnostics = __commonJS({
         "undici:request:headers",
         (evt) => {
           const {
-            request: { method, path: path18, origin },
+            request: { method, path: path21, origin },
             response: { statusCode }
           } = evt;
           debugLog(
             "received response to %s %s%s - HTTP %d",
             method,
             origin,
-            path18,
+            path21,
             statusCode
           );
         }
@@ -86979,23 +87020,23 @@ var require_diagnostics = __commonJS({
         "undici:request:trailers",
         (evt) => {
           const {
-            request: { method, path: path18, origin }
+            request: { method, path: path21, origin }
           } = evt;
-          debugLog("trailers received from %s %s%s", method, origin, path18);
+          debugLog("trailers received from %s %s%s", method, origin, path21);
         }
       );
       diagnosticsChannel.subscribe(
         "undici:request:error",
         (evt) => {
           const {
-            request: { method, path: path18, origin },
+            request: { method, path: path21, origin },
             error: error51
           } = evt;
           debugLog(
             "request to %s %s%s errored - %s",
             method,
             origin,
-            path18,
+            path21,
             error51.message
           );
         }
@@ -87110,7 +87151,7 @@ var require_request = __commonJS({
     var kHandler = Symbol("handler");
     var Request2 = class {
       constructor(origin, {
-        path: path18,
+        path: path21,
         method,
         body,
         headers,
@@ -87127,11 +87168,11 @@ var require_request = __commonJS({
         maxRedirections,
         typeOfService
       }, handler) {
-        if (typeof path18 !== "string") {
+        if (typeof path21 !== "string") {
           throw new InvalidArgumentError("path must be a string");
-        } else if (path18[0] !== "/" && !(path18.startsWith("http://") || path18.startsWith("https://")) && method !== "CONNECT") {
+        } else if (path21[0] !== "/" && !(path21.startsWith("http://") || path21.startsWith("https://")) && method !== "CONNECT") {
           throw new InvalidArgumentError("path must be an absolute URL or start with a slash");
-        } else if (invalidPathRegex.test(path18)) {
+        } else if (invalidPathRegex.test(path21)) {
           throw new InvalidArgumentError("invalid request path");
         }
         if (typeof method !== "string") {
@@ -87206,7 +87247,7 @@ var require_request = __commonJS({
         this.completed = false;
         this.aborted = false;
         this.upgrade = upgrade || null;
-        this.path = query ? serializePathWithQuery(path18, query) : path18;
+        this.path = query ? serializePathWithQuery(path21, query) : path21;
         this.origin = origin;
         this.protocol = getProtocolFromUrlString(origin);
         this.idempotent = idempotent == null ? method === "HEAD" || method === "GET" : idempotent;
@@ -92389,7 +92430,7 @@ var require_client_h1 = __commonJS({
       return method !== "GET" && method !== "HEAD" && method !== "OPTIONS" && method !== "TRACE" && method !== "CONNECT";
     }
     function writeH1(client, request) {
-      const { method, path: path18, host, upgrade, blocking, reset } = request;
+      const { method, path: path21, host, upgrade, blocking, reset } = request;
       let { body, headers, contentLength } = request;
       const expectsPayload = method === "PUT" || method === "POST" || method === "PATCH" || method === "QUERY" || method === "PROPFIND" || method === "PROPPATCH";
       if (util.isFormDataLike(body)) {
@@ -92467,7 +92508,7 @@ var require_client_h1 = __commonJS({
       if (socket.setTypeOfService) {
         socket.setTypeOfService(request.typeOfService);
       }
-      let header = `${method} ${path18} HTTP/1.1\r
+      let header = `${method} ${path21} HTTP/1.1\r
 `;
       if (typeof host === "string") {
         header += `host: ${host}\r
@@ -93120,7 +93161,7 @@ var require_client_h2 = __commonJS({
     function writeH2(client, request) {
       const requestTimeout = request.bodyTimeout ?? client[kBodyTimeout];
       const session2 = client[kHTTP2Session];
-      const { method, path: path18, host, upgrade, expectContinue, signal, protocol: protocol2, headers: reqHeaders } = request;
+      const { method, path: path21, host, upgrade, expectContinue, signal, protocol: protocol2, headers: reqHeaders } = request;
       let { body } = request;
       if (upgrade != null && upgrade !== "websocket") {
         util.errorRequest(client, request, new InvalidArgumentError(`Custom upgrade "${upgrade}" not supported over HTTP/2`));
@@ -93188,7 +93229,7 @@ var require_client_h2 = __commonJS({
           }
           headers[HTTP2_HEADER_METHOD] = "CONNECT";
           headers[HTTP2_HEADER_PROTOCOL] = "websocket";
-          headers[HTTP2_HEADER_PATH] = path18;
+          headers[HTTP2_HEADER_PATH] = path21;
           if (protocol2 === "ws:" || protocol2 === "wss:") {
             headers[HTTP2_HEADER_SCHEME] = protocol2 === "ws:" ? "http" : "https";
           } else {
@@ -93229,7 +93270,7 @@ var require_client_h2 = __commonJS({
         stream.setTimeout(requestTimeout);
         return true;
       }
-      headers[HTTP2_HEADER_PATH] = path18;
+      headers[HTTP2_HEADER_PATH] = path21;
       headers[HTTP2_HEADER_SCHEME] = protocol2 === "http:" ? "http" : "https";
       const expectsPayload = method === "PUT" || method === "POST" || method === "PATCH";
       if (body && typeof body.read === "function") {
@@ -95572,10 +95613,10 @@ var require_proxy_agent = __commonJS({
         };
         const {
           origin,
-          path: path18 = "/",
+          path: path21 = "/",
           headers = {}
         } = opts;
-        opts.path = origin + path18;
+        opts.path = origin + path21;
         if (!("host" in headers) && !("Host" in headers)) {
           const { host } = new URL(origin);
           headers.host = host;
@@ -97658,20 +97699,20 @@ var require_mock_utils = __commonJS({
       }
       return normalizedQp;
     }
-    function safeUrl(path18) {
-      if (typeof path18 !== "string") {
-        return path18;
+    function safeUrl(path21) {
+      if (typeof path21 !== "string") {
+        return path21;
       }
-      const pathSegments = path18.split("?", 3);
+      const pathSegments = path21.split("?", 3);
       if (pathSegments.length !== 2) {
-        return path18;
+        return path21;
       }
       const qp = new URLSearchParams(pathSegments.pop());
       qp.sort();
       return [...pathSegments, qp.toString()].join("?");
     }
-    function matchKey(mockDispatch2, { path: path18, method, body, headers }) {
-      const pathMatch = matchValue(mockDispatch2.path, path18);
+    function matchKey(mockDispatch2, { path: path21, method, body, headers }) {
+      const pathMatch = matchValue(mockDispatch2.path, path21);
       const methodMatch = matchValue(mockDispatch2.method, method);
       const bodyMatch = typeof mockDispatch2.body !== "undefined" ? matchValue(mockDispatch2.body, body) : true;
       const headersMatch = matchHeaders(mockDispatch2, headers);
@@ -97696,8 +97737,8 @@ var require_mock_utils = __commonJS({
       const basePath = key.query ? serializePathWithQuery(key.path, key.query) : key.path;
       const resolvedPath = typeof basePath === "string" ? safeUrl(basePath) : basePath;
       const resolvedPathWithoutTrailingSlash = removeTrailingSlash(resolvedPath);
-      let matchedMockDispatches = mockDispatches.filter(({ consumed }) => !consumed).filter(({ path: path18, ignoreTrailingSlash }) => {
-        return ignoreTrailingSlash ? matchValue(removeTrailingSlash(safeUrl(path18)), resolvedPathWithoutTrailingSlash) : matchValue(safeUrl(path18), resolvedPath);
+      let matchedMockDispatches = mockDispatches.filter(({ consumed }) => !consumed).filter(({ path: path21, ignoreTrailingSlash }) => {
+        return ignoreTrailingSlash ? matchValue(removeTrailingSlash(safeUrl(path21)), resolvedPathWithoutTrailingSlash) : matchValue(safeUrl(path21), resolvedPath);
       });
       if (matchedMockDispatches.length === 0) {
         throw new MockNotMatchedError(`Mock dispatch not matched for path '${resolvedPath}'`);
@@ -97736,19 +97777,19 @@ var require_mock_utils = __commonJS({
         mockDispatches.splice(index2, 1);
       }
     }
-    function removeTrailingSlash(path18) {
-      while (path18.endsWith("/")) {
-        path18 = path18.slice(0, -1);
+    function removeTrailingSlash(path21) {
+      while (path21.endsWith("/")) {
+        path21 = path21.slice(0, -1);
       }
-      if (path18.length === 0) {
-        path18 = "/";
+      if (path21.length === 0) {
+        path21 = "/";
       }
-      return path18;
+      return path21;
     }
     function buildKey(opts) {
-      const { path: path18, method, body, headers, query } = opts;
+      const { path: path21, method, body, headers, query } = opts;
       return {
-        path: path18,
+        path: path21,
         method,
         body,
         headers,
@@ -98438,10 +98479,10 @@ var require_pending_interceptors_formatter = __commonJS({
       }
       format(pendingInterceptors) {
         const withPrettyHeaders = pendingInterceptors.map(
-          ({ method, path: path18, data: { statusCode }, persist, times, timesInvoked, origin }) => ({
+          ({ method, path: path21, data: { statusCode }, persist, times, timesInvoked, origin }) => ({
             Method: method,
             Origin: origin,
-            Path: path18,
+            Path: path21,
             "Status code": statusCode,
             Persistent: persist ? PERSISTENT : NOT_PERSISTENT,
             Invocations: timesInvoked,
@@ -98523,9 +98564,9 @@ var require_mock_agent = __commonJS({
         const acceptNonStandardSearchParameters = this[kMockAgentAcceptsNonStandardSearchParameters];
         const dispatchOpts = { ...opts };
         if (acceptNonStandardSearchParameters && dispatchOpts.path) {
-          const [path18, searchParams] = dispatchOpts.path.split("?");
+          const [path21, searchParams] = dispatchOpts.path.split("?");
           const normalizedSearchParams = normalizeSearchParams(searchParams, acceptNonStandardSearchParameters);
-          dispatchOpts.path = `${path18}?${normalizedSearchParams}`;
+          dispatchOpts.path = `${path21}?${normalizedSearchParams}`;
         }
         return this[kAgent].dispatch(dispatchOpts, handler);
       }
@@ -98653,8 +98694,8 @@ var require_snapshot_utils = __commonJS({
         match: new Set(matchHeaders.map((header) => caseSensitive ? header : header.toLowerCase()))
       };
     }
-    var crypto12 = runtimeFeatures.has("crypto") ? require("node:crypto") : null;
-    var hashId = crypto12?.hash ? (value) => crypto12.hash("sha256", value, "base64url") : (value) => Buffer.from(value).toString("base64url");
+    var crypto13 = runtimeFeatures.has("crypto") ? require("node:crypto") : null;
+    var hashId = crypto13?.hash ? (value) => crypto13.hash("sha256", value, "base64url") : (value) => Buffer.from(value).toString("base64url");
     function isUndiciHeaders(headers) {
       return Array.isArray(headers) && (headers.length & 1) === 0;
     }
@@ -98926,12 +98967,12 @@ var require_snapshot_recorder = __commonJS({
        * @return {Promise<void>} - Resolves when snapshots are loaded
        */
       async loadSnapshots(filePath) {
-        const path18 = filePath || this.#snapshotPath;
-        if (!path18) {
+        const path21 = filePath || this.#snapshotPath;
+        if (!path21) {
           throw new InvalidArgumentError("Snapshot path is required");
         }
         try {
-          const data2 = await readFile(resolve(path18), "utf8");
+          const data2 = await readFile(resolve(path21), "utf8");
           const parsed = JSON.parse(data2);
           if (Array.isArray(parsed)) {
             this.#snapshots.clear();
@@ -98945,7 +98986,7 @@ var require_snapshot_recorder = __commonJS({
           if (error51.code === "ENOENT") {
             this.#snapshots.clear();
           } else {
-            throw new UndiciError(`Failed to load snapshots from ${path18}`, { cause: error51 });
+            throw new UndiciError(`Failed to load snapshots from ${path21}`, { cause: error51 });
           }
         }
       }
@@ -98956,11 +98997,11 @@ var require_snapshot_recorder = __commonJS({
        * @returns {Promise<void>} - Resolves when snapshots are saved
        */
       async saveSnapshots(filePath) {
-        const path18 = filePath || this.#snapshotPath;
-        if (!path18) {
+        const path21 = filePath || this.#snapshotPath;
+        if (!path21) {
           throw new InvalidArgumentError("Snapshot path is required");
         }
-        const resolvedPath = resolve(path18);
+        const resolvedPath = resolve(path21);
         await mkdir(dirname(resolvedPath), { recursive: true });
         const data2 = Array.from(this.#snapshots.entries()).map(([hash2, snapshot]) => ({
           hash: hash2,
@@ -99592,15 +99633,15 @@ var require_redirect_handler = __commonJS({
           return;
         }
         const { origin, pathname, search: search2 } = util.parseURL(new URL(this.location, this.opts.origin && new URL(this.opts.path, this.opts.origin)));
-        const path18 = search2 ? `${pathname}${search2}` : pathname;
-        const redirectUrlString = `${origin}${path18}`;
+        const path21 = search2 ? `${pathname}${search2}` : pathname;
+        const redirectUrlString = `${origin}${path21}`;
         for (const historyUrl of this.history) {
           if (historyUrl.toString() === redirectUrlString) {
             throw new InvalidArgumentError(`Redirect loop detected. Cannot redirect to ${origin}. This typically happens when using a Client or Pool with cross-origin redirects. Use an Agent for cross-origin redirects.`);
           }
         }
         this.opts.headers = cleanRequestHeaders(this.opts.headers, statusCode === 303, this.opts.origin !== origin);
-        this.opts.path = path18;
+        this.opts.path = path21;
         this.opts.origin = origin;
         this.opts.query = null;
       }
@@ -101369,10 +101410,10 @@ var require_cache_handler = __commonJS({
       }
       return locationUrl.pathname + locationUrl.search;
     }
-    function deleteCachedUri(store2, cacheKey, path18) {
+    function deleteCachedUri(store2, cacheKey, path21) {
       deleteCachedValue(store2, {
         ...cacheKey,
-        path: path18
+        path: path21
       });
       for (let i2 = 0; i2 < util.safeHTTPMethods.length; i2++) {
         const method = util.safeHTTPMethods[i2];
@@ -101380,7 +101421,7 @@ var require_cache_handler = __commonJS({
           deleteCachedValue(store2, {
             ...cacheKey,
             method,
-            path: path18
+            path: path21
           });
         }
       }
@@ -101391,9 +101432,9 @@ var require_cache_handler = __commonJS({
       }
       const values = Array.isArray(headerValue) ? headerValue : [headerValue];
       for (let i2 = 0; i2 < values.length; i2++) {
-        const path18 = getSameOriginPath(cacheKey, values[i2]);
-        if (path18 !== void 0) {
-          deleteCachedUri(store2, cacheKey, path18);
+        const path21 = getSameOriginPath(cacheKey, values[i2]);
+        if (path21 !== void 0) {
+          deleteCachedUri(store2, cacheKey, path21);
         }
       }
     }
@@ -105183,10 +105224,10 @@ var require_subresource_integrity = __commonJS({
     var assert2 = require("node:assert");
     var { runtimeFeatures } = require_runtime_features();
     var validSRIHashAlgorithmTokenSet = /* @__PURE__ */ new Map([["sha256", 0], ["sha384", 1], ["sha512", 2]]);
-    var crypto12;
+    var crypto13;
     if (runtimeFeatures.has("crypto")) {
-      crypto12 = require("node:crypto");
-      const cryptoHashes = crypto12.getHashes();
+      crypto13 = require("node:crypto");
+      const cryptoHashes = crypto13.getHashes();
       if (cryptoHashes.length === 0) {
         validSRIHashAlgorithmTokenSet.clear();
       }
@@ -105276,7 +105317,7 @@ var require_subresource_integrity = __commonJS({
       return result;
     }
     var applyAlgorithmToBytes = (algorithm, bytes) => {
-      return crypto12.hash(algorithm, bytes, "base64");
+      return crypto13.hash(algorithm, bytes, "base64");
     };
     function caseSensitiveMatch(actualValue, expectedValue) {
       let actualValueLength = actualValue.length;
@@ -106271,11 +106312,11 @@ var require_fetch2 = __commonJS({
       function dispatch({ body }) {
         const url2 = requestCurrentURL(request);
         const agent = fetchParams.controller.dispatcher;
-        const path18 = url2.pathname + url2.search;
+        const path21 = url2.pathname + url2.search;
         const hasTrailingQuestionMark = url2.search.length === 0 && url2.href[url2.href.length - url2.hash.length - 1] === "?";
         return new Promise((resolve, reject) => agent.dispatch(
           {
-            path: hasTrailingQuestionMark ? `${path18}?` : path18,
+            path: hasTrailingQuestionMark ? `${path21}?` : path21,
             origin: url2.origin,
             method: request.method,
             body: agent.isMockActive ? request.body && (request.body.source || request.body.stream) : body,
@@ -107222,9 +107263,9 @@ var require_util6 = __commonJS({
         }
       }
     }
-    function validateCookiePath(path18) {
-      for (let i2 = 0; i2 < path18.length; ++i2) {
-        const code = path18.charCodeAt(i2);
+    function validateCookiePath(path21) {
+      for (let i2 = 0; i2 < path21.length; ++i2) {
+        const code = path21.charCodeAt(i2);
         if (code < 32 || // exclude CTLs (0-31)
         code > 126 || // exclude DEL and non-ascii
         code === 59) {
@@ -108259,7 +108300,7 @@ var require_connection = __commonJS({
     var { WebsocketFrameSend } = require_frame();
     var assert2 = require("node:assert");
     var { runtimeFeatures } = require_runtime_features();
-    var crypto12 = runtimeFeatures.has("crypto") ? require("node:crypto") : null;
+    var crypto13 = runtimeFeatures.has("crypto") ? require("node:crypto") : null;
     var warningEmitted = false;
     function establishWebSocketConnection(url2, protocols, client, handler, options) {
       const requestURL = url2;
@@ -108279,7 +108320,7 @@ var require_connection = __commonJS({
         const headersList = getHeadersList(new Headers3(options.headers));
         request.headersList = headersList;
       }
-      const keyValue = crypto12.randomBytes(16).toString("base64");
+      const keyValue = crypto13.randomBytes(16).toString("base64");
       request.headersList.append("sec-websocket-key", keyValue, true);
       request.headersList.append("sec-websocket-version", "13", true);
       for (const protocol2 of protocols) {
@@ -108319,7 +108360,7 @@ var require_connection = __commonJS({
             return;
           }
           const secWSAccept = response.headersList.get("Sec-WebSocket-Accept");
-          const digest = crypto12.hash("sha1", keyValue + uid, "base64");
+          const digest = crypto13.hash("sha1", keyValue + uid, "base64");
           if (secWSAccept !== digest) {
             failWebsocketConnection(handler, 1002, "Incorrect hash received in Sec-WebSocket-Accept header.");
             return;
@@ -110461,11 +110502,11 @@ var require_undici = __commonJS({
           if (typeof opts.path !== "string") {
             throw new InvalidArgumentError("invalid opts.path");
           }
-          let path18 = opts.path;
+          let path21 = opts.path;
           if (!opts.path.startsWith("/")) {
-            path18 = `/${path18}`;
+            path21 = `/${path21}`;
           }
-          url2 = new URL(util.parseOrigin(url2).origin + path18);
+          url2 = new URL(util.parseOrigin(url2).origin + path21);
         } else {
           if (!opts) {
             opts = typeof url2 === "object" ? url2 : {};
@@ -110935,9 +110976,9 @@ __export(ai_agent_exports, {
 });
 function getGeminiToken() {
   try {
-    const cfgPath = import_path13.default.join(import_electron15.app.getPath("userData"), "supabase-config.json");
-    if (import_fs13.default.existsSync(cfgPath)) {
-      const cfg = JSON.parse(import_fs13.default.readFileSync(cfgPath, "utf-8"));
+    const cfgPath = import_path16.default.join(import_electron18.app.getPath("userData"), "supabase-config.json");
+    if (import_fs16.default.existsSync(cfgPath)) {
+      const cfg = JSON.parse(import_fs16.default.readFileSync(cfgPath, "utf-8"));
       if (!cfg.geminiKey) return null;
       return cfg.geminiKey.startsWith("enc:v1:") ? decryptStandardSecret(cfg.geminiKey) : cfg.geminiKey;
     }
@@ -111029,15 +111070,15 @@ ${competitorText}
     throw new Error(`AI Analysis Failed: ${error51.message}`);
   }
 }
-var import_fs13, import_path13, import_electron15;
+var import_fs16, import_path16, import_electron18;
 var init_ai_agent = __esm({
   "electron/ai-agent.ts"() {
     "use strict";
     init_node();
     init_esm11();
-    import_fs13 = __toESM(require("fs"), 1);
-    import_path13 = __toESM(require("path"), 1);
-    import_electron15 = require("electron");
+    import_fs16 = __toESM(require("fs"), 1);
+    import_path16 = __toESM(require("path"), 1);
+    import_electron18 = require("electron");
     init_secure_storage();
   }
 });
@@ -111047,14 +111088,14 @@ var MediaProtocolService_exports = {};
 __export(MediaProtocolService_exports, {
   MediaProtocolService: () => MediaProtocolService
 });
-var import_electron16, import_fs14, import_path14, import_crypto10, import_url, MIME_MAP, MediaProtocolService;
+var import_electron19, import_fs17, import_path17, import_crypto11, import_url, MIME_MAP, MediaProtocolService;
 var init_MediaProtocolService = __esm({
   "electron/services/media/MediaProtocolService.ts"() {
     "use strict";
-    import_electron16 = require("electron");
-    import_fs14 = __toESM(require("fs"), 1);
-    import_path14 = __toESM(require("path"), 1);
-    import_crypto10 = __toESM(require("crypto"), 1);
+    import_electron19 = require("electron");
+    import_fs17 = __toESM(require("fs"), 1);
+    import_path17 = __toESM(require("path"), 1);
+    import_crypto11 = __toESM(require("crypto"), 1);
     import_url = require("url");
     init_supabase();
     MIME_MAP = {
@@ -111077,10 +111118,10 @@ var init_MediaProtocolService = __esm({
       cacheDir;
       isInitialized = false;
       constructor() {
-        const userData = import_electron16.app?.getPath ? import_electron16.app.getPath("userData") : import_path14.default.join(process.env.APPDATA || process.cwd(), "le-soft");
-        this.cacheDir = import_path14.default.join(userData, "image-cache");
+        const userData = import_electron19.app?.getPath ? import_electron19.app.getPath("userData") : import_path17.default.join(process.env.APPDATA || process.cwd(), "le-soft");
+        this.cacheDir = import_path17.default.join(userData, "image-cache");
         try {
-          import_fs14.default.mkdirSync(this.cacheDir, { recursive: true });
+          import_fs17.default.mkdirSync(this.cacheDir, { recursive: true });
         } catch {
         }
       }
@@ -111095,7 +111136,7 @@ var init_MediaProtocolService = __esm({
        */
       static registerSchemeAsPrivileged() {
         try {
-          import_electron16.protocol.registerSchemesAsPrivileged([
+          import_electron19.protocol.registerSchemesAsPrivileged([
             {
               scheme: "app-media",
               privileges: {
@@ -111118,7 +111159,7 @@ var init_MediaProtocolService = __esm({
       initialize() {
         if (this.isInitialized) return;
         this.isInitialized = true;
-        import_electron16.protocol.handle("app-media", async (request) => {
+        import_electron19.protocol.handle("app-media", async (request) => {
           const urlStr = request.url;
           try {
             const urlObj = new URL(urlStr);
@@ -111145,19 +111186,19 @@ var init_MediaProtocolService = __esm({
           if (/^\/[a-zA-Z]:/.test(cleanPath)) {
             cleanPath = cleanPath.slice(1);
           }
-          cleanPath = import_path14.default.normalize(cleanPath);
+          cleanPath = import_path17.default.normalize(cleanPath);
         }
-        if (!import_fs14.default.existsSync(cleanPath)) {
+        if (!import_fs17.default.existsSync(cleanPath)) {
           return new Response("File Not Found", { status: 404 });
         }
-        const stat3 = import_fs14.default.statSync(cleanPath);
+        const stat3 = import_fs17.default.statSync(cleanPath);
         if (stat3.isDirectory()) {
           return new Response("Cannot serve directory", { status: 403 });
         }
-        const ext = import_path14.default.extname(cleanPath).toLowerCase();
+        const ext = import_path17.default.extname(cleanPath).toLowerCase();
         const mimeType = MIME_MAP[ext] || "application/octet-stream";
         const fileUrl = (0, import_url.pathToFileURL)(cleanPath).toString();
-        const response = await import_electron16.net.fetch(fileUrl);
+        const response = await import_electron19.net.fetch(fileUrl);
         const newHeaders = new Headers(response.headers);
         newHeaders.set("Content-Type", mimeType);
         newHeaders.set("Cache-Control", "max-age=86400");
@@ -111193,17 +111234,17 @@ var init_MediaProtocolService = __esm({
           return new Response("Invalid remote URL", { status: 400 });
         }
         const cleanSubPath = isNas ? decodeURIComponent(rawPath).replace(/^\//, "") : "";
-        const ext = import_path14.default.extname(isNas ? cleanSubPath : new URL(targetUrl).pathname).toLowerCase() || ".webp";
+        const ext = import_path17.default.extname(isNas ? cleanSubPath : new URL(targetUrl).pathname).toLowerCase() || ".webp";
         const cacheKey = isNas ? `nas:${cleanSubPath}` : targetUrl;
-        const cacheHash = import_crypto10.default.createHash("sha256").update(cacheKey).digest("hex").slice(0, 32);
-        const cacheFile = import_path14.default.join(this.cacheDir, `${cacheHash}${ext}`);
-        if (import_fs14.default.existsSync(cacheFile)) {
+        const cacheHash = import_crypto11.default.createHash("sha256").update(cacheKey).digest("hex").slice(0, 32);
+        const cacheFile = import_path17.default.join(this.cacheDir, `${cacheHash}${ext}`);
+        if (import_fs17.default.existsSync(cacheFile)) {
           try {
-            const stat3 = import_fs14.default.statSync(cacheFile);
+            const stat3 = import_fs17.default.statSync(cacheFile);
             if (stat3.size > 0) {
               const mimeType = MIME_MAP[ext] || "image/webp";
               const fileUrl = (0, import_url.pathToFileURL)(cacheFile).toString();
-              const cachedResponse = await import_electron16.net.fetch(fileUrl);
+              const cachedResponse = await import_electron19.net.fetch(fileUrl);
               const headers = new Headers(cachedResponse.headers);
               headers.set("Content-Type", mimeType);
               headers.set("X-Cache-Status", "HIT");
@@ -111229,7 +111270,7 @@ var init_MediaProtocolService = __esm({
               const timeoutId = setTimeout(() => controller.abort(), 2500);
               let res;
               try {
-                res = await import_electron16.net.fetch(candidateUrl, {
+                res = await import_electron19.net.fetch(candidateUrl, {
                   headers: fetchHeaders,
                   signal: controller.signal
                 });
@@ -111246,7 +111287,7 @@ var init_MediaProtocolService = __esm({
               clearTimeout(timeoutId);
               if (res.ok && res.status === 200) {
                 const buffer = Buffer.from(await res.arrayBuffer());
-                import_fs14.default.promises.writeFile(cacheFile, buffer).catch((err) => {
+                import_fs17.default.promises.writeFile(cacheFile, buffer).catch((err) => {
                   console.warn("[MediaProtocol] Failed to cache image:", err.message);
                 });
                 const mimeType = res.headers.get("content-type") || MIME_MAP[ext] || "image/webp";
@@ -111268,13 +111309,13 @@ var init_MediaProtocolService = __esm({
           return new Response(`NAS storage error: ${lastErrorMsg}`, { status: lastStatus });
         } else {
           try {
-            const res = await import_electron16.net.fetch(targetUrl);
+            const res = await import_electron19.net.fetch(targetUrl);
             if (!res.ok) {
               console.warn(`[MediaProtocol] ${urlObj.href} \u2192 resolved: remote_http \u2192 response: ${res.status} \u2192 cache: MISS`);
               return new Response(`Remote error: HTTP ${res.status}`, { status: res.status });
             }
             const buffer = Buffer.from(await res.arrayBuffer());
-            import_fs14.default.promises.writeFile(cacheFile, buffer).catch(() => {
+            import_fs17.default.promises.writeFile(cacheFile, buffer).catch(() => {
             });
             const mimeType = res.headers.get("content-type") || MIME_MAP[ext] || "image/webp";
             const headers = new Headers();
@@ -111321,16 +111362,16 @@ var init_MediaProtocolService = __esm({
             } else if (u.hostname === "nas") {
               const cleanSub = decodeURIComponent(u.pathname).replace(/^\//, "");
               const cacheKey = `nas:${cleanSub}`;
-              const ext = import_path14.default.extname(cleanSub).toLowerCase() || ".webp";
-              const cacheHash = import_crypto10.default.createHash("sha256").update(cacheKey).digest("hex").slice(0, 32);
-              const cacheFile = import_path14.default.join(this.cacheDir, `${cacheHash}${ext}`);
-              if (import_fs14.default.existsSync(cacheFile) && import_fs14.default.statSync(cacheFile).size > 0) {
+              const ext = import_path17.default.extname(cleanSub).toLowerCase() || ".webp";
+              const cacheHash = import_crypto11.default.createHash("sha256").update(cacheKey).digest("hex").slice(0, 32);
+              const cacheFile = import_path17.default.join(this.cacheDir, `${cacheHash}${ext}`);
+              if (import_fs17.default.existsSync(cacheFile) && import_fs17.default.statSync(cacheFile).size > 0) {
                 return {
                   sourceType: "nas_storage",
                   normalizedSource: `https://storage.lenas.me/${cleanSub}`,
                   exists: true,
                   httpStatus: 200,
-                  fileSize: import_fs14.default.statSync(cacheFile).size,
+                  fileSize: import_fs17.default.statSync(cacheFile).size,
                   loadDurationMs: Date.now() - t0
                 };
               }
@@ -111341,7 +111382,7 @@ var init_MediaProtocolService = __esm({
                 const candidateUrl = `${base.replace(/\/$/, "")}/${encodedSub}`;
                 try {
                   const isTunnel = candidateUrl.includes("storage.lenas.me");
-                  const res = await import_electron16.net.fetch(candidateUrl, {
+                  const res = await import_electron19.net.fetch(candidateUrl, {
                     method: "HEAD",
                     headers: isTunnel ? { ...cfHeaders } : {}
                   });
@@ -111380,7 +111421,7 @@ var init_MediaProtocolService = __esm({
           }
           try {
             const cfHeaders = isNas && typeof getCfAccessHeaders === "function" ? getCfAccessHeaders() : {};
-            const res = await import_electron16.net.fetch(trimmed, { method: "HEAD", headers: cfHeaders });
+            const res = await import_electron19.net.fetch(trimmed, { method: "HEAD", headers: cfHeaders });
             const duration3 = Date.now() - t0;
             return {
               sourceType,
@@ -111407,14 +111448,14 @@ var init_MediaProtocolService = __esm({
         if (process.platform === "win32" && /^\/[a-zA-Z]:/.test(localPath)) {
           localPath = localPath.slice(1);
         }
-        localPath = import_path14.default.normalize(localPath);
+        localPath = import_path17.default.normalize(localPath);
         const sanitizedPath = localPath.replace(/Users\\[^\\]+/i, "Users\\[USER]");
-        const exists = import_fs14.default.existsSync(localPath);
+        const exists = import_fs17.default.existsSync(localPath);
         let fileSize;
         let failureReason;
         if (exists) {
           try {
-            fileSize = import_fs14.default.statSync(localPath).size;
+            fileSize = import_fs17.default.statSync(localPath).size;
           } catch (e2) {
             failureReason = "stat_failed: " + e2.message;
           }
@@ -111435,9 +111476,9 @@ var init_MediaProtocolService = __esm({
 });
 
 // electron/main.ts
-var import_electron18 = require("electron");
-var import_fs16 = __toESM(require("fs"), 1);
-var import_path16 = __toESM(require("path"), 1);
+var import_electron21 = require("electron");
+var import_fs19 = __toESM(require("fs"), 1);
+var import_path19 = __toESM(require("path"), 1);
 var import_electron_updater2 = require("electron-updater");
 
 // electron/database.ts
@@ -111633,11 +111674,11 @@ function startBroadcastListener() {
 }
 
 // electron/ipc-handlers.ts
-var import_electron17 = require("electron");
-var import_path15 = __toESM(require("path"), 1);
-var import_fs15 = __toESM(require("fs"), 1);
+var import_electron20 = require("electron");
+var import_path18 = __toESM(require("path"), 1);
+var import_fs18 = __toESM(require("fs"), 1);
 var import_os5 = __toESM(require("os"), 1);
-var import_crypto11 = __toESM(require("crypto"), 1);
+var import_crypto12 = __toESM(require("crypto"), 1);
 var import_bcryptjs2 = __toESM(require("bcryptjs"), 1);
 init_supabase();
 var import_promise = __toESM(require("mysql2/promise"), 1);
@@ -113618,8 +113659,7 @@ var MakeOrderService = class {
       requested_delivery_date: input.requested_delivery_date || null,
       salesman_id: input.salesman_id || null,
       customer_id: resolvedCustId,
-      reference_bill_no: input.reference_bill_no?.trim() || null,
-      invoice_attachment_urls: input.invoice_attachment_urls || [],
+      invoice_attachment_urls: Array.isArray(input.invoice_attachment_urls) && input.invoice_attachment_urls.length > 0 ? input.invoice_attachment_urls : Array.isArray(input.invoice_attachments) ? input.invoice_attachments : [],
       is_approved: isApproved,
       customer_name: input.customer_name?.trim() || null,
       customer_phone: input.customer_phone?.trim() || null,
@@ -113634,7 +113674,17 @@ var MakeOrderService = class {
       current_version: 1,
       created_at: (/* @__PURE__ */ new Date()).toISOString()
     };
-    const { data: createdOrder, error: orderErr } = await supabase.from("make_orders").insert(orderHeaderPayload).select("id, order_number").single();
+    if (input.reference_bill_no && input.reference_bill_no.trim()) {
+      orderHeaderPayload.reference_bill_no = input.reference_bill_no.trim();
+    }
+    let { data: createdOrder, error: orderErr } = await supabase.from("make_orders").insert(orderHeaderPayload).select("id, order_number").single();
+    if (orderErr && orderErr.message && orderErr.message.includes("reference_bill_no")) {
+      const fallbackPayload = { ...orderHeaderPayload };
+      delete fallbackPayload.reference_bill_no;
+      const retryRes = await supabase.from("make_orders").insert(fallbackPayload).select("id, order_number").single();
+      createdOrder = retryRes.data;
+      orderErr = retryRes.error;
+    }
     if (orderErr || !createdOrder) {
       return { success: false, error: `Failed to create order header: ${orderErr?.message || "Database error"}` };
     }
@@ -113647,25 +113697,53 @@ var MakeOrderService = class {
       color_id: item.color_id || null,
       product_name: item.product_name.trim(),
       spec_name: item.spec_name || null,
-      size_label: item.dimensions_text || null,
-      color_name: item.color_name || null,
+      spec_details: item.spec_details || null,
+      size_label: item.size_id ? item.dimensions_text || item.size_label || null : item.size_label || null,
+      dimensions_text: item.dimensions_text || null,
+      custom_size: item.custom_size || (item.is_customized ? item.dimensions_text : null) || null,
+      custom_dimensions: item.custom_dimensions || (item.is_customized ? item.custom_size || item.dimensions_text : null) || null,
+      color_name: item.color_name || item.custom_color || null,
       quantity: Number(item.quantity) || 1,
       item_cost_price: item.item_cost_price !== void 0 && item.item_cost_price !== null && item.item_cost_price !== "" ? Math.max(0, Number(item.item_cost_price)) : 0,
       item_sale_price: item.item_sale_price !== void 0 && item.item_sale_price !== null && item.item_sale_price !== "" ? Math.max(0, Number(item.item_sale_price)) : null,
-      is_customized: !!item.is_customized,
-      custom_dimensions: item.custom_dimensions || item.dimensions_text || null,
-      designer_notes: item.designer_notes || null
+      is_customized: !!(item.is_customized || item.is_custom),
+      designer_notes: item.designer_notes || item.custom_notes || null
     }));
-    const { data: insertedItems, error: itemsErr } = await supabase.from("make_order_items").insert(itemsPayload).select("id, product_name");
+    let { data: insertedItems, error: itemsErr } = await supabase.from("make_order_items").insert(itemsPayload).select("id, product_name");
+    if (itemsErr && (itemsErr.code === "42703" || itemsErr.message && /column.*does not exist/i.test(itemsErr.message))) {
+      console.warn("[MakeOrderService] Detected missing column on make_order_items insert:", itemsErr.message, "Retrying with schema-compatible payload...");
+      const missingColMatch = itemsErr.message.match(/column (?:[a-zA-Z0-9_]+\.)?([a-zA-Z0-9_]+) does not exist/i);
+      const missingCol = missingColMatch ? missingColMatch[1] : null;
+      const compatiblePayload = itemsPayload.map((rawItem) => {
+        const sanitized = { ...rawItem };
+        if (missingCol && missingCol in sanitized) {
+          delete sanitized[missingCol];
+        } else {
+          delete sanitized.designer_notes;
+          delete sanitized.technical_drawing_url;
+          delete sanitized.pdf_urls;
+        }
+        return sanitized;
+      });
+      const retryRes = await supabase.from("make_order_items").insert(compatiblePayload).select("id, product_name");
+      insertedItems = retryRes.data;
+      itemsErr = retryRes.error;
+    }
     if (itemsErr) {
       console.error("[MakeOrderService] Items insertion failed. Rolling back order header:", itemsErr.message);
       await supabase.from("make_orders").delete().eq("id", orderId);
       return { success: false, error: `Order creation rolled back due to item insertion error: ${itemsErr.message}` };
     }
+    const collectedItemNotes = input.items.map((it, idx) => {
+      const note = it.designer_notes || it.custom_notes;
+      return note ? `Item #${idx + 1} (${it.product_name}): ${note}` : null;
+    }).filter(Boolean);
+    const baseTimelineNote = input.salesman_id ? "Order created, awaiting salesperson approval" : "Order placed and approved";
+    const finalTimelineNote = collectedItemNotes.length > 0 ? `${baseTimelineNote} [Item Notes: ${collectedItemNotes.join("; ")}]` : baseTimelineNote;
     await supabase.from("make_order_updates").insert({
       order_id: orderId,
       status: initialStatus,
-      note: input.salesman_id ? "Order created, awaiting salesperson approval" : "Order placed and approved",
+      note: finalTimelineNote,
       updated_by: `${actorSession.fullName || actorSession.username} (${actorSession.role})`
     });
     if (input.salesman_id) {
@@ -114456,7 +114534,8 @@ var ALLOWED_INVOICE_EXTENSIONS = /* @__PURE__ */ new Set([
   "png",
   "jpg",
   "jpeg",
-  "webp"
+  "webp",
+  "pdf"
 ]);
 var MAX_CAD_FILE_SIZE = 50 * 1024 * 1024;
 var MAX_PHOTO_FILE_SIZE = 15 * 1024 * 1024;
@@ -114544,11 +114623,15 @@ var MakeCadService = class {
     if (!win) {
       return { canceled: true, error: "No active window found" };
     }
-    const filters2 = type === "photo" || type === "invoice_attachment" ? [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp"] }] : [
+    const filters2 = type === "invoice_attachment" ? [
+      { name: "Invoices & Documents", extensions: ["png", "jpg", "jpeg", "webp", "pdf"] },
+      { name: "PDF Documents", extensions: ["pdf"] },
+      { name: "Images", extensions: ["png", "jpg", "jpeg", "webp"] }
+    ] : type === "photo" ? [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp"] }] : [
       { name: "Drawings & CAD Files", extensions: ["pdf", "png", "jpg", "jpeg", "webp", "dwg", "dxf", "step", "stp", "iges", "igs", "skp", "stl", "obj"] },
       { name: "All Supported Files", extensions: ["*"] }
     ];
-    const title = type === "invoice_attachment" ? "Select Invoice Attachment" : type === "photo" ? "Select Stage Completion Photo" : "Select Technical Drawing / CAD Blueprint";
+    const title = type === "invoice_attachment" ? "Select Invoice Attachment / Document" : type === "photo" ? "Select Stage Completion Photo" : "Select Technical Drawing / CAD Blueprint";
     const result = await import_electron13.dialog.showOpenDialog(win, {
       title,
       properties: ["openFile"],
@@ -114565,7 +114648,7 @@ var MakeCadService = class {
    */
   static validateFileMetadata(fileName, fileSize, type) {
     const ext = import_path12.default.extname(fileName).replace(".", "").toLowerCase();
-    const allowedSet = type === "photo" || type === "invoice_attachment" ? ALLOWED_INVOICE_EXTENSIONS : ALLOWED_CAD_EXTENSIONS;
+    const allowedSet = type === "photo" ? ALLOWED_PHOTO_EXTENSIONS : type === "invoice_attachment" ? ALLOWED_INVOICE_EXTENSIONS : ALLOWED_CAD_EXTENSIONS;
     if (!allowedSet.has(ext)) {
       return { isValid: false, error: `Invalid file type ".${ext}". Allowed: ${Array.from(allowedSet).join(", ")}` };
     }
@@ -114577,6 +114660,15 @@ var MakeCadService = class {
     return { isValid: true };
   }
   /**
+   * Sanitizes a base filename preserving Unicode characters and spaces while stripping illegal filesystem chars.
+   */
+  static sanitizeFileName(rawFileName) {
+    const extWithDot = import_path12.default.extname(rawFileName).toLowerCase();
+    const baseWithoutExt = import_path12.default.basename(rawFileName, extWithDot);
+    const cleaned = baseWithoutExt.replace(/[\/\\:*?"<>|\x00-\x1F\x7F]/g, "_").trim() || "attachment";
+    return `${cleaned}${extWithDot}`;
+  }
+  /**
    * Validates an approved local file by reading its buffer and checking limits.
    */
   static validateLocalFile(filePath, type) {
@@ -114584,13 +114676,13 @@ var MakeCadService = class {
       return { canceled: true, error: "Selected file does not exist on disk." };
     }
     const stats = import_fs11.default.statSync(filePath);
-    const maxSize = type === "photo" || type === "invoice_attachment" ? MAX_PHOTO_FILE_SIZE : MAX_CAD_FILE_SIZE;
+    const maxSize = type === "photo" || type === "invoice_attachment" ? MAX_INVOICE_FILE_SIZE : MAX_CAD_FILE_SIZE;
     if (stats.size > maxSize) {
       const maxMb = maxSize / (1024 * 1024);
       return { canceled: true, error: `File size (${(stats.size / (1024 * 1024)).toFixed(1)} MB) exceeds the maximum allowed limit of ${maxMb} MB.` };
     }
     const ext = import_path12.default.extname(filePath).replace(".", "").toLowerCase();
-    const allowedSet = type === "photo" || type === "invoice_attachment" ? ALLOWED_PHOTO_EXTENSIONS : ALLOWED_CAD_EXTENSIONS;
+    const allowedSet = type === "photo" ? ALLOWED_PHOTO_EXTENSIONS : type === "invoice_attachment" ? ALLOWED_INVOICE_EXTENSIONS : ALLOWED_CAD_EXTENSIONS;
     if (!allowedSet.has(ext)) {
       return { canceled: true, error: `File extension ".${ext}" is not supported.` };
     }
@@ -114599,7 +114691,7 @@ var MakeCadService = class {
     if (!magicCheck.isValid) {
       return { canceled: true, error: magicCheck.error || "File failed security validation." };
     }
-    const sanitizedBase = import_path12.default.basename(filePath).replace(/[^a-zA-Z0-9._-]/g, "_");
+    const sanitizedBase = this.sanitizeFileName(import_path12.default.basename(filePath));
     return {
       isValid: true,
       mimeType: magicCheck.detectedMime,
@@ -114613,13 +114705,13 @@ var MakeCadService = class {
    * enforcing size, extension, magic byte validation, and absence of PE/ELF executables.
    */
   static validateBuffer(buffer, fileName, type) {
-    const maxSize = type === "photo" || type === "invoice_attachment" ? MAX_PHOTO_FILE_SIZE : MAX_CAD_FILE_SIZE;
+    const maxSize = type === "photo" || type === "invoice_attachment" ? MAX_INVOICE_FILE_SIZE : MAX_CAD_FILE_SIZE;
     if (buffer.length > maxSize) {
       const maxMb = maxSize / (1024 * 1024);
       return { isValid: false, error: `File size (${(buffer.length / (1024 * 1024)).toFixed(1)} MB) exceeds the maximum allowed limit of ${maxMb} MB.` };
     }
     const ext = import_path12.default.extname(fileName).replace(".", "").toLowerCase();
-    const allowedSet = type === "photo" || type === "invoice_attachment" ? ALLOWED_PHOTO_EXTENSIONS : ALLOWED_CAD_EXTENSIONS;
+    const allowedSet = type === "photo" ? ALLOWED_PHOTO_EXTENSIONS : type === "invoice_attachment" ? ALLOWED_INVOICE_EXTENSIONS : ALLOWED_CAD_EXTENSIONS;
     if (!allowedSet.has(ext)) {
       return { isValid: false, error: `File extension ".${ext}" is not supported.` };
     }
@@ -114627,7 +114719,7 @@ var MakeCadService = class {
     if (!magicCheck.isValid) {
       return { isValid: false, error: magicCheck.error || "File failed security validation." };
     }
-    const sanitizedBase = import_path12.default.basename(fileName).replace(/[^a-zA-Z0-9._-]/g, "_");
+    const sanitizedBase = this.sanitizeFileName(fileName);
     return {
       isValid: true,
       mimeType: magicCheck.detectedMime,
@@ -114642,7 +114734,8 @@ var MakeCadService = class {
   static async uploadValidatedBuffer(buffer, fileName, mimeType, subfolder) {
     const timestamp = Date.now();
     const randomToken = import_crypto9.default.randomBytes(4).toString("hex");
-    const storageFileName = `${timestamp}_${randomToken}_${fileName}`;
+    const sanitized = this.sanitizeFileName(fileName);
+    const storageFileName = `${timestamp}_${randomToken}_${sanitized}`;
     const storagePath = `${subfolder}/${storageFileName}`;
     const nasStorageUrl = this.getNasStorageUrl();
     if (nasStorageUrl) {
@@ -114664,13 +114757,13 @@ var MakeCadService = class {
           return {
             success: true,
             storagePath: `${subfolder}/${storageFileName}`,
-            publicUrl: rawUrl
+            publicUrl: encodeURI(rawUrl)
           };
         }
         return {
           success: true,
           storagePath: `${subfolder}/${storageFileName}`,
-          publicUrl: `https://storage.lenas.me/files/${subfolder}/${storageFileName}`
+          publicUrl: encodeURI(`https://storage.lenas.me/files/${subfolder}/${storageFileName}`)
         };
       } catch (nasErr) {
         console.warn("[MakeCadService] NAS upload failed, attempting Supabase fallback:", nasErr.message);
@@ -115455,10 +115548,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path18) {
-  if (!path18)
+function getElementAtPath(obj, path21) {
+  if (!path21)
     return obj;
-  return path18.reduce((acc, key) => acc?.[key], obj);
+  return path21.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -115867,11 +115960,11 @@ function explicitlyAborted(x2, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path18, issues) {
+function prefixIssues(path21, issues) {
   return issues.map((iss) => {
     var _a8;
     (_a8 = iss).path ?? (_a8.path = []);
-    iss.path.unshift(path18);
+    iss.path.unshift(path21);
     return iss;
   });
 }
@@ -116018,16 +116111,16 @@ function flattenError(error51, mapper = (issue2) => issue2.message) {
 }
 function formatError(error51, mapper = (issue2) => issue2.message) {
   const fieldErrors = { _errors: [] };
-  const processError = (error52, path18 = []) => {
+  const processError = (error52, path21 = []) => {
     for (const issue2 of error52.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path18, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path21, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path18, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path21, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path18, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path21, ...issue2.path]);
       } else {
-        const fullpath = [...path18, ...issue2.path];
+        const fullpath = [...path21, ...issue2.path];
         if (fullpath.length === 0) {
           fieldErrors._errors.push(mapper(issue2));
         } else {
@@ -116054,17 +116147,17 @@ function formatError(error51, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error51, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error52, path18 = []) => {
+  const processError = (error52, path21 = []) => {
     var _a8, _b;
     for (const issue2 of error52.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path18, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path21, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path18, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path21, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path18, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path21, ...issue2.path]);
       } else {
-        const fullpath = [...path18, ...issue2.path];
+        const fullpath = [...path21, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -116096,8 +116189,8 @@ function treeifyError(error51, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path18 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path18) {
+  const path21 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path21) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -128789,13 +128882,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path18 = ref.slice(1).split("/").filter(Boolean);
-  if (path18.length === 0) {
+  const path21 = ref.slice(1).split("/").filter(Boolean);
+  if (path21.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path18[0] === defsKey) {
-    const key = path18[1];
+  if (path21[0] === defsKey) {
+    const key = path21[1];
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -129451,9 +129544,10 @@ function registerMakeHandlers() {
   function canManageCatalog(session2) {
     const role = (session2.role || "").toLowerCase();
     if (role === "salesperson" || role === "salesman" || role === "sales") return false;
+    if (role === "factory_manager" || role === "factory manager" || role === "factory") return false;
     if (role === "admin" || role === "superadmin" || role === "manager") return true;
     if (role === "furniture_designer" || role === "furniture designer" || role === "designer" || role === "make_designer") return true;
-    return !!(session2.permissions && (session2.permissions["manage_catalog"] || session2.permissions["make_admin"] || session2.permissions["catalog_manage"] || session2.permissions["write_make_catalog"]));
+    return !!(session2.permissions && (session2.permissions["manage_catalog"] || session2.permissions["make_admin"] || session2.permissions["catalog_manage"] || session2.permissions["write_make_catalog"] || session2.permissions["create_product_from_place_order"]));
   }
   function canManageGlobalProductAttributes(session2) {
     const role = (session2.role || "").toLowerCase();
@@ -129478,6 +129572,10 @@ function registerMakeHandlers() {
   import_electron14.ipcMain.handle("create-make-order", async (_e, rawOrder) => {
     try {
       const session2 = requireSession();
+      const role = (session2.role || "").toLowerCase();
+      if (role === "factory_manager" || role === "factory manager" || role === "factory") {
+        throw new Error("Forbidden: Factory Manager is strictly prohibited from creating orders.");
+      }
       const parsed = CreateMakeOrderSchema.parse(rawOrder);
       const result = await MakeOrderService.createOrder(parsed, session2);
       if (!result.success) {
@@ -130268,6 +130366,14 @@ function registerMakeHandlers() {
         drawings: drawings.filter((d) => d.url)
       };
     }));
+    const session2 = SessionManager.getSession();
+    const role = (session2?.role || "").toLowerCase();
+    if (role === "factory_manager" || role === "factory manager" || role === "factory") {
+      return itemsWithDrawings.map((it) => {
+        const { item_sale_price, unit_sale_price, total_sale_price, ...rest } = it;
+        return rest;
+      });
+    }
     return itemsWithDrawings;
   });
   import_electron14.ipcMain.handle("make-get-dashboard-stats", async () => {
@@ -130331,11 +130437,20 @@ function registerMakeHandlers() {
   import_electron14.ipcMain.handle("make-search-orders", async (_e, rawPayload) => {
     try {
       const parsed = rawPayload || {};
-      return await MakeSearchService.searchOrders({
+      const orders = await MakeSearchService.searchOrders({
         query: parsed.query,
         status: parsed.status,
         limit: parsed.limit
       });
+      const session2 = SessionManager.getSession();
+      const role = (session2?.role || "").toLowerCase();
+      if (role === "factory_manager" || role === "factory manager" || role === "factory") {
+        return (orders || []).map((o) => {
+          const { sale_price, custom_price, ...rest } = o;
+          return rest;
+        });
+      }
+      return orders;
     } catch (err) {
       console.error("[MAKE IPC] make-search-orders error:", err);
       return [];
@@ -130777,6 +130892,595 @@ function registerMakeHandlers() {
   });
 }
 
+// electron/services/make/NASConnectionManager.ts
+var import_electron15 = require("electron");
+var import_fs12 = __toESM(require("fs"), 1);
+var import_path13 = __toESM(require("path"), 1);
+var import_crypto10 = __toESM(require("crypto"), 1);
+init_supabase();
+var NASConnectionManager = class _NASConnectionManager {
+  static instance;
+  installationId;
+  sessionSecret = null;
+  currentStatus = "Offline";
+  isNasOnline = false;
+  lastSuccessfulHeartbeat = 0;
+  consecutiveFailures = 0;
+  heartbeatTimer = null;
+  reconnectTimer = null;
+  isReconnecting = false;
+  isDestroyed = false;
+  // Timing constants
+  HEARTBEAT_INTERVAL_MS = process.env.LE_TEST_HEARTBEAT_INTERVAL_MS ? Math.max(500, parseInt(process.env.LE_TEST_HEARTBEAT_INTERVAL_MS, 10)) : 15e3;
+  TIMEOUT_MS = process.env.LE_TEST_TIMEOUT_MS ? Math.max(200, parseInt(process.env.LE_TEST_TIMEOUT_MS, 10)) : 2500;
+  BASE_BACKOFF_MS = process.env.LE_TEST_BASE_BACKOFF_MS ? Math.max(200, parseInt(process.env.LE_TEST_BASE_BACKOFF_MS, 10)) : 2e3;
+  MAX_BACKOFF_MS = 3e4;
+  constructor() {
+    this.installationId = this.loadOrGenerateInstallationId();
+  }
+  static getInstance() {
+    if (!_NASConnectionManager.instance) {
+      _NASConnectionManager.instance = new _NASConnectionManager();
+    }
+    return _NASConnectionManager.instance;
+  }
+  /**
+   * Loads or creates a persistent anonymous installation ID.
+   * Contains zero user or machine personal identifiers.
+   */
+  loadOrGenerateInstallationId() {
+    try {
+      const userData = import_electron15.app?.getPath ? import_electron15.app.getPath("userData") : import_path13.default.join(process.env.APPDATA || process.cwd(), "le-soft");
+      const idPath = import_path13.default.join(userData, "installation_id.json");
+      if (import_fs12.default.existsSync(idPath)) {
+        const parsed = JSON.parse(import_fs12.default.readFileSync(idPath, "utf-8"));
+        if (parsed.installationId && typeof parsed.installationId === "string") {
+          if (parsed.sessionSecret) this.sessionSecret = parsed.sessionSecret;
+          return parsed.installationId;
+        }
+      }
+      const newId = `inst-${import_crypto10.default.randomUUID()}`;
+      import_fs12.default.mkdirSync(import_path13.default.dirname(idPath), { recursive: true });
+      import_fs12.default.writeFileSync(idPath, JSON.stringify({ installationId: newId, createdAt: Date.now() }, null, 2), "utf-8");
+      return newId;
+    } catch {
+      return `inst-${import_crypto10.default.randomBytes(16).toString("hex")}`;
+    }
+  }
+  /**
+   * Persists cryptographic session secret securely to installation storage
+   */
+  persistSessionSecret(secret) {
+    try {
+      const userData = import_electron15.app?.getPath ? import_electron15.app.getPath("userData") : import_path13.default.join(process.env.APPDATA || process.cwd(), "le-soft");
+      const idPath = import_path13.default.join(userData, "installation_id.json");
+      if (import_fs12.default.existsSync(idPath)) {
+        const parsed = JSON.parse(import_fs12.default.readFileSync(idPath, "utf-8"));
+        parsed.sessionSecret = secret;
+        import_fs12.default.writeFileSync(idPath, JSON.stringify(parsed, null, 2), { encoding: "utf-8", mode: 384 });
+      }
+    } catch {
+    }
+  }
+  /**
+   * Clears invalidated session secret upon 403 authorization failure
+   */
+  clearSessionSecret() {
+    try {
+      const userData = import_electron15.app?.getPath ? import_electron15.app.getPath("userData") : import_path13.default.join(process.env.APPDATA || process.cwd(), "le-soft");
+      const idPath = import_path13.default.join(userData, "installation_id.json");
+      if (import_fs12.default.existsSync(idPath)) {
+        const parsed = JSON.parse(import_fs12.default.readFileSync(idPath, "utf-8"));
+        delete parsed.sessionSecret;
+        import_fs12.default.writeFileSync(idPath, JSON.stringify(parsed, null, 2), { encoding: "utf-8", mode: 384 });
+      }
+    } catch {
+    }
+  }
+  /**
+   * Resolves candidate connection endpoints for the NAS heartbeat service.
+   */
+  getHeartbeatCandidates() {
+    if (process.env.LE_TEST_HEARTBEAT_URL) {
+      return [process.env.LE_TEST_HEARTBEAT_URL];
+    }
+    const config2 = loadConfig();
+    const baseCandidates = [];
+    if (config2.nasHeartbeatUrl) baseCandidates.push(config2.nasHeartbeatUrl);
+    if (config2.nasUrl) {
+      baseCandidates.push(config2.nasUrl.replace(":3001", ":8085"));
+    }
+    if (config2.nasLocalUrl) {
+      baseCandidates.push(config2.nasLocalUrl.replace(":3001", ":8085"));
+    }
+    baseCandidates.push("http://100.88.85.6:8085");
+    baseCandidates.push("http://192.168.1.14:8085");
+    baseCandidates.push(config2.nasUrl || "http://100.88.85.6:3001");
+    baseCandidates.push(config2.nasLocalUrl || "http://192.168.1.14:3001");
+    return Array.from(new Set(baseCandidates.filter(Boolean)));
+  }
+  /**
+   * Starts background heartbeat monitoring and lease maintenance.
+   */
+  start() {
+    if (this.heartbeatTimer) return;
+    this.performHeartbeat();
+    this.heartbeatTimer = setInterval(() => {
+      if (!this.isReconnecting) {
+        this.performHeartbeat();
+      }
+    }, this.HEARTBEAT_INTERVAL_MS);
+  }
+  /**
+   * Stops the connection manager (e.g., during app shutdown).
+   */
+  async stop() {
+    this.isDestroyed = true;
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    try {
+      const candidates = this.getHeartbeatCandidates().filter((u) => u.includes(":8085"));
+      for (const url2 of candidates) {
+        const controller = new AbortController();
+        const tid = setTimeout(() => controller.abort(), 1e3);
+        await fetch(`${url2.replace(/\/$/, "")}/api/session/exit`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            installationId: this.installationId,
+            sessionSecret: this.sessionSecret
+          }),
+          signal: controller.signal
+        }).catch(() => {
+        });
+        clearTimeout(tid);
+        break;
+      }
+    } catch {
+    }
+  }
+  /**
+   * Executes an isolated heartbeat and lease renewal check.
+   */
+  async performHeartbeat() {
+    if (this.isDestroyed) return;
+    const candidates = this.getHeartbeatCandidates();
+    let connectedCandidate = null;
+    let isDegradedCandidate = false;
+    const appVersion = import_electron15.app?.getVersion ? import_electron15.app.getVersion() : "1.8.11";
+    const cfHeaders = getCfAccessHeaders();
+    for (const baseUrl of candidates) {
+      const cleanUrl = baseUrl.replace(/\/$/, "");
+      const isDedicatedService = cleanUrl.includes(":8085");
+      const endpoint = isDedicatedService ? `${cleanUrl}/api/heartbeat` : cleanUrl;
+      try {
+        const controller = new AbortController();
+        const tid = setTimeout(() => controller.abort(), this.TIMEOUT_MS);
+        const startTime = Date.now();
+        const response = isDedicatedService ? await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...cfHeaders },
+          body: JSON.stringify({
+            installationId: this.installationId,
+            sessionSecret: this.sessionSecret,
+            appVersion,
+            sessionStatus: "active",
+            connectionState: "connected",
+            metadata: { pingStartTime: startTime }
+          }),
+          signal: controller.signal
+        }) : await fetch(endpoint, {
+          method: "GET",
+          headers: cfHeaders,
+          signal: controller.signal
+        });
+        clearTimeout(tid);
+        const elapsed = Date.now() - startTime;
+        if (response.ok) {
+          if (isDedicatedService) {
+            try {
+              const data2 = await response.json();
+              if (data2?.sessionSecret && data2.sessionSecret !== this.sessionSecret) {
+                this.sessionSecret = data2.sessionSecret;
+                this.persistSessionSecret(data2.sessionSecret);
+              }
+            } catch {
+            }
+          }
+          connectedCandidate = baseUrl;
+          if (elapsed > 2e3) {
+            isDegradedCandidate = true;
+          }
+          break;
+        } else if (response.status === 403) {
+          this.sessionSecret = null;
+          this.clearSessionSecret();
+          this.installationId = `inst-${import_crypto10.default.randomUUID()}`;
+          try {
+            const userData = import_electron15.app?.getPath ? import_electron15.app.getPath("userData") : import_path13.default.join(process.env.APPDATA || process.cwd(), "le-soft");
+            const idPath = import_path13.default.join(userData, "installation_id.json");
+            import_fs12.default.writeFileSync(idPath, JSON.stringify({ installationId: this.installationId, createdAt: Date.now() }, null, 2), "utf-8");
+          } catch {
+          }
+        }
+      } catch {
+      }
+    }
+    if (connectedCandidate) {
+      this.consecutiveFailures = 0;
+      this.isNasOnline = true;
+      this.lastSuccessfulHeartbeat = Date.now();
+      const nextStatus = isDegradedCandidate ? "Degraded" : "Connected";
+      this.updateStatus(nextStatus);
+    } else {
+      this.consecutiveFailures++;
+      this.isNasOnline = false;
+      this.scheduleReconnect();
+    }
+  }
+  /**
+   * Schedules a single in-flight reconnection loop with exponential backoff and jitter.
+   */
+  scheduleReconnect() {
+    if (this.isReconnecting || this.isDestroyed) return;
+    this.isReconnecting = true;
+    this.updateStatus(this.consecutiveFailures >= 3 ? "Offline" : "Reconnecting");
+    const exponentialDelay = Math.min(
+      this.BASE_BACKOFF_MS * Math.pow(1.5, Math.max(0, this.consecutiveFailures - 1)),
+      this.MAX_BACKOFF_MS
+    );
+    const jitter = Math.floor(Math.random() * 1e3) + 500;
+    const totalDelay = Math.round(exponentialDelay + jitter);
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = setTimeout(async () => {
+      this.isReconnecting = false;
+      await this.performHeartbeat();
+    }, totalDelay);
+  }
+  /**
+   * Updates internal status and broadcasts safe notification to renderer.
+   */
+  updateStatus(newStatus) {
+    if (this.currentStatus !== newStatus) {
+      this.currentStatus = newStatus;
+      console.log(`[NAS-CONN] Status updated to: ${newStatus} (NAS online: ${this.isNasOnline})`);
+      this.writeDiagnosticsState();
+      this.broadcastStatusToWindows();
+    }
+  }
+  writeDiagnosticsState() {
+    try {
+      const userData = import_electron15.app?.getPath ? import_electron15.app.getPath("userData") : import_path13.default.join(process.env.APPDATA || process.cwd(), "le-soft");
+      const statePath = import_path13.default.join(userData, "nas_connection_state.json");
+      import_fs12.default.writeFileSync(statePath, JSON.stringify(this.getSafeStatus(), null, 2), "utf-8");
+    } catch {
+    }
+  }
+  /**
+   * Pushes safe connection status to all renderer windows without leaking internals.
+   */
+  broadcastStatusToWindows() {
+    const payload = this.getSafeStatus();
+    if (typeof import_electron15.BrowserWindow?.getAllWindows === "function") {
+      import_electron15.BrowserWindow.getAllWindows().forEach((win) => {
+        if (!win.isDestroyed()) {
+          win.webContents.send("nas-connection-status-changed", payload);
+        }
+      });
+    }
+  }
+  /**
+   * Returns strictly sanitized connection metrics suitable for UI display.
+   */
+  getSafeStatus() {
+    return {
+      status: this.currentStatus,
+      lastSync: this.lastSuccessfulHeartbeat,
+      isNasOnline: this.isNasOnline
+    };
+  }
+  getInstallationId() {
+    return this.installationId;
+  }
+};
+
+// electron/services/WindowsNotificationService.ts
+var import_electron16 = require("electron");
+var import_fs13 = __toESM(require("fs"), 1);
+var import_path14 = __toESM(require("path"), 1);
+var WindowsNotificationService = class _WindowsNotificationService {
+  static instance;
+  settingsPath;
+  settings = {
+    enabled: true,
+    orderNotifications: true,
+    updateNotifications: true,
+    systemNotifications: true,
+    connectionNotifications: true
+  };
+  // Deduplication tracking: Map<dedupKey, lastTimestamp>
+  recentNotifications = /* @__PURE__ */ new Map();
+  DEDUP_COOLDOWN_MS = 1e4;
+  // 10s cooldown for identical events
+  constructor() {
+    const userData = import_electron16.app?.getPath ? import_electron16.app.getPath("userData") : import_path14.default.join(process.env.APPDATA || process.cwd(), "le-soft");
+    this.settingsPath = import_path14.default.join(userData, "notification_settings.json");
+    this.loadSettings();
+    if (process.platform === "win32") {
+      import_electron16.app.setAppUserModelId("com.leadingedge.lesoft");
+    }
+  }
+  static getInstance() {
+    if (!_WindowsNotificationService.instance) {
+      _WindowsNotificationService.instance = new _WindowsNotificationService();
+    }
+    return _WindowsNotificationService.instance;
+  }
+  loadSettings() {
+    try {
+      if (import_fs13.default.existsSync(this.settingsPath)) {
+        const raw = import_fs13.default.readFileSync(this.settingsPath, "utf-8");
+        const parsed = JSON.parse(raw);
+        this.settings = { ...this.settings, ...parsed };
+      }
+    } catch {
+    }
+  }
+  getSettings() {
+    return { ...this.settings };
+  }
+  updateSettings(newSettings) {
+    this.settings = { ...this.settings, ...newSettings };
+    try {
+      import_fs13.default.mkdirSync(import_path14.default.dirname(this.settingsPath), { recursive: true });
+      import_fs13.default.writeFileSync(this.settingsPath, JSON.stringify(this.settings, null, 2), "utf-8");
+    } catch {
+    }
+    return this.getSettings();
+  }
+  /**
+   * Dispatches a native notification to the Windows Action Center
+   */
+  showNotification(options) {
+    if (!this.settings.enabled) return false;
+    if (!import_electron16.Notification.isSupported()) return false;
+    const category = options.category || "system_status";
+    if (category === "new_order" && !this.settings.orderNotifications) return false;
+    if (category === "app_update" && !this.settings.updateNotifications) return false;
+    if (category === "system_status" && !this.settings.systemNotifications) return false;
+    if (category === "connection_recovery" && !this.settings.connectionNotifications) return false;
+    const dedupKey = options.dedupKey || `${category}:${options.title}:${options.body}`;
+    const now = Date.now();
+    const lastSent = this.recentNotifications.get(dedupKey);
+    if (lastSent && now - lastSent < this.DEDUP_COOLDOWN_MS) {
+      return false;
+    }
+    this.recentNotifications.set(dedupKey, now);
+    try {
+      let iconPath;
+      try {
+        const resourceDir = import_path14.default.join(__dirname, "../../resource");
+        const candidate = import_path14.default.join(resourceDir, "icon.png");
+        if (import_fs13.default.existsSync(candidate)) iconPath = candidate;
+      } catch {
+      }
+      const notification = new import_electron16.Notification({
+        title: options.title,
+        body: options.body,
+        icon: iconPath,
+        silent: false
+      });
+      notification.on("click", () => {
+        const win = import_electron16.BrowserWindow.getAllWindows()[0];
+        if (win && !win.isDestroyed()) {
+          if (win.isMinimized()) win.restore();
+          win.focus();
+          if (options.actionRoute) {
+            win.webContents.send("navigate-to-page", options.actionRoute);
+          }
+        }
+      });
+      notification.show();
+      return true;
+    } catch (err) {
+      console.warn("[WindowsNotificationService] Failed to show notification:", err.message);
+      return false;
+    }
+  }
+};
+
+// electron/services/WatchdogService.ts
+var import_electron17 = require("electron");
+var import_fs14 = __toESM(require("fs"), 1);
+var import_path15 = __toESM(require("path"), 1);
+var WatchdogService = class _WatchdogService {
+  static instance;
+  mainLoopCheckTimer = null;
+  rendererPingTimer = null;
+  lastPingSent = 0;
+  pendingPong = false;
+  isMonitoring = false;
+  DRIFT_THRESHOLD_MS = 2e3;
+  OPERATION_THRESHOLD_MS = 2e3;
+  PING_INTERVAL_MS = 1e4;
+  PONG_TIMEOUT_MS = 5e3;
+  diagnosticsLogPath;
+  constructor() {
+    const userData = import_electron17.app?.getPath ? import_electron17.app.getPath("userData") : import_path15.default.join(process.env.APPDATA || process.cwd(), "le-soft");
+    this.diagnosticsLogPath = import_path15.default.join(userData, "stability_diagnostics.json");
+  }
+  static getInstance() {
+    if (!_WatchdogService.instance) {
+      _WatchdogService.instance = new _WatchdogService();
+    }
+    return _WatchdogService.instance;
+  }
+  /**
+   * Starts watchdog monitors
+   */
+  startMonitoring() {
+    if (this.isMonitoring) return;
+    this.isMonitoring = true;
+    this.startMainEventLoopMonitor();
+    this.startRendererResponsivenessMonitor();
+  }
+  /**
+   * Attaches lifecycle listeners to a newly created BrowserWindow
+   */
+  attachWindow(win) {
+    if (!win || win.isDestroyed()) return;
+    win.on("unresponsive", () => {
+      const memoryMb = Math.round(process.memoryUsage().heapUsed / (1024 * 1024));
+      this.recordDiagnostic({
+        operationName: "window_unresponsive",
+        durationMs: 5e3,
+        success: false,
+        errorCategory: "RENDERER_FREEZE",
+        connectionState: "unresponsive",
+        memoryHeapMb: memoryMb
+      });
+      console.warn("[WATCHDOG] Renderer window reported UNRESPONSIVE.");
+    });
+    win.on("responsive", () => {
+      console.log("[WATCHDOG] Renderer window recovered responsiveness.");
+    });
+    win.webContents.on("render-process-gone", (_event, details) => {
+      this.recordDiagnostic({
+        operationName: "render_process_gone",
+        durationMs: 0,
+        success: false,
+        errorCategory: `CRASH_${details.reason.toUpperCase()}`,
+        connectionState: "crashed"
+      });
+      console.error("[WATCHDOG] Renderer process crashed or exited:", details.reason);
+    });
+  }
+  /**
+   * Monitors main thread drift
+   */
+  startMainEventLoopMonitor() {
+    let expectedTime = Date.now() + 1e3;
+    this.mainLoopCheckTimer = setInterval(() => {
+      const now = Date.now();
+      const drift = now - expectedTime;
+      if (drift > this.DRIFT_THRESHOLD_MS) {
+        this.recordDiagnostic({
+          operationName: "main_thread_event_loop_stall",
+          durationMs: drift,
+          success: false,
+          errorCategory: "MAIN_LOOP_DRIFT",
+          memoryHeapMb: Math.round(process.memoryUsage().heapUsed / (1024 * 1024))
+        });
+        console.warn(`[WATCHDOG] Main event loop stalled for ${drift}ms.`);
+      }
+      expectedTime = Date.now() + 1e3;
+    }, 1e3);
+  }
+  /**
+   * Sends periodic heartbeat pings to renderer windows
+   */
+  startRendererResponsivenessMonitor() {
+    this.rendererPingTimer = setInterval(() => {
+      const windows = import_electron17.BrowserWindow.getAllWindows();
+      if (windows.length === 0) return;
+      this.lastPingSent = Date.now();
+      this.pendingPong = true;
+      windows.forEach((win) => {
+        if (!win.isDestroyed()) {
+          win.webContents.send("watchdog-ping", { sentAt: this.lastPingSent });
+        }
+      });
+      setTimeout(() => {
+        if (this.pendingPong) {
+          this.recordDiagnostic({
+            operationName: "renderer_ping_pong_timeout",
+            durationMs: this.PONG_TIMEOUT_MS,
+            success: false,
+            errorCategory: "RENDERER_TIMEOUT"
+          });
+        }
+      }, this.PONG_TIMEOUT_MS);
+    }, this.PING_INTERVAL_MS);
+  }
+  /**
+   * Renderer pong received
+   */
+  handleRendererPong() {
+    this.pendingPong = false;
+  }
+  /**
+   * Records an IPC or operation duration metric. Logs to file only if exceeding threshold.
+   */
+  recordOperationMetric(operationName, durationMs, success2 = true, errorCategory) {
+    if (durationMs >= this.OPERATION_THRESHOLD_MS || !success2) {
+      this.recordDiagnostic({
+        operationName,
+        durationMs,
+        success: success2,
+        errorCategory: errorCategory || (success2 ? "SLOW_OPERATION" : "OPERATION_FAILED")
+      });
+    }
+  }
+  /**
+   * Appends a sanitized diagnostic entry to stability_diagnostics.json
+   */
+  recordDiagnostic(entry) {
+    try {
+      const fullEntry = {
+        timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+        operationName: entry.operationName,
+        durationMs: Math.round(entry.durationMs),
+        success: entry.success,
+        errorCategory: entry.errorCategory || (entry.success ? "OK" : "UNKNOWN_ERROR"),
+        connectionState: entry.connectionState || "normal",
+        appVersion: import_electron17.app?.getVersion ? import_electron17.app.getVersion() : "1.8.11",
+        memoryHeapMb: entry.memoryHeapMb || Math.round(process.memoryUsage().heapUsed / (1024 * 1024))
+      };
+      let logs = [];
+      if (import_fs14.default.existsSync(this.diagnosticsLogPath)) {
+        try {
+          logs = JSON.parse(import_fs14.default.readFileSync(this.diagnosticsLogPath, "utf-8"));
+          if (!Array.isArray(logs)) logs = [];
+        } catch {
+          logs = [];
+        }
+      }
+      logs.push(fullEntry);
+      if (logs.length > 200) {
+        logs = logs.slice(-200);
+      }
+      import_fs14.default.mkdirSync(import_path15.default.dirname(this.diagnosticsLogPath), { recursive: true });
+      import_fs14.default.writeFileSync(this.diagnosticsLogPath, JSON.stringify(logs, null, 2), "utf-8");
+    } catch {
+    }
+  }
+  /**
+   * Reads recent diagnostic logs
+   */
+  getRecentDiagnostics() {
+    try {
+      if (import_fs14.default.existsSync(this.diagnosticsLogPath)) {
+        const raw = import_fs14.default.readFileSync(this.diagnosticsLogPath, "utf-8");
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+      }
+    } catch {
+    }
+    return [];
+  }
+  getSanitizedDiagnostics() {
+    return this.getRecentDiagnostics();
+  }
+  stop() {
+    if (this.mainLoopCheckTimer) clearInterval(this.mainLoopCheckTimer);
+    if (this.rendererPingTimer) clearInterval(this.rendererPingTimer);
+    this.isMonitoring = false;
+  }
+  stopMonitoring() {
+    this.stop();
+  }
+};
+
 // electron/ipc-handlers.ts
 var sharpModule = null;
 try {
@@ -130888,7 +131592,7 @@ async function checkLowStockForProduct(productId) {
 }
 function generateFirstTimePassword() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%";
-  const bytes = import_crypto11.default.randomBytes(16);
+  const bytes = import_crypto12.default.randomBytes(16);
   return Array.from(bytes).map((b) => chars[b % chars.length]).join("");
 }
 async function checkAndSeedSuperAdmin() {
@@ -130935,10 +131639,10 @@ async function checkAndSeedSuperAdmin() {
     if (!existing) {
       const generatedPassword = generateFirstTimePassword();
       const generatedHash = await import_bcryptjs2.default.hash(generatedPassword, BCRYPT_ROUNDS);
-      const logPath = import_path15.default.join(import_electron17.app.getPath("userData"), "app.log");
-      import_fs15.default.appendFileSync(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] [SEED] FIRST LAUNCH \u2014 Super Admin generated password: ${generatedPassword}
+      const logPath = import_path18.default.join(import_electron20.app.getPath("userData"), "app.log");
+      import_fs18.default.appendFileSync(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] [SEED] FIRST LAUNCH \u2014 Super Admin generated password: ${generatedPassword}
 `);
-      import_fs15.default.appendFileSync(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] [SEED] Please change this password immediately after first login.
+      import_fs18.default.appendFileSync(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] [SEED] Please change this password immediately after first login.
 `);
       const email3 = "sabbirsuperadmin@lesoft.local";
       const { data: authUser, error: authErr } = await supabaseAdmin.auth.admin.createUser({
@@ -130964,9 +131668,9 @@ async function checkAndSeedSuperAdmin() {
           ...encryptedProfile
         }).eq("auth_id", authUser.user.id);
         console.log("[SEED] Super Admin account created with random password and encrypted profile.");
-        const allWindows = import_electron17.BrowserWindow.getAllWindows();
+        const allWindows = import_electron20.BrowserWindow.getAllWindows();
         const targetWindow = allWindows.length > 0 ? allWindows[0] : void 0;
-        import_electron17.dialog.showMessageBoxSync(targetWindow || {}, {
+        import_electron20.dialog.showMessageBoxSync(targetWindow || {}, {
           type: "info",
           title: "\u{1F510} LE-SOFT \u2014 First Launch Setup",
           message: "Super Admin Account Created",
@@ -130988,8 +131692,8 @@ async function checkAndSeedSuperAdmin() {
     } else if (!existing.password_hash || !existing.password_hash.startsWith("$2")) {
       const repairedPassword = generateFirstTimePassword();
       const repairedHash = await import_bcryptjs2.default.hash(repairedPassword, BCRYPT_ROUNDS);
-      const logPath = import_path15.default.join(import_electron17.app.getPath("userData"), "app.log");
-      import_fs15.default.appendFileSync(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] [SEED] Password hash repaired. New password: ${repairedPassword}
+      const logPath = import_path18.default.join(import_electron20.app.getPath("userData"), "app.log");
+      import_fs18.default.appendFileSync(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] [SEED] Password hash repaired. New password: ${repairedPassword}
 `);
       await supabase_default.from("users").update({
         password_hash: repairedHash,
@@ -130997,7 +131701,7 @@ async function checkAndSeedSuperAdmin() {
         role: "superadmin"
       }).eq("id", existing.id);
       console.log("[SEED] Super Admin password hash repaired with a new random password. Check app.log.");
-      import_electron17.dialog.showMessageBoxSync({}, {
+      import_electron20.dialog.showMessageBoxSync({}, {
         type: "warning",
         title: "\u26A0\uFE0F  LE-SOFT \u2014 Account Repair",
         message: "Super Admin Password Reset",
@@ -131038,9 +131742,9 @@ function resetLoginAttempts(username) {
 }
 var mysqlPool = null;
 try {
-  const cfgPath = import_path15.default.join(import_electron17.app.getPath("userData"), "mysql-config.json");
-  if (import_fs15.default.existsSync(cfgPath)) {
-    const cfg = JSON.parse(import_fs15.default.readFileSync(cfgPath, "utf-8"));
+  const cfgPath = import_path18.default.join(import_electron20.app.getPath("userData"), "mysql-config.json");
+  if (import_fs18.default.existsSync(cfgPath)) {
+    const cfg = JSON.parse(import_fs18.default.readFileSync(cfgPath, "utf-8"));
     mysqlPool = import_promise.default.createPool({ host: cfg.host, user: cfg.user, password: cfg.password, database: cfg.database, port: cfg.port || 3306, waitForConnections: true, connectionLimit: 5 });
   }
 } catch {
@@ -131082,10 +131786,10 @@ async function writeAuditLog(params) {
 }
 function registerHandlers() {
   try {
-    const _origHandle = import_electron17.ipcMain.handle.bind(import_electron17.ipcMain);
-    import_electron17.ipcMain.handle = (channel, listener) => {
+    const _origHandle = import_electron20.ipcMain.handle.bind(import_electron20.ipcMain);
+    import_electron20.ipcMain.handle = (channel, listener) => {
       try {
-        import_electron17.ipcMain.removeHandler(channel);
+        import_electron20.ipcMain.removeHandler(channel);
       } catch (e2) {
       }
       return _origHandle(channel, listener);
@@ -131109,7 +131813,7 @@ function registerHandlers() {
     const r2 = (s2?.role || "").toLowerCase();
     return r2 === "superadmin" || r2 === "admin";
   }
-  import_electron17.ipcMain.handle("ping-supabase", async () => {
+  import_electron20.ipcMain.handle("ping-supabase", async () => {
     try {
       const { error: error51 } = await supabase_default.from("users").select("id").limit(1);
       if (error51) return { connected: false, error: error51.message };
@@ -131118,7 +131822,7 @@ function registerHandlers() {
       return { connected: false, error: e2.message };
     }
   });
-  import_electron17.ipcMain.handle("preload-cache", async () => {
+  import_electron20.ipcMain.handle("preload-cache", async () => {
     try {
       await preloadCache();
       return { success: true, stats: getCacheStats() };
@@ -131126,13 +131830,13 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron17.ipcMain.handle("get-cache-stats", async () => {
+  import_electron20.ipcMain.handle("get-cache-stats", async () => {
     return getCacheStats();
   });
-  import_electron17.ipcMain.handle("get-queue-stats", async () => {
+  import_electron20.ipcMain.handle("get-queue-stats", async () => {
     return getQueueStats();
   });
-  import_electron17.ipcMain.handle("update-user-presence", async (_e, userId) => {
+  import_electron20.ipcMain.handle("update-user-presence", async (_e, userId) => {
     const session2 = requireSession();
     const uid = Number(session2.id) || Number(userId);
     if (uid) {
@@ -131140,7 +131844,7 @@ function registerHandlers() {
     }
     return { success: true };
   });
-  import_electron17.ipcMain.handle("get-online-users", async () => {
+  import_electron20.ipcMain.handle("get-online-users", async () => {
     requireSession();
     const now = Date.now();
     const onlineIds = [];
@@ -131150,7 +131854,7 @@ function registerHandlers() {
     }
     return onlineIds;
   });
-  import_electron17.ipcMain.handle("set-typing-status", async (_e, payload = {}) => {
+  import_electron20.ipcMain.handle("set-typing-status", async (_e, payload = {}) => {
     const session2 = requireSession();
     const senderId = Number(session2.id);
     const receiverId = Number(payload.receiverId);
@@ -131160,7 +131864,7 @@ function registerHandlers() {
     else userTyping.delete(key);
     return { success: true };
   });
-  import_electron17.ipcMain.handle("get-typing-status", async (_e, { receiverId } = {}) => {
+  import_electron20.ipcMain.handle("get-typing-status", async (_e, { receiverId } = {}) => {
     requireSession();
     const now = Date.now();
     const typingIds = [];
@@ -131173,7 +131877,7 @@ function registerHandlers() {
     }
     return typingIds;
   });
-  import_electron17.ipcMain.handle("get-chat-messages", async (_e, { senderId, receiverId } = {}) => {
+  import_electron20.ipcMain.handle("get-chat-messages", async (_e, { senderId, receiverId } = {}) => {
     const session2 = requireSession();
     const uid = Number(session2.id);
     const otherId = Number(senderId) === uid ? Number(receiverId) : Number(senderId);
@@ -131181,7 +131885,7 @@ function registerHandlers() {
     if (error51) throw error51;
     return decryptRows(data2 || []);
   });
-  import_electron17.ipcMain.handle("send-chat-message", async (_e, msg = {}) => {
+  import_electron20.ipcMain.handle("send-chat-message", async (_e, msg = {}) => {
     const session2 = requireSession();
     const senderId = Number(session2.id);
     const receiverId = Number(msg.receiverId);
@@ -131205,7 +131909,7 @@ function registerHandlers() {
     });
     return { success: true, id: data2.id };
   });
-  import_electron17.ipcMain.handle("email-get-inbox", async (_e, userId) => {
+  import_electron20.ipcMain.handle("email-get-inbox", async (_e, userId) => {
     const session2 = requireSession();
     const uid = isSessionAdminOrSuper(session2) && userId ? Number(userId) : Number(session2.id);
     if (!uid) return [];
@@ -131213,7 +131917,7 @@ function registerHandlers() {
     if (error51) throw error51;
     return decryptRows(data2 || []);
   });
-  import_electron17.ipcMain.handle("email-get-sent", async (_e, userId) => {
+  import_electron20.ipcMain.handle("email-get-sent", async (_e, userId) => {
     const session2 = requireSession();
     const uid = isSessionAdminOrSuper(session2) && userId ? Number(userId) : Number(session2.id);
     if (!uid) return [];
@@ -131221,7 +131925,7 @@ function registerHandlers() {
     if (error51) throw error51;
     return decryptRows(data2 || []);
   });
-  import_electron17.ipcMain.handle("email-send", async (_e, emailPayload = {}) => {
+  import_electron20.ipcMain.handle("email-send", async (_e, emailPayload = {}) => {
     const session2 = requireSession();
     const senderId = Number(session2.id);
     const { receiverId, subject, body } = emailPayload;
@@ -131235,7 +131939,7 @@ function registerHandlers() {
     if (error51) throw error51;
     return { success: true };
   });
-  import_electron17.ipcMain.handle("email-mark-read", async (_e, emailId) => {
+  import_electron20.ipcMain.handle("email-mark-read", async (_e, emailId) => {
     const session2 = requireSession();
     const uid = Number(session2.id);
     let query = supabase_default.from("system_emails").update({ is_read: true }).eq("id", emailId);
@@ -131246,7 +131950,7 @@ function registerHandlers() {
     if (error51) throw error51;
     return { success: true };
   });
-  import_electron17.ipcMain.handle("email-delete", async (_e, { emailId, folder }) => {
+  import_electron20.ipcMain.handle("email-delete", async (_e, { emailId, folder }) => {
     const session2 = requireSession();
     const uid = Number(session2.id);
     const field = folder === "inbox" ? "is_deleted_by_receiver" : "is_deleted_by_sender";
@@ -131259,12 +131963,12 @@ function registerHandlers() {
     if (error51) throw error51;
     return { success: true };
   });
-  import_electron17.ipcMain.handle("get-groups", async () => {
+  import_electron20.ipcMain.handle("get-groups", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("groups").select("*, parent:groups!parent_group_id(name)").order("name");
     if (error51) throw error51;
     return decryptRows(data2 || []).map((g) => ({ ...g, parent_name: g.parent?.name || null }));
   });
-  import_electron17.ipcMain.handle("create-group", async (_e, group) => {
+  import_electron20.ipcMain.handle("create-group", async (_e, group) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -131287,7 +131991,7 @@ function registerHandlers() {
     });
     return { success: true, id: data2.id };
   });
-  import_electron17.ipcMain.handle("update-group", async (_e, id, group) => {
+  import_electron20.ipcMain.handle("update-group", async (_e, id, group) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -131317,7 +132021,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron17.ipcMain.handle("delete-group", async (_e, id) => {
+  import_electron20.ipcMain.handle("delete-group", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -131334,12 +132038,12 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron17.ipcMain.handle("get-ledgers", async () => {
+  import_electron20.ipcMain.handle("get-ledgers", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("ledgers").select("*, group:groups(name)").order("name");
     if (error51) throw error51;
     return decryptRows(data2 || []).map((l) => ({ ...l, group_name: l.group?.name || null }));
   });
-  import_electron17.ipcMain.handle("create-ledger", async (_e, ledger) => {
+  import_electron20.ipcMain.handle("create-ledger", async (_e, ledger) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -131374,7 +132078,7 @@ function registerHandlers() {
     });
     return { success: true, id: data2.id };
   });
-  import_electron17.ipcMain.handle("delete-ledger", async (_e, id) => {
+  import_electron20.ipcMain.handle("delete-ledger", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -131391,12 +132095,12 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron17.ipcMain.handle("get-vouchers", async () => {
+  import_electron20.ipcMain.handle("get-vouchers", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("vouchers").select("*, voucher_entries(ledger_id, amount, type, ledger:ledgers(name))").order("date", { ascending: false }).order("id", { ascending: false });
     if (error51) throw error51;
     return decryptRows(data2 || []).map((v) => ({ ...v, particulars: v.voucher_entries?.map((e2) => e2.ledger?.name).filter(Boolean).join(", ") || "" }));
   });
-  import_electron17.ipcMain.handle("create-voucher", async (_e, voucher) => {
+  import_electron20.ipcMain.handle("create-voucher", async (_e, voucher) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -131422,7 +132126,7 @@ function registerHandlers() {
     });
     return { success: true, id: vData.id, voucherNumber };
   });
-  import_electron17.ipcMain.handle("delete-voucher", async (_e, id) => {
+  import_electron20.ipcMain.handle("delete-voucher", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -131440,7 +132144,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron17.ipcMain.handle("get-voucher-types", async () => {
+  import_electron20.ipcMain.handle("get-voucher-types", async () => {
     try {
       const { data: data2, error: error51 } = await supabase_default.from("voucher_types").select("*").order("name");
       if (error51) {
@@ -131491,7 +132195,7 @@ function registerHandlers() {
       ];
     }
   });
-  import_electron17.ipcMain.handle("create-voucher-type", async (_e, payload) => {
+  import_electron20.ipcMain.handle("create-voucher-type", async (_e, payload) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -131513,7 +132217,7 @@ function registerHandlers() {
     });
     return { success: true, data: data2 };
   });
-  import_electron17.ipcMain.handle("update-voucher-type", async (_e, id, payload) => {
+  import_electron20.ipcMain.handle("update-voucher-type", async (_e, id, payload) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -131534,7 +132238,7 @@ function registerHandlers() {
     });
     return { success: true, data: data2 };
   });
-  import_electron17.ipcMain.handle("delete-voucher-type", async (_e, id) => {
+  import_electron20.ipcMain.handle("delete-voucher-type", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -131551,12 +132255,12 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron17.ipcMain.handle("get-units", async () => {
+  import_electron20.ipcMain.handle("get-units", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("units").select("*").order("name");
     if (error51) throw error51;
     return decryptRows(data2 || []);
   });
-  import_electron17.ipcMain.handle("create-unit", async (_e, unit) => {
+  import_electron20.ipcMain.handle("create-unit", async (_e, unit) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -131573,7 +132277,7 @@ function registerHandlers() {
     });
     return { success: true, id: data2.id };
   });
-  import_electron17.ipcMain.handle("delete-unit", async (_e, id) => {
+  import_electron20.ipcMain.handle("delete-unit", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -131590,7 +132294,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron17.ipcMain.handle("get-stock-groups", async () => {
+  import_electron20.ipcMain.handle("get-stock-groups", async () => {
     const { data: groupsData, error: groupsError } = await supabase_default.from("stock_groups").select("*, parent:stock_groups!parent_id(name)").order("name");
     if (groupsError) throw groupsError;
     const { data: productsData, error: productsError } = await supabase_default.from("products").select("id, stock_group_id");
@@ -131611,7 +132315,7 @@ function registerHandlers() {
       product_count: productCounts[Number(g.id)] || 0
     }));
   });
-  import_electron17.ipcMain.handle("create-stock-group", async (_e, group) => {
+  import_electron20.ipcMain.handle("create-stock-group", async (_e, group) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -131633,7 +132337,7 @@ function registerHandlers() {
     });
     return { success: true, id: data2.id };
   });
-  import_electron17.ipcMain.handle("update-stock-group", async (_e, id, group) => {
+  import_electron20.ipcMain.handle("update-stock-group", async (_e, id, group) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -131657,7 +132361,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron17.ipcMain.handle("delete-stock-group", async (_e, id) => {
+  import_electron20.ipcMain.handle("delete-stock-group", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -131674,12 +132378,12 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron17.ipcMain.handle("get-stock-items", async () => {
+  import_electron20.ipcMain.handle("get-stock-items", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("stock_items").select("*, group:stock_groups(name), unit:units(name,symbol)").order("name");
     if (error51) throw error51;
     return decryptRows(data2 || []).map((i2) => ({ ...i2, group_name: i2.group?.name || null, unit_name: i2.unit?.name || null, unit_symbol: i2.unit?.symbol || null }));
   });
-  import_electron17.ipcMain.handle("create-stock-item", async (_e, item) => {
+  import_electron20.ipcMain.handle("create-stock-item", async (_e, item) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -131700,7 +132404,7 @@ function registerHandlers() {
     });
     return { success: true, id: data2.id };
   });
-  import_electron17.ipcMain.handle("delete-stock-item", async (_e, id) => {
+  import_electron20.ipcMain.handle("delete-stock-item", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -131717,12 +132421,12 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron17.ipcMain.handle("get-companies", async () => {
+  import_electron20.ipcMain.handle("get-companies", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("companies").select("*").order("name");
     if (error51) throw error51;
     return decryptRows(data2 || []);
   });
-  import_electron17.ipcMain.handle("create-company", async (_e, c) => {
+  import_electron20.ipcMain.handle("create-company", async (_e, c) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -131739,7 +132443,7 @@ function registerHandlers() {
     });
     return { success: true, id: data2.id };
   });
-  import_electron17.ipcMain.handle("get-dashboard-stats", async () => {
+  import_electron20.ipcMain.handle("get-dashboard-stats", async () => {
     try {
       const [ledgers, groups, stockItems, products, bills, recentV] = await Promise.all([
         supabase_default.from("ledgers").select("id"),
@@ -131779,12 +132483,12 @@ function registerHandlers() {
       };
     }
   });
-  import_electron17.ipcMain.handle("get-godowns", async () => {
+  import_electron20.ipcMain.handle("get-godowns", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("godowns").select("*").order("name");
     if (error51) throw error51;
     return decryptRows(data2 || []);
   });
-  import_electron17.ipcMain.handle("create-godown", async (_e, g) => {
+  import_electron20.ipcMain.handle("create-godown", async (_e, g) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -131809,7 +132513,7 @@ function registerHandlers() {
     });
     return { success: true, id: data2?.id };
   });
-  import_electron17.ipcMain.handle("update-godown", async (_e, g) => {
+  import_electron20.ipcMain.handle("update-godown", async (_e, g) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -131833,7 +132537,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron17.ipcMain.handle("delete-godown", async (_e, id) => {
+  import_electron20.ipcMain.handle("delete-godown", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -131850,7 +132554,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron17.ipcMain.handle("get-products", async (_e, filterOpts) => {
+  import_electron20.ipcMain.handle("get-products", async (_e, filterOpts) => {
     let allData = [];
     let from = 0;
     const PAGE_SIZE = 1e3;
@@ -131899,7 +132603,7 @@ function registerHandlers() {
       throw error51;
     }
   });
-  import_electron17.ipcMain.handle("get-product", async (_e, id) => {
+  import_electron20.ipcMain.handle("get-product", async (_e, id) => {
     const { data: data2, error: error51 } = await supabase_default.from("products").select("*, unit:units(name,symbol), group:stock_groups(name), supplier:ledgers(id,name,store_name,contact_number,contact_person)").eq("id", id).maybeSingle();
     if (error51) throw error51;
     if (!data2) return null;
@@ -131946,7 +132650,7 @@ function registerHandlers() {
       serial
     };
   }
-  import_electron17.ipcMain.handle("create-product", async (_e, product) => {
+  import_electron20.ipcMain.handle("create-product", async (_e, product) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -132016,7 +132720,7 @@ function registerHandlers() {
     });
     return { success: true, id: data2.id };
   });
-  import_electron17.ipcMain.handle("update-product", async (_e, product) => {
+  import_electron20.ipcMain.handle("update-product", async (_e, product) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -132093,7 +132797,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron17.ipcMain.handle("get-product-ledger-detail", async (_e, id) => {
+  import_electron20.ipcMain.handle("get-product-ledger-detail", async (_e, id) => {
     const product = await (async () => {
       const { data: data2, error: error51 } = await supabase_default.from("products").select("*, unit:units(name,symbol), group:stock_groups(name), supplier:ledgers(id,name,store_name,contact_number,contact_person,payment_method)").eq("id", id).maybeSingle();
       if (error51) throw error51;
@@ -132133,7 +132837,7 @@ function registerHandlers() {
       lastPurchase: (purchaseItems || [])[0] || null
     };
   });
-  import_electron17.ipcMain.handle("get-product-requisition-summary", async (_e, productId, filters2) => {
+  import_electron20.ipcMain.handle("get-product-requisition-summary", async (_e, productId, filters2) => {
     const id = Number(productId);
     if (!Number.isFinite(id) || id <= 0) throw new Error("Valid product ID is required.");
     const productQuery = supabase_default.from("products").select("id,name,sku,product_code,model_number,quantity,unit:units(name,symbol),group:stock_groups(name)").eq("id", id).maybeSingle();
@@ -132174,7 +132878,7 @@ function registerHandlers() {
       }
     };
   });
-  import_electron17.ipcMain.handle("get-product-model-rules", async () => {
+  import_electron20.ipcMain.handle("get-product-model-rules", async () => {
     try {
       const { data: data2, error: error51 } = await supabase_default.from("product_model_rules").select("*, stock_group:stock_groups(id,name)").order("id", { ascending: true });
       if (error51) throw error51;
@@ -132186,12 +132890,12 @@ function registerHandlers() {
       return data2 || [];
     }
   });
-  import_electron17.ipcMain.handle("get-product-origins", async () => {
+  import_electron20.ipcMain.handle("get-product-origins", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("product_origins").select("*").order("name", { ascending: true });
     if (error51) throw error51;
     return data2 || [];
   });
-  import_electron17.ipcMain.handle("save-product-origin", async (_e, origin) => {
+  import_electron20.ipcMain.handle("save-product-origin", async (_e, origin) => {
     const session2 = requireSession();
     if (!isSessionSuperadmin(session2)) {
       throw new Error("Unauthorized: Super Admin access required");
@@ -132220,7 +132924,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron17.ipcMain.handle("delete-product-origin", async (_e, id) => {
+  import_electron20.ipcMain.handle("delete-product-origin", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionSuperadmin(session2)) {
       throw new Error("Unauthorized: Super Admin access required");
@@ -132246,7 +132950,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron17.ipcMain.handle("save-product-model-rule", async (_e, rule) => {
+  import_electron20.ipcMain.handle("save-product-model-rule", async (_e, rule) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -132277,7 +132981,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron17.ipcMain.handle("delete-product-model-rule", async (_e, id) => {
+  import_electron20.ipcMain.handle("delete-product-model-rule", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -132294,12 +132998,12 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron17.ipcMain.handle("get-product-attributes", async () => {
+  import_electron20.ipcMain.handle("get-product-attributes", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("product_attributes").select("*").order("name");
     if (error51) throw error51;
     return data2 || [];
   });
-  import_electron17.ipcMain.handle("save-product-attribute", async (_e, attribute) => {
+  import_electron20.ipcMain.handle("save-product-attribute", async (_e, attribute) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -132326,7 +133030,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron17.ipcMain.handle("get-damaged-goods", async () => {
+  import_electron20.ipcMain.handle("get-damaged-goods", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("damaged_goods").select("*, product:products(id,name,sku,product_code,model_number,quantity,unit:units(symbol,name),group:stock_groups(name)), requisition:purchase_requisitions(id,requisition_number,status)").order("created_at", { ascending: false });
     if (error51) throw error51;
     return (data2 || []).map((row) => ({
@@ -132337,7 +133041,7 @@ function registerHandlers() {
       usable_stock: row.product?.quantity || 0
     }));
   });
-  import_electron17.ipcMain.handle("create-damaged-goods", async (_e, payload) => {
+  import_electron20.ipcMain.handle("create-damaged-goods", async (_e, payload) => {
     const session2 = requireSession();
     const role = (session2.role || "").toLowerCase();
     const canManage = role === "superadmin" || role === "admin" || !!session2.permissions?.["manage_damaged_goods"] || !!session2.permissions?.["canManageDamaged"];
@@ -132381,7 +133085,7 @@ function registerHandlers() {
     }
     return { success: true, id: data2.id };
   });
-  import_electron17.ipcMain.handle("update-damaged-goods-status", async (_e, id, status, payload) => {
+  import_electron20.ipcMain.handle("update-damaged-goods-status", async (_e, id, status, payload) => {
     const session2 = requireSession();
     const role = (session2.role || "").toLowerCase();
     const canManage = role === "superadmin" || role === "admin" || !!session2.permissions?.["manage_damaged_goods"] || !!session2.permissions?.["canManageDamaged"];
@@ -132425,7 +133129,7 @@ function registerHandlers() {
     if (error51) throw error51;
     return { success: true };
   });
-  import_electron17.ipcMain.handle("delete-product-attribute", async (_e, id) => {
+  import_electron20.ipcMain.handle("delete-product-attribute", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Administrator access required.");
@@ -132434,7 +133138,7 @@ function registerHandlers() {
     if (error51) throw error51;
     return { success: true };
   });
-  import_electron17.ipcMain.handle("delete-product", async (_e, id, _performedByName, _userRole) => {
+  import_electron20.ipcMain.handle("delete-product", async (_e, id, _performedByName, _userRole) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Immediate stashing is restricted. Please request product deletion approval.");
@@ -132451,7 +133155,7 @@ function registerHandlers() {
     if (error51) throw error51;
     return { success: true };
   });
-  import_electron17.ipcMain.handle("request-product-deletion", async (_e, id, _performedByName, notes) => {
+  import_electron20.ipcMain.handle("request-product-deletion", async (_e, id, _performedByName, notes) => {
     const session2 = requireSession();
     const actor = session2.fullName || session2.username || "unknown-user";
     const { error: error51 } = await supabase_default.from("products").update({
@@ -132463,7 +133167,7 @@ function registerHandlers() {
     if (error51) throw error51;
     return { success: true };
   });
-  import_electron17.ipcMain.handle("approve-product-deletion", async (_e, id, _performedByName) => {
+  import_electron20.ipcMain.handle("approve-product-deletion", async (_e, id, _performedByName) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Only administrators can approve product deletion.");
@@ -132479,7 +133183,7 @@ function registerHandlers() {
     if (error51) throw error51;
     return { success: true };
   });
-  import_electron17.ipcMain.handle("reject-product-deletion", async (_e, id) => {
+  import_electron20.ipcMain.handle("reject-product-deletion", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Only administrators can reject product deletion.");
@@ -132490,7 +133194,7 @@ function registerHandlers() {
     if (error51) throw error51;
     return { success: true };
   });
-  import_electron17.ipcMain.handle("restore-product", async (_e, id) => {
+  import_electron20.ipcMain.handle("restore-product", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Only administrators can restore products.");
@@ -132508,12 +133212,12 @@ function registerHandlers() {
     if (error51) throw error51;
     return { success: true };
   });
-  import_electron17.ipcMain.handle("get-product-price-history", async () => {
+  import_electron20.ipcMain.handle("get-product-price-history", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("product_price_history").select("*, products(name, sku)").order("created_at", { ascending: false });
     if (error51) throw error51;
     return data2;
   });
-  import_electron17.ipcMain.handle("search-products-detailed", async (_e, query) => {
+  import_electron20.ipcMain.handle("search-products-detailed", async (_e, query) => {
     if (!query || query.trim().length < 1) return [];
     const q = `%${query}%`;
     const { data: data2, error: error51 } = await supabase_default.from("products").select("*, unit:units(symbol), group:stock_groups(name)").neq("status", "STASHED").or(`name.ilike.${q},sku.ilike.${q},category.ilike.${q}`).order("name").limit(50);
@@ -132524,14 +133228,14 @@ function registerHandlers() {
       group_name: p.group?.name || null
     }));
   });
-  import_electron17.ipcMain.handle("search-billing-customers", async (_e, query) => {
+  import_electron20.ipcMain.handle("search-billing-customers", async (_e, query) => {
     const cached2 = search("billing_customers", ["name", "phone"], query);
     if (cached2) return cached2.slice(0, 15);
     const q = `%${query}%`;
     const { data: data2 } = await supabase_default.from("billing_customers").select("*").or(`phone.ilike.${q},name.ilike.${q}`).order("name").limit(15);
     return decryptRows(data2 || []);
   });
-  import_electron17.ipcMain.handle("create-billing-customer", async (_e, customer) => {
+  import_electron20.ipcMain.handle("create-billing-customer", async (_e, customer) => {
     requireSession();
     const { name, phone, email: email3, address } = customer || {};
     if (phone) {
@@ -132561,11 +133265,11 @@ function registerHandlers() {
     }
     const insertedWithPlain = { ...inserted, address: address || null };
     addOne("billing_customers", insertedWithPlain);
-    const { BrowserWindow: BrowserWindow10 } = require("electron");
-    BrowserWindow10.getAllWindows().forEach((win) => win.webContents.send("data-updated", "billing_customers"));
+    const { BrowserWindow: BrowserWindow13 } = require("electron");
+    BrowserWindow13.getAllWindows().forEach((win) => win.webContents.send("data-updated", "billing_customers"));
     return insertedWithPlain;
   });
-  import_electron17.ipcMain.handle("create-bill", async (_e, billData) => {
+  import_electron20.ipcMain.handle("create-bill", async (_e, billData) => {
     const session2 = requireSession();
     const actor = session2.fullName || session2.username || "Admin";
     const { customer_id, items, shipping, subtotal, discount_total, installation_charge, installation_note, grand_total, price_adjustment } = billData || {};
@@ -132715,7 +133419,7 @@ function registerHandlers() {
                   console.error("[create-bill shipping log] Failed:", e2);
                 }
                 try {
-                  import_electron17.BrowserWindow.getAllWindows().forEach((win) => {
+                  import_electron20.BrowserWindow.getAllWindows().forEach((win) => {
                     if (!win.isDestroyed()) win.webContents.send("data-updated", "bill_shipping");
                   });
                 } catch {
@@ -132725,7 +133429,7 @@ function registerHandlers() {
           }
         }
         try {
-          import_electron17.BrowserWindow.getAllWindows().forEach((win) => {
+          import_electron20.BrowserWindow.getAllWindows().forEach((win) => {
             if (!win.isDestroyed()) win.webContents.send("data-updated", "bills");
           });
         } catch {
@@ -132742,7 +133446,7 @@ function registerHandlers() {
     });
     return { success: true, invoice_number: invoiceNumber, queued: true };
   });
-  import_electron17.ipcMain.handle("get-bills", async () => {
+  import_electron20.ipcMain.handle("get-bills", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("bills").select("*, customer:billing_customers(name,phone)").order("created_at", { ascending: false });
     if (error51) throw error51;
     return (data2 || []).map((b) => {
@@ -132752,7 +133456,7 @@ function registerHandlers() {
       return { ...dec, customer_name: custName, customer_phone: custPhone };
     });
   });
-  import_electron17.ipcMain.handle("get-bill-details", async (_e, billId) => {
+  import_electron20.ipcMain.handle("get-bill-details", async (_e, billId) => {
     const { data: bill } = await supabase_default.from("bills").select("*, customer:billing_customers(name,phone,email,address)").eq("id", billId).maybeSingle();
     if (!bill) return null;
     const { data: items } = await supabase_default.from("bill_items").select("*, product:products(image_path)").eq("bill_id", billId);
@@ -132768,7 +133472,7 @@ function registerHandlers() {
       items: decItems.map((i2) => ({ ...i2, image_path: i2.product?.image_path || null }))
     };
   });
-  import_electron17.ipcMain.handle("delete-bill", async (_e, { billId, reason }) => {
+  import_electron20.ipcMain.handle("delete-bill", async (_e, { billId, reason }) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -132808,12 +133512,12 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron17.ipcMain.handle("get-customer-bills", async (_e, customerId) => {
+  import_electron20.ipcMain.handle("get-customer-bills", async (_e, customerId) => {
     const { data: data2, error: error51 } = await supabase_default.from("bills").select("id, invoice_number, grand_total, created_at").eq("customer_id", customerId).order("created_at", { ascending: false }).limit(20);
     if (error51) throw error51;
     return (data2 || []).map((b) => decryptObject(b));
   });
-  import_electron17.ipcMain.handle("update-bill", async (_e, billData) => {
+  import_electron20.ipcMain.handle("update-bill", async (_e, billData) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2) && !session2.permissions?.["alter_bill"]) {
       throw new Error("Unauthorized: Admin access or alter_bill permission required");
@@ -132891,18 +133595,18 @@ function registerHandlers() {
       performed_by: actor
     });
     try {
-      import_electron17.BrowserWindow.getAllWindows().forEach((win) => {
+      import_electron20.BrowserWindow.getAllWindows().forEach((win) => {
         if (!win.isDestroyed()) win.webContents.send("data-updated", "bills");
       });
     } catch {
     }
     return { success: true };
   });
-  import_electron17.ipcMain.handle("get-bill-audit", async (_e, billId) => {
+  import_electron20.ipcMain.handle("get-bill-audit", async (_e, billId) => {
     const { data: data2 } = await supabase_default.from("bill_audit").select("*").eq("bill_id", billId).order("changed_at", { ascending: false });
     return decryptRows(data2 || []);
   });
-  import_electron17.ipcMain.handle("get-customer-ledger-list", async (_e, _opts) => {
+  import_electron20.ipcMain.handle("get-customer-ledger-list", async (_e, _opts) => {
     const session2 = requireSession();
     const isAdmin = isSessionAdminOrSuper(session2);
     const seeAll = isAdmin || !!session2.permissions?.["see_all_customers"] || !!session2.permissions?.["canSeeAllCustomers"];
@@ -132936,7 +133640,7 @@ function registerHandlers() {
       };
     });
   });
-  import_electron17.ipcMain.handle("get-customer-ledger-detail", async (_e, customerId) => {
+  import_electron20.ipcMain.handle("get-customer-ledger-detail", async (_e, customerId) => {
     const [custRes, billsRes, paymentsRes, addressesRes, exchangesRes, quotationsRes] = await Promise.all([
       supabase_default.from("billing_customers").select("*").eq("id", customerId).maybeSingle(),
       supabase_default.from("bills").select("id, invoice_number, grand_total, created_at, billed_by").eq("customer_id", customerId).order("created_at", { ascending: false }),
@@ -132971,7 +133675,7 @@ function registerHandlers() {
       make_orders: decryptRows(makeOrders || [])
     };
   });
-  import_electron17.ipcMain.handle("add-customer-payment", async (_e, payment) => {
+  import_electron20.ipcMain.handle("add-customer-payment", async (_e, payment) => {
     const session2 = requireSession();
     const actor = session2.fullName || session2.username || "Admin";
     const { customer_id, amount, payment_type, payment_method, note } = payment || {};
@@ -132986,7 +133690,7 @@ function registerHandlers() {
     }).select("id").single();
     if (error51) throw error51;
     try {
-      import_electron17.BrowserWindow.getAllWindows().forEach((win) => {
+      import_electron20.BrowserWindow.getAllWindows().forEach((win) => {
         if (!win.isDestroyed()) win.webContents.send("data-updated", "customer_payments");
       });
     } catch {
@@ -133001,7 +133705,7 @@ function registerHandlers() {
     });
     return { success: true, id: data2.id };
   });
-  import_electron17.ipcMain.handle("add-customer-address", async (_e, addr) => {
+  import_electron20.ipcMain.handle("add-customer-address", async (_e, addr) => {
     const session2 = requireSession();
     const { customer_id, label, address } = addr || {};
     if (!customer_id || !address) throw new Error("customer_id and address are required");
@@ -133013,7 +133717,7 @@ function registerHandlers() {
     if (error51) throw error51;
     return { success: true, id: data2.id };
   });
-  import_electron17.ipcMain.handle("delete-billing-customer", async (_e, customerId) => {
+  import_electron20.ipcMain.handle("delete-billing-customer", async (_e, customerId) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -133023,7 +133727,7 @@ function registerHandlers() {
     const { error: error51 } = await supabase_default.from("billing_customers").delete().eq("id", customerId);
     if (error51) throw error51;
     try {
-      import_electron17.BrowserWindow.getAllWindows().forEach((win) => {
+      import_electron20.BrowserWindow.getAllWindows().forEach((win) => {
         if (!win.isDestroyed()) win.webContents.send("data-updated", "billing_customers");
       });
     } catch {
@@ -133038,7 +133742,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron17.ipcMain.handle("create-exchange-order", async (_e, exchange) => {
+  import_electron20.ipcMain.handle("create-exchange-order", async (_e, exchange) => {
     const session2 = requireSession();
     const actor = session2.fullName || session2.username || "Admin";
     const { customer_id, original_bill_id, returned_items, new_items } = exchange || {};
@@ -133112,14 +133816,14 @@ function registerHandlers() {
       performed_by: actor
     });
     try {
-      import_electron17.BrowserWindow.getAllWindows().forEach((win) => {
+      import_electron20.BrowserWindow.getAllWindows().forEach((win) => {
         if (!win.isDestroyed()) win.webContents.send("data-updated", "exchange_orders");
       });
     } catch {
     }
     return { success: true, id: order.id, exchange_number: order.exchange_number, difference_amount: differenceAmount };
   });
-  import_electron17.ipcMain.handle("get-exchange-orders", async () => {
+  import_electron20.ipcMain.handle("get-exchange-orders", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("exchange_orders").select("*, customer:billing_customers(name, phone), bill:bills(invoice_number)").order("created_at", { ascending: false });
     if (error51) throw error51;
     return (data2 || []).map((ex) => ({
@@ -133129,7 +133833,7 @@ function registerHandlers() {
       original_invoice_number: decryptField(ex.bill?.invoice_number) || ex.bill?.invoice_number || null
     }));
   });
-  import_electron17.ipcMain.handle("get-exchange-details", async (_e, id) => {
+  import_electron20.ipcMain.handle("get-exchange-details", async (_e, id) => {
     const { data: order, error: error51 } = await supabase_default.from("exchange_orders").select("*, customer:billing_customers(name, phone)").eq("id", id).maybeSingle();
     if (error51) throw error51;
     if (!order) return null;
@@ -133140,12 +133844,12 @@ function registerHandlers() {
       items: decryptRows(items || [])
     };
   });
-  import_electron17.ipcMain.handle("get-purchase-bills", async () => {
+  import_electron20.ipcMain.handle("get-purchase-bills", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("purchase_bills").select("*, supplier:ledgers(name)").order("bill_date", { ascending: false }).order("id", { ascending: false });
     if (error51) throw error51;
     return decryptRows(data2 || []).map((b) => ({ ...b, supplier_name: b.supplier?.name || null }));
   });
-  import_electron17.ipcMain.handle("create-purchase-bill", async (_e, bill) => {
+  import_electron20.ipcMain.handle("create-purchase-bill", async (_e, bill) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -133176,7 +133880,7 @@ function registerHandlers() {
     });
     return { success: true, id: pb.id };
   });
-  import_electron17.ipcMain.handle("delete-purchase-bill", async (_e, id) => {
+  import_electron20.ipcMain.handle("delete-purchase-bill", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -133194,7 +133898,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron17.ipcMain.handle("change-password", async (_e, data2) => {
+  import_electron20.ipcMain.handle("change-password", async (_e, data2) => {
     const id = Number(data2?.id);
     const currentPassword = typeof data2?.currentPassword === "string" ? data2.currentPassword : "";
     const newPassword = typeof data2?.newPassword === "string" ? data2.newPassword : "";
@@ -133229,7 +133933,7 @@ function registerHandlers() {
   });
   checkAndSeedSuperAdmin().catch(() => {
   });
-  import_electron17.ipcMain.handle("get-users", async () => {
+  import_electron20.ipcMain.handle("get-users", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("users").select("id,username,full_name,role,email,phone,is_active,created_at,group_id").order("created_at", { ascending: false });
     if (error51) throw error51;
     return decryptRows(data2 || []);
@@ -133270,7 +133974,7 @@ function registerHandlers() {
       console.warn("[PUBLISH USER TO WEBSITE] Exception:", err?.message);
     }
   };
-  import_electron17.ipcMain.handle("create-user", async (_e, user) => {
+  import_electron20.ipcMain.handle("create-user", async (_e, user) => {
     const { username, password, fullName, role, groupId, email: email3, phone } = user;
     const session2 = requireSession();
     const reqRole = (session2.role || "").toLowerCase();
@@ -133395,7 +134099,7 @@ function registerHandlers() {
     });
     return { success: true, id: finalUserId };
   });
-  import_electron17.ipcMain.handle("update-user", async (_e, user) => {
+  import_electron20.ipcMain.handle("update-user", async (_e, user) => {
     const { id, username, fullName, role, email: email3, phone, isActive, password, groupId } = user;
     const session2 = requireSession();
     const reqRole = (session2.role || "").toLowerCase();
@@ -133477,7 +134181,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron17.ipcMain.handle("delete-user", async (_e, id) => {
+  import_electron20.ipcMain.handle("delete-user", async (_e, id) => {
     const session2 = requireSession();
     const reqRole = (session2.role || "").toLowerCase();
     const isAdminOrSuper = reqRole === "superadmin" || reqRole === "admin";
@@ -133530,7 +134234,7 @@ function registerHandlers() {
     }
     return { success: true };
   });
-  import_electron17.ipcMain.handle("authenticate-user", async (_e, credentials) => {
+  import_electron20.ipcMain.handle("authenticate-user", async (_e, credentials) => {
     const username = typeof credentials?.username === "string" ? credentials.username.trim() : "";
     const password = typeof credentials?.password === "string" ? credentials.password : "";
     if (!username || !password) return { success: false, error: "Invalid credentials" };
@@ -133663,7 +134367,7 @@ function registerHandlers() {
     recordFailedLogin(username);
     return { success: false, error: "Invalid username or password." };
   });
-  import_electron17.ipcMain.handle("clear-session", async () => {
+  import_electron20.ipcMain.handle("clear-session", async () => {
     try {
       await supabase_default.auth.signOut();
       clearSession();
@@ -133673,12 +134377,12 @@ function registerHandlers() {
       return { success: false, error: String(e2) };
     }
   });
-  import_electron17.ipcMain.handle("get-active-sessions", async () => {
+  import_electron20.ipcMain.handle("get-active-sessions", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("users").select("*").eq("is_online", true);
     if (error51) return { success: false, error: error51.message };
     return { success: true, data: data2 };
   });
-  import_electron17.ipcMain.handle("verify-admin-password", async (_e, { password }) => {
+  import_electron20.ipcMain.handle("verify-admin-password", async (_e, { password }) => {
     if (!password) return { success: false, error: "Missing password" };
     const { data: superAdmins, error: error51 } = await supabase_default.from("users").select("password_hash").eq("role", "superadmin");
     if (error51 || !superAdmins || superAdmins.length === 0) {
@@ -133691,7 +134395,7 @@ function registerHandlers() {
     }
     return { success: false, error: "Incorrect password" };
   });
-  import_electron17.ipcMain.handle("kick-user-session", async (_e, userId) => {
+  import_electron20.ipcMain.handle("kick-user-session", async (_e, userId) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       return { success: false, error: "Unauthorized: Administrator access required." };
@@ -133701,11 +134405,11 @@ function registerHandlers() {
     if (error51) return { success: false, error: error51.message };
     return { success: true };
   });
-  import_electron17.ipcMain.handle("get-settings", async () => {
+  import_electron20.ipcMain.handle("get-settings", async () => {
     const { data: data2 } = await supabase_default.from("companies").select("*").eq("id", 1).maybeSingle();
     return data2 || {};
   });
-  import_electron17.ipcMain.handle("get-device-sessions", async () => {
+  import_electron20.ipcMain.handle("get-device-sessions", async () => {
     const session2 = requireSession();
     if (!isSessionSuperadmin(session2)) return { success: false, error: "Unauthorized: Superadmin access required." };
     if (!supabaseAdmin) return { success: false, error: "Database Admin Key not configured in settings." };
@@ -133713,7 +134417,7 @@ function registerHandlers() {
     if (error51) return { success: false, error: error51.message };
     return { success: true, data: data2 };
   });
-  import_electron17.ipcMain.handle("force-update-all", async () => {
+  import_electron20.ipcMain.handle("force-update-all", async () => {
     const session2 = requireSession();
     if (!isSessionSuperadmin(session2)) return { success: false, error: "Unauthorized: Superadmin access required." };
     if (!supabaseAdmin) return { success: false, error: "Database Admin Key not configured in settings." };
@@ -133726,7 +134430,7 @@ function registerHandlers() {
     supabaseAdmin.removeChannel(channel);
     return { success: true };
   });
-  import_electron17.ipcMain.handle("clear-database", async (_e, { section, password }) => {
+  import_electron20.ipcMain.handle("clear-database", async (_e, { section, password }) => {
     const session2 = requireSession();
     if (!isSessionSuperadmin(session2)) {
       return { success: false, error: "Unauthorized: Only superadmin can perform this action." };
@@ -133779,7 +134483,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron17.ipcMain.handle("update-settings", async (_e, s2) => {
+  import_electron20.ipcMain.handle("update-settings", async (_e, s2) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Administrator access required.");
@@ -133800,11 +134504,11 @@ function registerHandlers() {
     if (error51) throw error51;
     return { success: true };
   });
-  import_electron17.ipcMain.handle("get-policy", async () => {
+  import_electron20.ipcMain.handle("get-policy", async () => {
     const { data: data2 } = await supabase_default.from("companies").select("max_price_adjustment").eq("id", 1).maybeSingle();
     return { maxPriceAdjustment: Number(data2?.max_price_adjustment ?? 0) };
   });
-  import_electron17.ipcMain.handle("save-policy", async (_e, policy) => {
+  import_electron20.ipcMain.handle("save-policy", async (_e, policy) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Administrator access required.");
@@ -133813,7 +134517,7 @@ function registerHandlers() {
     if (error51) throw error51;
     return { success: true };
   });
-  import_electron17.ipcMain.handle("get-db-connection-state", async () => {
+  import_electron20.ipcMain.handle("get-db-connection-state", async () => {
     const { failoverEngine: failoverEngine2 } = await Promise.resolve().then(() => (init_supabase(), supabase_exports));
     const status = failoverEngine2.getStatus();
     return {
@@ -133826,11 +134530,11 @@ function registerHandlers() {
       metrics: status.metrics
     };
   });
-  import_electron17.ipcMain.handle("get-db-status", async () => {
+  import_electron20.ipcMain.handle("get-db-status", async () => {
     const { failoverEngine: failoverEngine2 } = await Promise.resolve().then(() => (init_supabase(), supabase_exports));
     return failoverEngine2.getStatus();
   });
-  import_electron17.ipcMain.handle("trigger-db-reconcile", async () => {
+  import_electron20.ipcMain.handle("trigger-db-reconcile", async () => {
     const session2 = requireSession();
     if (session2.role !== "Administrator" && session2.role !== "Manager") {
       throw new Error("Forbidden: Manual database reconciliation requires Administrator or Manager privileges.");
@@ -133838,7 +134542,7 @@ function registerHandlers() {
     const { failoverEngine: failoverEngine2 } = await Promise.resolve().then(() => (init_supabase(), supabase_exports));
     return await failoverEngine2.reconcileFallbackWrites();
   });
-  import_electron17.ipcMain.handle("trigger-retention-cleanup", async () => {
+  import_electron20.ipcMain.handle("trigger-retention-cleanup", async () => {
     const session2 = requireSession();
     if (session2.role !== "Administrator") {
       throw new Error("Forbidden: Retention cleanup requires Administrator privileges.");
@@ -133846,7 +134550,7 @@ function registerHandlers() {
     const { failoverEngine: failoverEngine2 } = await Promise.resolve().then(() => (init_supabase(), supabase_exports));
     return await failoverEngine2.maintainSupabaseRetention();
   });
-  import_electron17.ipcMain.handle("trigger-db-bootstrap", async () => {
+  import_electron20.ipcMain.handle("trigger-db-bootstrap", async () => {
     const session2 = requireSession();
     if (session2.role !== "Administrator") {
       throw new Error("Forbidden: Database bootstrap requires Administrator privileges.");
@@ -133854,7 +134558,7 @@ function registerHandlers() {
     const { failoverEngine: failoverEngine2 } = await Promise.resolve().then(() => (init_supabase(), supabase_exports));
     return await failoverEngine2.bootstrapFallbackDataset();
   });
-  import_electron17.ipcMain.handle("get-supabase-config", async () => {
+  import_electron20.ipcMain.handle("get-supabase-config", async () => {
     try {
       const cfg = loadConfig();
       return {
@@ -133879,7 +134583,7 @@ function registerHandlers() {
       };
     }
   });
-  import_electron17.ipcMain.handle("save-supabase-config", async (_e, newConfig) => {
+  import_electron20.ipcMain.handle("save-supabase-config", async (_e, newConfig) => {
     const session2 = requireSession();
     if (!isSessionSuperadmin(session2)) {
       throw new Error("Unauthorized: Superadmin access required.");
@@ -133895,7 +134599,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron17.ipcMain.handle("get-user-groups", async () => {
+  import_electron20.ipcMain.handle("get-user-groups", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("user_groups").select("*").order("id");
     if (error51) throw error51;
     const isSuperAdmin = isSessionSuperadmin();
@@ -133903,7 +134607,7 @@ function registerHandlers() {
     const filtered = groups.filter((g) => isSuperAdmin || g.name !== "Super Admin");
     return filtered;
   });
-  import_electron17.ipcMain.handle("create-user-group", async (_e, group) => {
+  import_electron20.ipcMain.handle("create-user-group", async (_e, group) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Administrator access required to manage user groups.");
@@ -133929,7 +134633,7 @@ function registerHandlers() {
     }
     return { success: true, id: data2.id };
   });
-  import_electron17.ipcMain.handle("update-user-group", async (_e, group) => {
+  import_electron20.ipcMain.handle("update-user-group", async (_e, group) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Administrator access required to manage user groups.");
@@ -133954,7 +134658,7 @@ function registerHandlers() {
     }
     return { success: true };
   });
-  import_electron17.ipcMain.handle("delete-user-group", async (_e, id) => {
+  import_electron20.ipcMain.handle("delete-user-group", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Administrator access required to manage user groups.");
@@ -133971,7 +134675,7 @@ function registerHandlers() {
     }
     return { success: true };
   });
-  import_electron17.ipcMain.handle("get-notifications", async (_e, userId) => {
+  import_electron20.ipcMain.handle("get-notifications", async (_e, userId) => {
     try {
       const sevenDaysAgo = /* @__PURE__ */ new Date();
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
@@ -133990,14 +134694,14 @@ function registerHandlers() {
       return [];
     }
   });
-  import_electron17.ipcMain.handle("clear-all-notifications", async (_e, _userId) => {
+  import_electron20.ipcMain.handle("clear-all-notifications", async (_e, _userId) => {
     const session2 = requireSession();
     const userId = Number(session2.id);
     const { error: error51 } = await supabase_default.from("notifications").delete().or(`recipient_id.eq.${userId},recipient_id.is.null`);
     if (error51) throw error51;
     return { success: true };
   });
-  import_electron17.ipcMain.handle("send-notification", async (_e, notification) => {
+  import_electron20.ipcMain.handle("send-notification", async (_e, notification) => {
     const session2 = requireSession();
     const { title, message, recipientIds, actionPath, actionLabel, metadata, notificationKey } = notification;
     const baseRow = {
@@ -134019,39 +134723,39 @@ function registerHandlers() {
     if (error51) throw error51;
     return { success: true, count: recipientIds.length };
   });
-  import_electron17.ipcMain.handle("mark-notification-read", async (_e, id) => {
+  import_electron20.ipcMain.handle("mark-notification-read", async (_e, id) => {
     requireSession();
     await supabase_default.from("notifications").update({ is_read: true }).eq("id", id);
     return { success: true };
   });
-  import_electron17.ipcMain.handle("mark-all-notifications-read", async (_e, _userId) => {
+  import_electron20.ipcMain.handle("mark-all-notifications-read", async (_e, _userId) => {
     const session2 = requireSession();
     const userId = Number(session2.id);
     await supabase_default.from("notifications").update({ is_read: true }).or(`recipient_id.eq.${userId},recipient_id.is.null`).eq("is_read", false);
     return { success: true };
   });
-  import_electron17.ipcMain.handle("delete-notification", async (_e, id) => {
+  import_electron20.ipcMain.handle("delete-notification", async (_e, id) => {
     requireSession();
     await supabase_default.from("notifications").delete().eq("id", id);
     return { success: true };
   });
-  import_electron17.ipcMain.handle("pick-image", async () => {
-    const result = await import_electron17.dialog.showOpenDialog({ properties: ["openFile"], filters: [{ name: "Images", extensions: ["jpg", "jpeg", "png", "gif", "webp", "bmp"] }] });
+  import_electron20.ipcMain.handle("pick-image", async () => {
+    const result = await import_electron20.dialog.showOpenDialog({ properties: ["openFile"], filters: [{ name: "Images", extensions: ["jpg", "jpeg", "png", "gif", "webp", "bmp"] }] });
     if (result.canceled || result.filePaths.length === 0) return null;
     const filePath = result.filePaths[0];
     try {
-      return await uploadOptimizedImage(import_fs15.default.readFileSync(filePath), import_path15.default.basename(filePath, import_path15.default.extname(filePath)) || "product");
+      return await uploadOptimizedImage(import_fs18.default.readFileSync(filePath), import_path18.default.basename(filePath, import_path18.default.extname(filePath)) || "product");
     } catch (e2) {
       console.error("[IPC] Product image upload failed:", e2);
       return null;
     }
   });
-  import_electron17.ipcMain.handle("pick-chat-file", async () => {
-    const result = await import_electron17.dialog.showOpenDialog({ properties: ["openFile"], filters: [{ name: "All Files", extensions: ["*"] }, { name: "Images", extensions: ["jpg", "png", "gif", "webp"] }, { name: "Docs", extensions: ["pdf", "doc", "docx", "xls", "xlsx", "txt"] }] });
+  import_electron20.ipcMain.handle("pick-chat-file", async () => {
+    const result = await import_electron20.dialog.showOpenDialog({ properties: ["openFile"], filters: [{ name: "All Files", extensions: ["*"] }, { name: "Images", extensions: ["jpg", "png", "gif", "webp"] }, { name: "Docs", extensions: ["pdf", "doc", "docx", "xls", "xlsx", "txt"] }] });
     if (result.canceled || result.filePaths.length === 0) return null;
-    return { path: result.filePaths[0], name: import_path15.default.basename(result.filePaths[0]) };
+    return { path: result.filePaths[0], name: import_path18.default.basename(result.filePaths[0]) };
   });
-  import_electron17.ipcMain.handle("report-trial-balance", async () => {
+  import_electron20.ipcMain.handle("report-trial-balance", async () => {
     const { data: ledgers } = await supabase_default.from("ledgers").select("id,name,opening_balance,opening_balance_type,group:groups(name,nature)").order("name");
     const { data: entries } = await supabase_default.from("voucher_entries").select("ledger_id,amount,type");
     const entryMap = {};
@@ -134062,7 +134766,7 @@ function registerHandlers() {
     }
     return (ledgers || []).map((l) => ({ ...l, group_name: l.group?.name, nature: l.group?.nature, total_debit: entryMap[l.id]?.dr || 0, total_credit: entryMap[l.id]?.cr || 0 }));
   });
-  import_electron17.ipcMain.handle("report-balance-sheet", async () => {
+  import_electron20.ipcMain.handle("report-balance-sheet", async () => {
     const { data: data2 } = await supabase_default.from("ledgers").select("id,name,opening_balance,opening_balance_type,group:groups!inner(name,nature)").in("groups.nature", ["Assets", "Liabilities"]).order("name");
     const { data: entries } = await supabase_default.from("voucher_entries").select("ledger_id,amount,type");
     const em = {};
@@ -134073,7 +134777,7 @@ function registerHandlers() {
     }
     return decryptRows(data2 || []).map((l) => ({ ...l, group_name: l.group?.name, nature: l.group?.nature, total_debit: em[l.id]?.dr || 0, total_credit: em[l.id]?.cr || 0 }));
   });
-  import_electron17.ipcMain.handle("report-profit-and-loss", async () => {
+  import_electron20.ipcMain.handle("report-profit-and-loss", async () => {
     const { data: data2 } = await supabase_default.from("ledgers").select("id,name,opening_balance,opening_balance_type,group:groups!inner(name,nature)").in("groups.nature", ["Income", "Expenses"]).order("name");
     const { data: entries } = await supabase_default.from("voucher_entries").select("ledger_id,amount,type");
     const em = {};
@@ -134084,7 +134788,7 @@ function registerHandlers() {
     }
     return decryptRows(data2 || []).map((l) => ({ ...l, group_name: l.group?.name, nature: l.group?.nature, total_debit: em[l.id]?.dr || 0, total_credit: em[l.id]?.cr || 0 }));
   });
-  import_electron17.ipcMain.handle("report-stock-summary", async () => {
+  import_electron20.ipcMain.handle("report-stock-summary", async () => {
     const { data: products } = await supabase_default.from("products").select("id,name,sku,category,quantity,purchase_price,selling_price,image_path,unit:units(symbol)").order("name");
     const { data: pbi } = await supabase_default.from("purchase_bill_items").select("product_id,qty,amount");
     const pbiMap = {};
@@ -134095,7 +134799,7 @@ function registerHandlers() {
     }
     return (products || []).map((p) => ({ ...p, unit_symbol: p.unit?.symbol || null, purchased_qty: pbiMap[p.id]?.qty || 0, purchased_value: pbiMap[p.id]?.value || 0 }));
   });
-  import_electron17.ipcMain.handle("report-day-book", async (_e, params) => {
+  import_electron20.ipcMain.handle("report-day-book", async (_e, params) => {
     const { fromDate, toDate } = params || {};
     let q = supabase_default.from("vouchers").select("id,voucher_type,voucher_number,date,narration,total_amount,voucher_entries(amount,type,ledger:ledgers(name))").order("date", { ascending: false }).order("id", { ascending: false });
     if (fromDate && toDate) q = q.gte("date", fromDate).lte("date", toDate);
@@ -134105,11 +134809,19 @@ function registerHandlers() {
       (v) => (v.voucher_entries || []).map((e2) => ({ id: v.id, voucher_type: v.voucher_type, voucher_number: v.voucher_number, date: v.date, narration: v.narration, total_amount: v.total_amount, entry_amount: e2.amount, entry_type: e2.type, ledger_name: e2.ledger?.name || null }))
     );
   });
-  import_electron17.ipcMain.handle("get-make-orders", async () => {
+  import_electron20.ipcMain.handle("get-make-orders", async () => {
+    const session2 = SessionManager.getSession();
+    const role = (session2?.role || "").toLowerCase();
+    const isFactoryManager = role === "factory_manager" || role === "factory manager" || role === "factory";
+    const sanitizeOrder = (o) => {
+      if (!isFactoryManager) return o;
+      const { sale_price, custom_price, ...rest } = o;
+      return rest;
+    };
     try {
       const { data: data2, error: error51 } = await supabase_default.from("make_orders").select("*, salesman:users(full_name), bill:bills(invoice_number)").order("created_at", { ascending: false });
       if (!error51 && data2) {
-        return decryptRows(data2).map((o) => ({
+        return decryptRows(data2).map((o) => sanitizeOrder({
           ...o,
           salesman_name: o.salesman?.full_name || "Unassigned",
           bill_invoice_number: o.bill?.invoice_number || null
@@ -134123,20 +134835,20 @@ function registerHandlers() {
     }
     const { data: baseData, error: baseErr } = await supabase_default.from("make_orders").select("*, salesman:users(full_name)").order("created_at", { ascending: false });
     if (baseErr) throw baseErr;
-    return decryptRows(baseData || []).map((o) => ({
+    return decryptRows(baseData || []).map((o) => sanitizeOrder({
       ...o,
       salesman_name: o.salesman?.full_name || "Unassigned",
       bill_invoice_number: null
     }));
   });
-  import_electron17.ipcMain.handle("get-salesmen", async () => {
+  import_electron20.ipcMain.handle("get-salesmen", async () => {
     const { data: grp } = await supabase_default.from("user_groups").select("id").eq("name", "Salesman").maybeSingle();
     if (!grp) return [];
     const { data: data2, error: error51 } = await supabase_default.from("users").select("id, username, full_name, email").eq("group_id", grp.id).eq("is_active", 1);
     if (error51) throw error51;
     return decryptRows(data2 || []);
   });
-  import_electron17.ipcMain.handle("set-make-order-price", async (_e, { orderId, customPrice }) => {
+  import_electron20.ipcMain.handle("set-make-order-price", async (_e, { orderId, customPrice }) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -134171,7 +134883,7 @@ function registerHandlers() {
       }
     }
     try {
-      import_electron17.BrowserWindow.getAllWindows().forEach((win) => {
+      import_electron20.BrowserWindow.getAllWindows().forEach((win) => {
         if (!win.isDestroyed()) {
           win.webContents.send("data-updated", "make_orders");
           win.webContents.send("data-updated", "notifications");
@@ -134190,7 +134902,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron17.ipcMain.handle("mark-customization-paid", async (_e, { orderId }) => {
+  import_electron20.ipcMain.handle("mark-customization-paid", async (_e, { orderId }) => {
     const session2 = requireSession();
     const actor = session2.fullName || session2.username;
     const { data: order, error: fetchErr } = await supabase_default.from("make_orders").select("*").eq("id", orderId).maybeSingle();
@@ -134224,7 +134936,7 @@ function registerHandlers() {
       }
     }
     try {
-      import_electron17.BrowserWindow.getAllWindows().forEach((win) => {
+      import_electron20.BrowserWindow.getAllWindows().forEach((win) => {
         if (!win.isDestroyed()) {
           win.webContents.send("data-updated", "make_orders");
           win.webContents.send("data-updated", "bills");
@@ -134242,7 +134954,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron17.ipcMain.handle("update-make-order-status", async (_e, { orderId, status, note }) => {
+  import_electron20.ipcMain.handle("update-make-order-status", async (_e, { orderId, status, note }) => {
     const session2 = requireSession();
     const actor = session2.fullName || session2.username;
     await supabase_default.from("make_orders").update({ status, updated_at: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", orderId);
@@ -134258,17 +134970,17 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron17.ipcMain.handle("get-make-order-updates", async (_e, orderId) => {
+  import_electron20.ipcMain.handle("get-make-order-updates", async (_e, orderId) => {
     const { data: data2 } = await supabase_default.from("make_order_updates").select("*").eq("order_id", orderId).order("created_at");
     return decryptRows(data2 || []);
   });
-  import_electron17.ipcMain.handle("get-make-furniture-names", async () => {
+  import_electron20.ipcMain.handle("get-make-furniture-names", async () => {
     const { data: data2 } = await supabase_default.from("make_orders").select("furniture_name").order("furniture_name");
     return [...new Set((data2 || []).map((r2) => r2.furniture_name))];
   });
-  import_electron17.ipcMain.handle("get-printers", async () => {
+  import_electron20.ipcMain.handle("get-printers", async () => {
     try {
-      const mainWin = import_electron17.BrowserWindow.getAllWindows()[0];
+      const mainWin = import_electron20.BrowserWindow.getAllWindows()[0];
       if (!mainWin) return [];
       const printers = await mainWin.webContents.getPrintersAsync();
       return printers.map((p) => ({ name: p.name, isDefault: p.isDefault || p.status === 0 }));
@@ -134276,13 +134988,13 @@ function registerHandlers() {
       return [];
     }
   });
-  import_electron17.ipcMain.handle("get-audit-log", async (_e, { module: module2, limit }) => {
+  import_electron20.ipcMain.handle("get-audit-log", async (_e, { module: module2, limit }) => {
     let q = supabase_default.from("system_audit_log").select("*").order("performed_at", { ascending: false }).limit(limit || 200);
     if (module2) q = q.eq("module", module2);
     const { data: data2 } = await q;
     return decryptRows(data2 || []);
   });
-  import_electron17.ipcMain.handle("stage-bill-alteration", async (_e, { billId, changes, reason }) => {
+  import_electron20.ipcMain.handle("stage-bill-alteration", async (_e, { billId, changes, reason }) => {
     const session2 = requireSession();
     const actor = session2.fullName || session2.username;
     const { data: currentBill } = await supabase_default.from("bills").select("*").eq("id", billId).maybeSingle();
@@ -134310,7 +135022,7 @@ function registerHandlers() {
     });
     return { success: true, audit_id: data2.id };
   });
-  import_electron17.ipcMain.handle("get-pending-alterations", async () => {
+  import_electron20.ipcMain.handle("get-pending-alterations", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("bill_audit").select("*, bill:bills(invoice_number, customer:billing_customers(name))").eq("alter_status", "pending_approval").order("changed_at", { ascending: false });
     if (error51) throw error51;
     return (data2 || []).map((r2) => ({
@@ -134319,7 +135031,7 @@ function registerHandlers() {
       customer_name: decryptField(r2.bill?.customer?.name) || r2.bill?.customer?.name
     }));
   });
-  import_electron17.ipcMain.handle("approve-alteration", async (_e, { auditId }) => {
+  import_electron20.ipcMain.handle("approve-alteration", async (_e, { auditId }) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -134345,7 +135057,7 @@ function registerHandlers() {
     await writeAuditLog({ module: "Billing", action: "BILL_ALTER_APPROVED", entity_type: "bill", entity_id: audit.bill_id, description: `Approved by ${actor}`, performed_by: actor });
     return { success: true };
   });
-  import_electron17.ipcMain.handle("reject-alteration", async (_e, { auditId, rejectReason }) => {
+  import_electron20.ipcMain.handle("reject-alteration", async (_e, { auditId, rejectReason }) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -134356,7 +135068,7 @@ function registerHandlers() {
     await writeAuditLog({ module: "Billing", action: "BILL_ALTER_REJECTED", entity_type: "bill", entity_id: audit?.bill_id, description: `Rejected by ${actor}. Reason: ${rejectReason}`, performed_by: actor });
     return { success: true };
   });
-  import_electron17.ipcMain.handle("add-bill-shipping", async (_e, data2) => {
+  import_electron20.ipcMain.handle("add-bill-shipping", async (_e, data2) => {
     requireSession();
     enqueue({
       table: "bill_shipping",
@@ -134365,11 +135077,11 @@ function registerHandlers() {
     });
     return { success: true, queued: true };
   });
-  import_electron17.ipcMain.handle("get-bill-shipping", async (_e, billId) => {
+  import_electron20.ipcMain.handle("get-bill-shipping", async (_e, billId) => {
     const { data: data2 } = await supabase_default.from("bill_shipping").select("*").eq("bill_id", billId).maybeSingle();
     return data2 || null;
   });
-  import_electron17.ipcMain.handle("get-all-shipments", async (_e, { status } = {}) => {
+  import_electron20.ipcMain.handle("get-all-shipments", async (_e, { status } = {}) => {
     let q = supabase_default.from("bill_shipping").select("*, bill:bills(invoice_number,grand_total,created_at,customer:billing_customers(name,phone))").order("created_at", { ascending: false });
     if (status) q = q.eq("status", status);
     const { data: data2, error: error51 } = await q;
@@ -134382,11 +135094,11 @@ function registerHandlers() {
       customer_phone: decryptField(s2.bill?.customer?.phone) || s2.bill?.customer?.phone
     }));
   });
-  import_electron17.ipcMain.handle("get-shipment-history", async (_e, shipmentId) => {
+  import_electron20.ipcMain.handle("get-shipment-history", async (_e, shipmentId) => {
     const { data: data2 } = await supabase_default.from("shipping_status_log").select("*").eq("shipment_id", shipmentId).order("created_at");
     return decryptRows(data2 || []);
   });
-  import_electron17.ipcMain.handle("update-shipment-status", async (_e, { shipmentId, billId, status, note, imagePath }) => {
+  import_electron20.ipcMain.handle("update-shipment-status", async (_e, { shipmentId, billId, status, note, imagePath }) => {
     const session2 = requireSession();
     const actor = session2.fullName || session2.username;
     const actorRole = session2.role;
@@ -134398,7 +135110,7 @@ function registerHandlers() {
     await writeAuditLog({ module: "Shipping", action: "SHIPPING_STATUS_UPDATED", entity_type: "shipment", entity_id: shipmentId, description: `Status \u2192 "${status}" by ${actor}`, new_value: { status, note }, performed_by: actor });
     return { success: true };
   });
-  import_electron17.ipcMain.handle("upload-packaging-image", async (_e, { shipmentId, billId, imageBase64 }) => {
+  import_electron20.ipcMain.handle("upload-packaging-image", async (_e, { shipmentId, billId, imageBase64 }) => {
     const session2 = requireSession();
     const actor = session2.fullName || session2.username;
     const actorRole = session2.role;
@@ -134413,9 +135125,9 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron17.ipcMain.handle("get-machine-id", async () => getMachineId());
-  import_electron17.ipcMain.handle("check-license", async () => isLicensed());
-  import_electron17.ipcMain.handle("activate-license", async (_e, key) => {
+  import_electron20.ipcMain.handle("get-machine-id", async () => getMachineId());
+  import_electron20.ipcMain.handle("check-license", async () => isLicensed());
+  import_electron20.ipcMain.handle("activate-license", async (_e, key) => {
     if (!key || typeof key !== "string")
       return { success: false, error: "Invalid license key format" };
     const cleanKey = key.replace(/\s+/g, "");
@@ -134429,7 +135141,7 @@ function registerHandlers() {
     }
     return { success: true, credentialsDecrypted: credResult };
   });
-  import_electron17.ipcMain.handle("get-db-monitoring", async () => {
+  import_electron20.ipcMain.handle("get-db-monitoring", async () => {
     const [products, bills, users, vouchers, makeOrders] = await Promise.all([
       supabase_default.from("products").select("id", { count: "exact", head: true }),
       supabase_default.from("bills").select("id", { count: "exact", head: true }),
@@ -134440,11 +135152,11 @@ function registerHandlers() {
     return { products: products.count || 0, bills: bills.count || 0, users: users.count || 0, vouchers: vouchers.count || 0, makeOrders: makeOrders.count || 0, lastChecked: (/* @__PURE__ */ new Date()).toISOString() };
   });
   function getBackupDir() {
-    const d = import_path15.default.join(import_electron17.app.getPath("userData"), "backups");
-    if (!import_fs15.default.existsSync(d)) import_fs15.default.mkdirSync(d, { recursive: true });
+    const d = import_path18.default.join(import_electron20.app.getPath("userData"), "backups");
+    if (!import_fs18.default.existsSync(d)) import_fs18.default.mkdirSync(d, { recursive: true });
     return d;
   }
-  import_electron17.ipcMain.handle("create-db-backup", async () => {
+  import_electron20.ipcMain.handle("create-db-backup", async () => {
     const session2 = requireSession();
     if (!isSessionSuperadmin(session2)) {
       throw new Error("Unauthorized: Super Admin access required");
@@ -134458,12 +135170,12 @@ function registerHandlers() {
         backup[t2] = data2 || [];
       }
       const ts = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-").substring(0, 19);
-      const backupFile = import_path15.default.join(getBackupDir(), `le-soft-backup-${ts}.json`);
-      import_fs15.default.writeFileSync(backupFile, JSON.stringify(backup, null, 2), "utf-8");
-      const files = import_fs15.default.readdirSync(getBackupDir()).filter((f3) => f3.startsWith("le-soft-backup-") && f3.endsWith(".json")).sort().reverse();
+      const backupFile = import_path18.default.join(getBackupDir(), `le-soft-backup-${ts}.json`);
+      import_fs18.default.writeFileSync(backupFile, JSON.stringify(backup, null, 2), "utf-8");
+      const files = import_fs18.default.readdirSync(getBackupDir()).filter((f3) => f3.startsWith("le-soft-backup-") && f3.endsWith(".json")).sort().reverse();
       files.slice(10).forEach((f3) => {
         try {
-          import_fs15.default.unlinkSync(import_path15.default.join(getBackupDir(), f3));
+          import_fs18.default.unlinkSync(import_path18.default.join(getBackupDir(), f3));
         } catch {
         }
       });
@@ -134471,7 +135183,7 @@ function registerHandlers() {
         module: "Database",
         action: "BACKUP_CREATED",
         entity_type: "database",
-        description: `Backup created: ${import_path15.default.basename(backupFile)}`,
+        description: `Backup created: ${import_path18.default.basename(backupFile)}`,
         performed_by: actor
       });
       return { success: true, path: backupFile, time: (/* @__PURE__ */ new Date()).toISOString() };
@@ -134479,30 +135191,30 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron17.ipcMain.handle("list-db-backups", async () => {
+  import_electron20.ipcMain.handle("list-db-backups", async () => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
     }
     try {
-      return import_fs15.default.readdirSync(getBackupDir()).filter((f3) => f3.startsWith("le-soft-backup-") && f3.endsWith(".json")).map((f3) => {
-        const st = import_fs15.default.statSync(import_path15.default.join(getBackupDir(), f3));
+      return import_fs18.default.readdirSync(getBackupDir()).filter((f3) => f3.startsWith("le-soft-backup-") && f3.endsWith(".json")).map((f3) => {
+        const st = import_fs18.default.statSync(import_path18.default.join(getBackupDir(), f3));
         return { name: f3, size: st.size, date: st.mtime.toISOString() };
       }).sort((a, b) => b.date.localeCompare(a.date));
     } catch {
       return [];
     }
   });
-  import_electron17.ipcMain.handle("restore-db-backup", async (_e, backupName) => {
+  import_electron20.ipcMain.handle("restore-db-backup", async (_e, backupName) => {
     const session2 = requireSession();
     if (!isSessionSuperadmin(session2)) {
       throw new Error("Unauthorized: Super Admin access required");
     }
     const actor = session2.fullName || session2.username;
     try {
-      const backupPath = import_path15.default.join(getBackupDir(), backupName);
-      if (!import_fs15.default.existsSync(backupPath)) return { success: false, error: "Backup file not found" };
-      const backup = JSON.parse(import_fs15.default.readFileSync(backupPath, "utf-8"));
+      const backupPath = import_path18.default.join(getBackupDir(), backupName);
+      if (!import_fs18.default.existsSync(backupPath)) return { success: false, error: "Backup file not found" };
+      const backup = JSON.parse(import_fs18.default.readFileSync(backupPath, "utf-8"));
       for (const [table, rows] of Object.entries(backup)) {
         if (!Array.isArray(rows) || rows.length === 0) continue;
         try {
@@ -134554,14 +135266,14 @@ function registerHandlers() {
   function stripHTML(html3) {
     return html3.replace(/<[^>]*>/g, "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&nbsp;/g, " ").trim();
   }
-  import_electron17.ipcMain.handle("import-woocommerce-csv", async (_e, csvFilePath) => {
+  import_electron20.ipcMain.handle("import-woocommerce-csv", async (_e, csvFilePath) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
     }
     const actor = session2.fullName || session2.username;
     try {
-      let raw = import_fs15.default.readFileSync(csvFilePath, "utf-8");
+      let raw = import_fs18.default.readFileSync(csvFilePath, "utf-8");
       if (raw.charCodeAt(0) === 65279) raw = raw.slice(1);
       const lines = [];
       let cur = "";
@@ -134665,7 +135377,7 @@ function registerHandlers() {
       return { imported: 0, skipped: 0, errors: [e2.message] };
     }
   });
-  import_electron17.ipcMain.handle("sync-products-to-website", async () => {
+  import_electron20.ipcMain.handle("sync-products-to-website", async () => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -134692,29 +135404,29 @@ function registerHandlers() {
     });
     return { success: true, synced, failed, total: rows.length };
   });
-  import_electron17.ipcMain.handle("get-connected-devices", async () => getConnectedDevices());
-  import_electron17.ipcMain.handle("set-backup-node", async (_e, isBackup) => {
+  import_electron20.ipcMain.handle("get-connected-devices", async () => getConnectedDevices());
+  import_electron20.ipcMain.handle("set-backup-node", async (_e, isBackup) => {
     const session2 = requireSession();
     if (!isSessionSuperadmin(session2)) {
       throw new Error("Unauthorized: Super Admin access required");
     }
     return setBackupNode(isBackup);
   });
-  import_electron17.ipcMain.handle("get-device-id", async () => getMachineId());
-  import_electron17.ipcMain.handle("restart-app", () => {
-    import_electron17.app.relaunch();
-    import_electron17.app.exit();
+  import_electron20.ipcMain.handle("get-device-id", async () => getMachineId());
+  import_electron20.ipcMain.handle("restart-app", () => {
+    import_electron20.app.relaunch();
+    import_electron20.app.exit();
   });
-  import_electron17.ipcMain.handle("get-network-config", async () => ({}));
-  import_electron17.ipcMain.handle("save-network-config", async () => {
+  import_electron20.ipcMain.handle("get-network-config", async () => ({}));
+  import_electron20.ipcMain.handle("save-network-config", async () => {
     const session2 = requireSession();
     if (!isSessionSuperadmin(session2)) {
       throw new Error("Unauthorized: Super Admin access required");
     }
     return { success: true };
   });
-  import_electron17.ipcMain.handle("test-server-connection", async () => ({ success: false, error: "Network config not applicable in Supabase mode" }));
-  import_electron17.ipcMain.handle("get-local-ip", async () => {
+  import_electron20.ipcMain.handle("test-server-connection", async () => ({ success: false, error: "Network config not applicable in Supabase mode" }));
+  import_electron20.ipcMain.handle("get-local-ip", async () => {
     const ifaces = import_os5.default.networkInterfaces();
     for (const name of Object.keys(ifaces)) {
       for (const iface of ifaces[name] || []) {
@@ -134723,7 +135435,7 @@ function registerHandlers() {
     }
     return "127.0.0.1";
   });
-  import_electron17.ipcMain.handle("check-license-cloud", async () => {
+  import_electron20.ipcMain.handle("check-license-cloud", async () => {
     const localResult = isLicensed();
     if (localResult.valid) return { valid: true, source: "local", machineId: localResult.machineId };
     const { data: data2 } = await supabase_default.from("app_license").select("license_key").limit(1).maybeSingle();
@@ -134735,7 +135447,7 @@ function registerHandlers() {
     }
     return { valid: isValid, source: "cloud", machineId: localResult.machineId };
   });
-  import_electron17.ipcMain.handle("activate-license-cloud", async (_e, { key }) => {
+  import_electron20.ipcMain.handle("activate-license-cloud", async (_e, { key }) => {
     const machineId = getMachineId();
     const isValid = validateLicense(machineId, key);
     if (!isValid) return { success: false, error: "Invalid license key for this machine" };
@@ -134744,7 +135456,7 @@ function registerHandlers() {
       // enforce single row
       license_key: key.replace(/[\s-]/g, "").toUpperCase(),
       activated_by: machineId,
-      app_version: import_electron17.app.getVersion(),
+      app_version: import_electron20.app.getVersion(),
       activated_at: (/* @__PURE__ */ new Date()).toISOString()
     }, { onConflict: "id" });
     if (error51) return { success: false, error: error51.message };
@@ -134752,12 +135464,12 @@ function registerHandlers() {
     bootstrapPublicClientConfig();
     return { success: true };
   });
-  import_electron17.ipcMain.handle("hrm-get-employees", async () => {
+  import_electron20.ipcMain.handle("hrm-get-employees", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("hrm_employees").select("*").order("name");
     if (error51) throw error51;
     return decryptRows(data2 || []);
   });
-  import_electron17.ipcMain.handle("hrm-upsert-employee", async (_e, emp) => {
+  import_electron20.ipcMain.handle("hrm-upsert-employee", async (_e, emp) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -134789,12 +135501,12 @@ function registerHandlers() {
       return { success: true, id: data2.id };
     }
   });
-  import_electron17.ipcMain.handle("get-bill-exchange-count", async (_e, billId) => {
+  import_electron20.ipcMain.handle("get-bill-exchange-count", async (_e, billId) => {
     const { count, error: error51 } = await supabase_default.from("exchange_orders").select("*", { count: "exact", head: true }).eq("original_bill_id", billId);
     if (error51) throw error51;
     return count || 0;
   });
-  import_electron17.ipcMain.handle("hrm-delete-employee", async (_e, id) => {
+  import_electron20.ipcMain.handle("hrm-delete-employee", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -134811,14 +135523,14 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron17.ipcMain.handle("hrm-get-attendance", async (_e, { date: date5 }) => {
+  import_electron20.ipcMain.handle("hrm-get-attendance", async (_e, { date: date5 }) => {
     let q = supabase_default.from("hrm_attendance").select("*, employee:employee_id(name)");
     if (date5) q = q.eq("date", date5);
     const { data: data2, error: error51 } = await q.order("date", { ascending: false });
     if (error51) throw error51;
     return decryptRows(data2 || []);
   });
-  import_electron17.ipcMain.handle("hrm-mark-attendance", async (_e, att) => {
+  import_electron20.ipcMain.handle("hrm-mark-attendance", async (_e, att) => {
     const session2 = requireSession();
     const actor = session2.fullName || session2.username;
     const { error: error51 } = await supabase_default.from("hrm_attendance").upsert({
@@ -134839,12 +135551,12 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron17.ipcMain.handle("hrm-get-leaves", async () => {
+  import_electron20.ipcMain.handle("hrm-get-leaves", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("hrm_leaves").select("*, employee:employee_id(name)").order("created_at", { ascending: false });
     if (error51) throw error51;
     return decryptRows(data2 || []);
   });
-  import_electron17.ipcMain.handle("hrm-request-leave", async (_e, leave) => {
+  import_electron20.ipcMain.handle("hrm-request-leave", async (_e, leave) => {
     const session2 = requireSession();
     const actor = session2.fullName || session2.username;
     const { data: data2, error: error51 } = await supabase_default.from("hrm_leaves").insert(leave).select("id").single();
@@ -134859,7 +135571,7 @@ function registerHandlers() {
     });
     return { success: true, id: data2.id };
   });
-  import_electron17.ipcMain.handle("hrm-update-leave-status", async (_e, { id, status }) => {
+  import_electron20.ipcMain.handle("hrm-update-leave-status", async (_e, { id, status }) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -134877,7 +135589,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron17.ipcMain.handle("hrm-get-payroll", async (_e, { month, year }) => {
+  import_electron20.ipcMain.handle("hrm-get-payroll", async (_e, { month, year }) => {
     let q = supabase_default.from("hrm_payroll").select("*, employee:employee_id(name)");
     if (month) q = q.eq("month", month);
     if (year) q = q.eq("year", year);
@@ -134885,7 +135597,7 @@ function registerHandlers() {
     if (error51) throw error51;
     return decryptRows(data2 || []);
   });
-  import_electron17.ipcMain.handle("hrm-generate-payroll", async (_e, pr) => {
+  import_electron20.ipcMain.handle("hrm-generate-payroll", async (_e, pr) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -134914,7 +135626,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron17.ipcMain.handle("hrm-mark-payroll-paid", async (_e, id) => {
+  import_electron20.ipcMain.handle("hrm-mark-payroll-paid", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -134932,12 +135644,12 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron17.ipcMain.handle("hrm-get-holidays", async () => {
+  import_electron20.ipcMain.handle("hrm-get-holidays", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("hrm_holidays").select("*").order("holiday_date", { ascending: true });
     if (error51) throw error51;
     return data2 || [];
   });
-  import_electron17.ipcMain.handle("hrm-upsert-holiday", async (_e, item) => {
+  import_electron20.ipcMain.handle("hrm-upsert-holiday", async (_e, item) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -134974,7 +135686,7 @@ function registerHandlers() {
       return { success: true };
     }
   });
-  import_electron17.ipcMain.handle("hrm-delete-holiday", async (_e, id) => {
+  import_electron20.ipcMain.handle("hrm-delete-holiday", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -134991,14 +135703,14 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron17.ipcMain.handle("crm-get-customers", async () => {
+  import_electron20.ipcMain.handle("crm-get-customers", async () => {
     const cached2 = get2("billing_customers");
     if (cached2) return cached2;
     const { data: data2, error: error51 } = await supabase_default.from("billing_customers").select("*").order("name");
     if (error51) throw error51;
     return decryptRows(data2 || []);
   });
-  import_electron17.ipcMain.handle("crm-upsert-customer", async (_e, cust) => {
+  import_electron20.ipcMain.handle("crm-upsert-customer", async (_e, cust) => {
     const session2 = requireSession();
     const actor = session2.fullName || session2.username;
     const payload = encryptObject(cust);
@@ -135030,12 +135742,12 @@ function registerHandlers() {
       return { success: true, id: data2.id };
     }
   });
-  import_electron17.ipcMain.handle("crm-get-tracking-logs", async (_e, { customerId }) => {
+  import_electron20.ipcMain.handle("crm-get-tracking-logs", async (_e, { customerId }) => {
     const { data: data2, error: error51 } = await supabase_default.from("crm_tracking").select("*, user:user_id(full_name)").eq("customer_id", customerId).order("created_at", { ascending: false });
     if (error51) throw error51;
     return decryptRows(data2 || []);
   });
-  import_electron17.ipcMain.handle("crm-add-tracking-log", async (_e, log) => {
+  import_electron20.ipcMain.handle("crm-add-tracking-log", async (_e, log) => {
     const session2 = requireSession();
     const actor = session2.fullName || session2.username;
     const safeLog = {
@@ -135054,7 +135766,7 @@ function registerHandlers() {
     });
     return { success: true, id: data2.id };
   });
-  import_electron17.ipcMain.handle("create-quotation", async (_e, payload) => {
+  import_electron20.ipcMain.handle("create-quotation", async (_e, payload) => {
     const session2 = requireSession();
     const actor = session2.fullName || session2.username;
     const actorRole = session2.role;
@@ -135127,19 +135839,19 @@ function registerHandlers() {
     });
     return { id: quot.id, quoteNumber: quot.quote_number };
   });
-  import_electron17.ipcMain.handle("get-quotations", async () => {
+  import_electron20.ipcMain.handle("get-quotations", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("quotations").select("id,quote_number,quote_date,valid_until,customer_name,company_name,grand_total,status").order("created_at", { ascending: false });
     if (error51) throw error51;
     return decryptRows(data2 || []);
   });
-  import_electron17.ipcMain.handle("get-quotation", async (_e, id) => {
+  import_electron20.ipcMain.handle("get-quotation", async (_e, id) => {
     const { data: quot, error: error51 } = await supabase_default.from("quotations").select("*").eq("id", id).single();
     if (error51) throw error51;
     const { data: items } = await supabase_default.from("quotation_items").select("*").eq("quotation_id", id).order("sl_no");
     const decrypted = decryptObject(quot);
     return { ...decrypted, items: items || [] };
   });
-  import_electron17.ipcMain.handle("delete-quotation", async (_e, id) => {
+  import_electron20.ipcMain.handle("delete-quotation", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -135157,7 +135869,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron17.ipcMain.handle("get-customer-ledger-list", async (_e, _opts) => {
+  import_electron20.ipcMain.handle("get-customer-ledger-list", async (_e, _opts) => {
     const session2 = requireSession();
     const isAdmin = isSessionAdminOrSuper(session2);
     const seeAll = isAdmin || !!session2.permissions?.["see_all_customers"] || !!session2.permissions?.["canSeeAllCustomers"];
@@ -135191,7 +135903,7 @@ function registerHandlers() {
       };
     });
   });
-  import_electron17.ipcMain.handle("delete-billing-customer", async (_e, id) => {
+  import_electron20.ipcMain.handle("delete-billing-customer", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -135205,7 +135917,7 @@ function registerHandlers() {
     const { error: error51 } = await supabase_default.from("billing_customers").delete().eq("id", id);
     if (error51) throw error51;
     invalidate("billing_customers");
-    import_electron17.BrowserWindow.getAllWindows().forEach((win) => win.webContents.send("data-updated", "billing_customers"));
+    import_electron20.BrowserWindow.getAllWindows().forEach((win) => win.webContents.send("data-updated", "billing_customers"));
     await writeAuditLog({
       module: "CRM",
       action: "DELETE",
@@ -135216,7 +135928,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron17.ipcMain.handle("get-customer-ledger-detail", async (_e, id) => {
+  import_electron20.ipcMain.handle("get-customer-ledger-detail", async (_e, id) => {
     const { data: cust } = await supabase_default.from("billing_customers").select("*").eq("id", id).single();
     if (!cust) return null;
     const decryptedPhone = decryptField(cust.phone) || cust.phone;
@@ -135244,7 +135956,7 @@ function registerHandlers() {
       make_orders: decryptRows(makeOrdersRes.data || [])
     };
   });
-  import_electron17.ipcMain.handle("get-permission-levels", async () => {
+  import_electron20.ipcMain.handle("get-permission-levels", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("permission_levels").select("*, approver:approver_user_id(full_name, username)").order("workflow_key", { ascending: true, nullsFirst: false }).order("workflow_step", { ascending: true, nullsFirst: false }).order("feature_name");
     if (error51) throw error51;
     return decryptRows(data2 || []).map((p) => ({
@@ -135252,7 +135964,7 @@ function registerHandlers() {
       approver_user_name: p.approver ? p.approver.full_name || p.approver.username : null
     }));
   });
-  import_electron17.ipcMain.handle("create-permission-level", async (_e, payload) => {
+  import_electron20.ipcMain.handle("create-permission-level", async (_e, payload) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Administrator access required.");
@@ -135271,7 +135983,7 @@ function registerHandlers() {
     if (error51) throw error51;
     return { success: true, id: data2.id };
   });
-  import_electron17.ipcMain.handle("update-permission-level", async (_e, payload) => {
+  import_electron20.ipcMain.handle("update-permission-level", async (_e, payload) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Administrator access required.");
@@ -135282,7 +135994,7 @@ function registerHandlers() {
     if (error51) throw error51;
     return { success: true };
   });
-  import_electron17.ipcMain.handle("delete-permission-level", async (_e, id) => {
+  import_electron20.ipcMain.handle("delete-permission-level", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Administrator access required.");
@@ -135291,31 +136003,31 @@ function registerHandlers() {
     if (error51) throw error51;
     return { success: true };
   });
-  import_electron17.ipcMain.handle("save-ai-key", (_e, key) => {
+  import_electron20.ipcMain.handle("save-ai-key", (_e, key) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       return { success: false, error: "Unauthorized: Administrator access required." };
     }
     try {
-      const cfgPath = import_path15.default.join(import_electron17.app.getPath("userData"), "supabase-config.json");
+      const cfgPath = import_path18.default.join(import_electron20.app.getPath("userData"), "supabase-config.json");
       let cfg = {};
-      if (import_fs15.default.existsSync(cfgPath)) cfg = JSON.parse(import_fs15.default.readFileSync(cfgPath, "utf-8"));
+      if (import_fs18.default.existsSync(cfgPath)) cfg = JSON.parse(import_fs18.default.readFileSync(cfgPath, "utf-8"));
       cfg.geminiKey = key ? encryptStandardSecret(key.trim()) : "";
-      import_fs15.default.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), { mode: 384 });
+      import_fs18.default.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), { mode: 384 });
       return { success: true };
     } catch (err) {
       return { success: false, error: err.message };
     }
   });
-  import_electron17.ipcMain.handle("get-ai-key", () => {
+  import_electron20.ipcMain.handle("get-ai-key", () => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       return "";
     }
     try {
-      const cfgPath = import_path15.default.join(import_electron17.app.getPath("userData"), "supabase-config.json");
-      if (import_fs15.default.existsSync(cfgPath)) {
-        const cfg = JSON.parse(import_fs15.default.readFileSync(cfgPath, "utf-8"));
+      const cfgPath = import_path18.default.join(import_electron20.app.getPath("userData"), "supabase-config.json");
+      if (import_fs18.default.existsSync(cfgPath)) {
+        const cfg = JSON.parse(import_fs18.default.readFileSync(cfgPath, "utf-8"));
         if (!cfg.geminiKey) return "";
         return cfg.geminiKey.startsWith("enc:v1:") ? decryptStandardSecret(cfg.geminiKey) : cfg.geminiKey;
       }
@@ -135323,12 +136035,12 @@ function registerHandlers() {
     }
     return "";
   });
-  import_electron17.ipcMain.handle("get-competitor-urls", async (_e, productId) => {
+  import_electron20.ipcMain.handle("get-competitor-urls", async (_e, productId) => {
     const { data: data2, error: error51 } = await supabase_default.from("product_competitor_urls").select("*").eq("product_id", productId).order("created_at", { ascending: false });
     if (error51) throw error51;
     return decryptRows(data2 || []);
   });
-  import_electron17.ipcMain.handle("add-competitor-url", async (_e, data2) => {
+  import_electron20.ipcMain.handle("add-competitor-url", async (_e, data2) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -135345,7 +136057,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron17.ipcMain.handle("delete-competitor-url", async (_e, id) => {
+  import_electron20.ipcMain.handle("delete-competitor-url", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -135362,7 +136074,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron17.ipcMain.handle("get-market-analysis-history", async (_e, productId) => {
+  import_electron20.ipcMain.handle("get-market-analysis-history", async (_e, productId) => {
     let q = supabase_default.from("market_analysis_history").select("*, product:products(item_name)").order("recorded_at", { ascending: false });
     if (productId) q = q.eq("product_id", productId);
     const { data: data2, error: error51 } = await q;
@@ -135372,7 +136084,7 @@ function registerHandlers() {
       product_name: row.product ? row.product.item_name : "Unknown Product"
     }));
   });
-  import_electron17.ipcMain.handle("run-auto-price-scan", async (_e, productId) => {
+  import_electron20.ipcMain.handle("run-auto-price-scan", async (_e, productId) => {
     const session2 = requireSession();
     const actor = session2.fullName || session2.username;
     try {
@@ -135422,7 +136134,7 @@ function registerHandlers() {
       return { success: false, error: err.message };
     }
   });
-  import_electron17.ipcMain.handle("verify-bill-payment", async (_e, { paymentRef, status }) => {
+  import_electron20.ipcMain.handle("verify-bill-payment", async (_e, { paymentRef, status }) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -135439,9 +136151,9 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron17.ipcMain.handle("set-theme", (event, theme) => {
+  import_electron20.ipcMain.handle("set-theme", (event, theme) => {
     requireSession();
-    const win = import_electron17.BrowserWindow.fromWebContents(event.sender);
+    const win = import_electron20.BrowserWindow.fromWebContents(event.sender);
     if (!win) return;
     if (process.platform === "win32" && typeof win.setTitleBarOverlay === "function") {
       try {
@@ -135454,7 +136166,7 @@ function registerHandlers() {
       }
     }
   });
-  import_electron17.ipcMain.handle("get-payment-methods", async () => {
+  import_electron20.ipcMain.handle("get-payment-methods", async () => {
     try {
       const { data: data2, error: error51 } = await supabase_default.from("payment_methods").select("*").order("name");
       if (error51) {
@@ -135475,7 +136187,7 @@ function registerHandlers() {
       ];
     }
   });
-  import_electron17.ipcMain.handle("create-payment-method", async (_e, method) => {
+  import_electron20.ipcMain.handle("create-payment-method", async (_e, method) => {
     try {
       const session2 = requireSession();
       if (!isSessionAdminOrSuper(session2)) {
@@ -135488,7 +136200,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron17.ipcMain.handle("delete-payment-method", async (_e, id) => {
+  import_electron20.ipcMain.handle("delete-payment-method", async (_e, id) => {
     try {
       const session2 = requireSession();
       if (!isSessionAdminOrSuper(session2)) {
@@ -135501,7 +136213,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron17.ipcMain.handle("update-payment-method", async (_e, method) => {
+  import_electron20.ipcMain.handle("update-payment-method", async (_e, method) => {
     try {
       const session2 = requireSession();
       if (!isSessionAdminOrSuper(session2)) {
@@ -135519,7 +136231,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron17.ipcMain.handle("generate-license-key", async (_e, { machineId }) => {
+  import_electron20.ipcMain.handle("generate-license-key", async (_e, { machineId }) => {
     const session2 = requireSession();
     if (!isSessionSuperadmin(session2)) {
       return { success: false, error: "Unauthorized: superadmin access required" };
@@ -135533,12 +136245,12 @@ function registerHandlers() {
     }
     const VERIFICATION_SALT2 = "LE-SOFT-2026-VERIFY-SALT-xK9mQ2";
     const id = machineId.trim();
-    const prefix = import_crypto11.default.createHmac("sha256", VERIFICATION_SALT2).update(id).digest("hex").substring(0, 8).toUpperCase();
-    const body = import_crypto11.default.createHmac("sha256", GENERATION_SECRET).update(id).digest("hex").substring(0, 24).toUpperCase();
+    const prefix = import_crypto12.default.createHmac("sha256", VERIFICATION_SALT2).update(id).digest("hex").substring(0, 8).toUpperCase();
+    const body = import_crypto12.default.createHmac("sha256", GENERATION_SECRET).update(id).digest("hex").substring(0, 24).toUpperCase();
     const formatted = (prefix + body).match(/.{1,4}/g).join("-");
     return { success: true, key: formatted };
   });
-  import_electron17.ipcMain.handle("get-purchase-requisitions", async (_e, filters2) => {
+  import_electron20.ipcMain.handle("get-purchase-requisitions", async (_e, filters2) => {
     try {
       let query = supabase_default.from("purchase_requisitions").select("*").is("deleted_at", null).order("created_at", { ascending: false });
       if (filters2?.status) {
@@ -135590,7 +136302,7 @@ function registerHandlers() {
       return [];
     }
   });
-  import_electron17.ipcMain.handle("get-purchase-requisition-by-id", async (_e, id) => {
+  import_electron20.ipcMain.handle("get-purchase-requisition-by-id", async (_e, id) => {
     try {
       const { data: data2, error: error51 } = await supabase_default.from("purchase_requisitions").select("*").eq("id", id).single();
       if (error51) throw error51;
@@ -135652,12 +136364,12 @@ function registerHandlers() {
       metadata: { type: "purchase_requisition" }
     });
   }
-  import_electron17.ipcMain.handle("get-purchase-requisition-history", async (_e, requisitionId) => {
+  import_electron20.ipcMain.handle("get-purchase-requisition-history", async (_e, requisitionId) => {
     const { data: data2, error: error51 } = await supabase_default.from("purchase_requisition_status_history").select("*").eq("requisition_id", requisitionId).order("performed_at", { ascending: false });
     if (error51) throw error51;
     return data2 || [];
   });
-  import_electron17.ipcMain.handle("create-purchase-requisition", async (_e, input) => {
+  import_electron20.ipcMain.handle("create-purchase-requisition", async (_e, input) => {
     const session2 = requireSession();
     try {
       const userName = session2.fullName || session2.username;
@@ -135740,7 +136452,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron17.ipcMain.handle("update-purchase-requisition", async (_e, id, updates) => {
+  import_electron20.ipcMain.handle("update-purchase-requisition", async (_e, id, updates) => {
     const session2 = requireSession();
     try {
       const userName = session2.fullName || session2.username;
@@ -135803,7 +136515,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron17.ipcMain.handle("approve-purchase-requisition", async (_e, id, _status, notes) => {
+  import_electron20.ipcMain.handle("approve-purchase-requisition", async (_e, id, _status, notes) => {
     const session2 = requireSession();
     const isAdmin = isSessionAdminOrSuper(session2);
     const isStoreHead = session2.role === "Store Head" || session2.role === "store_head";
@@ -135851,7 +136563,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron17.ipcMain.handle("submit-purchase-estimates", async (_e, id, quotes) => {
+  import_electron20.ipcMain.handle("submit-purchase-estimates", async (_e, id, quotes) => {
     const session2 = requireSession();
     try {
       const userName = session2.fullName || session2.username;
@@ -135928,7 +136640,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron17.ipcMain.handle("get-purchase-requisition-quotes", async (_e, id) => {
+  import_electron20.ipcMain.handle("get-purchase-requisition-quotes", async (_e, id) => {
     const db2 = supabaseAdmin || supabase_default;
     const { data: data2, error: error51 } = await db2.from("purchase_requisition_quotes").select("*, supplier:ledgers(id,name,store_name,contact_person,contact_number), product:products(id,name)").eq("requisition_id", id).order("created_at", { ascending: true });
     if (error51) throw error51;
@@ -135944,12 +136656,12 @@ function registerHandlers() {
     });
     return decryptedData;
   });
-  import_electron17.ipcMain.handle("get-product-purchase-history", async (_e, productId) => {
+  import_electron20.ipcMain.handle("get-product-purchase-history", async (_e, productId) => {
     const { data: data2, error: error51 } = await supabase_default.from("purchase_bill_items").select("rate, amount, qty, purchase_bill:purchase_bills(bill_date, supplier:ledgers(name))").eq("product_id", productId).order("id", { ascending: false }).limit(5);
     if (error51) throw error51;
     return data2 || [];
   });
-  import_electron17.ipcMain.handle("audit-review-purchase-requisition", async (_e, id, status, notes) => {
+  import_electron20.ipcMain.handle("audit-review-purchase-requisition", async (_e, id, status, notes) => {
     const session2 = requireSession();
     const isAdmin = isSessionAdminOrSuper(session2);
     const isAuditor = session2.role === "Auditor" || session2.role === "auditor";
@@ -135994,7 +136706,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron17.ipcMain.handle("director-review-purchase-requisition", async (_e, id, status, notes) => {
+  import_electron20.ipcMain.handle("director-review-purchase-requisition", async (_e, id, status, notes) => {
     const session2 = requireSession();
     const isAdmin = isSessionAdminOrSuper(session2);
     const isDirector = session2.role === "Director" || session2.role === "director";
@@ -136038,7 +136750,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron17.ipcMain.handle("purchase-purchase-requisition", async (_e, id, payload) => {
+  import_electron20.ipcMain.handle("purchase-purchase-requisition", async (_e, id, payload) => {
     const session2 = requireSession();
     const isAdmin = isSessionAdminOrSuper(session2);
     const hasPerm = !!session2.permissions?.["purchase_requisition"] || !!session2.permissions?.["can_purchase_requisition"];
@@ -136115,7 +136827,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron17.ipcMain.handle("receive-purchase-requisition", async (_e, id) => {
+  import_electron20.ipcMain.handle("receive-purchase-requisition", async (_e, id) => {
     const session2 = requireSession();
     try {
       const userName = session2.fullName || session2.username;
@@ -136146,7 +136858,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron17.ipcMain.handle("complete-purchase-requisition", async (_e, id) => {
+  import_electron20.ipcMain.handle("complete-purchase-requisition", async (_e, id) => {
     const session2 = requireSession();
     try {
       const userName = session2.fullName || session2.username;
@@ -136236,7 +136948,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron17.ipcMain.handle("delete-purchase-requisition", async (_e, id) => {
+  import_electron20.ipcMain.handle("delete-purchase-requisition", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -136261,7 +136973,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron17.ipcMain.handle("get-supplier-settlements", async (_e, supplierLedgerId) => {
+  import_electron20.ipcMain.handle("get-supplier-settlements", async (_e, supplierLedgerId) => {
     let q = supabase_default.from("supplier_settlements").select("*, purchase_bill:purchase_bills(bill_number, bill_date, grand_total), supplier:ledgers(name)").is("deleted_at", null).order("settlement_date", { ascending: false });
     if (supplierLedgerId) q = q.eq("supplier_ledger_id", supplierLedgerId);
     const { data: data2, error: error51 } = await q;
@@ -136272,7 +136984,7 @@ function registerHandlers() {
       purchase_bill_number: row.purchase_bill?.bill_number || null
     }));
   });
-  import_electron17.ipcMain.handle("create-supplier-settlement", async (_e, settlement) => {
+  import_electron20.ipcMain.handle("create-supplier-settlement", async (_e, settlement) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -136309,7 +137021,7 @@ function registerHandlers() {
     await notifyProcurementWorkflow("Supplier settlement recorded", `Settlement posted for supplier ledger ${payload.supplier_ledger_id}.`);
     return { success: true, id: data2.id };
   });
-  import_electron17.ipcMain.handle("website-get-dashboard-data", async () => {
+  import_electron20.ipcMain.handle("website-get-dashboard-data", async () => {
     try {
       const { count: billCount } = await supabase_default.from("bills").select("*", { count: "exact", head: true });
       const { count: customerCount } = await supabase_default.from("billing_customers").select("*", { count: "exact", head: true });
@@ -136333,7 +137045,7 @@ function registerHandlers() {
       };
     }
   });
-  import_electron17.ipcMain.handle("report-client-error", async (_e, payload) => {
+  import_electron20.ipcMain.handle("report-client-error", async (_e, payload) => {
     try {
       const { TelemetryEngine: TelemetryEngine2 } = (init_TelemetryEngine(), __toCommonJS(TelemetryEngine_exports));
       const session2 = SessionManager.getSession();
@@ -136355,7 +137067,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron17.ipcMain.handle("get-telemetry-status", async () => {
+  import_electron20.ipcMain.handle("get-telemetry-status", async () => {
     try {
       const { TelemetryEngine: TelemetryEngine2 } = (init_TelemetryEngine(), __toCommonJS(TelemetryEngine_exports));
       return { success: true, data: TelemetryEngine2.getInstance().getStatus() };
@@ -136363,7 +137075,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron17.ipcMain.handle("set-telemetry-enabled", async (_e, enabled) => {
+  import_electron20.ipcMain.handle("set-telemetry-enabled", async (_e, enabled) => {
     try {
       const { TelemetryEngine: TelemetryEngine2 } = (init_TelemetryEngine(), __toCommonJS(TelemetryEngine_exports));
       TelemetryEngine2.getInstance().setEnabled(enabled);
@@ -136372,7 +137084,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron17.ipcMain.handle("send-diagnostic-test", async () => {
+  import_electron20.ipcMain.handle("send-diagnostic-test", async () => {
     try {
       const { TelemetryEngine: TelemetryEngine2 } = (init_TelemetryEngine(), __toCommonJS(TelemetryEngine_exports));
       const res = await TelemetryEngine2.getInstance().sendDiagnosticTest();
@@ -136381,7 +137093,7 @@ function registerHandlers() {
       return { success: false, message: e2.message };
     }
   });
-  import_electron17.ipcMain.handle("export-diagnostic-log", async () => {
+  import_electron20.ipcMain.handle("export-diagnostic-log", async () => {
     try {
       const { TelemetryEngine: TelemetryEngine2 } = (init_TelemetryEngine(), __toCommonJS(TelemetryEngine_exports));
       return await TelemetryEngine2.getInstance().exportDiagnosticLog();
@@ -136389,7 +137101,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron17.ipcMain.handle("get-admin-error-reports", async (_e, params) => {
+  import_electron20.ipcMain.handle("get-admin-error-reports", async (_e, params) => {
     const session2 = SessionManager.getSession();
     if (session2 && !isSessionAdminOrSuper(session2)) {
       return { success: false, error: "Unauthorized: Admin or Superadmin role required." };
@@ -136401,7 +137113,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron17.ipcMain.handle("prune-remote-reports", async (_e, params) => {
+  import_electron20.ipcMain.handle("prune-remote-reports", async (_e, params) => {
     const session2 = SessionManager.getSession();
     if (session2 && !isSessionAdminOrSuper(session2)) {
       return { success: false, error: "Unauthorized: Admin or Superadmin role required." };
@@ -136413,7 +137125,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron17.ipcMain.handle("diagnose-image", async (_e, rawSrc) => {
+  import_electron20.ipcMain.handle("diagnose-image", async (_e, rawSrc) => {
     try {
       const { MediaProtocolService: MediaProtocolService2 } = (init_MediaProtocolService(), __toCommonJS(MediaProtocolService_exports));
       return await MediaProtocolService2.getInstance().diagnoseImage(rawSrc);
@@ -136427,8 +137139,55 @@ function registerHandlers() {
       };
     }
   });
-  import_electron17.ipcMain.handle("resolve-image-src", (_e, imagePath) => {
+  import_electron20.ipcMain.handle("resolve-image-src", (_e, imagePath) => {
     return imagePath || "";
+  });
+  import_electron20.ipcMain.handle("get-nas-connection-status", async () => {
+    try {
+      return NASConnectionManager.getInstance().getSafeStatus();
+    } catch {
+      return { status: "Offline", lastSync: 0, isNasOnline: false };
+    }
+  });
+  import_electron20.ipcMain.handle("get-notification-settings", async () => {
+    try {
+      return WindowsNotificationService.getInstance().getSettings();
+    } catch {
+      return {
+        enabled: true,
+        orderNotifications: true,
+        updateNotifications: true,
+        systemNotifications: true,
+        connectionNotifications: true
+      };
+    }
+  });
+  import_electron20.ipcMain.handle("update-notification-settings", async (_e, settings) => {
+    try {
+      return WindowsNotificationService.getInstance().updateSettings(settings);
+    } catch (e2) {
+      return { success: false, error: e2.message };
+    }
+  });
+  import_electron20.ipcMain.handle("show-windows-notification", async (_e, options) => {
+    try {
+      return WindowsNotificationService.getInstance().showNotification(options);
+    } catch {
+      return false;
+    }
+  });
+  import_electron20.ipcMain.on("watchdog-pong", () => {
+    try {
+      WatchdogService.getInstance().recordRendererHeartbeat();
+    } catch {
+    }
+  });
+  import_electron20.ipcMain.handle("get-stability-diagnostics", async () => {
+    try {
+      return WatchdogService.getInstance().getSanitizedDiagnostics();
+    } catch {
+      return [];
+    }
   });
 }
 
@@ -136448,8 +137207,8 @@ function sanitizeUpdaterLog(msg) {
 }
 function appendUpdaterLog(msg) {
   try {
-    const logPath = import_path16.default.join(import_electron18.app.getPath("userData"), "app.log");
-    import_fs16.default.appendFileSync(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
+    const logPath = import_path19.default.join(import_electron21.app.getPath("userData"), "app.log");
+    import_fs19.default.appendFileSync(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
 `);
   } catch {
   }
@@ -136472,7 +137231,7 @@ function setupAutoUpdater() {
       appendUpdaterLog(`[Updater ERROR] ${clean}`);
     },
     debug: (msg) => {
-      if (!import_electron18.app.isPackaged) {
+      if (!import_electron21.app.isPackaged) {
         console.log(`[Updater DEBUG] ${sanitizeUpdaterLog(msg)}`);
       }
     }
@@ -136486,21 +137245,21 @@ function setupAutoUpdater() {
     appendUpdaterLog(`[Updater ERROR] Failed to configure autoUpdater: ${sanitizeUpdaterLog(e2.message)}`);
   }
   const broadcast = (data2) => {
-    import_electron18.BrowserWindow.getAllWindows().forEach((win) => {
+    import_electron21.BrowserWindow.getAllWindows().forEach((win) => {
       if (!win.isDestroyed()) win.webContents.send("update-status", data2);
     });
   };
-  if (import_electron18.app.isPackaged) {
+  if (import_electron21.app.isPackaged) {
     import_electron_updater2.autoUpdater.on("checking-for-update", () => {
       updaterLogger.info("Checking for update at provider feed...");
       broadcast({ status: "checking" });
     });
     import_electron_updater2.autoUpdater.on("update-not-available", (info) => {
-      updaterLogger.info(`Update check complete: application is up-to-date (v${import_electron18.app.getVersion()})`);
+      updaterLogger.info(`Update check complete: application is up-to-date (v${import_electron21.app.getVersion()})`);
       broadcast({ status: "up-to-date", info });
     });
     import_electron_updater2.autoUpdater.on("update-available", (info) => {
-      updaterLogger.info(`Update available: v${info?.version} (current: v${import_electron18.app.getVersion()})`);
+      updaterLogger.info(`Update available: v${info?.version} (current: v${import_electron21.app.getVersion()})`);
       broadcast({ status: "available", info });
     });
     import_electron_updater2.autoUpdater.on("error", (err) => {
@@ -136522,7 +137281,7 @@ function setupAutoUpdater() {
       if (!response.ok) return;
       const data2 = await response.json();
       if (data2 && data2.tag_name) {
-        const current = import_electron18.app.getVersion().replace("v", "").split(".").map(Number);
+        const current = import_electron21.app.getVersion().replace("v", "").split(".").map(Number);
         const latest = data2.tag_name.replace("v", "").split(".").map(Number);
         let isNewer = false;
         for (let i2 = 0; i2 < 3; i2++) {
@@ -136551,8 +137310,8 @@ function setupAutoUpdater() {
       updaterLogger.error(`Manual fallback fetch failed: ${sanitizeUpdaterLog(err?.message)}`);
     }
   };
-  import_electron18.ipcMain.handle("check-for-update", async () => {
-    if (!import_electron18.app.isPackaged) {
+  import_electron21.ipcMain.handle("check-for-update", async () => {
+    if (!import_electron21.app.isPackaged) {
       return { status: "up-to-date" };
     }
     try {
@@ -136569,8 +137328,8 @@ function setupAutoUpdater() {
       return { status: "error", message: cleanMsg };
     }
   });
-  import_electron18.ipcMain.handle("download-update", async () => {
-    if (!import_electron18.app.isPackaged) return { status: "idle" };
+  import_electron21.ipcMain.handle("download-update", async () => {
+    if (!import_electron21.app.isPackaged) return { status: "idle" };
     try {
       updaterLogger.info("download-update requested via IPC");
       await import_electron_updater2.autoUpdater.downloadUpdate();
@@ -136582,8 +137341,8 @@ function setupAutoUpdater() {
       return { status: "error", message: cleanMsg, phase: "download" };
     }
   });
-  import_electron18.ipcMain.handle("install-update", async () => {
-    if (!import_electron18.app.isPackaged) return { status: "idle" };
+  import_electron21.ipcMain.handle("install-update", async () => {
+    if (!import_electron21.app.isPackaged) return { status: "idle" };
     try {
       updaterLogger.info("install-update requested via IPC \u2014 calling quitAndInstall");
       import_electron_updater2.autoUpdater.quitAndInstall(false, true);
@@ -136595,8 +137354,8 @@ function setupAutoUpdater() {
       return { status: "error", message: cleanMsg, phase: "install" };
     }
   });
-  import_electron18.ipcMain.handle("get-app-version", () => import_electron18.app.getVersion());
-  if (import_electron18.app.isPackaged) {
+  import_electron21.ipcMain.handle("get-app-version", () => import_electron21.app.getVersion());
+  if (import_electron21.app.isPackaged) {
     setTimeout(() => {
       updaterLogger.info("Running automated 5s startup update check...");
       import_electron_updater2.autoUpdater.checkForUpdates().catch((e2) => {
@@ -136610,17 +137369,17 @@ function setupAutoUpdater() {
   }
 }
 function createWindow() {
-  import_electron18.Menu.setApplicationMenu(null);
+  import_electron21.Menu.setApplicationMenu(null);
   const lockFilePath = getLockFilePath();
-  if (import_fs16.default.existsSync(lockFilePath)) {
+  if (import_fs19.default.existsSync(lockFilePath)) {
     let lockReason = "tampering detected";
     try {
-      const content = import_fs16.default.readFileSync(lockFilePath, "utf-8");
+      const content = import_fs19.default.readFileSync(lockFilePath, "utf-8");
       const data2 = JSON.parse(content);
       if (data2.reason) lockReason = data2.reason;
     } catch {
     }
-    const win2 = new import_electron18.BrowserWindow({
+    const win2 = new import_electron21.BrowserWindow({
       width: 600,
       height: 400,
       resizable: false,
@@ -136708,17 +137467,17 @@ function createWindow() {
     win2.show();
     return;
   }
-  const logPath = import_path16.default.join(import_electron18.app.getPath("userData"), "app.log");
+  const logPath = import_path19.default.join(import_electron21.app.getPath("userData"), "app.log");
   const log = (msg) => {
     const entry = `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
 `;
-    import_fs16.default.appendFileSync(logPath, entry);
+    import_fs19.default.appendFileSync(logPath, entry);
     console.log(msg);
   };
   log("Creating window...");
   const isMac = process.platform === "darwin";
-  const iconFile = isMac ? import_path16.default.join(__dirname, "../Logo/icon.icns") : import_path16.default.join(import_path16.default.dirname(import_path16.default.dirname(__dirname)), "icon.ico");
-  const win = new import_electron18.BrowserWindow({
+  const iconFile = isMac ? import_path19.default.join(__dirname, "../Logo/icon.icns") : import_path19.default.join(import_path19.default.dirname(import_path19.default.dirname(__dirname)), "icon.ico");
+  const win = new import_electron21.BrowserWindow({
     width: 1280,
     height: 800,
     webPreferences: {
@@ -136727,7 +137486,7 @@ function createWindow() {
       sandbox: false,
       webSecurity: true,
       allowRunningInsecureContent: false,
-      preload: import_path16.default.join(__dirname, "preload.cjs")
+      preload: import_path19.default.join(__dirname, "preload.cjs")
     },
     icon: iconFile,
     backgroundColor: "#f5f6fa",
@@ -136745,13 +137504,21 @@ function createWindow() {
       }
     }
   });
-  if (import_electron18.app.isPackaged) {
+  try {
+    WatchdogService.getInstance().attachWindow(win);
+    WatchdogService.getInstance().startMonitoring();
+    NASConnectionManager.getInstance().start();
+    WindowsNotificationService.getInstance();
+  } catch (e2) {
+    log(`Failed to attach watchdog or background services to window: ${e2.message}`);
+  }
+  if (import_electron21.app.isPackaged) {
     win.webContents.on("devtools-opened", () => {
       triggerSystemLockout("DevTools opened in production");
     });
   }
-  if (import_electron18.app.isPackaged) {
-    win.loadFile(import_path16.default.join(__dirname, "../resource/index.html"));
+  if (import_electron21.app.isPackaged) {
+    win.loadFile(import_path19.default.join(__dirname, "../resource/index.html"));
   } else {
     const tryLoad = (retries = 10) => {
       win.loadURL("http://localhost:5173").catch(() => {
@@ -136760,7 +137527,7 @@ function createWindow() {
           setTimeout(() => tryLoad(retries - 1), 1e3);
         } else {
           console.error("[Main] Dev server unavailable. Falling back to resource/index.html");
-          win.loadFile(import_path16.default.join(__dirname, "../resource/index.html")).catch(console.error);
+          win.loadFile(import_path19.default.join(__dirname, "../resource/index.html")).catch(console.error);
         }
       });
     };
@@ -136768,7 +137535,7 @@ function createWindow() {
   }
   win.once("ready-to-show", () => {
     win.show();
-    if (!import_electron18.app.isPackaged) {
+    if (!import_electron21.app.isPackaged) {
       win.webContents.openDevTools();
     }
   });
@@ -136778,20 +137545,20 @@ function createWindow() {
     }
   }, 3e3);
   win.webContents.on("did-fail-load", (_, errorCode, errorDescription, validatedURL) => {
-    const lp = import_path16.default.join(import_electron18.app.getPath("userData"), "app.log");
-    import_fs16.default.appendFileSync(lp, `[${(/* @__PURE__ */ new Date()).toISOString()}] LOAD FAILED: ${errorCode} ${errorDescription} @ ${validatedURL}
+    const lp = import_path19.default.join(import_electron21.app.getPath("userData"), "app.log");
+    import_fs19.default.appendFileSync(lp, `[${(/* @__PURE__ */ new Date()).toISOString()}] LOAD FAILED: ${errorCode} ${errorDescription} @ ${validatedURL}
 `);
   });
   win.webContents.on("console-message", (_, level, message, line, sourceId) => {
     if (level >= 2) {
-      const lp = import_path16.default.join(import_electron18.app.getPath("userData"), "app.log");
-      import_fs16.default.appendFileSync(lp, `[${(/* @__PURE__ */ new Date()).toISOString()}] RENDERER[${level}]: ${message} (${sourceId}:${line})
+      const lp = import_path19.default.join(import_electron21.app.getPath("userData"), "app.log");
+      import_fs19.default.appendFileSync(lp, `[${(/* @__PURE__ */ new Date()).toISOString()}] RENDERER[${level}]: ${message} (${sourceId}:${line})
 `);
     }
   });
   win.webContents.on("render-process-gone", (_event, details) => {
-    const lp = import_path16.default.join(import_electron18.app.getPath("userData"), "app.log");
-    import_fs16.default.appendFileSync(lp, `[${(/* @__PURE__ */ new Date()).toISOString()}] RENDER PROCESS GONE: ${details.reason} (exit: ${details.exitCode})
+    const lp = import_path19.default.join(import_electron21.app.getPath("userData"), "app.log");
+    import_fs19.default.appendFileSync(lp, `[${(/* @__PURE__ */ new Date()).toISOString()}] RENDER PROCESS GONE: ${details.reason} (exit: ${details.exitCode})
 `);
     try {
       const { TelemetryEngine: TelemetryEngine2 } = (init_TelemetryEngine(), __toCommonJS(TelemetryEngine_exports));
@@ -136806,8 +137573,8 @@ function createWindow() {
     }
   });
   win.webContents.on("unresponsive", () => {
-    const lp = import_path16.default.join(import_electron18.app.getPath("userData"), "app.log");
-    import_fs16.default.appendFileSync(lp, `[${(/* @__PURE__ */ new Date()).toISOString()}] RENDERER UNRESPONSIVE
+    const lp = import_path19.default.join(import_electron21.app.getPath("userData"), "app.log");
+    import_fs19.default.appendFileSync(lp, `[${(/* @__PURE__ */ new Date()).toISOString()}] RENDERER UNRESPONSIVE
 `);
     try {
       const { TelemetryEngine: TelemetryEngine2 } = (init_TelemetryEngine(), __toCommonJS(TelemetryEngine_exports));
@@ -136847,7 +137614,7 @@ function createWindow() {
   });
   win.on("close", (e2) => {
     e2.preventDefault();
-    const choice = import_electron18.dialog.showMessageBoxSync(win, {
+    const choice = import_electron21.dialog.showMessageBoxSync(win, {
       type: "question",
       buttons: ["Yes, Close", "Cancel"],
       defaultId: 1,
@@ -136863,12 +137630,12 @@ function createWindow() {
     }
   });
 }
-import_electron18.app.disableHardwareAcceleration();
+import_electron21.app.disableHardwareAcceleration();
 process.on("uncaughtException", (error51) => {
   console.error("[MAIN:FATAL] Uncaught Exception:", error51);
   try {
-    const lp = import_path16.default.join(import_electron18.app.getPath("userData"), "app.log");
-    import_fs16.default.appendFileSync(lp, `[${(/* @__PURE__ */ new Date()).toISOString()}] UNCAUGHT EXCEPTION: ${error51?.stack || error51}
+    const lp = import_path19.default.join(import_electron21.app.getPath("userData"), "app.log");
+    import_fs19.default.appendFileSync(lp, `[${(/* @__PURE__ */ new Date()).toISOString()}] UNCAUGHT EXCEPTION: ${error51?.stack || error51}
 `);
   } catch {
   }
@@ -136887,8 +137654,8 @@ process.on("uncaughtException", (error51) => {
 process.on("unhandledRejection", (reason) => {
   console.error("[MAIN] Unhandled Promise Rejection:", reason);
   try {
-    const lp = import_path16.default.join(import_electron18.app.getPath("userData"), "app.log");
-    import_fs16.default.appendFileSync(lp, `[${(/* @__PURE__ */ new Date()).toISOString()}] UNHANDLED REJECTION: ${reason instanceof Error ? reason.stack : reason}
+    const lp = import_path19.default.join(import_electron21.app.getPath("userData"), "app.log");
+    import_fs19.default.appendFileSync(lp, `[${(/* @__PURE__ */ new Date()).toISOString()}] UNHANDLED REJECTION: ${reason instanceof Error ? reason.stack : reason}
 `);
   } catch {
   }
@@ -136903,11 +137670,11 @@ process.on("unhandledRejection", (reason) => {
   } catch {
   }
 });
-import_electron18.app.whenReady().then(() => {
-  const logPath = import_path16.default.join(import_electron18.app.getPath("userData"), "app.log");
-  const log = (msg) => import_fs16.default.appendFileSync(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
+import_electron21.app.whenReady().then(() => {
+  const logPath = import_path19.default.join(import_electron21.app.getPath("userData"), "app.log");
+  const log = (msg) => import_fs19.default.appendFileSync(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
 `);
-  if (import_electron18.app.isPackaged) {
+  if (import_electron21.app.isPackaged) {
     const args = process.argv || [];
     const hasDebugArgs = args.some(
       (arg) => arg.startsWith("--inspect") || arg.startsWith("--remote-debugging-port") || arg.startsWith("--remote-debugging-pipe")
@@ -136915,7 +137682,7 @@ import_electron18.app.whenReady().then(() => {
     if (hasDebugArgs) {
       const lockFilePath2 = getLockFilePath();
       try {
-        import_fs16.default.writeFileSync(lockFilePath2, JSON.stringify({
+        import_fs19.default.writeFileSync(lockFilePath2, JSON.stringify({
           timestamp: (/* @__PURE__ */ new Date()).toISOString(),
           reason: "unauthorized debugging command-line flags"
         }, null, 2), "utf-8");
@@ -136924,7 +137691,7 @@ import_electron18.app.whenReady().then(() => {
     }
   }
   const lockFilePath = getLockFilePath();
-  if (import_fs16.default.existsSync(lockFilePath)) {
+  if (import_fs19.default.existsSync(lockFilePath)) {
     log("App starting in LOCKED mode. Aborting initialization.");
     createWindow();
     return;
@@ -136945,7 +137712,7 @@ import_electron18.app.whenReady().then(() => {
   createWindow();
   log("Window created call done");
   try {
-    import_electron18.session.defaultSession.webRequest.onBeforeSendHeaders(
+    import_electron21.session.defaultSession.webRequest.onBeforeSendHeaders(
       { urls: ["https://storage.lenas.me/*"] },
       (details, callback) => {
         const cfHeaders = getCfAccessHeaders();
@@ -136958,7 +137725,7 @@ import_electron18.app.whenReady().then(() => {
     log(`CF Access interceptor setup failed: ${e2.message}`);
   }
   try {
-    import_electron18.session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    import_electron21.session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
       const responseHeaders = { ...details.responseHeaders };
       if (!responseHeaders["content-security-policy"] && !responseHeaders["Content-Security-Policy"]) {
         responseHeaders["Content-Security-Policy"] = [
@@ -137004,15 +137771,15 @@ import_electron18.app.whenReady().then(() => {
       log(`Service start error: ${e2.message}`);
     }
   })();
-  import_electron18.app.on("activate", () => {
-    if (import_electron18.BrowserWindow.getAllWindows().length === 0) {
+  import_electron21.app.on("activate", () => {
+    if (import_electron21.BrowserWindow.getAllWindows().length === 0) {
       createWindow();
     }
   });
 });
 var isQuitting = false;
 var cleanupDone = false;
-import_electron18.app.on("before-quit", async (event) => {
+import_electron21.app.on("before-quit", async (event) => {
   if (cleanupDone) {
     return;
   }
@@ -137035,15 +137802,23 @@ import_electron18.app.on("before-quit", async (event) => {
     ]);
   } catch {
   }
+  try {
+    await Promise.race([
+      NASConnectionManager.getInstance().stop(),
+      new Promise((resolve) => setTimeout(resolve, 1e3))
+    ]);
+    WatchdogService.getInstance().stopMonitoring();
+  } catch {
+  }
   clearAll();
   clearEncryptionKey();
   console.log("[App] Cleanup done. Re-triggering quit.");
   cleanupDone = true;
-  import_electron18.app.quit();
+  import_electron21.app.quit();
 });
-import_electron18.app.on("window-all-closed", () => {
+import_electron21.app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
-    import_electron18.app.quit();
+    import_electron21.app.quit();
   }
 });
 /*! Bundled license information:

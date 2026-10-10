@@ -34,5 +34,29 @@ services:
       - portainer_data:/data
     restart: always
 
+  connection-manager:
+    image: node:20-alpine
+    container_name: lesoft-connection-manager
+    working_dir: /app
+    volumes:
+      - ./scripts/nas-connection-service.js:/app/nas-connection-service.js:ro
+    command: sh -c "npm install -g pg && NODE_PATH=$$(npm root -g) node /app/nas-connection-service.js"
+    ports:
+      - "8085:8085"
+    environment:
+      PORT: 8085
+      ADMIN_SECRET: ${CONNECTION_MANAGER_ADMIN_SECRET:?Error: CONNECTION_MANAGER_ADMIN_SECRET must be set and cannot use default}
+      PGHOST: ${PGHOST:-127.0.0.1}
+      PGPORT: ${PGPORT:-5432}
+      PGDATABASE: ${PGDATABASE:-lesoft}
+      PGUSER: ${PGUSER:-nas_connection_service}
+      PGPASSWORD: ${PGPASSWORD:?Error: PGPASSWORD must be set for durable client registry persistence}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8085/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+    restart: always
+
 volumes:
   portainer_data:

@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   ClipboardList, ChevronDown, ChevronUp, CheckCircle, Trash2, Send, 
   FileText, Download, Eye, X, Edit2, Ruler, MapPin, 
-  User, History, Layers, ArrowRight, RefreshCw, Upload, Search
+  User, History, Layers, ArrowRight, RefreshCw, Upload, Search, Copy, Paperclip
 } from 'lucide-react';
 import DashboardLayout from '../../components/DashboardLayout';
 import { useAutoRefresh } from '../../hooks/useAutoRefresh';
@@ -176,6 +177,7 @@ interface Order {
   factory_manager_id?: number | null;
   factory_manager_name?: string | null;
   current_stage_photo?: string | null;
+  invoice_attachment_urls?: string[] | null;
 }
 
 interface StatusUpdate { 
@@ -193,6 +195,7 @@ interface PdfEntry { path: string; name: string; url: string; }
 interface Part { id: number; part_name: string; length: string; width: string; height: string; notes: string; sort_order: number; }
 
 const TrackOrders: React.FC = () => {
+  const navigate = useNavigate();
   const pricingPerms = getUserPricingPermissions();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
@@ -262,10 +265,26 @@ const TrackOrders: React.FC = () => {
 
   const hasPermission = (key: string) => {
     if (key === 'set_make_cost_price') {
-      return pricingPerms.canViewCostPrice;
+      return pricingPerms.canEditCostPrice;
     }
     if (userRole === 'admin' || userRole === 'superadmin' || userRole === 'manager') return true;
     return !!userPermissions[key];
+  };
+
+  const handleDuplicateOrder = async (orderToDuplicate: Order) => {
+    let items = orderToDuplicate.items || [];
+    if (items.length === 0) {
+      if (expandedId === orderToDuplicate.id && orderItems.length > 0) {
+        items = orderItems;
+      } else if (window.electron?.makeGetOrderItems) {
+        try {
+          items = await window.electron.makeGetOrderItems(orderToDuplicate.id) || [];
+        } catch (err) {
+          console.warn('Failed to load items for duplicate order:', err);
+        }
+      }
+    }
+    navigate('/make/place-order', { state: { duplicateFromOrder: { ...orderToDuplicate, items } } });
   };
 
   const isDesigner = userRole === 'designer' || userRole === 'furniture designer' || userRole === 'make_designer';
@@ -919,7 +938,7 @@ const TrackOrders: React.FC = () => {
                             </span>
                           )
                         )}
-                        {order.sale_price && (
+                        {pricingPerms.canViewSalePrice && order.sale_price && (
                           <span style={{ color: 'var(--accent-color)', fontWeight: 700 }}>
                             Sale: ৳{Number(order.sale_price).toLocaleString()}
                           </span>
@@ -929,6 +948,12 @@ const TrackOrders: React.FC = () => {
 
                     {/* Action buttons */}
                     <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }} onClick={e => e.stopPropagation()}>
+                      {!isFactoryManager && (
+                        <button onClick={() => handleDuplicateOrder(order)} style={{ ...smallBtn('var(--accent-color)'), display: 'flex', alignItems: 'center', gap: '4px' }} title="Duplicate Order to new Place Order draft">
+                          <Copy size={13} /> Duplicate
+                        </button>
+                      )}
+
                       <button onClick={() => handleOpenVersionDiff(order)} style={smallBtn('#6366f1')} title="View Version Diff & History">
                         <History size={14} /> Diff
                       </button>
@@ -1159,8 +1184,8 @@ const TrackOrders: React.FC = () => {
                                     </div>
 
                                     {/* Designer Pricing for Legacy Order */}
-                                    {hasPermission('set_make_cost_price') && (
-                                      <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.2fr 1.5fr', gap: '12px', alignItems: 'flex-end', paddingTop: '4px' }}>
+                                    {pricingPerms.canEditCostPrice && (
+                                      <div style={{ display: 'grid', gridTemplateColumns: pricingPerms.canViewSalePrice ? '1.2fr 1.2fr 1.5fr' : '1.2fr 1.5fr', gap: '12px', alignItems: 'flex-end', paddingTop: '4px' }}>
                                         <div>
                                           <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 700, color: '#dc2626', marginBottom: '4px', textTransform: 'uppercase' }}>
                                             * Unit Cost Price (৳) [Required]
@@ -1174,19 +1199,21 @@ const TrackOrders: React.FC = () => {
                                             style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--border-color)', background: 'var(--card-bg)', color: 'var(--text-primary)', fontSize: '0.88rem', fontWeight: 700, boxSizing: 'border-box' }}
                                           />
                                         </div>
-                                        <div>
-                                          <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '4px', textTransform: 'uppercase' }}>
-                                            Unit Sale Price (৳) [Optional]
-                                          </label>
-                                          <input
-                                            type="number"
-                                            min={1}
-                                            placeholder="Enter unit sale..."
-                                            value={salePrices[order.id] !== undefined ? salePrices[order.id] : (order.sale_price ? String(Math.round(order.sale_price / (order.quantity || 1))) : '')}
-                                            onChange={e => setSalePrices({ ...salePrices, [order.id]: e.target.value })}
-                                            style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--border-color)', background: 'var(--card-bg)', color: 'var(--text-primary)', fontSize: '0.88rem', fontWeight: 700, boxSizing: 'border-box' }}
-                                          />
-                                        </div>
+                                        {pricingPerms.canViewSalePrice && (
+                                          <div>
+                                            <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '4px', textTransform: 'uppercase' }}>
+                                              Unit Sale Price (৳) [Optional]
+                                            </label>
+                                            <input
+                                              type="number"
+                                              min={1}
+                                              placeholder="Enter unit sale..."
+                                              value={salePrices[order.id] !== undefined ? salePrices[order.id] : (order.sale_price ? String(Math.round(order.sale_price / (order.quantity || 1))) : '')}
+                                              onChange={e => setSalePrices({ ...salePrices, [order.id]: e.target.value })}
+                                              style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--border-color)', background: 'var(--card-bg)', color: 'var(--text-primary)', fontSize: '0.88rem', fontWeight: 700, boxSizing: 'border-box' }}
+                                            />
+                                          </div>
+                                        )}
                                         <div style={{ background: 'var(--card-bg)', padding: '8px 12px', borderRadius: '6px', border: '1px solid var(--border-color)', fontSize: '0.78rem' }}>
                                           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                                             <span style={{ color: 'var(--text-secondary)' }}>Total Cost ({order.quantity}x):</span>
@@ -1194,12 +1221,14 @@ const TrackOrders: React.FC = () => {
                                               ৳{((parseFloat(costPrices[order.id] || '0') || 0) * (order.quantity || 1)).toLocaleString()}
                                             </strong>
                                           </div>
-                                          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '2px' }}>
-                                            <span style={{ color: 'var(--text-secondary)' }}>Total Sale:</span>
-                                            <strong style={{ color: 'var(--accent-color)' }}>
-                                              {(parseFloat(salePrices[order.id] || '0') > 0) ? `৳${((parseFloat(salePrices[order.id] || '0') || 0) * (order.quantity || 1)).toLocaleString()}` : '—'}
-                                            </strong>
-                                          </div>
+                                          {pricingPerms.canViewSalePrice && (
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '2px' }}>
+                                              <span style={{ color: 'var(--text-secondary)' }}>Total Sale:</span>
+                                              <strong style={{ color: 'var(--accent-color)' }}>
+                                                {(parseFloat(salePrices[order.id] || '0') > 0) ? `৳${((parseFloat(salePrices[order.id] || '0') || 0) * (order.quantity || 1)).toLocaleString()}` : '—'}
+                                              </strong>
+                                            </div>
+                                          )}
                                         </div>
                                       </div>
                                     )}
@@ -1254,11 +1283,11 @@ const TrackOrders: React.FC = () => {
                                                 )}
                                               </div>
                                               <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap', marginTop: '6px', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                                                {item.spec_name && (
-                                                  <span><strong>Spec:</strong> {item.spec_name}</span>
+                                                {(item.spec_details || item.spec_name) && (
+                                                  <span><strong>Spec:</strong> {item.spec_details || item.spec_name}</span>
                                                 )}
                                                 <span>
-                                                  <strong>Dimensions:</strong>{' '}
+                                                  <strong>Size / Dimensions:</strong>{' '}
                                                   <span style={{ color: item.is_customized ? '#c2410c' : 'inherit', fontWeight: item.is_customized ? 700 : 400 }}>
                                                     {item.custom_dimensions || item.dimensions_text || item.size_label || 'Standard Dimensions'}
                                                   </span>
@@ -1332,7 +1361,7 @@ const TrackOrders: React.FC = () => {
                                           </div>
 
                                           {/* Individual Product Pricing & Designer Notes */}
-                                          {hasPermission('set_make_cost_price') ? (
+                                          {pricingPerms.canEditCostPrice ? (
                                             <div className="make-responsive-grid-4" style={{ gap: '12px', alignItems: 'flex-end', paddingTop: '2px' }}>
                                               <div>
                                                 <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 700, color: '#dc2626', marginBottom: '4px', textTransform: 'uppercase' }}>
@@ -1348,19 +1377,21 @@ const TrackOrders: React.FC = () => {
                                                 />
                                               </div>
 
-                                              <div>
-                                                <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '4px', textTransform: 'uppercase' }}>
-                                                  Unit Sale Price (৳) [Optional]
-                                                </label>
-                                                <input
-                                                  type="number"
-                                                  min={1}
-                                                  placeholder="e.g. 7200"
-                                                  value={itemSaleVal}
-                                                  onChange={e => setItemSalePrices({ ...itemSalePrices, [item.id]: e.target.value })}
-                                                  style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--border-color)', background: 'var(--card-bg)', color: 'var(--text-primary)', fontSize: '0.88rem', fontWeight: 700, boxSizing: 'border-box' }}
-                                                />
-                                              </div>
+                                              {pricingPerms.canViewSalePrice && (
+                                                <div>
+                                                  <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '4px', textTransform: 'uppercase' }}>
+                                                    Unit Sale Price (৳) [Optional]
+                                                  </label>
+                                                  <input
+                                                    type="number"
+                                                    min={1}
+                                                    placeholder="e.g. 7200"
+                                                    value={itemSaleVal}
+                                                    onChange={e => setItemSalePrices({ ...itemSalePrices, [item.id]: e.target.value })}
+                                                    style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--border-color)', background: 'var(--card-bg)', color: 'var(--text-primary)', fontSize: '0.88rem', fontWeight: 700, boxSizing: 'border-box' }}
+                                                  />
+                                                </div>
+                                              )}
 
                                               {/* Line Subtotals */}
                                               <div style={{ background: 'var(--input-bg)', padding: '8px 12px', borderRadius: '6px', border: '1px solid var(--border-color)', fontSize: '0.78rem' }}>
@@ -1370,13 +1401,15 @@ const TrackOrders: React.FC = () => {
                                                     ৳{lineCost.toLocaleString()}
                                                   </strong>
                                                 </div>
-                                                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '2px' }}>
-                                                  <span style={{ color: 'var(--text-secondary)' }}>Line Sale:</span>
-                                                  <strong style={{ color: 'var(--accent-color)' }}>
-                                                    {lineSale > 0 ? `৳${lineSale.toLocaleString()}` : '—'}
-                                                  </strong>
-                                                </div>
-                                                {lineMarginPct && (
+                                                {pricingPerms.canViewSalePrice && (
+                                                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '2px' }}>
+                                                    <span style={{ color: 'var(--text-secondary)' }}>Line Sale:</span>
+                                                    <strong style={{ color: 'var(--accent-color)' }}>
+                                                      {lineSale > 0 ? `৳${lineSale.toLocaleString()}` : '—'}
+                                                    </strong>
+                                                  </div>
+                                                )}
+                                                {pricingPerms.canViewSalePrice && lineMarginPct && (
                                                   <div style={{ fontSize: '0.7rem', color: Number(lineMarginPct) >= 0 ? '#16a34a' : '#dc2626', fontWeight: 700, marginTop: '2px', textAlign: 'right' }}>
                                                     {Number(lineMarginPct) >= 0 ? `+${lineMarginPct}% margin` : `${lineMarginPct}% loss`}
                                                   </div>
@@ -1401,7 +1434,9 @@ const TrackOrders: React.FC = () => {
                                               {pricingPerms.canViewCostPrice && (
                                                 <div>Unit Cost: <strong style={{ color: '#059669' }}>{item.item_cost_price ? `৳${Number(item.item_cost_price).toLocaleString()}` : 'Pending'}</strong></div>
                                               )}
-                                              <div>Unit Sale: <strong style={{ color: 'var(--accent-color)' }}>{item.item_sale_price ? `৳${Number(item.item_sale_price).toLocaleString()}` : 'Pending'}</strong></div>
+                                              {pricingPerms.canViewSalePrice && (
+                                                <div>Unit Sale: <strong style={{ color: 'var(--accent-color)' }}>{item.item_sale_price ? `৳${Number(item.item_sale_price).toLocaleString()}` : 'Pending'}</strong></div>
+                                              )}
                                               {pricingPerms.canViewCostPrice && (
                                                 <div>Line Cost ({item.quantity}x): <strong style={{ color: '#059669' }}>৳{(Number(item.item_cost_price || 0) * item.quantity).toLocaleString()}</strong></div>
                                               )}
@@ -1415,7 +1450,7 @@ const TrackOrders: React.FC = () => {
                                 )}
 
                                 {/* ── ORDER PRICING SUMMARY & PUBLISH BAR ── */}
-                                {hasPermission('set_make_cost_price') && (
+                                {pricingPerms.canEditCostPrice && (
                                   <div style={{
                                     background: 'linear-gradient(135deg, rgba(99,102,241,0.06), rgba(249,115,22,0.06))',
                                     border: '1.5px solid var(--accent-color)',
@@ -1442,14 +1477,18 @@ const TrackOrders: React.FC = () => {
                                             ৳{liveTotalCost.toLocaleString()}
                                           </div>
                                         </div>
-                                        <div style={{ width: '1px', height: '30px', background: 'var(--border-color)' }} />
-                                        <div>
-                                          <span style={{ fontSize: '0.72rem', color: 'var(--accent-color)', textTransform: 'uppercase', fontWeight: 700 }}>Total Order Sale</span>
-                                          <div style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--accent-color)' }}>
-                                            {liveTotalSale > 0 ? `৳${liveTotalSale.toLocaleString()}` : 'Not Specified'}
-                                          </div>
-                                        </div>
-                                        {liveTotalSale > liveTotalCost && (
+                                        {pricingPerms.canViewSalePrice && (
+                                          <>
+                                            <div style={{ width: '1px', height: '30px', background: 'var(--border-color)' }} />
+                                            <div>
+                                              <span style={{ fontSize: '0.72rem', color: 'var(--accent-color)', textTransform: 'uppercase', fontWeight: 700 }}>Total Order Sale</span>
+                                              <div style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--accent-color)' }}>
+                                                {liveTotalSale > 0 ? `৳${liveTotalSale.toLocaleString()}` : 'Not Specified'}
+                                              </div>
+                                            </div>
+                                          </>
+                                        )}
+                                        {pricingPerms.canViewSalePrice && liveTotalSale > liveTotalCost && (
                                           <>
                                             <div style={{ width: '1px', height: '30px', background: 'var(--border-color)' }} />
                                             <div>
@@ -1756,6 +1795,49 @@ const TrackOrders: React.FC = () => {
                               </div>
                             )}
                           </div>
+
+                          {/* Invoice Attachments & Documents */}
+                          {Array.isArray(order.invoice_attachment_urls) && order.invoice_attachment_urls.length > 0 && (
+                            <div style={{ marginTop: '20px', borderTop: '1px solid var(--border-color)', paddingTop: '16px' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                                <h4 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                  <Paperclip size={15} color="var(--accent-color)" /> Invoice Attachments &amp; Documents ({order.invoice_attachment_urls.length})
+                                </h4>
+                              </div>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                {order.invoice_attachment_urls.map((attUrl, attIdx) => {
+                                  const attName = attUrl.split('/').pop()?.replace(/^\d+_/, '') || `Invoice Attachment #${attIdx + 1}`;
+                                  const isPdf = attUrl.toLowerCase().endsWith('.pdf');
+                                  return (
+                                    <div key={attUrl + attIdx} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '9px 12px', background: 'rgba(99,102,241,0.05)', border: '1px solid rgba(99,102,241,0.18)', borderRadius: '8px' }}>
+                                      {isPdf ? <FileText size={15} color="#3b82f6" /> : <Paperclip size={15} color="var(--accent-color)" />}
+                                      <span style={{ flex: 1, fontSize: '0.85rem', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{attName}</span>
+                                      <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+                                        <button
+                                          onClick={() => {
+                                            if (isPdf) {
+                                              setPdfViewer({ path: attUrl, name: attName, url: attUrl });
+                                            } else {
+                                              window.open(attUrl, '_blank');
+                                            }
+                                          }}
+                                          style={smallBtn('#3b82f6')}
+                                          title="View Attachment"
+                                        >
+                                          <Eye size={13} /> View
+                                        </button>
+                                        <a href={attUrl} download={attName} target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>
+                                          <button style={smallBtn('#10b981')} title="Download Attachment">
+                                            <Download size={13} /> Download
+                                          </button>
+                                        </a>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </motion.div>
                     )}

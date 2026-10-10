@@ -1,7 +1,7 @@
 {
   "name": "le-soft",
   "private": true,
-  "version": "1.8.10",
+  "version": "1.8.11",
   "description": "Leading Edge ECO-System Software",
   "author": "Leading Edge <leadingedge.com.bd>",
   "type": "module",
@@ -112,7 +112,8 @@
     "win": {
       "target": "nsis",
       "icon": "../icon.ico",
-      "artifactName": "${productName}-Setup-${version}.${ext}"
+      "artifactName": "${productName}-Setup-${version}.${ext}",
+      "executableName": "LESOFT"
     },
     "nsis": {
       "oneClick": false,

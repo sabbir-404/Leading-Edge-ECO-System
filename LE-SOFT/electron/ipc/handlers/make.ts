@@ -59,8 +59,9 @@ export function registerMakeHandlers(): void {
      */
     function canManageCatalog(session: UserSession): boolean {
         const role = (session.role || '').toLowerCase();
-        // Salespersons are strictly forbidden from creating or managing products
+        // Salespersons and Factory Managers are strictly forbidden from creating or managing products
         if (role === 'salesperson' || role === 'salesman' || role === 'sales') return false;
+        if (role === 'factory_manager' || role === 'factory manager' || role === 'factory') return false;
         if (role === 'admin' || role === 'superadmin' || role === 'manager') return true;
         if (
             role === 'furniture_designer' || 
@@ -73,7 +74,8 @@ export function registerMakeHandlers(): void {
                 session.permissions['manage_catalog'] ||
                 session.permissions['make_admin'] ||
                 session.permissions['catalog_manage'] ||
-                session.permissions['write_make_catalog']
+                session.permissions['write_make_catalog'] ||
+                session.permissions['create_product_from_place_order']
             )
         );
     }
@@ -122,6 +124,10 @@ export function registerMakeHandlers(): void {
     ipcMain.handle('create-make-order', async (_e, rawOrder: any) => {
         try {
             const session = requireSession();
+            const role = (session.role || '').toLowerCase();
+            if (role === 'factory_manager' || role === 'factory manager' || role === 'factory') {
+                throw new Error('Forbidden: Factory Manager is strictly prohibited from creating orders.');
+            }
             const parsed = CreateMakeOrderSchema.parse(rawOrder);
             const result = await MakeOrderService.createOrder(parsed as any, session);
             if (!result.success) {
@@ -1059,6 +1065,15 @@ export function registerMakeHandlers(): void {
             };
         }));
 
+        const session = SessionManager.getSession();
+        const role = (session?.role || '').toLowerCase();
+        if (role === 'factory_manager' || role === 'factory manager' || role === 'factory') {
+            return itemsWithDrawings.map((it: any) => {
+                const { item_sale_price, unit_sale_price, total_sale_price, ...rest } = it;
+                return rest;
+            });
+        }
+
         return itemsWithDrawings;
     });
 
@@ -1140,11 +1155,22 @@ export function registerMakeHandlers(): void {
     ipcMain.handle('make-search-orders', async (_e, rawPayload: any) => {
         try {
             const parsed = rawPayload || {};
-            return await MakeSearchService.searchOrders({
+            const orders = await MakeSearchService.searchOrders({
                 query: parsed.query,
                 status: parsed.status,
                 limit: parsed.limit
             });
+
+            const session = SessionManager.getSession();
+            const role = (session?.role || '').toLowerCase();
+            if (role === 'factory_manager' || role === 'factory manager' || role === 'factory') {
+                return (orders || []).map((o: any) => {
+                    const { sale_price, custom_price, ...rest } = o;
+                    return rest;
+                });
+            }
+
+            return orders;
         } catch (err: any) {
             console.error('[MAKE IPC] make-search-orders error:', err);
             return [];

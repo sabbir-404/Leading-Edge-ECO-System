@@ -33,12 +33,16 @@ describe('LESOFT v1.8.4 Real-World Clean-Install & Production Validation', () =>
     let canonicalGenSecret: string;
 
     const realAppData = process.env.APPDATA || 'C:\\Users\\sabbi\\AppData\\Roaming';
-    const installerPath = fs.existsSync(path.join(__dirname, '../../release/LESOFT Setup 1.8.4.exe'))
+    const installerPath = fs.existsSync(path.join(__dirname, '../../release/LESOFT-Setup-1.8.11.exe'))
+        ? path.join(__dirname, '../../release/LESOFT-Setup-1.8.11.exe')
+        : fs.existsSync(path.join(__dirname, '../../release/LESOFT Setup 1.8.4.exe'))
         ? path.join(__dirname, '../../release/LESOFT Setup 1.8.4.exe')
         : fs.existsSync(path.join(__dirname, '../../release/LESOFT Setup 1.8.3.exe'))
         ? path.join(__dirname, '../../release/LESOFT Setup 1.8.3.exe')
         : path.join(__dirname, '../../release/LESOFT Setup 1.8.2.exe');
-    const exePath = path.join(__dirname, '../../scratch/installed-app/LESOFT.exe');
+    const exePath = fs.existsSync(path.join(__dirname, '../../scratch/installed-app/LESOFT.exe'))
+        ? path.join(__dirname, '../../scratch/installed-app/LESOFT.exe')
+        : path.join(__dirname, '../../release/win-unpacked/LESOFT.exe');
 
     beforeAll(() => {
         process.env.APPDATA = realAppData;
@@ -151,7 +155,7 @@ describe('LESOFT v1.8.4 Real-World Clean-Install & Production Validation', () =>
 
         // 3.8 Confirm read-only verification (no mutations performed)
         expect(userErr).toBeNull();
-    });
+    }, 30000);
 
     it('4. Security Verification: Customer environment has zero developer secrets, zero private keys, and safe logs', () => {
         delete process.env.LE_GENERATION_SECRET;

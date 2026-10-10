@@ -441,5 +441,26 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   pruneRemoteReports: (params) => import_electron.ipcRenderer.invoke("prune-remote-reports", params),
   // ─── MEDIA & IMAGE DIAGNOSTICS ───
   diagnoseImage: (rawSrc) => import_electron.ipcRenderer.invoke("diagnose-image", rawSrc),
-  resolveImageSrc: (imagePath) => import_electron.ipcRenderer.invoke("resolve-image-src", imagePath)
+  resolveImageSrc: (imagePath) => import_electron.ipcRenderer.invoke("resolve-image-src", imagePath),
+  // ─── NAS SMART CONNECTION MANAGER ───
+  getNasConnectionStatus: () => import_electron.ipcRenderer.invoke("get-nas-connection-status"),
+  onNasConnectionStatusChanged: (callback) => {
+    const handler = (_event, status) => callback(status);
+    import_electron.ipcRenderer.on("nas-status-changed", handler);
+    return () => import_electron.ipcRenderer.removeListener("nas-status-changed", handler);
+  },
+  // ─── WINDOWS NOTIFICATION SERVICE ───
+  getNotificationSettings: () => import_electron.ipcRenderer.invoke("get-notification-settings"),
+  updateNotificationSettings: (settings) => import_electron.ipcRenderer.invoke("update-notification-settings", settings),
+  showWindowsNotification: (options) => import_electron.ipcRenderer.invoke("show-windows-notification", options),
+  // ─── WATCHDOG & STABILITY ───
+  getStabilityDiagnostics: () => import_electron.ipcRenderer.invoke("get-stability-diagnostics"),
+  onWatchdogPing: (callback) => {
+    const handler = () => callback();
+    import_electron.ipcRenderer.on("watchdog-ping", handler);
+    return () => import_electron.ipcRenderer.removeListener("watchdog-ping", handler);
+  },
+  sendWatchdogPong: () => {
+    import_electron.ipcRenderer.send("watchdog-pong");
+  }
 });

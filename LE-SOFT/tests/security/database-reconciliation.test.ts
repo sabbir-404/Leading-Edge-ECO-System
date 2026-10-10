@@ -114,7 +114,7 @@ describe('Final Read-Only Database Reconciliation', () => {
             .select('id, order_id, stage', { count: 'exact' })
             .limit(3);
         console.log('  • make_order_updates (stage):', !updateErr ? `PRESENT (rows: ${updateCount})` : 'ERROR: ' + JSON.stringify(updateErr));
-    });
+    }, 25000);
 
     it('3 & 4. Supabase Cloud Database Verification (READ-ONLY) & Migration 063 Status', async () => {
         console.log('\n[SUPABASE CLOUD] Checking live Supabase schema for Migration 063...');

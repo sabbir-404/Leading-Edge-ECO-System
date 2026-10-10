@@ -49,3 +49,6 @@ Stock ss.csv
 
 # WordPress Plugin generated zips
 wordpress-plugin/**/*.zip
+
+# Scratch files
+scratch/

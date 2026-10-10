@@ -31,6 +31,9 @@ import { LocalEntityCache } from './local-cache';
 import { BackgroundSyncEngine } from './sync-engine';
 import { SessionManager, UserSession } from './session-manager';
 import { registerMakeHandlers } from './ipc/handlers/make';
+import { NASConnectionManager } from './services/make/NASConnectionManager';
+import { WindowsNotificationService } from './services/WindowsNotificationService';
+import { WatchdogService } from './services/WatchdogService';
 
 const BCRYPT_ROUNDS = 12;
 const HOSTINGER_UPLOAD_URL = process.env.HOSTINGER_UPLOAD_URL || 'https://leadingedge.com.bd/api/upload_image.php';
@@ -4117,10 +4120,20 @@ export function registerHandlers() {
     // ═══ MAKE MODULE ══════════════════════════════════════════════════════
 
     ipcMain.handle('get-make-orders', async () => {
+        const session = SessionManager.getSession();
+        const role = (session?.role || '').toLowerCase();
+        const isFactoryManager = role === 'factory_manager' || role === 'factory manager' || role === 'factory';
+
+        const sanitizeOrder = (o: any) => {
+            if (!isFactoryManager) return o;
+            const { sale_price, custom_price, ...rest } = o;
+            return rest;
+        };
+
         try {
             const { data, error } = await supabase.from('make_orders').select('*, salesman:users(full_name), bill:bills(invoice_number)').order('created_at', { ascending: false });
             if (!error && data) {
-                return decryptRows(data).map((o: any) => ({ 
+                return decryptRows(data).map((o: any) => sanitizeOrder({
                     ...o, 
                     salesman_name: o.salesman?.full_name || 'Unassigned',
                     bill_invoice_number: o.bill?.invoice_number || null
@@ -4135,7 +4148,7 @@ export function registerHandlers() {
 
         const { data: baseData, error: baseErr } = await supabase.from('make_orders').select('*, salesman:users(full_name)').order('created_at', { ascending: false });
         if (baseErr) throw baseErr;
-        return decryptRows(baseData || []).map((o: any) => ({ 
+        return decryptRows(baseData || []).map((o: any) => sanitizeOrder({
             ...o, 
             salesman_name: o.salesman?.full_name || 'Unassigned',
             bill_invoice_number: null
@@ -6893,6 +6906,61 @@ export function registerHandlers() {
 
     ipcMain.handle('resolve-image-src', (_e, imagePath: string) => {
         return imagePath || '';
+    });
+
+    // ─── NAS SMART CONNECTION MANAGER ───
+    ipcMain.handle('get-nas-connection-status', async () => {
+        try {
+            return NASConnectionManager.getInstance().getSafeStatus();
+        } catch {
+            return { status: 'Offline', lastSync: 0, isNasOnline: false };
+        }
+    });
+
+    // ─── WINDOWS NOTIFICATION CENTER ───
+    ipcMain.handle('get-notification-settings', async () => {
+        try {
+            return WindowsNotificationService.getInstance().getSettings();
+        } catch {
+            return {
+                enabled: true,
+                orderNotifications: true,
+                updateNotifications: true,
+                systemNotifications: true,
+                connectionNotifications: true
+            };
+        }
+    });
+
+    ipcMain.handle('update-notification-settings', async (_e, settings: any) => {
+        try {
+            return WindowsNotificationService.getInstance().updateSettings(settings);
+        } catch (e: any) {
+            return { success: false, error: e.message };
+        }
+    });
+
+    ipcMain.handle('show-windows-notification', async (_e, options: any) => {
+        try {
+            return WindowsNotificationService.getInstance().showNotification(options);
+        } catch {
+            return false;
+        }
+    });
+
+    // ─── APPLICATION WATCHDOG & STABILITY ───
+    ipcMain.on('watchdog-pong', () => {
+        try {
+            WatchdogService.getInstance().recordRendererHeartbeat();
+        } catch {}
+    });
+
+    ipcMain.handle('get-stability-diagnostics', async () => {
+        try {
+            return WatchdogService.getInstance().getSanitizedDiagnostics();
+        } catch {
+            return [];
+        }
     });
 
 } // end registerHandlers

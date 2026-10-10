@@ -4,7 +4,7 @@ import {
     Save, Download, RefreshCw, CheckCircle, AlertTriangle, User, Lock,
     Eye, EyeOff, DollarSign, Barcode, Printer, Database, Settings as SettingsIcon,
     Server, Sun, Moon, AtSign, Info, Clock, Key, Copy, CheckCheck, MonitorPlay,
-    Compass, RotateCcw
+    Compass, RotateCcw, Bell
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTheme } from '../../context/ThemeContext';
@@ -76,6 +76,16 @@ const Settings: React.FC = () => {
     // ── Auto Logout ──────────────────────────────────────────────────────────
     const [autoLogoutEnabled, setAutoLogoutEnabled] = useState(localStorage.getItem('auto_logout_enabled') !== 'false');
     const [autoLogoutMinutes, setAutoLogoutMinutes] = useState(localStorage.getItem('auto_logout_minutes') || '15');
+
+    // ── Windows Notification Center Settings ────────────────────────────────
+    const [notifSettings, setNotifSettings] = useState({
+        enabled: true,
+        orderNotifications: true,
+        updateNotifications: true,
+        systemNotifications: true,
+        connectionNotifications: true
+    });
+    const [notifSaved, setNotifSaved] = useState(false);
 
     // ── License Key Reveal ──────────────────────────────────────────────────
     const [licenseKeyReveal, setLicenseKeyReveal] = useState(localStorage.getItem('app_license_key') || 'Not Activated');
@@ -231,6 +241,10 @@ const Settings: React.FC = () => {
             fetchPaymentMethods();
         } else if (activeTab === 'versions') {
             fetchDeviceSessions();
+        } else if (activeTab === 'system_hardware') {
+            window.electron?.getNotificationSettings?.().then((res: any) => {
+                if (res) setNotifSettings(res);
+            }).catch(console.error);
         }
     }, [activeTab]);
 
@@ -455,6 +469,18 @@ const Settings: React.FC = () => {
         localStorage.setItem('auto_logout_minutes', autoLogoutMinutes);
         setBarcodeSaved(true); setTimeout(() => setBarcodeSaved(false), 2500);
         showToast('Settings saved!', 'success');
+    };
+
+    const handleSaveNotificationSettings = async () => {
+        if (!window.electron?.updateNotificationSettings) return;
+        const res = await window.electron.updateNotificationSettings(notifSettings);
+        if (res?.success) {
+            setNotifSaved(true);
+            setTimeout(() => setNotifSaved(false), 2500);
+            showToast('Windows notification settings saved!', 'success');
+        } else {
+            showToast('Failed to save notification settings: ' + (res?.error || 'Unknown error'), 'error');
+        }
     };
 
     // ── Inline styles ─────────────────────────────────────────────────────────
@@ -961,6 +987,67 @@ const Settings: React.FC = () => {
 
                                     <button onClick={handleBarcodeSave} style={{ ...btn(barcodeSaved ? '#22c55e' : 'var(--accent-color)'), marginTop: '1.5rem', transition: 'background 0.3s' }}>
                                         <Save size={15} /> {barcodeSaved ? '✓ Saved!' : 'Save Auto-Logout Settings'}
+                                    </button>
+                                </div>
+
+                                {/* Windows Action Center Notifications */}
+                                <div style={card}>
+                                    <div style={cardHeader}>
+                                        <div style={iconBox('#6366f1', 'rgba(99,102,241,0.12)')}><Bell size={20} /></div>
+                                        <div>
+                                            <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>Windows Action Center Notifications</h2>
+                                            <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-secondary)' }}>Native Windows desktop notifications (AppUserModelID com.leadingedge.lesoft)</p>
+                                        </div>
+                                    </div>
+
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem', padding: '1rem', background: 'var(--input-bg)', borderRadius: '10px', border: '1px solid var(--border-color)' }}>
+                                        <div>
+                                            <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>Enable Desktop Notifications</div>
+                                            <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>Master switch for Windows native notification toasts</div>
+                                        </div>
+                                        <div
+                                            onClick={() => setNotifSettings({ ...notifSettings, enabled: !notifSettings.enabled })}
+                                            style={{
+                                                width: '48px', height: '24px', borderRadius: '12px', background: notifSettings.enabled ? 'var(--accent-color)' : '#475569',
+                                                position: 'relative', cursor: 'pointer', transition: 'all 0.3s',
+                                            }}
+                                        >
+                                            <div style={{
+                                                width: '18px', height: '18px', borderRadius: '50%', background: '#fff',
+                                                position: 'absolute', top: '3px', left: notifSettings.enabled ? '27px' : '3px',
+                                                transition: 'all 0.3s',
+                                            }} />
+                                        </div>
+                                    </div>
+
+                                    {notifSettings.enabled && (
+                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '0.75rem', marginBottom: '1rem' }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.85rem 1rem', background: 'var(--input-bg)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                                                <div>
+                                                    <div style={{ fontWeight: 600, fontSize: '0.88rem' }}>Order Confirmations</div>
+                                                    <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>When new orders are successfully placed</div>
+                                                </div>
+                                                <input type="checkbox" checked={notifSettings.orderNotifications} onChange={e => setNotifSettings({ ...notifSettings, orderNotifications: e.target.checked })} style={{ width: '18px', height: '18px', accentColor: 'var(--accent-color)', cursor: 'pointer' }} />
+                                            </div>
+                                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.85rem 1rem', background: 'var(--input-bg)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                                                <div>
+                                                    <div style={{ fontWeight: 600, fontSize: '0.88rem' }}>Update Alerts</div>
+                                                    <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>When software updates are available</div>
+                                                </div>
+                                                <input type="checkbox" checked={notifSettings.updateNotifications} onChange={e => setNotifSettings({ ...notifSettings, updateNotifications: e.target.checked })} style={{ width: '18px', height: '18px', accentColor: 'var(--accent-color)', cursor: 'pointer' }} />
+                                            </div>
+                                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.85rem 1rem', background: 'var(--input-bg)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                                                <div>
+                                                    <div style={{ fontWeight: 600, fontSize: '0.88rem' }}>System &amp; Connection Status</div>
+                                                    <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>TrueNAS connection recovery alerts</div>
+                                                </div>
+                                                <input type="checkbox" checked={notifSettings.connectionNotifications} onChange={e => setNotifSettings({ ...notifSettings, connectionNotifications: e.target.checked })} style={{ width: '18px', height: '18px', accentColor: 'var(--accent-color)', cursor: 'pointer' }} />
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    <button onClick={handleSaveNotificationSettings} style={{ ...btn(notifSaved ? '#22c55e' : 'var(--accent-color)'), transition: 'background 0.3s' }}>
+                                        <Save size={15} /> {notifSaved ? '✓ Saved!' : 'Save Notification Settings'}
                                     </button>
                                 </div>
                             </>

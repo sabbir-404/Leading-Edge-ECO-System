@@ -35,7 +35,7 @@ const ALLOWED_PHOTO_EXTENSIONS = new Set([
 ]);
 
 const ALLOWED_INVOICE_EXTENSIONS = new Set([
-    'png', 'jpg', 'jpeg', 'webp'
+    'png', 'jpg', 'jpeg', 'webp', 'pdf'
 ]);
 
 const MAX_CAD_FILE_SIZE = 50 * 1024 * 1024;    // 50 MB
@@ -148,15 +148,21 @@ export class MakeCadService {
             return { canceled: true, error: 'No active window found' };
         }
 
-        const filters = (type === 'photo' || type === 'invoice_attachment')
-            ? [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }]
-            : [
-                { name: 'Drawings & CAD Files', extensions: ['pdf', 'png', 'jpg', 'jpeg', 'webp', 'dwg', 'dxf', 'step', 'stp', 'iges', 'igs', 'skp', 'stl', 'obj'] },
-                { name: 'All Supported Files', extensions: ['*'] }
-            ];
+        const filters = type === 'invoice_attachment'
+            ? [
+                { name: 'Invoices & Documents', extensions: ['png', 'jpg', 'jpeg', 'webp', 'pdf'] },
+                { name: 'PDF Documents', extensions: ['pdf'] },
+                { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }
+              ]
+            : (type === 'photo'
+                ? [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }]
+                : [
+                    { name: 'Drawings & CAD Files', extensions: ['pdf', 'png', 'jpg', 'jpeg', 'webp', 'dwg', 'dxf', 'step', 'stp', 'iges', 'igs', 'skp', 'stl', 'obj'] },
+                    { name: 'All Supported Files', extensions: ['*'] }
+                  ]);
 
         const title = type === 'invoice_attachment'
-            ? 'Select Invoice Attachment'
+            ? 'Select Invoice Attachment / Document'
             : (type === 'photo' ? 'Select Stage Completion Photo' : 'Select Technical Drawing / CAD Blueprint');
 
         const result = await dialog.showOpenDialog(win, {
@@ -182,7 +188,9 @@ export class MakeCadService {
         type: 'cad' | 'photo' | 'invoice_attachment'
     ): { isValid: boolean; error?: string } {
         const ext = path.extname(fileName).replace('.', '').toLowerCase();
-        const allowedSet = (type === 'photo' || type === 'invoice_attachment') ? ALLOWED_INVOICE_EXTENSIONS : ALLOWED_CAD_EXTENSIONS;
+        const allowedSet = type === 'photo'
+            ? ALLOWED_PHOTO_EXTENSIONS
+            : (type === 'invoice_attachment' ? ALLOWED_INVOICE_EXTENSIONS : ALLOWED_CAD_EXTENSIONS);
 
         if (!allowedSet.has(ext)) {
             return { isValid: false, error: `Invalid file type ".${ext}". Allowed: ${Array.from(allowedSet).join(', ')}` };
@@ -198,6 +206,17 @@ export class MakeCadService {
     }
 
     /**
+     * Sanitizes a base filename preserving Unicode characters and spaces while stripping illegal filesystem chars.
+     */
+    public static sanitizeFileName(rawFileName: string): string {
+        const extWithDot = path.extname(rawFileName).toLowerCase();
+        const baseWithoutExt = path.basename(rawFileName, extWithDot);
+        // Strip illegal filename characters (/ \ ? * : | " < > and control chars)
+        const cleaned = baseWithoutExt.replace(/[\/\\:*?"<>|\x00-\x1F\x7F]/g, '_').trim() || 'attachment';
+        return `${cleaned}${extWithDot}`;
+    }
+
+    /**
      * Validates an approved local file by reading its buffer and checking limits.
      */
     public static validateLocalFile(filePath: string, type: 'cad' | 'photo' | 'invoice_attachment'): FileValidationResult | { canceled: true; error?: string } {
@@ -206,7 +225,7 @@ export class MakeCadService {
         }
 
         const stats = fs.statSync(filePath);
-        const maxSize = (type === 'photo' || type === 'invoice_attachment') ? MAX_PHOTO_FILE_SIZE : MAX_CAD_FILE_SIZE;
+        const maxSize = (type === 'photo' || type === 'invoice_attachment') ? MAX_INVOICE_FILE_SIZE : MAX_CAD_FILE_SIZE;
 
         if (stats.size > maxSize) {
             const maxMb = maxSize / (1024 * 1024);
@@ -214,7 +233,9 @@ export class MakeCadService {
         }
 
         const ext = path.extname(filePath).replace('.', '').toLowerCase();
-        const allowedSet = (type === 'photo' || type === 'invoice_attachment') ? ALLOWED_PHOTO_EXTENSIONS : ALLOWED_CAD_EXTENSIONS;
+        const allowedSet = type === 'photo'
+            ? ALLOWED_PHOTO_EXTENSIONS
+            : (type === 'invoice_attachment' ? ALLOWED_INVOICE_EXTENSIONS : ALLOWED_CAD_EXTENSIONS);
 
         if (!allowedSet.has(ext)) {
             return { canceled: true, error: `File extension ".${ext}" is not supported.` };
@@ -227,7 +248,7 @@ export class MakeCadService {
             return { canceled: true, error: magicCheck.error || 'File failed security validation.' };
         }
 
-        const sanitizedBase = path.basename(filePath).replace(/[^a-zA-Z0-9._-]/g, '_');
+        const sanitizedBase = this.sanitizeFileName(path.basename(filePath));
 
         return {
             isValid: true,
@@ -247,14 +268,17 @@ export class MakeCadService {
         fileName: string,
         type: 'cad' | 'photo' | 'invoice_attachment'
     ): FileValidationResult | { isValid: false; error: string } {
-        const maxSize = (type === 'photo' || type === 'invoice_attachment') ? MAX_PHOTO_FILE_SIZE : MAX_CAD_FILE_SIZE;
+        const maxSize = (type === 'photo' || type === 'invoice_attachment') ? MAX_INVOICE_FILE_SIZE : MAX_CAD_FILE_SIZE;
         if (buffer.length > maxSize) {
             const maxMb = maxSize / (1024 * 1024);
             return { isValid: false, error: `File size (${(buffer.length / (1024 * 1024)).toFixed(1)} MB) exceeds the maximum allowed limit of ${maxMb} MB.` };
         }
 
         const ext = path.extname(fileName).replace('.', '').toLowerCase();
-        const allowedSet = (type === 'photo' || type === 'invoice_attachment') ? ALLOWED_PHOTO_EXTENSIONS : ALLOWED_CAD_EXTENSIONS;
+        const allowedSet = type === 'photo'
+            ? ALLOWED_PHOTO_EXTENSIONS
+            : (type === 'invoice_attachment' ? ALLOWED_INVOICE_EXTENSIONS : ALLOWED_CAD_EXTENSIONS);
+
         if (!allowedSet.has(ext)) {
             return { isValid: false, error: `File extension ".${ext}" is not supported.` };
         }
@@ -264,7 +288,7 @@ export class MakeCadService {
             return { isValid: false, error: magicCheck.error || 'File failed security validation.' };
         }
 
-        const sanitizedBase = path.basename(fileName).replace(/[^a-zA-Z0-9._-]/g, '_');
+        const sanitizedBase = this.sanitizeFileName(fileName);
         return {
             isValid: true,
             mimeType: magicCheck.detectedMime,
@@ -285,7 +309,8 @@ export class MakeCadService {
     ): Promise<{ success: boolean; storagePath?: string; publicUrl?: string; error?: string }> {
         const timestamp = Date.now();
         const randomToken = crypto.randomBytes(4).toString('hex');
-        const storageFileName = `${timestamp}_${randomToken}_${fileName}`;
+        const sanitized = this.sanitizeFileName(fileName);
+        const storageFileName = `${timestamp}_${randomToken}_${sanitized}`;
         const storagePath = `${subfolder}/${storageFileName}`;
         const nasStorageUrl = this.getNasStorageUrl();
 
@@ -310,7 +335,7 @@ export class MakeCadService {
                     return {
                         success: true,
                         storagePath: `${subfolder}/${storageFileName}`,
-                        publicUrl: rawUrl
+                        publicUrl: encodeURI(rawUrl)
                     };
                 }
 
@@ -318,7 +343,7 @@ export class MakeCadService {
                 return {
                     success: true,
                     storagePath: `${subfolder}/${storageFileName}`,
-                    publicUrl: `https://storage.lenas.me/files/${subfolder}/${storageFileName}`
+                    publicUrl: encodeURI(`https://storage.lenas.me/files/${subfolder}/${storageFileName}`)
                 };
             } catch (nasErr: any) {
                 console.warn('[MakeCadService] NAS upload failed, attempting Supabase fallback:', nasErr.message);

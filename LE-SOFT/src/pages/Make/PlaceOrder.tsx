@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Plus, AlertCircle, CheckCircle, Paperclip, X, FileText, 
@@ -8,7 +9,8 @@ import {
 import DashboardLayout from '../../components/DashboardLayout';
 import { 
   getUserPricingPermissions,
-  canManageMakeCatalog 
+  canCreateProductFromPlaceOrder,
+  isFactoryManager
 } from '../../utils/permissions';
 import { ProductCreateModal } from './components/ProductCreateModal';
 import { 
@@ -51,8 +53,12 @@ interface CartItem {
 }
 
 const PlaceOrder: React.FC = () => {
+  const location = useLocation();
   const pricingPerms = getUserPricingPermissions();
-  const canCreateProduct = canManageMakeCatalog();
+  const canCreateProduct = canCreateProductFromPlaceOrder();
+  const isFactoryMgr = isFactoryManager();
+  const [duplicateNotice, setDuplicateNotice] = useState<string | null>(null);
+  const [confirmedOrderNumber, setConfirmedOrderNumber] = useState<string | null>(null);
   const [showProductCreateModal, setShowProductCreateModal] = useState(false);
   const [autoOrderNumber, setAutoOrderNumber] = useState<string>('');
 
@@ -185,7 +191,71 @@ const PlaceOrder: React.FC = () => {
   // Manual/Custom non-catalog item fallback mode
   const [isCustomItemMode, setIsCustomItemMode] = useState(() => initialDraft.isCustomItemMode ?? false);
   const [customItemName, setCustomItemName] = useState(() => initialDraft.customItemName || '');
+  const [customItemSize, setCustomItemSize] = useState(() => initialDraft.customItemSize || '');
   const [customItemSpec, setCustomItemSpec] = useState(() => initialDraft.customItemSpec || '');
+
+  // Handle duplicating existing order passed from Track Orders
+  useEffect(() => {
+    const dup = (location.state as any)?.duplicateFromOrder;
+    if (dup && !isFactoryMgr) {
+      if (dup.priority) setPriority(dup.priority);
+      if (dup.target_delivery_date || dup.delivery_date) setTargetDeliveryDate(dup.target_delivery_date || dup.delivery_date);
+      if (dup.requested_delivery_date) setRequestedDeliveryDate(dup.requested_delivery_date);
+      if (dup.salesman_id) setSelectedSalesmanId(String(dup.salesman_id));
+      if (dup.customer_id) setSelectedCustomerId(dup.customer_id);
+      if (dup.customer_name) setCustomerName(dup.customer_name);
+      if (dup.customer_phone) setCustomerPhone(dup.customer_phone);
+      if (dup.customer_email) setCustomerEmail(dup.customer_email);
+      if (dup.shipping_address) setShippingAddress(dup.shipping_address);
+      if (dup.location_landmark) setLocationLandmark(dup.location_landmark);
+      if (dup.receiver_name) setReceiverName(dup.receiver_name);
+      if (dup.receiver_phone) setReceiverPhone(dup.receiver_phone);
+      if (dup.special_instructions) setSpecialInstructions(dup.special_instructions);
+
+      if (Array.isArray(dup.items) && dup.items.length > 0) {
+        const mapped = dup.items.map((it: any) => ({
+          _id: String(Date.now() + Math.random()),
+          product_id: it.product_id || undefined,
+          product_code: it.product_code || undefined,
+          product_name: it.product_name || 'Custom Item',
+          spec_id: it.spec_id || undefined,
+          spec_name: it.spec_name || undefined,
+          spec_details: it.spec_details || it.spec_name || undefined,
+          size_id: it.size_id || undefined,
+          dimensions_text: it.dimensions_text || it.custom_dimensions || it.size_label || undefined,
+          is_customized: !!it.is_customized,
+          custom_dimensions: it.custom_dimensions || it.dimensions_text || undefined,
+          color_id: it.color_id || undefined,
+          color_name: it.color_name || undefined,
+          color_code: it.color_code || undefined,
+          quantity: it.quantity > 0 ? it.quantity : 1,
+          item_cost_price: pricingPerms.canViewCostPrice ? (it.item_cost_price || it.unit_cost_price || 0) : 0,
+          item_sale_price: pricingPerms.canViewSalePrice ? (it.item_sale_price || it.unit_sale_price || null) : null,
+          notes: it.designer_notes || it.notes || '',
+          attachedFile: (it.technical_drawing_url || it.drawing_url) ? {
+            name: 'Drawing Blueprint',
+            url: it.technical_drawing_url || it.drawing_url,
+            type: 'cad'
+          } : null
+        }));
+        setCartItems(mapped);
+      } else if (dup.furniture_name) {
+        setCartItems([{
+          _id: String(Date.now()),
+          product_name: dup.furniture_name,
+          spec_details: dup.description || '',
+          dimensions_text: undefined,
+          quantity: dup.quantity || 1,
+          item_cost_price: pricingPerms.canViewCostPrice ? (dup.cost_price || 0) : 0,
+          item_sale_price: pricingPerms.canViewSalePrice ? (dup.sale_price || null) : null,
+          notes: dup.description || ''
+        }]);
+      }
+
+      setDuplicateNotice(`Duplicated from Order #${dup.order_number || dup.id} as a new unsaved draft.`);
+      window.history.replaceState({}, document.title);
+    }
+  }, [location.state, isFactoryMgr, pricingPerms.canViewCostPrice, pricingPerms.canViewSalePrice]);
 
   // Multi-item Cart
   const [cartItems, setCartItems] = useState<CartItem[]>(() => (Array.isArray(initialDraft.cartItems) ? initialDraft.cartItems : []) as any);
@@ -361,6 +431,7 @@ const PlaceOrder: React.FC = () => {
         customColorName,
         isCustomItemMode,
         customItemName,
+        customItemSize,
         customItemSpec,
         cartItems: cartItems as any,
         invoiceAttachments
@@ -375,7 +446,7 @@ const PlaceOrder: React.FC = () => {
     selectedSize, selectedColor, itemQuantity, itemCostPrice, itemSalePrice, itemRemarks,
     isCustomSize, customShape, customLength, customWidth, customHeight, customDiameter,
     customUnit, isCustomSpec, customSpecName, isCustomColor, customColorName,
-    isCustomItemMode, customItemName, customItemSpec, cartItems, invoiceAttachments
+    isCustomItemMode, customItemName, customItemSize, customItemSpec, cartItems, invoiceAttachments
   ]);
 
   const handleClearDraft = () => {
@@ -429,6 +500,7 @@ const PlaceOrder: React.FC = () => {
     setIsCustomColor(false);
     setIsCustomItemMode(false);
     setCustomItemName('');
+    setCustomItemSize('');
     setCustomItemSpec('');
     setCartItems([]);
     setInvoiceAttachments([]);
@@ -614,10 +686,11 @@ const PlaceOrder: React.FC = () => {
       const newItem: CartItem = {
         _id: String(Date.now()),
         product_name: customItemName.trim(),
-        spec_details: customItemSpec.trim(),
-        dimensions_text: customItemSpec.trim(),
+        spec_details: customItemSpec.trim() || undefined,
+        spec_name: customItemSpec.trim() || undefined,
+        dimensions_text: customItemSize.trim() || undefined,
+        custom_dimensions: customItemSize.trim() || undefined,
         is_customized: true,
-        custom_dimensions: customItemSpec.trim(),
         quantity: itemQuantity > 0 ? itemQuantity : 1,
         item_cost_price: costP,
         item_sale_price: saleP,
@@ -626,6 +699,7 @@ const PlaceOrder: React.FC = () => {
       };
       setCartItems(prev => [...prev, newItem]);
       setCustomItemName('');
+      setCustomItemSize('');
       setCustomItemSpec('');
       setItemRemarks('');
       setItemQuantity(1);
@@ -747,6 +821,10 @@ const PlaceOrder: React.FC = () => {
   // ── Submit Order ───────────────────────────────────────────────────────────
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isFactoryMgr) {
+      setError('Factory Managers are strictly restricted from placing orders.');
+      return;
+    }
     if (cartItems.length === 0) {
       setError('Please add at least one product item to the order.');
       return;
@@ -841,7 +919,20 @@ const PlaceOrder: React.FC = () => {
         }
       }
 
+      const confirmedNo = order?.order_number || (orderId ? `ORD-${orderId}` : 'Confirmed');
+      setConfirmedOrderNumber(confirmedNo);
       setSuccess(true);
+
+      // Trigger Windows Action Center Notification safely without PII
+      if (window.electron?.showWindowsNotification) {
+        window.electron.showWindowsNotification({
+          title: 'Order Confirmed',
+          body: `Order #${confirmedNo} has been successfully placed in MAKE.`,
+          category: 'new_order',
+          dedupKey: `order-created-${orderId || confirmedNo}`
+        });
+      }
+
       clearPlaceOrderDraft();
       setSelectedCustomerId(null);
       setSelectedCustomerInfo(null);
@@ -853,7 +944,10 @@ const PlaceOrder: React.FC = () => {
       setTargetDeliveryDate(''); setRequestedDeliveryDate('');
       setInvoiceAttachments([]);
       setAttachedFile(null);
-      setTimeout(() => setSuccess(false), 3500);
+      setTimeout(() => {
+        setSuccess(false);
+        setConfirmedOrderNumber(null);
+      }, 5000);
     } catch (err: any) {
       console.error(err);
       setError('Failed to place order: ' + (err?.message || 'Please try again.'));
@@ -877,6 +971,25 @@ const PlaceOrder: React.FC = () => {
     marginBottom: '14px', paddingBottom: '8px', borderBottom: '1px solid var(--border-color)',
     display: 'flex', alignItems: 'center', gap: '8px'
   };
+
+  if (isFactoryMgr) {
+    return (
+      <DashboardLayout title="Place Customized Furniture Order">
+        <div style={{ maxWidth: '800px', margin: '3rem auto', padding: '0 1.5rem' }}>
+          <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '2.5rem', textAlign: 'center', boxShadow: '0 4px 20px rgba(0,0,0,0.05)' }}>
+            <Lock size={48} color="#ea580c" style={{ margin: '0 auto 1rem auto' }} />
+            <h2 style={{ fontSize: '1.4rem', fontWeight: 800, marginBottom: '0.5rem', color: 'var(--text-primary)' }}>Access Restricted: Factory Manager</h2>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', maxWidth: '520px', margin: '0 auto 1.5rem auto', lineHeight: 1.6 }}>
+              Factory Manager accounts are designated exclusively for managing production stages and workshop operations in <strong>Track Orders</strong>. Placing new production orders is restricted to Furniture Designers, Salespersons, and Administrators.
+            </p>
+            <a href="#/make/track" style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '10px 20px', background: 'var(--accent-color)', color: 'white', borderRadius: '8px', textDecoration: 'none', fontWeight: 700, fontSize: '0.88rem' }}>
+              Go to Track Orders →
+            </a>
+          </div>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout title="Place Customized Furniture Order">
@@ -981,10 +1094,21 @@ const PlaceOrder: React.FC = () => {
           </div>
 
           <AnimatePresence>
+            {duplicateNotice && (
+              <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
+                style={{ background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.3)', borderRadius: '10px', padding: '12px 14px', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: 'var(--accent-color)', fontSize: '0.88rem', fontWeight: 600 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <ShoppingBag size={18} /> {duplicateNotice}
+                </div>
+                <button type="button" onClick={() => setDuplicateNotice(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                  <X size={16} />
+                </button>
+              </motion.div>
+            )}
             {success && (
               <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
                 style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)', borderRadius: '10px', padding: '14px', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '8px', color: '#16a34a', fontSize: '0.9rem', fontWeight: 600 }}>
-                <CheckCircle size={20} /> Order created successfully! It is now tracked in MAKE.
+                <CheckCircle size={20} /> Order created and confirmed! Order #{confirmedOrderNumber || autoOrderNumber} is now tracked in MAKE.
               </motion.div>
             )}
             {error && (
@@ -1649,14 +1773,18 @@ const PlaceOrder: React.FC = () => {
               ) : (
                 /* Custom Item Input Mode */
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                  <div className="make-responsive-grid-2" style={{ gap: '1rem' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
                     <div>
                       <label style={labelStyle}>Custom Item Name *</label>
                       <input placeholder="e.g. Custom Executive Desk Frame" value={customItemName} onChange={e => setCustomItemName(e.target.value)} style={inputStyle} />
                     </div>
                     <div>
-                      <label style={labelStyle}>Specifications &amp; Dimensions</label>
-                      <input placeholder="e.g. 1800x900x750mm, Black Powdercoated" value={customItemSpec} onChange={e => setCustomItemSpec(e.target.value)} style={inputStyle} />
+                      <label style={labelStyle}>Size / Dimensions</label>
+                      <input placeholder="e.g. 1800 x 900 x 750 mm" value={customItemSize} onChange={e => setCustomItemSize(e.target.value)} style={inputStyle} />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Specifications &amp; Model Details</label>
+                      <input placeholder="e.g. Black Powdercoated MS Frame, Solid Oak Top" value={customItemSpec} onChange={e => setCustomItemSpec(e.target.value)} style={inputStyle} />
                     </div>
                   </div>
 
@@ -1808,11 +1936,15 @@ const PlaceOrder: React.FC = () => {
                                   </span>
                                 )}
                               </div>
-                              {item.spec_name && <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{item.spec_name}</div>}
+                              {(item.spec_details || item.spec_name) && (
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                                  {item.spec_details || item.spec_name}
+                                </div>
+                              )}
                             </td>
                             <td style={{ padding: '10px 12px' }}>
                               <span style={{ color: item.is_customized ? '#c2410c' : 'var(--text-secondary)', fontWeight: item.is_customized ? 700 : 400 }}>
-                                {item.dimensions_text || '—'}
+                                {item.dimensions_text || item.custom_dimensions || '—'}
                               </span>
                             </td>
                             <td style={{ padding: '10px 12px' }}>

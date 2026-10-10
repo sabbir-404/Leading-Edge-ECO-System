@@ -96,6 +96,11 @@ const PERMISSION_GROUPS = [
             { key: 'alter_make', label: 'Alter Manufacturing Orders' },
             { key: 'read_make_catalog', label: 'View Customized Product Catalog' },
             { key: 'write_make_catalog', label: 'Manage Customized Product Catalog (Specs, Sizes, Colors)' },
+            {
+                key: 'create_product_from_place_order',
+                label: 'Create Product from Place Order',
+                desc: 'Allows creating new products directly from the Place Order page.'
+            },
             { 
                 key: 'manage_global_product_attributes', 
                 label: 'Manage Global Product Attributes', 

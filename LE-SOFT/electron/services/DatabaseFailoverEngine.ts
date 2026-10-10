@@ -851,18 +851,16 @@ export class DatabaseFailoverEngine {
 
                 // Asynchronously mirror write to Supabase Cloud with durable retry protection
                 const cloudClient = this.supabaseAdmin || this.supabaseClient;
-                if (cloudClient) {
-                    this.mirrorWriteToCloud(cloudClient, metadata, res.data || metadata.data).catch(e => {
-                        console.warn(`[DB:SYNC] Async cloud mirror failed for ${metadata.table}, saving to mirror retry journal:`, e.message);
-                        this.journalMirrorRetry({
-                            table: metadata.table,
-                            operation: metadata.operation,
-                            primaryKey: metadata.primaryKey,
-                            data: res.data || metadata.data,
-                            filter: metadata.filter
-                        });
+                this.mirrorWriteToCloud(cloudClient as any, metadata, res.data || metadata.data).catch(e => {
+                    console.warn(`[DB:SYNC] Async cloud mirror failed for ${metadata.table}, saving to mirror retry journal:`, e.message);
+                    this.journalMirrorRetry({
+                        table: metadata.table,
+                        operation: metadata.operation,
+                        primaryKey: metadata.primaryKey,
+                        data: res.data || metadata.data,
+                        filter: metadata.filter
                     });
-                }
+                });
 
                 return { data: res.data, error: null, databaseUsed: 'nas' };
             }
@@ -917,23 +915,45 @@ export class DatabaseFailoverEngine {
 
     private async mirrorWriteToCloud(client: SupabaseClient, meta: any, savedData: any): Promise<void> {
         const { table, operation } = meta;
+        if (!client) {
+            throw new Error(`Supabase cloud client is not configured for table "${table}".`);
+        }
+        if (typeof client.from !== 'function') {
+            throw new Error(`Supabase client is malformed (missing from() method) for table "${table}".`);
+        }
+        const tableClient = client.from(table);
+        if (!tableClient) {
+            throw new Error(`Supabase client table builder returned undefined for table "${table}".`);
+        }
+
         if (operation === 'insert' || operation === 'update' || operation === 'upsert') {
-            if (savedData) {
-                const { error } = await client.from(table).upsert(savedData);
-                if (error) throw error;
+            if (!savedData) {
+                throw new Error(`Mirror payload missing saved data for operation "${operation}" on table "${table}".`);
             }
+            if (typeof tableClient.upsert !== 'function') {
+                throw new Error(`Table client for "${table}" does not support upsert.`);
+            }
+            const { error } = await tableClient.upsert(savedData);
+            if (error) throw error;
         } else if (operation === 'delete') {
+            if (typeof tableClient.delete !== 'function') {
+                throw new Error(`Table client for "${table}" does not support delete.`);
+            }
             if (meta.primaryKey) {
-                const { error } = await client.from(table).delete().eq(meta.primaryKey.name, meta.primaryKey.value);
+                const { error } = await tableClient.delete().eq(meta.primaryKey.name, meta.primaryKey.value);
                 if (error) throw error;
             } else if (meta.filter && meta.filter.length > 0) {
-                let q = client.from(table).delete();
+                let q = tableClient.delete();
                 for (const f of meta.filter) {
                     q = q.eq(f.column, f.value);
                 }
                 const { error } = await q;
                 if (error) throw error;
+            } else {
+                throw new Error(`Delete operation on table "${table}" requires primaryKey or filter.`);
             }
+        } else {
+            throw new Error(`Unsupported mirror operation "${operation}" on table "${table}".`);
         }
         this.freshnessData.lastSuccessfulMirrorTime = Date.now();
         this.persistFreshness();
@@ -962,6 +982,28 @@ export class DatabaseFailoverEngine {
     }
 
     public journalMirrorRetry(entry: Omit<DurableMirrorRetryEntry, 'id' | 'timestamp' | 'retryCount'>): void {
+        const pkField = entry.primaryKey?.name || (entry.data?.id ? 'id' : (entry.data?.product_code ? 'product_code' : null));
+        const pkValue = entry.primaryKey?.value || (pkField && entry.data ? entry.data[pkField] : null);
+
+        // Deduplicate: If an entry already exists for this exact table and record key, update it in place
+        if (pkField && pkValue !== null && pkValue !== undefined) {
+            const existing = this.mirrorRetryEntries.find(e => {
+                const ePkField = e.primaryKey?.name || (e.data?.id ? 'id' : (e.data?.product_code ? 'product_code' : null));
+                const ePkValue = e.primaryKey?.value || (ePkField && e.data ? e.data[ePkField] : null);
+                return e.table === entry.table && ePkValue === pkValue;
+            });
+            if (existing) {
+                existing.operation = entry.operation;
+                existing.data = entry.data;
+                existing.filter = entry.filter;
+                existing.primaryKey = entry.primaryKey || { name: pkField, value: pkValue };
+                existing.timestamp = Date.now();
+                this.persistMirrorJournal();
+                this.broadcastStatus();
+                return;
+            }
+        }
+
         const item: DurableMirrorRetryEntry = {
             id: `mr-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
             timestamp: Date.now(),
@@ -971,6 +1013,10 @@ export class DatabaseFailoverEngine {
         this.mirrorRetryEntries.push(item);
         this.persistMirrorJournal();
         this.broadcastStatus();
+    }
+
+    public getMirrorRetryEntries(): DurableMirrorRetryEntry[] {
+        return [...this.mirrorRetryEntries];
     }
 
     public async processPendingMirrorRetries(): Promise<{ succeeded: number; failed: number }> {

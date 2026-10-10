@@ -509,4 +509,28 @@ contextBridge.exposeInMainWorld('electron', {
     diagnoseImage: (rawSrc: string) => ipcRenderer.invoke('diagnose-image', rawSrc),
     resolveImageSrc: (imagePath: string) => ipcRenderer.invoke('resolve-image-src', imagePath),
 
+    // ─── NAS SMART CONNECTION MANAGER ───
+    getNasConnectionStatus: () => ipcRenderer.invoke('get-nas-connection-status'),
+    onNasConnectionStatusChanged: (callback: (status: any) => void) => {
+        const handler = (_event: any, status: any) => callback(status);
+        ipcRenderer.on('nas-status-changed', handler);
+        return () => ipcRenderer.removeListener('nas-status-changed', handler);
+    },
+
+    // ─── WINDOWS NOTIFICATION SERVICE ───
+    getNotificationSettings: () => ipcRenderer.invoke('get-notification-settings'),
+    updateNotificationSettings: (settings: any) => ipcRenderer.invoke('update-notification-settings', settings),
+    showWindowsNotification: (options: any) => ipcRenderer.invoke('show-windows-notification', options),
+
+    // ─── WATCHDOG & STABILITY ───
+    getStabilityDiagnostics: () => ipcRenderer.invoke('get-stability-diagnostics'),
+    onWatchdogPing: (callback: () => void) => {
+        const handler = () => callback();
+        ipcRenderer.on('watchdog-ping', handler);
+        return () => ipcRenderer.removeListener('watchdog-ping', handler);
+    },
+    sendWatchdogPong: () => {
+        ipcRenderer.send('watchdog-pong');
+    },
+
 });

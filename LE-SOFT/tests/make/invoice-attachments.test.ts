@@ -2,9 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { MakeCadService } from '../../electron/services/make/MakeCadService';
 
 describe('MAKE V1.1 — Invoice Attachments Security & File Validation', () => {
-    // ── 1. ACCEPTED FORMATS (JPG, JPEG, PNG, WEBP) ───────────────────────────
-    it('should accept valid image extensions for invoice attachments', () => {
-        const allowedFormats = ['receipt.jpg', 'bill.jpeg', 'invoice_photo.png', 'scan.webp'];
+    // ── 1. ACCEPTED FORMATS (JPG, JPEG, PNG, WEBP, PDF) ────────────────────
+    it('should accept valid image and PDF extensions for invoice attachments', () => {
+        const allowedFormats = ['receipt.jpg', 'bill.jpeg', 'invoice_photo.png', 'scan.webp', 'invoice_document.pdf'];
 
         for (const fileName of allowedFormats) {
             const result = MakeCadService.validateFileMetadata(fileName, 5 * 1024 * 1024, 'invoice_attachment');
@@ -13,7 +13,7 @@ describe('MAKE V1.1 — Invoice Attachments Security & File Validation', () => {
         }
     });
 
-    it('should accept valid image buffers with proper magic bytes', () => {
+    it('should accept valid image and PDF buffers with proper magic bytes', () => {
         // PNG magic bytes
         const pngBuffer = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00]);
         const pngResult = MakeCadService.validateBuffer(pngBuffer, 'invoice.png', 'invoice_attachment');
@@ -28,6 +28,11 @@ describe('MAKE V1.1 — Invoice Attachments Security & File Validation', () => {
         const webpBuffer = Buffer.from('RIFF1234WEBPVP8 ');
         const webpResult = MakeCadService.validateBuffer(webpBuffer, 'scan.webp', 'invoice_attachment');
         expect(webpResult.isValid).toBe(true);
+
+        // PDF magic bytes (%PDF-)
+        const pdfBuffer = Buffer.from('%PDF-1.7 standard document');
+        const pdfResult = MakeCadService.validateBuffer(pdfBuffer, 'invoice.pdf', 'invoice_attachment');
+        expect(pdfResult.isValid).toBe(true);
     });
 
     // ── 2. 15MB LIMIT ENFORCEMENT ────────────────────────────────────────────
@@ -45,14 +50,14 @@ describe('MAKE V1.1 — Invoice Attachments Security & File Validation', () => {
     });
 
     // ── 3. REJECTION OF EXECUTABLES & UNSUPPORTED FORMATS ────────────────────
-    it('should reject non-image file types for invoice attachments', () => {
+    it('should reject non-image and non-PDF file types for invoice attachments', () => {
         const disallowed = [
-            'document.pdf',
             'blueprint.dwg',
             'vector.dxf',
             'script.js',
             'archive.zip',
-            'executable.exe'
+            'executable.exe',
+            'shell.sh'
         ];
 
         for (const fileName of disallowed) {

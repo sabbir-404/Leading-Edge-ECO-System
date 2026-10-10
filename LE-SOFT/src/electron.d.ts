@@ -451,6 +451,20 @@ export interface ElectronAPI {
     // Media & Image Diagnostics
     diagnoseImage?: (rawSrc: string) => Promise<any>;
     resolveImageSrc?: (imagePath: string) => Promise<string>;
+
+    // NAS Smart Connection Manager
+    getNasConnectionStatus?: () => Promise<{ status: 'Connected' | 'Reconnecting' | 'Degraded' | 'Offline'; lastSync: number; isNasOnline: boolean }>;
+    onNasConnectionStatusChanged?: (callback: (status: { status: 'Connected' | 'Reconnecting' | 'Degraded' | 'Offline'; lastSync: number; isNasOnline: boolean }) => void) => () => void;
+
+    // Windows Notification Service
+    getNotificationSettings?: () => Promise<{ enabled: boolean; orderNotifications: boolean; updateNotifications: boolean; systemNotifications: boolean; connectionNotifications: boolean }>;
+    updateNotificationSettings?: (settings: any) => Promise<{ success: boolean; error?: string }>;
+    showWindowsNotification?: (options: { title: string; body: string; category?: string; actionRoute?: string; dedupKey?: string }) => Promise<boolean>;
+
+    // Watchdog & Stability
+    getStabilityDiagnostics?: () => Promise<any[]>;
+    onWatchdogPing?: (callback: () => void) => () => void;
+    sendWatchdogPong?: () => void;
 }
 
 declare global {

@@ -12,6 +12,9 @@ import { clearAll as clearCache } from './cache-manager';
 import { triggerSystemLockout, getLockFilePath } from './lockout';
 import { getCfAccessHeaders } from './supabase';
 import { MediaProtocolService } from './services/media/MediaProtocolService';
+import { NASConnectionManager } from './services/make/NASConnectionManager';
+import { WindowsNotificationService } from './services/WindowsNotificationService';
+import { WatchdogService } from './services/WatchdogService';
 
 // Register privileged custom scheme for secure media loading before app is ready
 MediaProtocolService.registerSchemeAsPrivileged();
@@ -354,6 +357,16 @@ function createWindow() {
         }),
     });
 
+    // Initialize & attach services
+    try {
+        WatchdogService.getInstance().attachWindow(win);
+        WatchdogService.getInstance().startMonitoring();
+        NASConnectionManager.getInstance().start();
+        WindowsNotificationService.getInstance();
+    } catch (e: any) {
+        log(`Failed to attach watchdog or background services to window: ${e.message}`);
+    }
+
     // DevTools opened in production = tampering detected
     if (app.isPackaged) {
         win.webContents.on('devtools-opened', () => {
@@ -687,6 +700,15 @@ app.on('before-quit', async (event) => {
             TelemetryEngine.getInstance().flushOfflineQueue(),
             new Promise(resolve => setTimeout(resolve, 1500))
         ]);
+    } catch {}
+
+    // Stop NAS connection manager and watchdog
+    try {
+        await Promise.race([
+            NASConnectionManager.getInstance().stop(),
+            new Promise(resolve => setTimeout(resolve, 1000))
+        ]);
+        WatchdogService.getInstance().stopMonitoring();
     } catch {}
 
     // Clear sensitive data from memory before exit

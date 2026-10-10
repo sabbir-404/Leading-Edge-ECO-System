@@ -6,12 +6,19 @@ vi.mock('electron', () => ({
     getPath: vi.fn().mockImplementation((name: string) => process.env.APPDATA || process.cwd()),
     isPackaged: false,
     getName: vi.fn().mockReturnValue('LE-SOFT'),
-    getVersion: vi.fn().mockReturnValue('1.8.4'),
+    getVersion: vi.fn().mockReturnValue('1.8.11'),
+    setAppUserModelId: vi.fn(),
   },
   dialog: {
     showOpenDialog: vi.fn(),
     showSaveDialog: vi.fn(),
     showMessageBox: vi.fn(),
+  },
+  Notification: class {
+    static isSupported = vi.fn().mockReturnValue(true);
+    show = vi.fn();
+    on = vi.fn();
+    constructor(_options?: any) {}
   },
   BrowserWindow: {
     getFocusedWindow: vi.fn().mockReturnValue({
@@ -39,6 +46,19 @@ vi.mock('electron', () => ({
     openPath: vi.fn(),
   },
 }));
+
+// Mock localStorage globally for node/vitest environment
+if (typeof globalThis.localStorage === 'undefined') {
+  let store: Record<string, string> = {};
+  globalThis.localStorage = {
+    getItem: (key: string) => store[key] ?? null,
+    setItem: (key: string, value: string) => { store[key] = String(value); },
+    removeItem: (key: string) => { delete store[key]; },
+    clear: () => { store = {}; },
+    key: (i: number) => Object.keys(store)[i] ?? null,
+    get length() { return Object.keys(store).length; },
+  } as any;
+}
 
 // Mock electron API globally for UI tests if window exists
 beforeAll(() => {

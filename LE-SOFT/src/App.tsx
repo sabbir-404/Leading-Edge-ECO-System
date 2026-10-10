@@ -220,6 +220,16 @@ function App() {
     return () => cleanup?.();
   }, [navigate]);
 
+  // Watchdog ping-pong heartbeat response to main process
+  useEffect(() => {
+    if (window.electron?.onWatchdogPing) {
+      const cleanup = window.electron.onWatchdogPing(() => {
+        window.electron?.sendWatchdogPong?.();
+      });
+      return () => cleanup?.();
+    }
+  }, []);
+
   // License gate state
   const [licenseChecked, setLicenseChecked] = useState(false);
   const [isLicensed, setIsLicensed] = useState(false);
