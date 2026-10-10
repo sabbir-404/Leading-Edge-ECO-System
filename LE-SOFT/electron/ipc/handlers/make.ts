@@ -82,7 +82,6 @@ export function isApprovedNasHost(hostname: string, port?: string): boolean {
  * Validates whether a port is allowed on an approved NAS host.
  */
 export function isApprovedNasPort(hostname: string, port?: string): boolean {
-    if (!port || port === '') return true;
     const lowerHost = (hostname || '').toLowerCase();
 
     const runtimeCandidates = typeof getNasStorageCandidates === 'function'
@@ -90,21 +89,35 @@ export function isApprovedNasPort(hostname: string, port?: string): boolean {
         : ['http://100.88.85.6:8081', 'https://storage.lenas.me'];
 
     if (lowerHost === 'storage.lenas.me') {
-        return port === '443';
+        return !port || port === '443';
     }
 
     if (lowerHost === '100.88.85.6' || lowerHost === '192.168.1.14') {
-        if (port === '8080' || port === '8081') return true;
+        if (!port || port === '8080' || port === '8081') return true;
         for (const c of runtimeCandidates) {
             try {
                 const u = new URL(c);
-                if (u.hostname.toLowerCase() === lowerHost && u.port === port) return true;
+                const candPort = u.port || (u.protocol === 'https:' ? '443' : '80');
+                if (u.hostname.toLowerCase() === lowerHost && candPort === port) return true;
             } catch {}
         }
         return false;
     }
 
-    return true;
+    // Explicit port rules for configured candidate hosts (reject arbitrary ports)
+    const matchingCandidates = runtimeCandidates
+        .map(c => { try { return new URL(c); } catch { return null; } })
+        .filter((u): u is URL => u !== null && u.hostname.toLowerCase() === lowerHost);
+
+    if (matchingCandidates.length > 0) {
+        return matchingCandidates.some(cand => {
+            const candPort = cand.port || (cand.protocol === 'https:' ? '443' : '80');
+            const reqPort = port || (cand.protocol === 'https:' ? '443' : '80');
+            return candPort === reqPort;
+        });
+    }
+
+    return false;
 }
 
 /**
@@ -159,6 +172,39 @@ export function validateAndNormalizeDownloadUrl(rawUrl: string): ValidatedDownlo
         return { isValid: false, error: `Unapproved port: ${parsedUrl.port}`, candidates: [] };
     }
 
+    const lowerHost = parsedUrl.hostname.toLowerCase();
+    if (lowerHost === 'storage.lenas.me') {
+        if (parsedUrl.protocol !== 'https:') {
+            return { isValid: false, error: 'storage.lenas.me is only permitted over HTTPS', candidates: [] };
+        }
+        if (parsedUrl.port && parsedUrl.port !== '443') {
+            return { isValid: false, error: `Unapproved port: ${parsedUrl.port}`, candidates: [] };
+        }
+    } else if (lowerHost === '100.88.85.6' || lowerHost === '192.168.1.14') {
+        if (parsedUrl.protocol !== 'http:') {
+            return { isValid: false, error: `Host "${parsedUrl.hostname}" is only permitted over HTTP`, candidates: [] };
+        }
+        if (parsedUrl.port && parsedUrl.port !== '8080' && parsedUrl.port !== '8081') {
+            return { isValid: false, error: `Unapproved port: ${parsedUrl.port}`, candidates: [] };
+        }
+    } else {
+        // Explicit protocol and port rules for other configured candidate hosts
+        const matchingCandidates = candidateBases
+            .map(c => { try { return new URL(c); } catch { return null; } })
+            .filter((u): u is URL => u !== null && u.hostname.toLowerCase() === lowerHost);
+
+        const effectivePort = parsedUrl.port || (parsedUrl.protocol === 'https:' ? '443' : '80');
+        const matches = matchingCandidates.some(cand => {
+            const candPort = cand.port || (cand.protocol === 'https:' ? '443' : '80');
+            return cand.protocol.toLowerCase() === parsedUrl.protocol.toLowerCase() &&
+                   candPort === effectivePort;
+        });
+
+        if (!matches) {
+            return { isValid: false, error: `Unapproved endpoint: ${parsedUrl.protocol}//${parsedUrl.host}`, candidates: [] };
+        }
+    }
+
     // Extract subpath and guard against directory traversal
     const cleanSub = decodeURIComponent(parsedUrl.pathname).replace(/^\/+/, '');
     if (cleanSub.includes('..')) {
@@ -195,13 +241,164 @@ export function sanitizeDownloadDestination(rawFileName: string, tempDir: string
 }
 
 /**
+ * Validates the complete redirect target URL (protocol, hostname, effective port, downgrade, traversal)
+ * and safely normalizes legacy :8080 ports to :8081 without requesting port 8080 directly.
+ */
+export function validateAndNormalizeRedirect(redirectUrlStr: string, currentUrlStr: string): string {
+    if (!redirectUrlStr || typeof redirectUrlStr !== 'string') {
+        throw new Error('Redirect URL must be a non-empty string');
+    }
+
+    let currentParsed: URL;
+    let redirectParsed: URL;
+    try {
+        currentParsed = new URL(currentUrlStr);
+        redirectParsed = new URL(redirectUrlStr, currentUrlStr);
+    } catch {
+        throw new Error('Malformed redirect URL');
+    }
+
+    // Reject unsupported protocols
+    if (redirectParsed.protocol !== 'http:' && redirectParsed.protocol !== 'https:') {
+        throw new Error(`Unsupported redirect protocol "${redirectParsed.protocol}". Only HTTP and HTTPS are permitted.`);
+    }
+
+    // Reject HTTPS-to-HTTP downgrade redirects
+    if (currentParsed.protocol === 'https:' && redirectParsed.protocol === 'http:') {
+        throw new Error('HTTPS-to-HTTP downgrade redirect is forbidden');
+    }
+
+    // Path traversal defense in redirect URL
+    if (
+        redirectUrlStr.includes('../') ||
+        redirectUrlStr.includes('..\\') ||
+        redirectUrlStr.includes('/..') ||
+        redirectUrlStr.includes('\\..') ||
+        decodeURIComponent(redirectParsed.pathname).includes('..')
+    ) {
+        throw new Error('Path traversal is not permitted in redirect URL');
+    }
+
+    const lowerHost = redirectParsed.hostname.toLowerCase();
+
+    // Legacy :8080 normalization:
+    // Ensure redirects cannot bypass legacy :8080 normalization.
+    // Either reject those redirects or safely normalize them through approved candidates; do not request port 8080 directly.
+    if (redirectParsed.port === '8080') {
+        if (lowerHost === '100.88.85.6' || lowerHost === '192.168.1.14') {
+            redirectParsed.port = '8081';
+        } else {
+            throw new Error(`Unapproved port 8080 on host "${redirectParsed.hostname}"`);
+        }
+    }
+
+    const runtimeCandidates = typeof getNasStorageCandidates === 'function'
+        ? getNasStorageCandidates()
+        : ['http://100.88.85.6:8081', 'https://storage.lenas.me'];
+
+    const effectivePort = redirectParsed.port || (redirectParsed.protocol === 'https:' ? '443' : '80');
+
+    // Rule 1: storage.lenas.me is permitted ONLY over HTTPS on default port or 443
+    if (lowerHost === 'storage.lenas.me') {
+        if (redirectParsed.protocol !== 'https:') {
+            throw new Error('storage.lenas.me is only permitted over HTTPS');
+        }
+        if (effectivePort !== '443') {
+            throw new Error(`Unapproved port "${redirectParsed.port}" for storage.lenas.me`);
+        }
+        return redirectParsed.href;
+    }
+
+    // Rule 2: Explicit rules for standard NAS IP endpoints
+    if (lowerHost === '100.88.85.6' || lowerHost === '192.168.1.14') {
+        if (redirectParsed.protocol !== 'http:') {
+            const hasHttpsCandidate = runtimeCandidates.some(c => {
+                try {
+                    const u = new URL(c);
+                    return u.hostname.toLowerCase() === lowerHost && u.protocol === 'https:';
+                } catch { return false; }
+            });
+            if (!hasHttpsCandidate) {
+                throw new Error(`Host "${lowerHost}" is only permitted over HTTP`);
+            }
+        }
+        if (effectivePort !== '8081') {
+            throw new Error(`Unapproved port "${redirectParsed.port || effectivePort}" for ${lowerHost}`);
+        }
+        return redirectParsed.href;
+    }
+
+    // Rule 3: Explicit protocol and port rules for every other configured candidate host
+    const matchingCandidates = runtimeCandidates
+        .map(c => { try { return new URL(c); } catch { return null; } })
+        .filter((u): u is URL => u !== null && u.hostname.toLowerCase() === lowerHost);
+
+    if (matchingCandidates.length === 0) {
+        throw new Error(`Redirect to unapproved host "${redirectParsed.hostname}" was blocked`);
+    }
+
+    const matchesCandidate = matchingCandidates.some(cand => {
+        const candEffectivePort = cand.port || (cand.protocol === 'https:' ? '443' : '80');
+        return cand.protocol.toLowerCase() === redirectParsed.protocol.toLowerCase() &&
+               candEffectivePort === effectivePort;
+    });
+
+    if (!matchesCandidate) {
+        throw new Error(`Unapproved endpoint (protocol/port) "${redirectParsed.protocol}//${redirectParsed.host}" for candidate host "${redirectParsed.hostname}"`);
+    }
+
+    return redirectParsed.href;
+}
+
+/**
+ * Reads the response body buffer while keeping the download timeout signal actively enforced.
+ */
+export async function readResponseBodyWithSignal(
+    res: Response,
+    signal: AbortSignal,
+    timeoutMs: number
+): Promise<ArrayBuffer> {
+    if (signal.aborted) {
+        throw new Error(`Download timed out after ${timeoutMs}ms`);
+    }
+
+    return new Promise<ArrayBuffer>((resolve, reject) => {
+        let settled = false;
+
+        const onAbort = () => {
+            if (settled) return;
+            settled = true;
+            reject(new Error(`Download timed out after ${timeoutMs}ms`));
+        };
+
+        signal.addEventListener('abort', onAbort, { once: true });
+
+        res.arrayBuffer().then(
+            (buf) => {
+                if (settled) return;
+                settled = true;
+                signal.removeEventListener('abort', onAbort);
+                resolve(buf);
+            },
+            (err) => {
+                if (settled) return;
+                settled = true;
+                signal.removeEventListener('abort', onAbort);
+                reject(err);
+            }
+        );
+    });
+}
+
+/**
  * Downloads a file from NAS storage candidates with Cloudflare Access headers,
- * redirect policy validation, timeout, and partial file cleanup.
+ * redirect policy validation, active body streaming timeout, and partial file cleanup.
  */
 export async function downloadPdfFromNas(
     url: string,
     fileName: string,
-    tempDir: string
+    tempDir: string,
+    timeoutMs: number = 6000
 ): Promise<{ success: boolean; path?: string; error?: string }> {
     const validation = validateAndNormalizeDownloadUrl(url);
     if (!validation.isValid) {
@@ -233,6 +430,11 @@ export async function downloadPdfFromNas(
     const fetchFn: typeof fetch = (electron as any)?.net?.fetch || globalThis.fetch;
 
     for (const candidateUrl of candidates) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => {
+            controller.abort(new Error(`Download timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+
         try {
             let currentUrl = candidateUrl;
             let redirectCount = 0;
@@ -240,32 +442,26 @@ export async function downloadPdfFromNas(
             let res: Response | null = null;
 
             while (redirectCount <= maxRedirects) {
-                const isTunnel = currentUrl.includes('storage.lenas.me');
-                const headers: Record<string, string> = isTunnel ? { ...cfHeaders } : {};
+                // Cloudflare Access headers are strictly forbidden over unencrypted HTTP
+                const isHttpsTunnel = currentUrl.startsWith('https://storage.lenas.me');
+                const headers: Record<string, string> = (isHttpsTunnel && currentUrl.startsWith('https://'))
+                    ? { ...cfHeaders }
+                    : {};
 
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 6000);
-
-                try {
-                    res = await fetchFn(currentUrl, {
-                        headers,
-                        signal: controller.signal,
-                        redirect: 'manual'
-                    });
-                } finally {
-                    clearTimeout(timeoutId);
-                }
+                res = await fetchFn(currentUrl, {
+                    headers,
+                    signal: controller.signal,
+                    redirect: 'manual'
+                });
 
                 if (res.status >= 300 && res.status < 400 && res.headers.has('location')) {
                     const location = res.headers.get('location')!;
                     const resolvedRedirect = new URL(location, currentUrl).href;
 
-                    const parsedRedirect = new URL(resolvedRedirect);
-                    if (!isApprovedNasHost(parsedRedirect.hostname, parsedRedirect.port)) {
-                        throw new Error(`Redirect to unapproved host "${parsedRedirect.hostname}" was blocked`);
-                    }
+                    // Strictly validate and normalize redirect target
+                    const normalizedRedirect = validateAndNormalizeRedirect(resolvedRedirect, currentUrl);
 
-                    currentUrl = resolvedRedirect;
+                    currentUrl = normalizedRedirect;
                     redirectCount++;
                     continue;
                 }
@@ -278,7 +474,8 @@ export async function downloadPdfFromNas(
                 continue;
             }
 
-            const arrayBuf = await res.arrayBuffer();
+            // Keep download timeout active while reading response body
+            const arrayBuf = await readResponseBodyWithSignal(res, controller.signal, timeoutMs);
             if (!arrayBuf || arrayBuf.byteLength === 0) {
                 throw new Error('Downloaded file is empty (0 bytes)');
             }
@@ -293,10 +490,23 @@ export async function downloadPdfFromNas(
             return { success: true, path: targetPath };
         } catch (err: any) {
             cleanupTemp();
-            if (err.message && err.message.includes('Redirect to unapproved host')) {
+            if (err.message && (
+                err.message.includes('Redirect to unapproved host') ||
+                err.message.includes('downgrade redirect is forbidden') ||
+                err.message.includes('only permitted over HTTPS') ||
+                err.message.includes('Unapproved port') ||
+                err.message.includes('Unapproved endpoint') ||
+                err.message.includes('Path traversal')
+            )) {
                 return { success: false, error: err.message };
             }
-            lastError = err.message || 'Fetch failed';
+            if (err.name === 'AbortError' || controller.signal.aborted || (err.message && err.message.includes('timed out'))) {
+                lastError = `Download timed out after ${timeoutMs}ms`;
+            } else {
+                lastError = err.message || 'Fetch failed';
+            }
+        } finally {
+            clearTimeout(timeoutId);
         }
     }
 
