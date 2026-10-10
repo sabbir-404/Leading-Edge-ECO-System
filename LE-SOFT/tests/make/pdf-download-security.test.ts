@@ -9,6 +9,8 @@ import {
   sanitizeDownloadDestination,
   validateAndNormalizeRedirect,
   readResponseBodyWithSignal,
+  hasPathTraversal,
+  isApprovedCloudflareTunnelUrl,
   downloadPdfFromNas
 } from '../../electron/ipc/handlers/make';
 
@@ -82,6 +84,16 @@ describe('PDF Download Security & Candidate Resolution — Issue 1 Fixes', () =>
       expect(res.error).toContain('storage.lenas.me is only permitted over HTTPS');
     });
 
+    it('rejects lookalike hostnames such as storage.lenas.me.attacker.invalid', () => {
+      expect(isApprovedNasHost('storage.lenas.me.attacker.invalid')).toBe(false);
+      expect(isApprovedNasHost('storage.lenas.me.evil.com')).toBe(false);
+      expect(isApprovedNasHost('attacker-storage.lenas.me')).toBe(false);
+
+      const res = validateAndNormalizeDownloadUrl('https://storage.lenas.me.attacker.invalid/files/invoice.pdf');
+      expect(res.isValid).toBe(false);
+      expect(res.error).toContain('not an approved NAS storage endpoint');
+    });
+
     it('rejects arbitrary ports on configured candidate hosts and approved endpoints', () => {
       expect(isApprovedNasPort('100.88.85.6', '9999')).toBe(false);
       expect(isApprovedNasPort('storage.lenas.me', '9999')).toBe(false);
@@ -140,6 +152,22 @@ describe('PDF Download Security & Candidate Resolution — Issue 1 Fixes', () =>
       const res = validateAndNormalizeDownloadUrl('http://100.88.85.6:8081/files/../../secret.pdf');
       expect(res.isValid).toBe(false);
       expect(res.error).toContain('Path traversal is not permitted');
+    });
+
+    it('detects directory traversal across plain and percent-encoded forms using hasPathTraversal', () => {
+      expect(hasPathTraversal('../')).toBe(true);
+      expect(hasPathTraversal('..\\')).toBe(true);
+      expect(hasPathTraversal('/..')).toBe(true);
+      expect(hasPathTraversal('\\..')).toBe(true);
+      expect(hasPathTraversal('..')).toBe(true);
+      expect(hasPathTraversal('%2e%2e/')).toBe(true);
+      expect(hasPathTraversal('%2e%2e%2f')).toBe(true);
+      expect(hasPathTraversal('..%2f')).toBe(true);
+      expect(hasPathTraversal('..%5c')).toBe(true);
+      expect(hasPathTraversal('/files/%2e%2e/secret.pdf')).toBe(true);
+      expect(hasPathTraversal('/files/%252e%252e%252fsecret.pdf')).toBe(true); // double-encoded
+      expect(hasPathTraversal('http://100.88.85.6:8081/files/invoice.pdf')).toBe(false);
+      expect(hasPathTraversal('invoice.v1.2.pdf')).toBe(false);
     });
   });
 
@@ -236,6 +264,25 @@ describe('PDF Download Security & Candidate Resolution — Issue 1 Fixes', () =>
 
   // ── 5. CLOUDFLARE ACCESS HEADERS ─────────────────────────────────────────
   describe('5. Cloudflare Tunnel Path & CF-Access Headers', () => {
+    it('strictly identifies the approved Cloudflare tunnel URL via isApprovedCloudflareTunnelUrl', () => {
+      expect(isApprovedCloudflareTunnelUrl('https://storage.lenas.me/files/doc.pdf')).toBe(true);
+      expect(isApprovedCloudflareTunnelUrl('https://storage.lenas.me:443/files/doc.pdf')).toBe(true);
+
+      // Rejects lookalike hostnames
+      expect(isApprovedCloudflareTunnelUrl('https://storage.lenas.me.attacker.invalid/doc.pdf')).toBe(false);
+      expect(isApprovedCloudflareTunnelUrl('https://storage.lenas.me.evil.com/doc.pdf')).toBe(false);
+      expect(isApprovedCloudflareTunnelUrl('https://attacker-storage.lenas.me/doc.pdf')).toBe(false);
+
+      // Rejects unapproved ports
+      expect(isApprovedCloudflareTunnelUrl('https://storage.lenas.me:8443/doc.pdf')).toBe(false);
+      expect(isApprovedCloudflareTunnelUrl('https://storage.lenas.me:8080/doc.pdf')).toBe(false);
+      expect(isApprovedCloudflareTunnelUrl('https://storage.lenas.me:9999/doc.pdf')).toBe(false);
+
+      // Rejects HTTP URLs
+      expect(isApprovedCloudflareTunnelUrl('http://storage.lenas.me/doc.pdf')).toBe(false);
+      expect(isApprovedCloudflareTunnelUrl('http://storage.lenas.me:80/doc.pdf')).toBe(false);
+    });
+
     it('attaches Cloudflare Access headers when downloading via storage.lenas.me over HTTPS', async () => {
       let passedHeaders: Record<string, string> = {};
       const fakePdfBuffer = Buffer.from('%PDF-1.4 sample');
@@ -290,6 +337,41 @@ describe('PDF Download Security & Candidate Resolution — Issue 1 Fixes', () =>
       expect(capturedHttpHeaders['cf-access-client-id']).toBeUndefined();
       expect(capturedHttpHeaders['cf-access-client-secret']).toBeUndefined();
     });
+
+    it('confirms legitimate HTTPS tunnel downloads via storage.lenas.me still work with CF headers', async () => {
+      let capturedHeaders: Record<string, string> = {};
+      const fakePdfBuffer = Buffer.from('%PDF-1.4 legitimate tunnel download test');
+
+      const mockFetch = vi.fn().mockImplementation((url: string, opts?: any) => {
+        if (url.startsWith('https://storage.lenas.me/')) {
+          capturedHeaders = opts?.headers || {};
+          return Promise.resolve(new Response(fakePdfBuffer, {
+            status: 200,
+            headers: { 'Content-Type': 'application/pdf' }
+          }));
+        }
+        return Promise.resolve(new Response(null, { status: 502 }));
+      });
+
+      const electron = await import('electron');
+      (electron as any).net = { fetch: mockFetch };
+
+      const res = await downloadPdfFromNas(
+        'https://storage.lenas.me/files/make-order-files/invoices/test_legit.pdf',
+        'test_legit.pdf',
+        tempTestDir
+      );
+
+      expect(res.success).toBe(true);
+      expect(res.path).toBeDefined();
+      expect(fs.existsSync(res.path!)).toBe(true);
+      expect(fs.readFileSync(res.path!).toString()).toContain('%PDF-1.4 legitimate tunnel download test');
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://storage.lenas.me/files/make-order-files/invoices/test_legit.pdf',
+        expect.anything()
+      );
+      expect(capturedHeaders).toBeDefined();
+    });
   });
 
   // ── 6. REDIRECT POLICY & SECURITY ENFORCEMENT ────────────────────────────
@@ -320,6 +402,31 @@ describe('PDF Download Security & Candidate Resolution — Issue 1 Fixes', () =>
 
       // Confirm malicious domain was never fetched
       expect(mockFetch).not.toHaveBeenCalledWith('http://evil-attacker.com/malicious.pdf', expect.anything());
+    });
+
+    it('rejects redirect to lookalike hostname storage.lenas.me.attacker.invalid and fails safely', async () => {
+      const mockFetch = vi.fn().mockImplementation((url: string) => {
+        if (url.includes(':8081')) {
+          return Promise.resolve(new Response(null, {
+            status: 302,
+            headers: { Location: 'https://storage.lenas.me.attacker.invalid/files/malware.pdf' }
+          }));
+        }
+        return Promise.resolve(new Response(null, { status: 502 }));
+      });
+
+      const electron = await import('electron');
+      (electron as any).net = { fetch: mockFetch };
+
+      const res = await downloadPdfFromNas(
+        'http://100.88.85.6:8081/files/invoice.pdf',
+        'invoice.pdf',
+        tempTestDir
+      );
+
+      expect(res.success).toBe(false);
+      expect(res.error).toContain('Redirect to unapproved host "storage.lenas.me.attacker.invalid" was blocked');
+      expect(mockFetch).not.toHaveBeenCalledWith('https://storage.lenas.me.attacker.invalid/files/malware.pdf', expect.anything());
     });
 
     it('rejects an HTTP redirect to storage.lenas.me and fails safely', async () => {
@@ -439,9 +546,101 @@ describe('PDF Download Security & Candidate Resolution — Issue 1 Fixes', () =>
       expect(mockFetch).not.toHaveBeenCalledWith('http://100.88.85.6:9999/files/malicious.pdf', expect.anything());
     });
 
-    it('rejects path traversal inside redirect URLs', () => {
+    it('prevents raw relative path traversal in Location header without requesting normalized target', async () => {
+      const requestedUrls: string[] = [];
+      const mockFetch = vi.fn().mockImplementation((url: string) => {
+        requestedUrls.push(url);
+        if (url.includes(':8081')) {
+          return Promise.resolve(new Response(null, {
+            status: 302,
+            headers: { Location: '../../secret.pdf' }
+          }));
+        }
+        return Promise.resolve(new Response(null, { status: 502 }));
+      });
+
+      const electron = await import('electron');
+      (electron as any).net = { fetch: mockFetch };
+
+      const res = await downloadPdfFromNas(
+        'http://100.88.85.6:8081/files/sub/invoice.pdf',
+        'invoice.pdf',
+        tempTestDir
+      );
+
+      expect(res.success).toBe(false);
+      expect(res.error).toContain('Path traversal is not permitted in redirect URL');
+      // Ensure the normalized traversal target was NEVER fetched
+      for (const req of requestedUrls) {
+        expect(req).not.toContain('secret.pdf');
+      }
+    });
+
+    it('prevents percent-encoded path traversal in Location header (%2e%2e%2f) without requesting normalized target', async () => {
+      const requestedUrls: string[] = [];
+      const mockFetch = vi.fn().mockImplementation((url: string) => {
+        requestedUrls.push(url);
+        if (url.includes(':8081')) {
+          return Promise.resolve(new Response(null, {
+            status: 302,
+            headers: { Location: '%2e%2e%2f%2e%2e%2fsecret.pdf' }
+          }));
+        }
+        return Promise.resolve(new Response(null, { status: 502 }));
+      });
+
+      const electron = await import('electron');
+      (electron as any).net = { fetch: mockFetch };
+
+      const res = await downloadPdfFromNas(
+        'http://100.88.85.6:8081/files/sub/invoice.pdf',
+        'invoice.pdf',
+        tempTestDir
+      );
+
+      expect(res.success).toBe(false);
+      expect(res.error).toContain('Path traversal is not permitted in redirect URL');
+      for (const req of requestedUrls) {
+        expect(req).not.toContain('secret.pdf');
+      }
+    });
+
+    it('prevents encoded path traversal (/files/%2e%2e/) in Location header', async () => {
+      const requestedUrls: string[] = [];
+      const mockFetch = vi.fn().mockImplementation((url: string) => {
+        requestedUrls.push(url);
+        if (url.includes(':8081')) {
+          return Promise.resolve(new Response(null, {
+            status: 302,
+            headers: { Location: '/files/%2e%2e/secret.pdf' }
+          }));
+        }
+        return Promise.resolve(new Response(null, { status: 502 }));
+      });
+
+      const electron = await import('electron');
+      (electron as any).net = { fetch: mockFetch };
+
+      const res = await downloadPdfFromNas(
+        'http://100.88.85.6:8081/files/invoice.pdf',
+        'invoice.pdf',
+        tempTestDir
+      );
+
+      expect(res.success).toBe(false);
+      expect(res.error).toContain('Path traversal is not permitted in redirect URL');
+      for (const req of requestedUrls) {
+        expect(req).not.toContain('secret.pdf');
+      }
+    });
+
+    it('rejects path traversal inside redirect URLs directly in validateAndNormalizeRedirect', () => {
       expect(() => {
         validateAndNormalizeRedirect('http://100.88.85.6:8081/files/../../secret.pdf', 'http://100.88.85.6:8081/files/doc.pdf');
+      }).toThrow(/Path traversal is not permitted/);
+
+      expect(() => {
+        validateAndNormalizeRedirect('http://100.88.85.6:8081/files/%2e%2e%2fsecret.pdf', 'http://100.88.85.6:8081/files/doc.pdf');
       }).toThrow(/Path traversal is not permitted/);
     });
   });

@@ -121,6 +121,86 @@ export function isApprovedNasPort(hostname: string, port?: string): boolean {
 }
 
 /**
+ * Detects directory traversal patterns in raw and percent-encoded URL or path strings.
+ * Evaluates both raw and decoded representations before any URL normalization can erase traversal segments.
+ */
+export function hasPathTraversal(str: string): boolean {
+    if (!str || typeof str !== 'string') return false;
+
+    // Direct check for plain dot-dot traversal sequences
+    if (
+        str.includes('../') ||
+        str.includes('..\\') ||
+        str.includes('/..') ||
+        str.includes('\\..') ||
+        str === '..'
+    ) {
+        return true;
+    }
+
+    // Direct check for percent-encoded dot-dot combinations (%2e = '.')
+    if (/%2e%2e|%2e\.|\.%2e|\.\.%2f|\.\.%5c|%2f\.\.|%5c\.\./i.test(str)) {
+        return true;
+    }
+
+    // Check decoded representation(s) (handles single and double percent-encoding)
+    let currentStr = str;
+    for (let depth = 0; depth < 2; depth++) {
+        try {
+            const decoded = decodeURIComponent(currentStr);
+            if (decoded === currentStr) break;
+            currentStr = decoded;
+
+            if (
+                currentStr.includes('../') ||
+                currentStr.includes('..\\') ||
+                currentStr.includes('/..') ||
+                currentStr.includes('\\..') ||
+                currentStr === '..'
+            ) {
+                return true;
+            }
+
+            // Check if any path segment split by / or \ is exactly '..'
+            const segments = currentStr.split(/[/\\]/);
+            for (const seg of segments) {
+                if (seg.trim() === '..') {
+                    return true;
+                }
+            }
+        } catch {
+            if (/%2e/i.test(currentStr)) {
+                return true;
+            }
+            break;
+        }
+    }
+
+    return false;
+}
+
+/**
+ * Determines whether a URL matches the exact approved Cloudflare tunnel HTTPS endpoint (storage.lenas.me).
+ * Parses the URL to strictly validate that:
+ *  - Protocol is 'https:'
+ *  - Hostname is exactly 'storage.lenas.me' (no lookalike domains or suffixes)
+ *  - Port is default or explicit '443'
+ */
+export function isApprovedCloudflareTunnelUrl(urlStr: string): boolean {
+    if (!urlStr || typeof urlStr !== 'string') return false;
+    try {
+        const u = new URL(urlStr);
+        if (u.protocol.toLowerCase() !== 'https:') return false;
+        if (u.hostname.toLowerCase() !== 'storage.lenas.me') return false;
+        const effectivePort = u.port || '443';
+        if (effectivePort !== '443') return false;
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+/**
  * Strictly validates download URLs against approved hosts/protocols and normalizes candidates.
  */
 export function validateAndNormalizeDownloadUrl(rawUrl: string): ValidatedDownloadUrlResult {
@@ -131,7 +211,7 @@ export function validateAndNormalizeDownloadUrl(rawUrl: string): ValidatedDownlo
     const trimmed = rawUrl.trim();
 
     // Guard against directory traversal in raw URL
-    if (trimmed.includes('../') || trimmed.includes('..\\') || trimmed.includes('/..') || trimmed.includes('\\..')) {
+    if (hasPathTraversal(trimmed)) {
         return { isValid: false, error: 'Path traversal is not permitted in URL path', candidates: [] };
     }
 
@@ -143,7 +223,7 @@ export function validateAndNormalizeDownloadUrl(rawUrl: string): ValidatedDownlo
     if (/^app-media:\/\/nas\//i.test(trimmed)) {
         const sub = trimmed.replace(/^app-media:\/\/nas\/?/i, '');
         const cleanSub = decodeURIComponent(sub).replace(/^\/+/, '');
-        if (cleanSub.includes('..')) {
+        if (hasPathTraversal(cleanSub)) {
             return { isValid: false, error: 'Path traversal is not permitted in URL path', candidates: [] };
         }
         const candidates = candidateBases.map(b => `${b.replace(/\/$/, '')}/${encodeURI(cleanSub)}`);
@@ -207,7 +287,7 @@ export function validateAndNormalizeDownloadUrl(rawUrl: string): ValidatedDownlo
 
     // Extract subpath and guard against directory traversal
     const cleanSub = decodeURIComponent(parsedUrl.pathname).replace(/^\/+/, '');
-    if (cleanSub.includes('..')) {
+    if (hasPathTraversal(cleanSub)) {
         return { isValid: false, error: 'Path traversal is not permitted in URL path', candidates: [] };
     }
 
@@ -249,6 +329,11 @@ export function validateAndNormalizeRedirect(redirectUrlStr: string, currentUrlS
         throw new Error('Redirect URL must be a non-empty string');
     }
 
+    // Validate raw redirect target before any URL parsing or normalization
+    if (hasPathTraversal(redirectUrlStr)) {
+        throw new Error('Path traversal is not permitted in redirect URL');
+    }
+
     let currentParsed: URL;
     let redirectParsed: URL;
     try {
@@ -268,13 +353,10 @@ export function validateAndNormalizeRedirect(redirectUrlStr: string, currentUrlS
         throw new Error('HTTPS-to-HTTP downgrade redirect is forbidden');
     }
 
-    // Path traversal defense in redirect URL
+    // Path traversal defense in resolved redirect URL
     if (
-        redirectUrlStr.includes('../') ||
-        redirectUrlStr.includes('..\\') ||
-        redirectUrlStr.includes('/..') ||
-        redirectUrlStr.includes('\\..') ||
-        decodeURIComponent(redirectParsed.pathname).includes('..')
+        hasPathTraversal(redirectParsed.pathname) ||
+        hasPathTraversal(decodeURIComponent(redirectParsed.pathname))
     ) {
         throw new Error('Path traversal is not permitted in redirect URL');
     }
@@ -442,11 +524,10 @@ export async function downloadPdfFromNas(
             let res: Response | null = null;
 
             while (redirectCount <= maxRedirects) {
-                // Cloudflare Access headers are strictly forbidden over unencrypted HTTP
-                const isHttpsTunnel = currentUrl.startsWith('https://storage.lenas.me');
-                const headers: Record<string, string> = (isHttpsTunnel && currentUrl.startsWith('https://'))
-                    ? { ...cfHeaders }
-                    : {};
+                // Attach Cloudflare Access headers strictly to the exact approved storage.lenas.me HTTPS endpoint.
+                // Never attached to lookalike hostnames, unapproved ports, or unencrypted HTTP URLs.
+                const isExactTunnel = isApprovedCloudflareTunnelUrl(currentUrl);
+                const headers: Record<string, string> = isExactTunnel ? { ...cfHeaders } : {};
 
                 res = await fetchFn(currentUrl, {
                     headers,
@@ -455,8 +536,19 @@ export async function downloadPdfFromNas(
                 });
 
                 if (res.status >= 300 && res.status < 400 && res.headers.has('location')) {
-                    const location = res.headers.get('location')!;
-                    const resolvedRedirect = new URL(location, currentUrl).href;
+                    const rawLocation = res.headers.get('location')!;
+
+                    // Validate raw Location header before URL normalization can erase traversal segments
+                    if (hasPathTraversal(rawLocation)) {
+                        throw new Error('Path traversal is not permitted in redirect URL');
+                    }
+
+                    let resolvedRedirect: string;
+                    try {
+                        resolvedRedirect = new URL(rawLocation, currentUrl).href;
+                    } catch {
+                        throw new Error('Malformed redirect URL');
+                    }
 
                     // Strictly validate and normalize redirect target
                     const normalizedRedirect = validateAndNormalizeRedirect(resolvedRedirect, currentUrl);
