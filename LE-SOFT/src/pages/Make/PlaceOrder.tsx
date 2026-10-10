@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Plus, AlertCircle, CheckCircle, Paperclip, X, FileText, 
   Trash2, MapPin, User, ShoppingBag, 
-  Palette, Maximize2, Tag, Shield, DollarSign, Lock, Box, Search
+  Palette, Maximize2, Tag, Shield, DollarSign, Lock, Box, Search, Save, FolderOpen, ChevronDown
 } from 'lucide-react';
 import DashboardLayout from '../../components/DashboardLayout';
 import { 
@@ -17,11 +17,25 @@ import {
   loadPlaceOrderDraft, 
   savePlaceOrderDraft, 
   clearPlaceOrderDraft, 
-  hasMeaningfulPlaceOrderDraft 
+  hasMeaningfulPlaceOrderDraft,
+  loadSavedPlaceOrderDrafts,
+  saveNamedPlaceOrderDraft,
+  deleteSavedPlaceOrderDraft,
+  type PlaceOrderDraftData,
+  type SavedPlaceOrderDraft
 } from '../../utils/placeOrderDraft';
+import { useToast } from '../../context/ToastContext';
 import { formatSizeDisplay } from '../../utils/formatSize';
 
 const PRIORITIES = ['Low', 'Normal', 'High', 'Urgent'];
+
+const getColorSwatchColor = (value?: unknown): string => {
+  const color = typeof value === 'string' ? value.trim() : '';
+  if (/^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(color)) return color;
+  if (/^(?:rgb|rgba|hsl|hsla)\(/i.test(color)) return color;
+  if (/^[a-z]{3,24}$/i.test(color)) return color;
+  return '#d1d5db';
+};
 
 interface CartItem {
   _id: string;
@@ -54,6 +68,7 @@ interface CartItem {
 
 const PlaceOrder: React.FC = () => {
   const location = useLocation();
+  const { showToast } = useToast();
   const pricingPerms = getUserPricingPermissions();
   const canCreateProduct = canCreateProductFromPlaceOrder();
   const isFactoryMgr = isFactoryManager();
@@ -61,6 +76,8 @@ const PlaceOrder: React.FC = () => {
   const [confirmedOrderNumber, setConfirmedOrderNumber] = useState<string | null>(null);
   const [showProductCreateModal, setShowProductCreateModal] = useState(false);
   const [autoOrderNumber, setAutoOrderNumber] = useState<string>('');
+  const [savedDrafts, setSavedDrafts] = useState<SavedPlaceOrderDraft[]>(() => loadSavedPlaceOrderDrafts());
+  const [activeSavedDraftId, setActiveSavedDraftId] = useState<string | null>(null);
 
   // Initial draft loaded synchronously to prevent any asynchronous typing wipes
   const initialDraft = React.useMemo(() => {
@@ -121,6 +138,7 @@ const PlaceOrder: React.FC = () => {
     }
     return null;
   });
+  const [showColorOptions, setShowColorOptions] = useState(false);
   const [itemQuantity, setItemQuantity] = useState<number>(() => initialDraft.itemQuantity ?? 1);
   const [itemCostPrice, setItemCostPrice] = useState<number | string>(() => initialDraft.itemCostPrice ?? '');
   const [itemSalePrice, setItemSalePrice] = useState<number | string>(() => initialDraft.itemSalePrice ?? '');
@@ -276,6 +294,159 @@ const PlaceOrder: React.FC = () => {
 
   const designerName = localStorage.getItem('user_name') || 'Unknown';
   const isDraftRestoredRef = React.useRef(true);
+
+
+  const buildCurrentDraftData = (): PlaceOrderDraftData => ({
+    priority,
+    targetDeliveryDate,
+    requestedDeliveryDate,
+    selectedSalesmanId,
+    selectedCustomerId,
+    selectedCustomerInfo,
+    customerName,
+    customerPhone,
+    customerEmail,
+    shippingAddress,
+    locationLandmark,
+    receiverName,
+    receiverPhone,
+    specialInstructions,
+    selectedProduct,
+    selectedProductId: selectedProduct?.id ?? null,
+    selectedSpecId: selectedSpec?.id,
+    selectedSizeId: selectedSize?.id,
+    selectedColorId: selectedColor?.id,
+    itemQuantity,
+    itemCostPrice,
+    itemSalePrice,
+    itemRemarks,
+    selectedItemAttachedFile: attachedFile
+      ? { name: attachedFile.name, url: attachedFile.url, type: attachedFile.type }
+      : null,
+    isCustomSize,
+    customShape,
+    customLength,
+    customWidth,
+    customHeight,
+    customDiameter,
+    customUnit,
+    isCustomSpec,
+    customSpecName,
+    isCustomColor,
+    customColorName,
+    isCustomItemMode,
+    customItemName,
+    customItemSize,
+    customItemSpec,
+    cartItems: cartItems as any,
+    invoiceAttachments
+  });
+
+  const handleLoadSavedDraft = (savedDraft: SavedPlaceOrderDraft) => {
+    if (activeSavedDraftId !== savedDraft.id && hasMeaningfulPlaceOrderDraft(buildCurrentDraftData())) {
+      const confirmed = window.confirm(
+        'Loading this saved draft will replace the order details currently in the form. Continue?'
+      );
+      if (!confirmed) return;
+    }
+
+    const d = savedDraft.data || {};
+    const product = d.selectedProduct || null;
+    setPriority(d.priority || 'Normal');
+    setTargetDeliveryDate(d.targetDeliveryDate || '');
+    setRequestedDeliveryDate(d.requestedDeliveryDate || '');
+    setSelectedSalesmanId(d.selectedSalesmanId || '');
+    setSelectedCustomerId(d.selectedCustomerId ?? d.selectedCustomerInfo?.id ?? null);
+    setSelectedCustomerInfo(d.selectedCustomerInfo || null);
+    setCustomerName(d.customerName || '');
+    setCustomerPhone(d.customerPhone || '');
+    setCustomerEmail(d.customerEmail || '');
+    setShippingAddress(d.shippingAddress || '');
+    setLocationLandmark(d.locationLandmark || '');
+    setReceiverName(d.receiverName || '');
+    setReceiverPhone(d.receiverPhone || '');
+    setSpecialInstructions(d.specialInstructions || '');
+    setSelectedProduct(product);
+    setSelectedSpec(product?.specifications?.find((item: any) => String(item.id) === String(d.selectedSpecId)) || null);
+    setSelectedSize(product?.sizes?.find((item: any) => String(item.id) === String(d.selectedSizeId)) || null);
+    setSelectedColor(product?.colors?.find((item: any) => String(item.id) === String(d.selectedColorId))
+      || product?.specifications?.flatMap((spec: any) => spec.colors || []).find((item: any) => String(item.id) === String(d.selectedColorId))
+      || null);
+    setItemQuantity(d.itemQuantity ?? 1);
+    setItemCostPrice(d.itemCostPrice ?? '');
+    setItemSalePrice(d.itemSalePrice ?? '');
+    setItemRemarks(d.itemRemarks || '');
+    setAttachedFile(d.selectedItemAttachedFile?.url
+      ? { name: d.selectedItemAttachedFile.name, url: d.selectedItemAttachedFile.url, type: d.selectedItemAttachedFile.type }
+      : null);
+    setIsCustomSize(d.isCustomSize ?? false);
+    setCustomShape(d.customShape || 'rect');
+    setCustomLength(d.customLength || '');
+    setCustomWidth(d.customWidth || '');
+    setCustomHeight(d.customHeight || '');
+    setCustomDiameter(d.customDiameter || '');
+    setCustomUnit(d.customUnit || 'mm');
+    setIsCustomSpec(d.isCustomSpec ?? false);
+    setCustomSpecName(d.customSpecName || '');
+    setIsCustomColor(d.isCustomColor ?? false);
+    setCustomColorName(d.customColorName || '');
+    setIsCustomItemMode(d.isCustomItemMode ?? false);
+    setCustomItemName(d.customItemName || '');
+    setCustomItemSize(d.customItemSize || '');
+    setCustomItemSpec(d.customItemSpec || '');
+    setCartItems(Array.isArray(d.cartItems) ? d.cartItems as any : []);
+    setInvoiceAttachments(Array.isArray(d.invoiceAttachments) ? d.invoiceAttachments : []);
+    setShowColorOptions(false);
+    setCustomerSearchQuery('');
+    setCustomerSuggestions([]);
+    setShowCustomerDropdown(false);
+    setError('');
+    setSuccess(false);
+    setActiveSavedDraftId(savedDraft.id);
+    showToast('Loaded saved draft: ' + savedDraft.title, 'success');
+  };
+
+  const handleSaveAsDraft = () => {
+    const snapshot = buildCurrentDraftData();
+    if (!hasMeaningfulPlaceOrderDraft(snapshot)) {
+      showToast('Enter customer details or add an item before saving a draft.', 'warning');
+      return;
+    }
+
+    const draftTitle = (
+      customerName.trim()
+      || selectedCustomerInfo?.name
+      || cartItems[0]?.product_name
+      || selectedProduct?.product_name
+      || customItemName.trim()
+      || 'Untitled order'
+    ).toString();
+
+    try {
+      const saved = saveNamedPlaceOrderDraft(snapshot, draftTitle, activeSavedDraftId || undefined);
+      setSavedDrafts(loadSavedPlaceOrderDrafts());
+      setActiveSavedDraftId(saved.draft.id);
+      if (saved.omittedAttachmentCount > 0) {
+        showToast(
+          'Draft saved. ' + saved.omittedAttachmentCount + ' temporary or offline attachment(s) were not saved; upload them to NAS before relying on this draft.',
+          'warning'
+        );
+      } else {
+        showToast('Draft saved: ' + saved.draft.title, 'success');
+      }
+    } catch (err: any) {
+      showToast('Could not save draft locally: ' + (err?.message || 'storage is unavailable or full'), 'error');
+    }
+  };
+
+  const handleDeleteSavedDraft = (savedDraft: SavedPlaceOrderDraft) => {
+    if (!window.confirm('Delete saved draft "' + savedDraft.title + '"? This cannot be undone.')) return;
+    deleteSavedPlaceOrderDraft(savedDraft.id);
+    setSavedDrafts(loadSavedPlaceOrderDrafts());
+    if (activeSavedDraftId === savedDraft.id) setActiveSavedDraftId(null);
+    showToast('Saved draft deleted.', 'success');
+  };
+
 
   // Close customer dropdown on click outside
   useEffect(() => {
@@ -471,6 +642,8 @@ const PlaceOrder: React.FC = () => {
     }
 
     clearPlaceOrderDraft();
+    setActiveSavedDraftId(null);
+    setShowColorOptions(false);
     setSelectedCustomerId(null);
     setSelectedCustomerInfo(null);
     setCustomerSearchQuery('');
@@ -934,6 +1107,11 @@ const PlaceOrder: React.FC = () => {
       }
 
       clearPlaceOrderDraft();
+      if (activeSavedDraftId) {
+        deleteSavedPlaceOrderDraft(activeSavedDraftId);
+        setSavedDrafts(loadSavedPlaceOrderDrafts());
+        setActiveSavedDraftId(null);
+      }
       setSelectedCustomerId(null);
       setSelectedCustomerInfo(null);
       setCustomerSearchQuery('');
@@ -1627,19 +1805,117 @@ const PlaceOrder: React.FC = () => {
                         </div>
 
                         {!isCustomColor ? (
-                          <select
-                            value={selectedColor?.id || ''}
-                            onChange={e => {
-                              const availableColors = (selectedProduct.colors && selectedProduct.colors.length > 0) ? selectedProduct.colors : (selectedSpec?.colors || []);
-                              const cl = availableColors.find((c: any) => c.id === Number(e.target.value)) || null;
-                              setSelectedColor(cl);
-                            }}
-                            style={inputStyle}>
-                            <option value="">-- Standard / Default Color --</option>
-                            {((selectedProduct.colors && selectedProduct.colors.length > 0) ? selectedProduct.colors : (selectedSpec?.colors || [])).map((cl: any) => (
-                              <option key={cl.id} value={cl.id}>{cl.color_name} {cl.color_code ? `(${cl.color_code})` : ''}</option>
-                            ))}
-                          </select>
+                          <div style={{ position: 'relative' }}>
+                            <button
+                              type="button"
+                              aria-haspopup="listbox"
+                              aria-expanded={showColorOptions}
+                              onClick={() => setShowColorOptions(value => !value)}
+                              style={{
+                                ...inputStyle,
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '10px',
+                                textAlign: 'left',
+                                cursor: 'pointer',
+                                minHeight: '42px'
+                              }}
+                            >
+                              <span aria-hidden="true" style={{
+                                width: '22px',
+                                height: '22px',
+                                flexShrink: 0,
+                                borderRadius: '6px',
+                                border: '1px solid rgba(15,23,42,0.28)',
+                                background: getColorSwatchColor(selectedColor?.color_code),
+                                boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.18)'
+                              }} />
+                              <span style={{ flex: 1 }}>
+                                {selectedColor
+                                  ? (selectedColor.color_name || 'Selected color') + (selectedColor.color_code ? ' (' + selectedColor.color_code + ')' : '')
+                                  : '-- Standard / Default Color --'}
+                              </span>
+                              <ChevronDown size={15} style={{ flexShrink: 0, opacity: 0.7 }} />
+                            </button>
+                            {showColorOptions && (
+                              <div
+                                role="listbox"
+                                aria-label="Color and finish options"
+                                style={{
+                                  position: 'absolute',
+                                  top: 'calc(100% + 4px)',
+                                  left: 0,
+                                  right: 0,
+                                  zIndex: 50,
+                                  maxHeight: '240px',
+                                  overflowY: 'auto',
+                                  padding: '5px',
+                                  background: 'var(--card-bg, #fff)',
+                                  border: '1px solid var(--border-color, #d1d5db)',
+                                  borderRadius: '10px',
+                                  boxShadow: '0 12px 28px rgba(0,0,0,0.16)'
+                                }}
+                              >
+                                <button
+                                  type="button"
+                                  role="option"
+                                  aria-selected={!selectedColor}
+                                  onClick={() => { setSelectedColor(null); setShowColorOptions(false); }}
+                                  style={{
+                                    width: '100%',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '10px',
+                                    padding: '8px 10px',
+                                    border: 'none',
+                                    borderRadius: '7px',
+                                    background: !selectedColor ? 'rgba(99,102,241,0.10)' : 'transparent',
+                                    color: 'var(--text-primary)',
+                                    textAlign: 'left',
+                                    cursor: 'pointer'
+                                  }}
+                                >
+                                  <span aria-hidden="true" style={{ width: '22px', height: '22px', flexShrink: 0, border: '1px solid var(--border-color)', borderRadius: '6px', background: 'linear-gradient(135deg, #fff 45%, #e5e7eb 45%, #e5e7eb 55%, #fff 55%)' }} />
+                                  <span>-- Standard / Default Color --</span>
+                                </button>
+                                {((selectedProduct.colors && selectedProduct.colors.length > 0) ? selectedProduct.colors : (selectedSpec?.colors || [])).map((cl: any) => (
+                                  <button
+                                    key={cl.id}
+                                    type="button"
+                                    role="option"
+                                    aria-selected={String(selectedColor?.id) === String(cl.id)}
+                                    onClick={() => { setSelectedColor(cl); setShowColorOptions(false); }}
+                                    style={{
+                                      width: '100%',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: '10px',
+                                      padding: '8px 10px',
+                                      border: 'none',
+                                      borderRadius: '7px',
+                                      background: String(selectedColor?.id) === String(cl.id) ? 'rgba(99,102,241,0.10)' : 'transparent',
+                                      color: 'var(--text-primary)',
+                                      textAlign: 'left',
+                                      cursor: 'pointer'
+                                    }}
+                                  >
+                                    <span aria-hidden="true" style={{
+                                      width: '22px',
+                                      height: '22px',
+                                      flexShrink: 0,
+                                      borderRadius: '6px',
+                                      border: '1px solid rgba(15,23,42,0.28)',
+                                      background: getColorSwatchColor(cl.color_code),
+                                      boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.18)'
+                                    }} />
+                                    <span style={{ flex: 1 }}>
+                                      {cl.color_name || 'Color'} {cl.color_code ? '(' + cl.color_code + ')' : ''}
+                                    </span>
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
                         ) : (
                           <div style={{ background: 'rgba(249,115,22,0.04)', border: '1px dashed #f97316', borderRadius: '8px', padding: '8px 10px' }}>
                             <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#ea580c', marginBottom: '4px' }}>
@@ -2084,7 +2360,15 @@ const PlaceOrder: React.FC = () => {
             </div>
 
             {/* ── SUBMIT & ACTION BUTTONS ──────────────────────────────────── */}
-            <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={handleSaveAsDraft}
+                disabled={loading || uploadingInvoice}
+                style={{ padding: '16px 20px', background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.35)', borderRadius: '12px', color: '#059669', fontWeight: 700, fontSize: '0.95rem', cursor: loading || uploadingInvoice ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '8px', opacity: loading || uploadingInvoice ? 0.65 : 1 }}
+              >
+                <Save size={18} /> {activeSavedDraftId ? 'Update Saved Draft' : 'Save as Draft'}
+              </button>
               <button
                 type="button"
                 onClick={handleClearDraft}
@@ -2110,6 +2394,85 @@ const PlaceOrder: React.FC = () => {
               </motion.button>
             </div>
           </form>
+
+          {/* Individually saved drafts are separate from the auto-restored working copy above. */}
+          <section style={{
+            marginTop: '20px',
+            padding: '18px',
+            border: '1px solid var(--border-color)',
+            borderRadius: '14px',
+            background: 'var(--card-bg, #fff)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginBottom: '12px', flexWrap: 'wrap' }}>
+              <div>
+                <h3 style={{ margin: 0, color: 'var(--text-primary)', fontSize: '1rem', fontWeight: 800 }}>Saved Order Drafts</h3>
+                <p style={{ margin: '4px 0 0', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                  Drafts are saved on this workstation for the current user. Successfully placed drafts are removed automatically.
+                </p>
+              </div>
+              <span style={{ padding: '4px 10px', borderRadius: '20px', background: 'rgba(99,102,241,0.1)', color: 'var(--accent-color)', fontSize: '0.78rem', fontWeight: 800 }}>
+                {savedDrafts.length} saved
+              </span>
+            </div>
+            {savedDrafts.length === 0 ? (
+              <div style={{ padding: '22px 12px', textAlign: 'center', color: 'var(--text-secondary)', border: '1px dashed var(--border-color)', borderRadius: '10px', fontSize: '0.88rem' }}>
+                No saved drafts yet. Fill in an order and select “Save as Draft”.
+              </div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', minWidth: '680px', borderCollapse: 'collapse', fontSize: '0.84rem' }}>
+                  <thead>
+                    <tr style={{ background: 'var(--input-bg, #f8fafc)', color: 'var(--text-secondary)', textAlign: 'left' }}>
+                      <th style={{ padding: '10px 12px', borderBottom: '1px solid var(--border-color)' }}>Draft</th>
+                      <th style={{ padding: '10px 12px', borderBottom: '1px solid var(--border-color)' }}>Customer</th>
+                      <th style={{ padding: '10px 12px', borderBottom: '1px solid var(--border-color)', textAlign: 'center' }}>Items</th>
+                      <th style={{ padding: '10px 12px', borderBottom: '1px solid var(--border-color)' }}>Last Saved</th>
+                      <th style={{ padding: '10px 12px', borderBottom: '1px solid var(--border-color)', textAlign: 'right' }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {savedDrafts.map(savedDraft => {
+                      const itemCount = Array.isArray(savedDraft.data.cartItems)
+                        ? savedDraft.data.cartItems.length
+                        : (savedDraft.data.selectedProduct ? 1 : 0);
+                      const customer = savedDraft.data.customerName
+                        || savedDraft.data.selectedCustomerInfo?.name
+                        || '—';
+                      return (
+                        <tr key={savedDraft.id} style={{ borderBottom: '1px solid var(--border-color)', background: activeSavedDraftId === savedDraft.id ? 'rgba(99,102,241,0.05)' : 'transparent' }}>
+                          <td style={{ padding: '11px 12px', color: 'var(--text-primary)', fontWeight: 700 }}>
+                            {savedDraft.title}
+                            <div style={{ marginTop: '3px', fontSize: '0.74rem', fontWeight: 400, color: 'var(--text-secondary)' }}>
+                              {savedDraft.data.targetDeliveryDate ? 'Target: ' + savedDraft.data.targetDeliveryDate : 'Target date not set'}
+                            </div>
+                          </td>
+                          <td style={{ padding: '11px 12px', color: 'var(--text-primary)' }}>{customer}</td>
+                          <td style={{ padding: '11px 12px', textAlign: 'center', color: 'var(--text-primary)' }}>{itemCount}</td>
+                          <td style={{ padding: '11px 12px', whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>{new Date(savedDraft.updatedAt).toLocaleString()}</td>
+                          <td style={{ padding: '11px 12px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                            <button
+                              type="button"
+                              onClick={() => handleLoadSavedDraft(savedDraft)}
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '6px 9px', marginRight: '6px', borderRadius: '7px', border: '1px solid var(--border-color)', background: 'var(--card-bg, #fff)', color: 'var(--text-primary)', cursor: 'pointer', fontWeight: 700 }}
+                            >
+                              <FolderOpen size={14} /> Load
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteSavedDraft(savedDraft)}
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '6px 9px', borderRadius: '7px', border: '1px solid rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.06)', color: '#dc2626', cursor: 'pointer', fontWeight: 700 }}
+                            >
+                              <Trash2 size={14} /> Delete
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
         </motion.div>
       </div>
 

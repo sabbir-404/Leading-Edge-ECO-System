@@ -23,6 +23,7 @@ const UserCreate: React.FC = () => {
     const [error, setError] = useState('');
 
     const userRole = localStorage.getItem('user_role') || '';
+    const userName = localStorage.getItem('user_name') || localStorage.getItem('username') || 'System';
     let perms: any = {};
     try { perms = JSON.parse(localStorage.getItem('user_permissions') || '{}'); } catch {}
     const isSuperAdmin = userRole.toLowerCase() === 'superadmin';

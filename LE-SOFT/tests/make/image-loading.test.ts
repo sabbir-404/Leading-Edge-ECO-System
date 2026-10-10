@@ -47,6 +47,11 @@ describe('Image Loading & Protocol Resolution — Issue 1 Fixes', () => {
             expect(resolved).toBe('app-media://nas/invoices/inv-1001.pdf');
         });
 
+        it('routes legacy :8080 MAKE invoice URLs through the NAS media resolver', () => {
+            const legacyUrl = 'http://100.88.85.6:8080/files/make-order-files/invoices/1791550487683_89a8e45a_invoice_receipt_2026.png';
+            expect(resolveImageSrc(legacyUrl)).toBe('app-media://nas/files/make-order-files/invoices/1791550487683_89a8e45a_invoice_receipt_2026.png');
+        });
+
         it('preserves public Supabase and external HTTP/HTTPS URLs untouched', () => {
             const supabaseUrl = 'https://my-project.supabase.co/storage/v1/object/public/products/chair.jpg';
             expect(resolveImageSrc(supabaseUrl)).toBe(supabaseUrl);
