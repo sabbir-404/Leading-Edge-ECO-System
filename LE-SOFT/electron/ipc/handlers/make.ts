@@ -13,7 +13,7 @@
  */
 
 import { ipcMain, BrowserWindow } from 'electron';
-import { supabase, supabaseAdmin, failoverEngine } from '../../supabase';
+import { supabase, supabaseAdmin, failoverEngine, getNasStorageCandidates } from '../../supabase';
 import { SessionManager, UserSession } from '../../session-manager';
 import { MakeOrderService } from '../../services/make/MakeOrderService';
 import { MakePricingService } from '../../services/make/MakePricingService';
@@ -483,6 +483,57 @@ export function registerMakeHandlers(): void {
         }).eq('id', itemId);
 
         return { success: true };
+    });
+
+    ipcMain.handle('make-download-pdf', async (_e, { url, fileName }: { url: string; fileName: string }) => {
+        try {
+            const https = await import('https');
+            const http = await import('http');
+            const path = await import('path');
+            const fs = await import('fs');
+            const { app, shell } = await import('electron');
+            const tmpPath = path.join(app.getPath('temp'), fileName || 'download');
+
+            let fetchUrl = url;
+            // Normalize legacy :8080 URLs or app-media URLs to primary candidate NAS endpoint
+            if (/^https?:\/\/(storage\.lenas\.me|[a-zA-Z0-9\.\-]+:(?:8080|8081))\//i.test(fetchUrl)) {
+                const subPath = fetchUrl.replace(/^https?:\/\/(storage\.lenas\.me|[a-zA-Z0-9\.\-]+:(?:8080|8081))\/?/i, '');
+                const cleanSub = decodeURIComponent(subPath).replace(/^\//, '');
+                const candidates = typeof getNasStorageCandidates === 'function'
+                    ? getNasStorageCandidates()
+                    : ['http://100.88.85.6:8081', 'https://storage.lenas.me'];
+                fetchUrl = `${candidates[0].replace(/\/$/, '')}/${encodeURI(cleanSub)}`;
+            } else if (/^app-media:\/\/nas\//i.test(fetchUrl)) {
+                const subPath = fetchUrl.replace(/^app-media:\/\/nas\/?/i, '');
+                const cleanSub = decodeURIComponent(subPath).replace(/^\//, '');
+                const candidates = typeof getNasStorageCandidates === 'function'
+                    ? getNasStorageCandidates()
+                    : ['http://100.88.85.6:8081', 'https://storage.lenas.me'];
+                fetchUrl = `${candidates[0].replace(/\/$/, '')}/${encodeURI(cleanSub)}`;
+            }
+
+            await new Promise<void>((resolve, reject) => {
+                const file = fs.createWriteStream(tmpPath);
+                const protocol = fetchUrl.startsWith('https') ? https : http;
+                protocol.get(fetchUrl, (res: any) => {
+                    if (res.statusCode && res.statusCode >= 400) {
+                        reject(new Error(`Download failed with HTTP ${res.statusCode}`));
+                        return;
+                    }
+                    res.pipe(file);
+                    file.on('finish', () => {
+                        file.close();
+                        resolve();
+                    });
+                }).on('error', reject);
+            });
+
+            await shell.openPath(tmpPath);
+            return { success: true, path: tmpPath };
+        } catch (e: any) {
+            console.error('[make-download-pdf] Download error:', e);
+            return { success: false, error: e?.message || 'Download error' };
+        }
     });
 
     // ── 11. Parts & Dimensions CRUD ──────────────────────────────────────────

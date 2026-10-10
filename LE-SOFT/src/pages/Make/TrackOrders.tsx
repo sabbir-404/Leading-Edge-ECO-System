@@ -670,8 +670,24 @@ const TrackOrders: React.FC = () => {
   };
 
   const handleDownloadPdf = async (pdf: PdfEntry) => {
-    // @ts-ignore
-    await window.electron.makeDownloadPdf({ url: pdf.url, fileName: pdf.name });
+    try {
+      // @ts-ignore
+      if (window.electron?.makeDownloadPdf) {
+        // @ts-ignore
+        await window.electron.makeDownloadPdf({ url: pdf.url, fileName: pdf.name });
+      } else {
+        const resolved = resolveImageSrc(pdf.url);
+        const a = document.createElement('a');
+        a.href = resolved;
+        a.download = pdf.name;
+        a.target = '_blank';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }
+    } catch (e: any) {
+      console.error('[TrackOrders] Download error:', e);
+    }
   };
 
   // Open Version Diff modal
@@ -1815,22 +1831,20 @@ const TrackOrders: React.FC = () => {
                                       <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
                                         <button
                                           onClick={() => {
-                                            if (isPdf) {
-                                              setPdfViewer({ path: attUrl, name: attName, url: attUrl });
-                                            } else {
-                                              window.open(attUrl, '_blank');
-                                            }
+                                            setPdfViewer({ path: attUrl, name: attName, url: attUrl });
                                           }}
                                           style={smallBtn('#3b82f6')}
                                           title="View Attachment"
                                         >
                                           <Eye size={13} /> View
                                         </button>
-                                        <a href={attUrl} download={attName} target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>
-                                          <button style={smallBtn('#10b981')} title="Download Attachment">
-                                            <Download size={13} /> Download
-                                          </button>
-                                        </a>
+                                        <button
+                                          onClick={() => handleDownloadPdf({ path: attUrl, name: attName, url: attUrl })}
+                                          style={smallBtn('#10b981')}
+                                          title="Download Attachment"
+                                        >
+                                          <Download size={13} /> Download
+                                        </button>
                                       </div>
                                     </div>
                                   );
@@ -2024,7 +2038,7 @@ const TrackOrders: React.FC = () => {
                   </button>
                 </div>
               ) : (
-                <iframe src={pdfViewer.url} title={pdfViewer.name}
+                <iframe src={resolveImageSrc(pdfViewer.url)} title={pdfViewer.name}
                   style={{ flex: 1, border: 'none', width: '100%', background: '#525659' }} />
               )}
             </div>

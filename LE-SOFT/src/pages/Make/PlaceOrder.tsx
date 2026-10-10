@@ -29,7 +29,7 @@ import { formatSizeDisplay } from '../../utils/formatSize';
 
 const PRIORITIES = ['Low', 'Normal', 'High', 'Urgent'];
 
-const getColorSwatchColor = (value?: unknown): string => {
+export const getColorSwatchColor = (value?: unknown): string => {
   const color = typeof value === 'string' ? value.trim() : '';
   if (/^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(color)) return color;
   if (/^(?:rgb|rgba|hsl|hsla)\(/i.test(color)) return color;
@@ -106,6 +106,7 @@ const PlaceOrder: React.FC = () => {
   const customerSearchSeqRef = React.useRef(0);
   const customerSearchInputRef = React.useRef<HTMLInputElement | null>(null);
   const customerDropdownContainerRef = React.useRef<HTMLDivElement | null>(null);
+  const colorDropdownContainerRef = React.useRef<HTMLDivElement | null>(null);
 
   // Customer & Delivery info
   const [customerName, setCustomerName] = useState(() => initialDraft.customerName || '');
@@ -428,7 +429,7 @@ const PlaceOrder: React.FC = () => {
       setActiveSavedDraftId(saved.draft.id);
       if (saved.omittedAttachmentCount > 0) {
         showToast(
-          'Draft saved. ' + saved.omittedAttachmentCount + ' temporary or offline attachment(s) were not saved; upload them to NAS before relying on this draft.',
+          'Draft saved. ' + saved.omittedAttachmentCount + ' temporary or offline attachment(s) were not saved; upload them to server storage before relying on this draft.',
           'warning'
         );
       } else {
@@ -448,11 +449,14 @@ const PlaceOrder: React.FC = () => {
   };
 
 
-  // Close customer dropdown on click outside
+  // Close dropdowns on click outside
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (customerDropdownContainerRef.current && !customerDropdownContainerRef.current.contains(e.target as Node)) {
         setShowCustomerDropdown(false);
+      }
+      if (colorDropdownContainerRef.current && !colorDropdownContainerRef.current.contains(e.target as Node)) {
+        setShowColorOptions(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -1805,12 +1809,24 @@ const PlaceOrder: React.FC = () => {
                         </div>
 
                         {!isCustomColor ? (
-                          <div style={{ position: 'relative' }}>
+                          <div ref={colorDropdownContainerRef} style={{ position: 'relative' }} onKeyDown={e => {
+                            if (e.key === 'Escape') {
+                              setShowColorOptions(false);
+                            }
+                          }}>
                             <button
                               type="button"
                               aria-haspopup="listbox"
                               aria-expanded={showColorOptions}
                               onClick={() => setShowColorOptions(value => !value)}
+                              onKeyDown={e => {
+                                if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') {
+                                  if (!showColorOptions) {
+                                    e.preventDefault();
+                                    setShowColorOptions(true);
+                                  }
+                                }
+                              }}
                               style={{
                                 ...inputStyle,
                                 display: 'flex',

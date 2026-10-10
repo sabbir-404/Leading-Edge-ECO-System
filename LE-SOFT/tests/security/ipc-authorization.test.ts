@@ -17,6 +17,8 @@ vi.mock('../../electron/supabase', () => {
         not: vi.fn().mockReturnThis(),
         in: vi.fn().mockReturnThis(),
         lt: vi.fn().mockReturnThis(),
+        or: vi.fn().mockReturnThis(),
+        upsert: vi.fn().mockReturnThis(),
         order: vi.fn().mockReturnThis(),
         limit: vi.fn().mockReturnThis(),
         single: vi.fn().mockResolvedValue({ data: { id: 99, role: 'staff', username: 'testuser' }, error: null }),
@@ -261,6 +263,62 @@ describe('Security Audit Phase 1 — IPC Authentication & Authorization Boundari
 
             expect(res.success).toBe(false);
             expect(res.error).toContain('Only Super Administrators can assign the Super Admin role');
+        });
+
+        it('should validate that username is required for create-user', async () => {
+            const handler = ipcHandlers.get('create-user');
+            SessionManager.setSession({
+                id: 1,
+                username: 'admin_user',
+                role: 'admin'
+            });
+
+            const res = await handler!({}, {
+                username: '   ',
+                password: 'password123',
+                role: 'operator'
+            });
+
+            expect(res.success).toBe(false);
+            expect(res.error).toBe('Username is required');
+        });
+
+        it('should validate that password is at least 4 characters for create-user', async () => {
+            const handler = ipcHandlers.get('create-user');
+            SessionManager.setSession({
+                id: 1,
+                username: 'admin_user',
+                role: 'admin'
+            });
+
+            const res = await handler!({}, {
+                username: 'valid_user',
+                password: '12',
+                role: 'operator'
+            });
+
+            expect(res.success).toBe(false);
+            expect(res.error).toBe('Password must be at least 4 characters');
+        });
+
+        it('should successfully create user and record requesting user in audit log', async () => {
+            const handler = ipcHandlers.get('create-user');
+            SessionManager.setSession({
+                id: 1,
+                username: 'admin_creator',
+                role: 'admin'
+            });
+
+            const res = await handler!({}, {
+                username: 'new_operator',
+                password: 'password123',
+                fullName: 'New Operator',
+                role: 'operator',
+                requestingUserName: 'admin_creator'
+            });
+
+            expect(res.success).toBe(true);
+            expect(res.id).toBeDefined();
         });
 
         it('should reject delete-user without session', async () => {

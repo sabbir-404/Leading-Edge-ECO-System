@@ -3245,6 +3245,18 @@ export function registerHandlers() {
             groupId: parsedGroupId
         });
 
+        // 5. Audit log entry recording user creation with requesting user identity
+        const actorName = session.username || user?.requestingUserName || 'System';
+        await writeAuditLog({
+            module: 'users',
+            action: 'create',
+            entity_type: 'user',
+            entity_id: finalUserId,
+            description: `User "${cleanUsername}" created with role "${role || 'operator'}" by ${actorName}`,
+            new_value: { username: cleanUsername, role: role || 'operator', fullName: fullName || cleanUsername },
+            performed_by: actorName
+        });
+
         return { success: true, id: finalUserId };
     });
 
