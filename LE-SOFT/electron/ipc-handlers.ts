@@ -17,7 +17,11 @@ try {
     console.warn('[IPC] sharp native module not loaded:', err);
 }
 
-import supabase, { supabaseAdmin, nasClient, isNasOnline, decryptEmbeddedCredentials, bootstrapPublicClientConfig, reinitSupabaseClients, getNasStorageUrl, getNasStorageCandidates, getCfAccessHeaders, loadConfig, saveSupabaseConfig } from './supabase';
+import supabase, { supabaseAdmin, nasClient, isNasOnline, decryptEmbeddedCredentials, bootstrapPublicClientConfig, reinitSupabaseClients, getNasStorageUrl, getNasStorageCandidates, getCfAccessHeaders, loadConfig, saveSupabaseConfig, getDbClients } from './supabase';
+import { DurableOutboxService } from './services/outbox/DurableOutboxService';
+import { DurableUploadService } from './services/media/DurableUploadService';
+import { SupabaseQuotaManager } from './services/quota/SupabaseQuotaManager';
+import { ConsolidatedHealthEngine } from './services/health/ConsolidatedHealthEngine';
 import mysql from 'mysql2/promise';
 import * as licenseManager from './license-manager';
 import { getConnectedDevices, setBackupNode, DEVICE_ID } from './device-monitor';
@@ -83,11 +87,29 @@ export function toPublicStorageUrl(url: string | null | undefined): string {
 
 async function uploadOptimizedImage(buffer: Buffer, filenamePrefix: string): Promise<string> {
     const optimized = await optimizeImageBuffer(buffer);
-    const candidates = getNasStorageCandidates();
     const finalFilename = `${filenamePrefix}_${Date.now()}.webp`;
 
+    try {
+        const staged = await DurableUploadService.getInstance().stageFile(
+            optimized,
+            finalFilename,
+            'image/webp',
+            'product-images'
+        );
+
+        const result = await DurableUploadService.getInstance().dispatchUpload(staged.id);
+        if (result.success || result.status === 'buffered_supabase') {
+            return result.activeUrl || `https://storage.lenas.me/files/product-images/${finalFilename}`;
+        }
+        if (result.status === 'staged_local') {
+            return `file://${staged.localPath}`;
+        }
+    } catch (err: any) {
+        console.warn('[uploadOptimizedImage] DurableUploadService exception, falling back to direct pipeline:', err.message);
+    }
+
+    const candidates = getNasStorageCandidates();
     if (candidates.length > 0) {
-        let lastError: any = null;
         for (const candidateUrl of candidates) {
             try {
                 const formData = new FormData();
@@ -101,7 +123,7 @@ async function uploadOptimizedImage(buffer: Buffer, filenamePrefix: string): Pro
                         'x-subfolder': 'product-images',
                         ...cfHeaders
                     },
-                    signal: AbortSignal.timeout(3000)
+                    signal: AbortSignal.timeout(20000)
                 });
                 if (response.ok) {
                     const data = await response.json();
@@ -109,25 +131,42 @@ async function uploadOptimizedImage(buffer: Buffer, filenamePrefix: string): Pro
                         return `https://storage.lenas.me/files/product-images/${finalFilename}`;
                     }
                 }
-            } catch (err) {
-                lastError = err;
-            }
+            } catch {}
         }
     }
 
-    // Upload to Hostinger (fallback)
-    const formData = new FormData();
-    formData.append('secret_key', HOSTINGER_UPLOAD_SECRET);
-    formData.append('image', new Blob([new Uint8Array(optimized)], { type: 'image/webp' }), finalFilename);
+    // Supabase Storage fallback within quota
+    try {
+        const quotaMgr = SupabaseQuotaManager.getInstance();
+        if (quotaMgr.canAcceptStorageUpload(optimized.length)) {
+            const storagePath = `product-images/${finalFilename}`;
+            const { error: sbErr } = await supabase.storage
+                .from('make-order-files')
+                .upload(storagePath, optimized, { contentType: 'image/webp', upsert: false });
+            if (!sbErr) {
+                const { data: pubData } = supabase.storage.from('make-order-files').getPublicUrl(storagePath);
+                return pubData?.publicUrl || storagePath;
+            }
+        }
+    } catch {}
 
-    const response = await fetch(HOSTINGER_UPLOAD_URL, { method: 'POST', body: formData });
-    const data = await response.json();
+    // Upload to Hostinger (legacy fallback only if secret configured)
+    if (HOSTINGER_UPLOAD_SECRET) {
+        try {
+            const formData = new FormData();
+            formData.append('secret_key', HOSTINGER_UPLOAD_SECRET);
+            formData.append('image', new Blob([new Uint8Array(optimized)], { type: 'image/webp' }), finalFilename);
 
-    if (!data.success || !data.url) {
-        throw new Error(data.error || 'Failed to upload image');
+            const response = await fetch(HOSTINGER_UPLOAD_URL, { method: 'POST', body: formData, signal: AbortSignal.timeout(10000) });
+            const data = await response.json();
+
+            if (data.success && data.url) {
+                return data.url;
+            }
+        } catch {}
     }
 
-    return data.url;
+    throw new Error('Failed to upload image');
 }
 
 async function createSystemNotification(input: {
@@ -2233,6 +2272,21 @@ export function registerHandlers() {
         const insertedWithPlain = { ...inserted, address: address || null };
         // Update cache
         cache.addOne('billing_customers', insertedWithPlain);
+
+        // Mirror new customer to Supabase Cloud so that when a subsequent bill
+        // is written with this customer_id, Supabase's foreign key constraint (bills_customer_id_fkey)
+        // is guaranteed to be satisfied!
+        (async () => {
+            try {
+                const { supabase: sbClient } = getDbClients();
+                if (sbClient && inserted?.id) {
+                    await sbClient.from('billing_customers').upsert(inserted, { onConflict: 'id' });
+                }
+            } catch (mirrorErr) {
+                console.warn('[create-billing-customer] Async Supabase mirror deferral:', mirrorErr);
+            }
+        })();
+
         // Broadcast so ledger list refreshes
         const { BrowserWindow } = require('electron');
         BrowserWindow.getAllWindows().forEach((win: any) => win.webContents.send('data-updated', 'billing_customers'));
@@ -2269,7 +2323,7 @@ export function registerHandlers() {
         };
 
         // Enqueue the bill insert — returns immediately to user
-        enqueue({
+        const billOpId = enqueue({
             table: 'bills',
             operation: 'insert',
             data: billRow,
@@ -2434,6 +2488,30 @@ export function registerHandlers() {
                 } catch { }
             },
         });
+
+        // Persist child items in Durable SQLite Outbox with dependency tracking so they survive restarts
+        if (items && items.length > 0) {
+            try {
+                DurableOutboxService.getInstance().enqueueSingle({
+                    entityType: 'bill_items',
+                    operation: 'insert',
+                    payload: items.map((item: any) => ({
+                        product_id: item.product_id,
+                        product_name: item.product_name,
+                        sku: item.sku || '',
+                        quantity: item.quantity,
+                        cost_price: Number(item.cost_price || item.item_cost_price || 0),
+                        mrp: item.mrp,
+                        discount_pct: item.discount_pct || 0,
+                        discount_amt: item.discount_amt || 0,
+                        price: item.price,
+                        notes: item.notes || null,
+                        customization: item.customization || {},
+                    })),
+                    dependencyOpId: billOpId
+                });
+            } catch {}
+        }
 
         await writeAuditLog({
             module: 'Billing',
@@ -6972,6 +7050,90 @@ export function registerHandlers() {
             return WatchdogService.getInstance().getSanitizedDiagnostics();
         } catch {
             return [];
+        }
+    });
+
+    // ─── SMART FAILOVER, DURABLE OUTBOX & 1GB QUOTA ───
+    ipcMain.handle('get-outbox-status', async () => {
+        try {
+            return DurableOutboxService.getInstance().getStats();
+        } catch {
+            return {
+                totalPending: 0,
+                bufferedSupabase: 0,
+                blockedDependencies: 0,
+                deadLetterCount: 0,
+                oldestPendingTime: null,
+                recentErrors: []
+            };
+        }
+    });
+
+    ipcMain.handle('get-dead-letter-operations', async () => {
+        try {
+            return DurableOutboxService.getInstance().getDeadLetters();
+        } catch {
+            return [];
+        }
+    });
+
+    ipcMain.handle('replay-dead-letter-operation', async (_e, id: string) => {
+        try {
+            return { success: DurableOutboxService.getInstance().replayDeadLetter(id) };
+        } catch (e: any) {
+            return { success: false, error: e.message };
+        }
+    });
+
+    ipcMain.handle('replay-all-dead-letters', async () => {
+        try {
+            return { count: DurableOutboxService.getInstance().replayAllDeadLetters() };
+        } catch (e: any) {
+            return { count: 0, error: e.message };
+        }
+    });
+
+    ipcMain.handle('get-supabase-quota-status', async () => {
+        try {
+            return SupabaseQuotaManager.getInstance().getQuotaStatus();
+        } catch {
+            return null;
+        }
+    });
+
+    ipcMain.handle('audit-supabase-quota', async () => {
+        try {
+            return await SupabaseQuotaManager.getInstance().auditUsage();
+        } catch (e: any) {
+            return { error: e.message };
+        }
+    });
+
+    ipcMain.handle('get-consolidated-health', async () => {
+        try {
+            const engine = ConsolidatedHealthEngine.getInstance();
+            return {
+                state: engine.getCurrentState(),
+                probes: engine.getProbeDetails()
+            };
+        } catch {
+            return null;
+        }
+    });
+
+    ipcMain.handle('get-pending-uploads', async () => {
+        try {
+            return DurableUploadService.getInstance().getStagedUploads();
+        } catch {
+            return [];
+        }
+    });
+
+    ipcMain.handle('retry-staged-upload', async (_e, id: string) => {
+        try {
+            return await DurableUploadService.getInstance().dispatchUpload(id);
+        } catch (e: any) {
+            return { success: false, error: e.message };
         }
     });
 

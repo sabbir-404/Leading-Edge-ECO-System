@@ -15,6 +15,8 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { supabase, getCfAccessHeaders } from '../../supabase';
+import { SupabaseQuotaManager } from '../quota/SupabaseQuotaManager';
+import { DurableUploadService } from '../media/DurableUploadService';
 
 export interface FileValidationResult {
     isValid: boolean;
@@ -327,31 +329,36 @@ export class MakeCadService {
                     headers: {
                         'x-subfolder': subfolder,
                         ...cfHeaders
-                    }
+                    },
+                    signal: AbortSignal.timeout(20000)
                 });
 
-                const data = await response.json();
-                if (data.success && (data.file_url || data.url)) {
-                    const rawUrl = data.file_url || data.url;
-                    return {
-                        success: true,
-                        storagePath: `${subfolder}/${storageFileName}`,
-                        publicUrl: encodeURI(rawUrl)
-                    };
+                if (response.ok || (response as any).status === undefined) {
+                    const data = await response.json();
+                    if (data && data.success && (data.file_url || data.url)) {
+                        const rawUrl = data.file_url || data.url;
+                        return {
+                            success: true,
+                            storagePath: storagePath,
+                            publicUrl: encodeURI(rawUrl)
+                        };
+                    }
                 }
-
-                // Fallback direct storage URL construction
-                return {
-                    success: true,
-                    storagePath: `${subfolder}/${storageFileName}`,
-                    publicUrl: encodeURI(`https://storage.lenas.me/files/${subfolder}/${storageFileName}`)
-                };
+                // Eliminate fake URL hallucination: Do NOT synthesize fake storage.lenas.me URL if NAS failed.
             } catch (nasErr: any) {
                 console.warn('[MakeCadService] NAS upload failed, attempting Supabase fallback:', nasErr.message);
             }
         }
 
-        // Supabase Storage Fallback
+        // Supabase Storage Fallback (strictly gated by 600 MB / 1 GB Quota Manager)
+        const quotaMgr = SupabaseQuotaManager.getInstance();
+        if (!quotaMgr.canAcceptStorageUpload(buffer.length)) {
+            return {
+                success: false,
+                error: 'Supabase Storage quota limit reached (600 MB / 1 GB ceiling).'
+            };
+        }
+
         const { error: sbErr } = await supabase.storage
             .from('make-order-files')
             .upload(storagePath, buffer, { contentType: mimeType, upsert: false });

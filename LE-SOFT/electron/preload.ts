@@ -533,4 +533,15 @@ contextBridge.exposeInMainWorld('electron', {
         ipcRenderer.send('watchdog-pong');
     },
 
+    // ─── SMART FAILOVER, DURABLE OUTBOX & 1GB QUOTA ───
+    getOutboxStatus: () => ipcRenderer.invoke('get-outbox-status'),
+    getDeadLetterOperations: () => ipcRenderer.invoke('get-dead-letter-operations'),
+    replayDeadLetterOperation: (id: string) => ipcRenderer.invoke('replay-dead-letter-operation', id),
+    replayAllDeadLetters: () => ipcRenderer.invoke('replay-all-dead-letters'),
+    getSupabaseQuotaStatus: () => ipcRenderer.invoke('get-supabase-quota-status'),
+    auditSupabaseQuota: () => ipcRenderer.invoke('audit-supabase-quota'),
+    getConsolidatedHealth: () => ipcRenderer.invoke('get-consolidated-health'),
+    getPendingUploads: () => ipcRenderer.invoke('get-pending-uploads'),
+    retryStagedUpload: (id: string) => ipcRenderer.invoke('retry-staged-upload', id),
+
 });

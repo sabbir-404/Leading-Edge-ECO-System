@@ -25,7 +25,9 @@
 import { BrowserWindow } from 'electron';
 import supabase, { getDbClients } from './supabase';
 import { encryptObject, encryptRowsAsync } from './field-encryption';
-import { enqueueOfflineWrite, removePendingWrite, getPendingWrites, incrementRetryCount } from './offline-db';
+import { enqueueOfflineWrite, removePendingWrite, getPendingWrites, incrementRetryCount, loadTableCache } from './offline-db';
+import { DurableOutboxService } from './services/outbox/DurableOutboxService';
+import { SupabaseQuotaManager } from './services/quota/SupabaseQuotaManager';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 export type QueueOperation = 'insert' | 'update' | 'upsert' | 'delete' | 'custom';
@@ -75,12 +77,13 @@ function broadcastStatus() {
 // ── Enqueue ───────────────────────────────────────────────────────────────────
 export function enqueue(entry: Omit<QueueEntry, 'id' | 'retries' | 'enqueuedAt'>): string {
     if (queue.length >= MAX_QUEUE_SIZE) {
-        console.warn('[WriteQueue] Queue full! Dropping oldest entry.');
-        queue.shift();
+        console.warn('[WriteQueue] Memory queue at capacity (2000)! Preserving writes in durable SQLite outbox.');
     }
     const id = nextId();
     const newEntry: QueueEntry = { ...entry, id, retries: 0, enqueuedAt: Date.now() };
-    queue.push(newEntry);
+    if (queue.length < MAX_QUEUE_SIZE) {
+        queue.push(newEntry);
+    }
     
     // Persist to offline SQLite queue immediately (fire-and-forget)
     enqueueOfflineWrite({
@@ -90,34 +93,94 @@ export function enqueue(entry: Omit<QueueEntry, 'id' | 'retries' | 'enqueuedAt'>
         payload: newEntry.data || newEntry.filter || {} 
     }).catch(() => {});
 
+    // Also track in DurableOutboxService for crash resilience and dependency ordering
+    try {
+        DurableOutboxService.getInstance().enqueueSingle({
+            id: newEntry.id,
+            entityType: newEntry.table,
+            operation: newEntry.operation === 'custom' ? 'insert' : newEntry.operation,
+            payload: (newEntry.data || newEntry.filter || {}) as any
+        });
+    } catch {}
+
     broadcastStatus();
     return id;
 }
 
-async function executeWriteOnClient(client: any, entry: QueueEntry, encData: any): Promise<any> {
+async function executeWriteOnClient(client: any, entry: QueueEntry, encData: any, clientName?: string): Promise<any> {
     const { table, operation, filter, upsertConflict, data } = entry;
+
+    // Quota guard: Check Supabase Quota before writing to Supabase Cloud
+    if (clientName === 'Supabase') {
+        const quotaMgr = SupabaseQuotaManager.getInstance();
+        if (!quotaMgr.canAcceptDatabaseWrite(500)) {
+            console.warn(`[WriteQueue] Supabase 1 GB buffer ceiling reached. Skipping cloud write for ${table} to protect quota.`);
+            return { code: 'QUOTA_EXCEEDED', message: 'Supabase quota buffer exceeded 1 GB ceiling' };
+        }
+    }
+
     if (operation === 'insert') {
         if (table === 'bills') {
-            const res = await client.from(table).upsert(encData as any, { onConflict: 'invoice_number' });
-            return res.error;
+            let res = await client.from(table).upsert(encData as any, { onConflict: 'invoice_number' });
+
+            // 1. NAS Schema Defense: PostgREST 42703 (undefined_column: installation_charge or installation_note)
+            if (res?.error && (res.error.code === '42703' || String(res.error.message || '').includes('installation_charge') || String(res.error.message || '').includes('installation_note'))) {
+                console.warn(`[WriteQueue] ${clientName || 'Target'} schema missing installation columns (42703). Sanitizing bill payload for backwards-compatibility...`);
+                const sanitizeBill = (row: any) => {
+                    if (!row || typeof row !== 'object') return row;
+                    const copy = { ...row };
+                    delete copy.installation_charge;
+                    delete copy.installation_note;
+                    return copy;
+                };
+                const sanitized = Array.isArray(encData) ? encData.map(sanitizeBill) : sanitizeBill(encData);
+                res = await client.from(table).upsert(sanitized as any, { onConflict: 'invoice_number' });
+            }
+
+            // 2. Supabase Foreign Key Defense: Postgres 23503 (bills_customer_id_fkey)
+            if (res?.error && (res.error.code === '23503' || String(res.error.message || '').includes('bills_customer_id_fkey') || String(res.error.message || '').includes('customer_id'))) {
+                console.warn(`[WriteQueue] ${clientName || 'Target'} foreign key constraint failed (bills_customer_id_fkey). Resolving missing customer dependency...`);
+                const billRow = Array.isArray(encData) ? encData[0] : encData;
+                const customerId = billRow?.customer_id;
+                if (customerId) {
+                    const { nas } = getDbClients();
+                    let custData: any = null;
+                    if (nas && client !== nas) {
+                        const { data: nasCust } = await nas.from('billing_customers').select('*').eq('id', customerId).maybeSingle();
+                        custData = nasCust;
+                    }
+                    if (!custData) {
+                        const localCusts = await loadTableCache('billing_customers').catch(() => []);
+                        custData = localCusts.find((c: any) => c.id === customerId);
+                    }
+                    if (custData) {
+                        console.log(`[WriteQueue] Auto-upserting parent customer ${customerId} ('${custData.name}') into ${clientName || 'target'}...`);
+                        await client.from('billing_customers').upsert(custData, { onConflict: 'id' });
+                        // Retry bill upsert
+                        res = await client.from(table).upsert(encData as any, { onConflict: 'invoice_number' });
+                    }
+                }
+            }
+
+            return res?.error || null;
         }
         const res = await client.from(table).insert(encData as any);
-        return res.error;
+        return res?.error || null;
     } else if (operation === 'upsert') {
         const res = await client.from(table).upsert(encData as any,
             upsertConflict ? { onConflict: upsertConflict } : undefined
         );
-        return res.error;
+        return res?.error || null;
     } else if (operation === 'update' && filter) {
         let q: any = client.from(table).update(encData as any);
         for (const f of filter) q = q.eq(f.column, f.value);
         const res = await q;
-        return res.error;
+        return res?.error || null;
     } else if (operation === 'delete' && filter) {
         let q: any = client.from(table).delete();
         for (const f of filter) q = q.eq(f.column, f.value);
         const res = await q;
-        return res.error;
+        return res?.error || null;
     } else if (operation === 'custom' && table === 'bill_shipping') {
         const d = data as Record<string, any>;
         // Resolve actual bill_id using client
@@ -190,8 +253,12 @@ async function processEntry(entry: QueueEntry): Promise<void> {
         // Write to all initialized clients in parallel
         await Promise.all(targets.map(async ({ name, client }) => {
             try {
-                const error = await executeWriteOnClient(client, entry, encData);
+                const error = await executeWriteOnClient(client, entry, encData, name);
                 if (error) {
+                    if (error.code === 'QUOTA_EXCEEDED' && client !== active) {
+                        console.info(`[WriteQueue] Protected Supabase 1 GB quota; skipped non-primary mirror write for ${entry.table}`);
+                        return;
+                    }
                     console.error(`[WriteQueue] Write to ${name} failed:`, error.message);
                     if (client === active) {
                         primaryFailed = true;
@@ -233,7 +300,12 @@ async function processEntry(entry: QueueEntry): Promise<void> {
             console.warn(`[WriteQueue] Retry ${entry.retries}/${MAX_RETRIES} for ${entry.table} in ${delay}ms`);
             setTimeout(() => queue.push(entry), delay);
         } else {
-            console.error(`[WriteQueue] Permanently failed after ${MAX_RETRIES} retries:`, entry.table, err.message);
+            console.error(`[WriteQueue] Permanently failed after ${MAX_RETRIES} retries:`, entry.table, err?.message);
+            // CRITICAL: Hand off to DurableOutboxService dead-letter table so write is NEVER lost!
+            DurableOutboxService.getInstance().markDeadLetter(
+                entry.id,
+                `WriteQueue retry budget exhausted (${MAX_RETRIES}) on ${entry.table}: ${err?.message || 'Unknown error'}`
+            );
             entry.onError?.(err);
         }
     }

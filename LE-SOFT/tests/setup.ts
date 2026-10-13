@@ -47,6 +47,181 @@ vi.mock('electron', () => ({
   },
 }));
 
+// In-memory mock for better-sqlite3 to run flawlessly in Vitest without ABI rebuild conflicts
+vi.mock('better-sqlite3', () => {
+  const globalTables = new Map<string, any[]>();
+
+  class MockStatement {
+    constructor(private sql: string) {}
+
+    private getTargetTable(): string {
+      const match = this.sql.match(/(?:from|into|update|delete\s+from)\s+([a-zA-Z0-9_]+)/i);
+      return match ? match[1].toLowerCase() : 'default';
+    }
+
+    run(...args: any[]) {
+      const table = this.getTargetTable();
+      let rows = globalTables.get(table);
+      if (!rows) {
+        rows = [];
+        globalTables.set(table, rows);
+      }
+
+      const lower = this.sql.trim().toLowerCase();
+      if (lower.startsWith('insert')) {
+        if (table === 'outbox_operations') {
+          const existing = rows.find(r => r.id === args[0]);
+          if (existing) {
+            throw new Error('UNIQUE constraint failed: outbox_operations.id');
+          }
+          rows.push({
+            id: args[0],
+            entity_type: args[1],
+            operation: args[2],
+            payload_json: args[3],
+            primary_key_col: args[4],
+            primary_key_val: args[5],
+            dependency_op_id: args[6],
+            target: args[7],
+            status: args[8],
+            retry_count: 0,
+            max_retries: args[9] || 10,
+            last_error: null,
+            created_at: args[10] || Date.now(),
+            updated_at: args[11] || Date.now(),
+          });
+        } else if (table === 'durable_uploads') {
+          rows.push({
+            id: args[0],
+            local_path: args[1],
+            file_name: args[2],
+            mime_type: args[3],
+            size_bytes: args[4],
+            sha256: args[5],
+            subfolder: args[6],
+            entity_type: args[7],
+            entity_id: args[8],
+            field_name: args[9],
+            status: 'staged_local',
+            remote_url_nas: null,
+            remote_url_supabase: null,
+            retry_count: 0,
+            last_error: null,
+            created_at: args[10] || Date.now(),
+            updated_at: args[11] || Date.now(),
+          });
+        } else if (table === 'outbox_id_map') {
+          const existing = rows.find(r => r.op_id === args[0] && r.target === args[1]);
+          if (existing) {
+            existing.resolved_id = args[2];
+          } else {
+            rows.push({ op_id: args[0], target: args[1], resolved_id: args[2], created_at: args[3] });
+          }
+        } else {
+          rows.push({ id: args[0], args });
+        }
+      } else if (lower.startsWith('update')) {
+        if (table === 'outbox_operations') {
+          if (lower.includes("status = 'completed'")) {
+            const id = args[1];
+            const r = rows.find(x => x.id === id);
+            if (r) { r.status = 'completed'; r.updated_at = args[0]; }
+          } else if (lower.includes("status = 'pending'")) {
+            for (const r of rows) {
+              if (r.status === 'blocked_dependency') r.status = 'pending';
+              if (r.status === 'dead_letter' && (!args[1] || r.id === args[1])) {
+                r.status = 'pending';
+                r.last_error = null;
+              }
+            }
+          } else if (lower.includes("status = 'dead_letter'")) {
+            const id = args[args.length - 1];
+            const err = args[0];
+            const r = rows.find(x => x.id === id);
+            if (r) { r.status = 'dead_letter'; r.last_error = err; }
+          } else if (lower.includes('status = ?')) {
+            const status = args[0];
+            const err = args[1];
+            const id = args[3];
+            const r = rows.find(x => x.id === id);
+            if (r) { r.status = status; r.last_error = err; }
+          }
+        } else if (table === 'durable_uploads') {
+          const id = args[args.length - 1];
+          const r = rows.find(x => x.id === id);
+          if (r) {
+            if (lower.includes("status = 'synced_nas'")) {
+              r.status = 'synced_nas';
+              r.remote_url_nas = args[0];
+            } else if (lower.includes("status = 'buffered_supabase'")) {
+              r.status = 'buffered_supabase';
+              r.remote_url_supabase = args[0];
+            } else if (args[0] && typeof args[0] === 'string') {
+              r.status = args[0];
+            }
+            if (args[1]) r.last_error = args[1];
+          }
+        }
+      } else if (lower.startsWith('delete')) {
+        const id = args[0];
+        const idx = rows.findIndex(x => x.id === id);
+        if (idx >= 0) rows.splice(idx, 1);
+      }
+      return { changes: 1 };
+    }
+
+    get(...args: any[]) {
+      const table = this.getTargetTable();
+      const rows = globalTables.get(table) || [];
+      const lower = this.sql.toLowerCase();
+      if (lower.includes('count(')) {
+        return {
+          pending_cnt: rows.filter(r => r.status === 'pending').length,
+          buffered_cnt: rows.filter(r => r.status === 'buffered_supabase').length,
+          blocked_cnt: rows.filter(r => r.status === 'blocked_dependency').length,
+          dead_letter_cnt: rows.filter(r => r.status === 'dead_letter').length,
+          oldest_pending: rows[0]?.created_at || null,
+        };
+      }
+      if (args.length > 0) {
+        return rows.find(r => r.id === args[0] || r.op_id === args[0]);
+      }
+      return rows[0];
+    }
+
+    all(...args: any[]) {
+      const table = this.getTargetTable();
+      const rows = globalTables.get(table) || [];
+      const lower = this.sql.toLowerCase();
+      if (lower.includes("status in ('pending', 'buffered_supabase')")) {
+        return rows.filter(r => r.status === 'pending' || r.status === 'buffered_supabase');
+      }
+      if (lower.includes("status in ('staged_local', 'buffered_supabase')")) {
+        return rows.filter(r => r.status === 'staged_local' || r.status === 'buffered_supabase');
+      }
+      if (lower.includes("status = 'dead_letter'")) {
+        return rows.filter(r => r.status === 'dead_letter');
+      }
+      return [...rows];
+    }
+  }
+
+  class MockDatabase {
+    constructor(_path?: string) {}
+    pragma(_cmd: string) {}
+    exec(_sql: string) {}
+    prepare(sql: string) {
+      return new MockStatement(sql);
+    }
+    transaction(fn: any) {
+      return (...args: any[]) => fn(...args);
+    }
+    close() {}
+  }
+
+  return { default: MockDatabase };
+});
+
 // Mock localStorage globally for node/vitest environment
 if (typeof globalThis.localStorage === 'undefined') {
   let store: Record<string, string> = {};

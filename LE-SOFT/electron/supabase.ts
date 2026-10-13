@@ -711,6 +711,17 @@ function recreateNasClient(url: string) {
             supabase: supabaseClient,
             supabaseAdmin: supabaseAdmin
         });
+
+        setImmediate(async () => {
+            try {
+                const { DurableOutboxService } = await import('./services/outbox/DurableOutboxService');
+                const { DurableUploadService } = await import('./services/media/DurableUploadService');
+                const { ConsolidatedHealthEngine } = await import('./services/health/ConsolidatedHealthEngine');
+                DurableOutboxService.getInstance().registerClients({ nas: nasClient, supabase: supabaseClient });
+                DurableUploadService.getInstance().registerClients({ nas: nasClient, supabase: supabaseClient });
+                ConsolidatedHealthEngine.getInstance().registerClients({ nas: nasClient, supabase: supabaseClient });
+            } catch {}
+        });
     } catch (e: any) {
         console.error('[SUPABASE] Failed to recreate nasClient:', e.message);
     }
@@ -803,6 +814,31 @@ export function reinitSupabaseClients(): void {
 
         // Start background health monitor (10s cycle) and retention audit
         failoverEngine.startBackgroundMonitoring(getCandidates);
+
+        // Register and wire resilience engines asynchronously to break circular dependencies
+        setImmediate(async () => {
+            try {
+                const { DurableOutboxService } = await import('./services/outbox/DurableOutboxService');
+                const { DurableUploadService } = await import('./services/media/DurableUploadService');
+                const { SupabaseQuotaManager } = await import('./services/quota/SupabaseQuotaManager');
+                const { ConsolidatedHealthEngine } = await import('./services/health/ConsolidatedHealthEngine');
+
+                DurableOutboxService.getInstance().registerClients({ nas: nasClient, supabase: supabaseClient });
+                DurableUploadService.getInstance().registerClients({ nas: nasClient, supabase: supabaseClient });
+                SupabaseQuotaManager.getInstance().registerClients({ supabase: supabaseClient });
+                ConsolidatedHealthEngine.getInstance().registerClients({ nas: nasClient, supabase: supabaseClient });
+
+                // Start background workers (only in non-test runtime)
+                if (process.env.NODE_ENV !== 'test') {
+                    DurableOutboxService.getInstance().startWorker(1000);
+                    DurableUploadService.getInstance().startWorker(3000);
+                    ConsolidatedHealthEngine.getInstance().startMonitoring(10000);
+                    SupabaseQuotaManager.getInstance().startBackgroundAudit(60000);
+                }
+            } catch (err: any) {
+                console.warn('[SUPABASE] Resilience engine deferred registration warning:', err.message);
+            }
+        });
 
         if (config.url && config.anonKey) {
             console.log('[SUPABASE] Clients successfully re-initialized with FailoverEngine →', config.url);

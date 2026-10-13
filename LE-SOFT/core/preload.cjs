@@ -462,5 +462,15 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   },
   sendWatchdogPong: () => {
     import_electron.ipcRenderer.send("watchdog-pong");
-  }
+  },
+  // ─── SMART FAILOVER, DURABLE OUTBOX & 1GB QUOTA ───
+  getOutboxStatus: () => import_electron.ipcRenderer.invoke("get-outbox-status"),
+  getDeadLetterOperations: () => import_electron.ipcRenderer.invoke("get-dead-letter-operations"),
+  replayDeadLetterOperation: (id) => import_electron.ipcRenderer.invoke("replay-dead-letter-operation", id),
+  replayAllDeadLetters: () => import_electron.ipcRenderer.invoke("replay-all-dead-letters"),
+  getSupabaseQuotaStatus: () => import_electron.ipcRenderer.invoke("get-supabase-quota-status"),
+  auditSupabaseQuota: () => import_electron.ipcRenderer.invoke("audit-supabase-quota"),
+  getConsolidatedHealth: () => import_electron.ipcRenderer.invoke("get-consolidated-health"),
+  getPendingUploads: () => import_electron.ipcRenderer.invoke("get-pending-uploads"),
+  retryStagedUpload: (id) => import_electron.ipcRenderer.invoke("retry-staged-upload", id)
 });
