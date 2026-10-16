@@ -140,14 +140,40 @@ export class DurableOutboxService {
         }
     }
 
+    private callbacks = new Map<string, { onSuccess?: (data: any) => void; onError?: (err: any) => void }>();
+
+    public registerCallbacks(opId: string, cb: { onSuccess?: (data: any) => void; onError?: (err: any) => void }): void {
+        this.callbacks.set(opId, cb);
+    }
+
+    private invokeCallbacks(opId: string, success: boolean, resultOrError: any): void {
+        const cb = this.callbacks.get(opId);
+        if (cb) {
+            this.callbacks.delete(opId);
+            try {
+                if (success) {
+                    cb.onSuccess?.(resultOrError);
+                } else {
+                    cb.onError?.(resultOrError instanceof Error ? resultOrError : new Error(String(resultOrError)));
+                }
+            } catch (err) {
+                console.warn('[DurableOutbox] Callback invocation error:', err);
+            }
+        }
+    }
+
     // ── Atomic Enqueue API ───────────────────────────────────────────────────────
 
     /**
      * Enqueues an operation or atomic batch of operations into SQLite.
      * All items are committed in a single SQLite transaction.
+     * Fails closed if the durable database is uninitialized.
      */
     public enqueueBatch(operations: OutboxOperationInput[]): string[] {
-        if (!this.db || operations.length === 0) return [];
+        if (!this.db) {
+            throw new Error('[DurableOutbox] SQLite database is not initialized. Cannot perform durable write.');
+        }
+        if (operations.length === 0) return [];
 
         const generatedIds: string[] = [];
         const now = Date.now();
@@ -216,10 +242,12 @@ export class DurableOutboxService {
 
     /**
      * Drains pending outbox operations with dependency checks and error classification.
+     * Returns the number of operations processed.
      */
-    public async drainNextBatch(batchSize = 10): Promise<void> {
-        if (!this.db || this.isDraining) return;
+    public async drainNextBatch(batchSize = 10): Promise<number> {
+        if (!this.db || this.isDraining) return 0;
         this.isDraining = true;
+        let processedCount = 0;
 
         try {
             // 1. Resolve unblocked dependencies first
@@ -233,7 +261,7 @@ export class DurableOutboxService {
                 LIMIT ?
             `).all(batchSize) as any[];
 
-            if (rows.length === 0) return;
+            if (rows.length === 0) return 0;
 
             for (const r of rows) {
                 const record: OutboxRecord = {
@@ -254,11 +282,14 @@ export class DurableOutboxService {
                 };
 
                 await this.processRecord(record);
+                processedCount++;
             }
 
             this.broadcastOutboxStatus();
+            return processedCount;
         } catch (err: any) {
             console.error('[DurableOutbox] Exception during drain loop:', err.message);
+            return processedCount;
         } finally {
             this.isDraining = false;
         }
@@ -305,6 +336,11 @@ export class DurableOutboxService {
                     }
                 } else {
                     const classified = this.classifyError(result.error);
+                    // PRESERVE BILLING DATA: Never discard required financial fields!
+                    if (classified.code === '42703' || classified.message.includes('installation_charge') || classified.message.includes('installation_note')) {
+                        this.markDeadLetter(id, `PostgreSQL schema error 42703: Column does not exist on TrueNAS database (${classified.message}). Original financial payload preserved intact. Requires Migration 069.`);
+                        return;
+                    }
                     if (classified.isPermanent) {
                         this.markDeadLetter(id, `NAS permanent error: ${classified.message}`);
                         return;
@@ -312,6 +348,10 @@ export class DurableOutboxService {
                 }
             } catch (err: any) {
                 const classified = this.classifyError(err);
+                if (classified.code === '42703' || classified.message.includes('installation_charge') || classified.message.includes('installation_note')) {
+                    this.markDeadLetter(id, `PostgreSQL schema error 42703: Column does not exist on TrueNAS database (${classified.message}). Original financial payload preserved intact. Requires Migration 069.`);
+                    return;
+                }
                 if (classified.isPermanent) {
                     this.markDeadLetter(id, `NAS permanent exception: ${classified.message}`);
                     return;
@@ -413,7 +453,35 @@ export class DurableOutboxService {
         primaryKeyCol: string
     ): Promise<{ success: boolean; resolvedId?: string; error?: any }> {
         try {
+            if (table === 'bill_shipping') {
+                const d = payload as Record<string, any>;
+                const { data: b } = await client.from('bills').select('id').eq('invoice_number', d.invoice_number).maybeSingle();
+                const realBillId = b?.id || d.bill_id;
+
+                const { data: sh, error: shErr } = await client.from('bill_shipping').upsert({ 
+                    bill_id: realBillId, 
+                    ship_to_name: d.ship_to_name, 
+                    ship_to_address: d.ship_to_address, 
+                    ship_to_phone: d.ship_to_phone || '', 
+                    ship_from_name: d.ship_from_name || '', 
+                    ship_from_address: d.ship_from_address || '', 
+                    shipping_charge: d.shipping_charge || 0, 
+                    updated_by: d.updated_by, 
+                    status: 'pending_payment' 
+                }, { onConflict: 'bill_id' }).select('id').maybeSingle();
+                
+                if (shErr) return { success: false, error: shErr };
+                const resolvedId = sh?.id ? String(sh.id) : undefined;
+                return { success: true, resolvedId };
+            }
+
             if (op === 'insert') {
+                if (table === 'bills') {
+                    const res = await client.from(table).upsert(payload, { onConflict: 'invoice_number' }).select(primaryKeyCol).maybeSingle();
+                    if (res.error) return { success: false, error: res.error };
+                    const resolvedId = res.data ? String(res.data[primaryKeyCol]) : undefined;
+                    return { success: true, resolvedId };
+                }
                 const res = await client.from(table).insert(payload).select(primaryKeyCol).maybeSingle();
                 if (res.error) return { success: false, error: res.error };
                 const resolvedId = res.data ? String(res.data[primaryKeyCol]) : undefined;
@@ -467,11 +535,27 @@ export class DurableOutboxService {
     private markCompleted(id: string): void {
         if (!this.db) return;
         try {
+            const row = this.db.prepare(`SELECT entity_type FROM outbox_operations WHERE id = ?`).get(id) as any;
             this.db.prepare(`
                 UPDATE outbox_operations
                 SET status = 'completed', updated_at = ?
                 WHERE id = ?
             `).run(Date.now(), id);
+            this.invokeCallbacks(id, true, { success: true, id });
+            if (row?.entity_type) {
+                this.broadcastDataUpdated(row.entity_type);
+            }
+            this.broadcastOutboxStatus();
+        } catch {}
+    }
+
+    private broadcastDataUpdated(entityType: string): void {
+        try {
+            BrowserWindow.getAllWindows().forEach(win => {
+                if (!win.isDestroyed()) {
+                    win.webContents.send('data-updated', entityType);
+                }
+            });
         } catch {}
     }
 
@@ -483,6 +567,7 @@ export class DurableOutboxService {
                 SET status = ?, last_error = ?, updated_at = ?
                 WHERE id = ?
             `).run(status, errorMsg, Date.now(), id);
+            this.broadcastOutboxStatus();
         } catch {}
     }
 
@@ -495,6 +580,8 @@ export class DurableOutboxService {
                 WHERE id = ?
             `).run(errorMsg, Date.now(), id);
             console.error(`[DurableOutbox] Operation ${id} moved to DEAD_LETTER:`, errorMsg);
+            this.invokeCallbacks(id, false, new Error(errorMsg));
+            this.broadcastOutboxStatus();
         } catch {}
     }
 

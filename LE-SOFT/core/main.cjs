@@ -24496,9 +24496,10 @@ var init_SupabaseQuotaManager = __esm({
       // 800 MB (80%)
       static CRITICAL_THRESHOLD_BYTES = 95e7;
       // 950 MB (95%)
+      clientId;
       client = null;
       stateFilePath;
-      // In-memory atomic reservation tracking
+      // In-memory atomic reservation tracking (local view)
       activeStorageReservations = /* @__PURE__ */ new Map();
       activeDatabaseReservations = /* @__PURE__ */ new Map();
       // Measured byte metrics
@@ -24507,10 +24508,13 @@ var init_SupabaseQuotaManager = __esm({
       lastMeasuredAt = 0;
       oldestPendingTime = null;
       blockedOperationsCount = 0;
+      isMeasurementStale = false;
       isAuditing = false;
-      constructor() {
+      constructor(clientId, client) {
+        this.clientId = clientId || (process.env.LESOFT_CLIENT_ID || (import_electron5.app?.getPath ? import_electron5.app.getPath("userData") : process.cwd()).replace(/[^a-zA-Z0-9_-]/g, "_"));
+        this.client = client || null;
         const userData = import_electron5.app?.getPath ? import_electron5.app.getPath("userData") : import_path5.default.join(process.env.APPDATA || process.cwd(), "le-soft");
-        this.stateFilePath = import_path5.default.join(userData, "supabase_quota_state.json");
+        this.stateFilePath = import_path5.default.join(userData, `supabase_quota_state_${this.clientId.slice(0, 16)}.json`);
         this.loadPersistedState();
       }
       static getInstance() {
@@ -24529,6 +24533,7 @@ var init_SupabaseQuotaManager = __esm({
         this.measuredStorageBytes = storageBytes;
         this.measuredDatabaseBytes = dbBytes;
         this.lastMeasuredAt = Date.now();
+        this.isMeasurementStale = false;
         this.persistState();
       }
       loadPersistedState() {
@@ -24561,49 +24566,175 @@ var init_SupabaseQuotaManager = __esm({
       // ── Atomic Reservation Mechanism ─────────────────────────────────────────────
       /**
        * Attempts to atomically reserve storage quota for a file upload.
-       * Returns true if reservation is accepted, false if capacity would be exceeded.
+       * Enforces shared server-side reservation across multiple desktop clients when client is registered.
+       * Returns true if reservation is accepted, false if capacity would be exceeded or uncertain.
        */
-      reserveStorageQuota(reservationId, bytesNeeded) {
+      async reserveStorageQuota(reservationId, bytesNeeded) {
         if (bytesNeeded <= 0) return true;
+        if (this.client) {
+          try {
+            const { data: data2, error: error51 } = await this.client.rpc("reserve_buffer_capacity", {
+              p_reservation_id: reservationId,
+              p_client_id: this.clientId,
+              p_resource_type: "storage",
+              p_bytes: bytesNeeded,
+              p_storage_ceiling: _SupabaseQuotaManager.STORAGE_CEILING_BYTES,
+              p_db_ceiling: _SupabaseQuotaManager.DATABASE_CEILING_BYTES,
+              p_total_ceiling: _SupabaseQuotaManager.HARD_CEILING_BYTES,
+              p_critical_reserve: _SupabaseQuotaManager.CRITICAL_RESERVE_BYTES
+            });
+            if (!error51 && data2) {
+              if (data2.success === true) {
+                this.activeStorageReservations.set(reservationId, bytesNeeded);
+                return true;
+              } else {
+                this.blockedOperationsCount++;
+                console.warn(`[QUOTA] Shared storage reservation REJECTED for ${reservationId} (${bytesNeeded} B). Reason: ${data2.reason}`);
+                return false;
+              }
+            }
+            const { data: activeRes, error: fetchErr } = await this.client.from("supabase_buffer_reservations").select("bytes_reserved, resource_type").eq("status", "active").gt("expires_at", (/* @__PURE__ */ new Date()).toISOString());
+            if (!fetchErr && Array.isArray(activeRes)) {
+              const sharedActiveStorage = activeRes.filter((r2) => r2.resource_type === "storage").reduce((acc, r2) => acc + Number(r2.bytes_reserved), 0);
+              const sharedActiveDb = activeRes.filter((r2) => r2.resource_type === "database").reduce((acc, r2) => acc + Number(r2.bytes_reserved), 0);
+              if (sharedActiveStorage + bytesNeeded > _SupabaseQuotaManager.STORAGE_CEILING_BYTES || sharedActiveStorage + sharedActiveDb + bytesNeeded > _SupabaseQuotaManager.HARD_CEILING_BYTES - _SupabaseQuotaManager.CRITICAL_RESERVE_BYTES) {
+                this.blockedOperationsCount++;
+                return false;
+              }
+              const { error: insErr } = await this.client.from("supabase_buffer_reservations").upsert({
+                id: reservationId,
+                client_id: this.clientId,
+                resource_type: "storage",
+                bytes_reserved: bytesNeeded,
+                status: "active",
+                expires_at: new Date(Date.now() + 5 * 60 * 1e3).toISOString()
+              });
+              if (!insErr) {
+                this.activeStorageReservations.set(reservationId, bytesNeeded);
+                return true;
+              }
+            }
+            this.blockedOperationsCount++;
+            console.warn(`[QUOTA] Shared quota state could not be verified safely. Retaining work in local outbox.`);
+            return false;
+          } catch (ex) {
+            this.blockedOperationsCount++;
+            console.warn(`[QUOTA] Shared quota verification exception. Retaining work locally:`, ex.message);
+            return false;
+          }
+        }
         const currentReserved = this.getTotalReservedStorageBytes();
         const prospectiveStorageTotal = this.measuredStorageBytes + currentReserved + bytesNeeded;
         const prospectiveGrandTotal = this.getCurrentTotalUsageBytes() + bytesNeeded;
         if (prospectiveStorageTotal > _SupabaseQuotaManager.STORAGE_CEILING_BYTES || prospectiveGrandTotal > _SupabaseQuotaManager.CRITICAL_THRESHOLD_BYTES) {
           this.blockedOperationsCount++;
-          console.warn(`[QUOTA] Storage reservation REJECTED for ${reservationId} (${bytesNeeded} B). Prospective Storage: ${(prospectiveStorageTotal / (1024 * 1024)).toFixed(2)} MB (Max 600 MB), Total: ${(prospectiveGrandTotal / (1024 * 1024)).toFixed(2)} MB.`);
           return false;
         }
         this.activeStorageReservations.set(reservationId, bytesNeeded);
         return true;
       }
-      releaseStorageQuota(reservationId, confirmedUploadedBytes = 0) {
+      async releaseStorageQuota(reservationId, confirmedUploadedBytes = 0) {
         this.activeStorageReservations.delete(reservationId);
         if (confirmedUploadedBytes > 0) {
           this.measuredStorageBytes += confirmedUploadedBytes;
           this.persistState();
         }
+        if (this.client) {
+          try {
+            await this.client.rpc("release_buffer_capacity", {
+              p_reservation_id: reservationId,
+              p_status: confirmedUploadedBytes > 0 ? "committed" : "released"
+            });
+          } catch {
+            try {
+              await this.client.from("supabase_buffer_reservations").update({ status: confirmedUploadedBytes > 0 ? "committed" : "released" }).eq("id", reservationId);
+            } catch {
+            }
+          }
+        }
       }
       /**
        * Attempts to atomically reserve database quota for an offline fallback row batch.
        */
-      reserveDatabaseQuota(reservationId, estimatedBytes) {
+      async reserveDatabaseQuota(reservationId, estimatedBytes) {
         if (estimatedBytes <= 0) return true;
+        if (this.client) {
+          try {
+            const { data: data2, error: error51 } = await this.client.rpc("reserve_buffer_capacity", {
+              p_reservation_id: reservationId,
+              p_client_id: this.clientId,
+              p_resource_type: "database",
+              p_bytes: estimatedBytes,
+              p_storage_ceiling: _SupabaseQuotaManager.STORAGE_CEILING_BYTES,
+              p_db_ceiling: _SupabaseQuotaManager.DATABASE_CEILING_BYTES,
+              p_total_ceiling: _SupabaseQuotaManager.HARD_CEILING_BYTES,
+              p_critical_reserve: _SupabaseQuotaManager.CRITICAL_RESERVE_BYTES
+            });
+            if (!error51 && data2) {
+              if (data2.success === true) {
+                this.activeDatabaseReservations.set(reservationId, estimatedBytes);
+                return true;
+              } else {
+                this.blockedOperationsCount++;
+                return false;
+              }
+            }
+            const { data: activeRes, error: fetchErr } = await this.client.from("supabase_buffer_reservations").select("bytes_reserved, resource_type").eq("status", "active").gt("expires_at", (/* @__PURE__ */ new Date()).toISOString());
+            if (!fetchErr && Array.isArray(activeRes)) {
+              const sharedActiveStorage = activeRes.filter((r2) => r2.resource_type === "storage").reduce((acc, r2) => acc + Number(r2.bytes_reserved), 0);
+              const sharedActiveDb = activeRes.filter((r2) => r2.resource_type === "database").reduce((acc, r2) => acc + Number(r2.bytes_reserved), 0);
+              if (sharedActiveDb + estimatedBytes > _SupabaseQuotaManager.DATABASE_CEILING_BYTES || sharedActiveStorage + sharedActiveDb + estimatedBytes > _SupabaseQuotaManager.HARD_CEILING_BYTES - _SupabaseQuotaManager.CRITICAL_RESERVE_BYTES) {
+                this.blockedOperationsCount++;
+                return false;
+              }
+              const { error: insErr } = await this.client.from("supabase_buffer_reservations").upsert({
+                id: reservationId,
+                client_id: this.clientId,
+                resource_type: "database",
+                bytes_reserved: estimatedBytes,
+                status: "active",
+                expires_at: new Date(Date.now() + 5 * 60 * 1e3).toISOString()
+              });
+              if (!insErr) {
+                this.activeDatabaseReservations.set(reservationId, estimatedBytes);
+                return true;
+              }
+            }
+            this.blockedOperationsCount++;
+            return false;
+          } catch {
+            this.blockedOperationsCount++;
+            return false;
+          }
+        }
         const currentReserved = this.getTotalReservedDatabaseBytes();
         const prospectiveDbTotal = this.measuredDatabaseBytes + currentReserved + estimatedBytes;
         const prospectiveGrandTotal = this.getCurrentTotalUsageBytes() + estimatedBytes;
         if (prospectiveDbTotal > _SupabaseQuotaManager.DATABASE_CEILING_BYTES || prospectiveGrandTotal > _SupabaseQuotaManager.CRITICAL_THRESHOLD_BYTES) {
           this.blockedOperationsCount++;
-          console.warn(`[QUOTA] Database write reservation REJECTED for ${reservationId} (${estimatedBytes} B). Exceeds 250 MB DB ceiling or 950 MB total.`);
           return false;
         }
         this.activeDatabaseReservations.set(reservationId, estimatedBytes);
         return true;
       }
-      releaseDatabaseQuota(reservationId, confirmedWrittenBytes = 0) {
+      async releaseDatabaseQuota(reservationId, confirmedWrittenBytes = 0) {
         this.activeDatabaseReservations.delete(reservationId);
         if (confirmedWrittenBytes > 0) {
           this.measuredDatabaseBytes += confirmedWrittenBytes;
           this.persistState();
+        }
+        if (this.client) {
+          try {
+            await this.client.rpc("release_buffer_capacity", {
+              p_reservation_id: reservationId,
+              p_status: confirmedWrittenBytes > 0 ? "committed" : "released"
+            });
+          } catch {
+            try {
+              await this.client.from("supabase_buffer_reservations").update({ status: confirmedWrittenBytes > 0 ? "committed" : "released" }).eq("id", reservationId);
+            } catch {
+            }
+          }
         }
       }
       deductConfirmedPrunedStorage(bytesRemoved) {
@@ -24620,6 +24751,7 @@ var init_SupabaseQuotaManager = __esm({
       }
       canAcceptStorageUpload(bytesNeeded = 0) {
         if (bytesNeeded < 0) return false;
+        if (this.isMeasurementStale && this.getCurrentTotalUsageBytes() > 75e7) return false;
         const currentReserved = this.getTotalReservedStorageBytes();
         const prospectiveStorageTotal = this.measuredStorageBytes + currentReserved + bytesNeeded;
         const prospectiveGrandTotal = this.getCurrentTotalUsageBytes() + bytesNeeded;
@@ -24627,6 +24759,7 @@ var init_SupabaseQuotaManager = __esm({
       }
       canAcceptDatabaseWrite(bytesNeeded = 0) {
         if (bytesNeeded < 0) return false;
+        if (this.isMeasurementStale && this.getCurrentTotalUsageBytes() > 75e7) return false;
         const currentReserved = this.getTotalReservedDatabaseBytes();
         const prospectiveDbTotal = this.measuredDatabaseBytes + currentReserved + bytesNeeded;
         const prospectiveGrandTotal = this.getCurrentTotalUsageBytes() + bytesNeeded;
@@ -24687,6 +24820,45 @@ var init_SupabaseQuotaManager = __esm({
       }
       // ── Live Audit of Supabase Cloud Usage ───────────────────────────────────────
       /**
+       * Recursive crawler that measures all nested Supabase Storage objects.
+       */
+      async crawlStorageBucketRecursive(bucket, prefix = "") {
+        let totalBytes = 0;
+        let fileCount = 0;
+        let offset = 0;
+        const limit = 100;
+        let hasMore = true;
+        while (hasMore) {
+          try {
+            const { data: data2, error: error51 } = await this.client.storage.from(bucket).list(prefix, { limit, offset, sortBy: { column: "name", order: "asc" } });
+            if (error51 || !data2 || data2.length === 0) {
+              hasMore = false;
+              break;
+            }
+            for (const item of data2) {
+              if (item.metadata && typeof item.metadata.size === "number") {
+                totalBytes += item.metadata.size;
+                fileCount++;
+              } else if (!item.id || item.id === null) {
+                const nestedPath = prefix ? `${prefix}/${item.name}` : item.name;
+                const subResult = await this.crawlStorageBucketRecursive(bucket, nestedPath);
+                totalBytes += subResult.totalBytes;
+                fileCount += subResult.fileCount;
+              }
+            }
+            if (data2.length < limit) {
+              hasMore = false;
+            } else {
+              offset += limit;
+            }
+          } catch {
+            hasMore = false;
+            break;
+          }
+        }
+        return { totalBytes, fileCount };
+      }
+      /**
        * Conducts a read-only live measurement of Supabase Database table footprints
        * and Supabase Storage bucket volume.
        */
@@ -24699,36 +24871,51 @@ var init_SupabaseQuotaManager = __esm({
           console.log("[QUOTA] Performing live measurement of Supabase fallback buffer...");
           let totalStorageBytes = 0;
           try {
-            const { data: files, error: listErr } = await this.client.storage.from("make-order-files").list("", { limit: 1e3, sortBy: { column: "name", order: "asc" } });
-            if (!listErr && Array.isArray(files)) {
-              for (const f3 of files) {
-                if (f3.metadata && typeof f3.metadata.size === "number") {
-                  totalStorageBytes += f3.metadata.size;
-                }
+            const rootCrawl = await this.crawlStorageBucketRecursive("make-order-files", "");
+            totalStorageBytes = rootCrawl.totalBytes;
+            const knownSubfolders = ["product-images", "cad-models", "technical-drawings", "order-drawings", "order-photos", "bill-attachments", "temp"];
+            for (const sub of knownSubfolders) {
+              const subCrawl = await this.crawlStorageBucketRecursive("make-order-files", sub);
+              if (rootCrawl.fileCount === 0) {
+                totalStorageBytes += subCrawl.totalBytes;
               }
             }
           } catch (storageErr) {
-            console.warn("[QUOTA] Could not list storage objects:", storageErr.message);
+            console.warn("[QUOTA] Storage crawl exception:", storageErr.message);
+            this.isMeasurementStale = true;
           }
           let totalDatabaseBytes = 0;
+          let hadTableFailure = false;
           const tablesToInspect = [
-            { name: "make_orders", avgBytesPerRow: 1200 },
-            { name: "make_order_items", avgBytesPerRow: 600 },
-            { name: "make_products", avgBytesPerRow: 800 },
-            { name: "bills", avgBytesPerRow: 500 },
-            { name: "bill_items", avgBytesPerRow: 350 },
-            { name: "billing_customers", avgBytesPerRow: 400 },
-            { name: "system_audit_log", avgBytesPerRow: 450 }
+            { name: "bills", avgBytesPerRow: 600 },
+            { name: "bill_items", avgBytesPerRow: 400 },
+            { name: "billing_customers", avgBytesPerRow: 500 },
+            { name: "customer_payments", avgBytesPerRow: 300 },
+            { name: "customer_addresses", avgBytesPerRow: 350 },
+            { name: "exchange_orders", avgBytesPerRow: 500 },
+            { name: "exchange_items", avgBytesPerRow: 350 },
+            { name: "make_orders", avgBytesPerRow: 1500 },
+            { name: "make_order_items", avgBytesPerRow: 800 },
+            { name: "make_products", avgBytesPerRow: 1e3 },
+            { name: "company_settings", avgBytesPerRow: 1200 },
+            { name: "system_audit_log", avgBytesPerRow: 500 },
+            { name: "shipping_status_log", avgBytesPerRow: 400 },
+            { name: "nas_client_registry", avgBytesPerRow: 300 },
+            { name: "supabase_buffer_reservations", avgBytesPerRow: 250 }
           ];
           await Promise.allSettled(tablesToInspect.map(async (t2) => {
             try {
               const { count, error: error51 } = await this.client.from(t2.name).select("id", { count: "exact", head: true });
               if (!error51 && typeof count === "number") {
                 totalDatabaseBytes += Math.round(count * t2.avgBytesPerRow * 1.4);
+              } else if (error51) {
+                hadTableFailure = true;
               }
             } catch {
+              hadTableFailure = true;
             }
           }));
+          this.isMeasurementStale = hadTableFailure;
           this.measuredStorageBytes = totalStorageBytes;
           this.measuredDatabaseBytes = totalDatabaseBytes;
           this.lastMeasuredAt = Date.now();
@@ -24738,6 +24925,7 @@ var init_SupabaseQuotaManager = __esm({
           return status;
         } catch (err) {
           console.error("[QUOTA] Live quota audit error:", err.message);
+          this.isMeasurementStale = true;
           return this.getQuotaStatus();
         } finally {
           this.isAuditing = false;
@@ -24826,13 +25014,36 @@ var init_DurableOutboxService = __esm({
           console.error("[DurableOutbox] Failed to initialize SQLite database:", err.message);
         }
       }
+      callbacks = /* @__PURE__ */ new Map();
+      registerCallbacks(opId, cb) {
+        this.callbacks.set(opId, cb);
+      }
+      invokeCallbacks(opId, success2, resultOrError) {
+        const cb = this.callbacks.get(opId);
+        if (cb) {
+          this.callbacks.delete(opId);
+          try {
+            if (success2) {
+              cb.onSuccess?.(resultOrError);
+            } else {
+              cb.onError?.(resultOrError instanceof Error ? resultOrError : new Error(String(resultOrError)));
+            }
+          } catch (err) {
+            console.warn("[DurableOutbox] Callback invocation error:", err);
+          }
+        }
+      }
       // ── Atomic Enqueue API ───────────────────────────────────────────────────────
       /**
        * Enqueues an operation or atomic batch of operations into SQLite.
        * All items are committed in a single SQLite transaction.
+       * Fails closed if the durable database is uninitialized.
        */
       enqueueBatch(operations) {
-        if (!this.db || operations.length === 0) return [];
+        if (!this.db) {
+          throw new Error("[DurableOutbox] SQLite database is not initialized. Cannot perform durable write.");
+        }
+        if (operations.length === 0) return [];
         const generatedIds = [];
         const now = Date.now();
         const insertStmt = this.db.prepare(`
@@ -24891,10 +25102,12 @@ var init_DurableOutboxService = __esm({
       }
       /**
        * Drains pending outbox operations with dependency checks and error classification.
+       * Returns the number of operations processed.
        */
       async drainNextBatch(batchSize = 10) {
-        if (!this.db || this.isDraining) return;
+        if (!this.db || this.isDraining) return 0;
         this.isDraining = true;
+        let processedCount = 0;
         try {
           this.unblockResolvedDependencies();
           const rows = this.db.prepare(`
@@ -24903,7 +25116,7 @@ var init_DurableOutboxService = __esm({
                 ORDER BY created_at ASC
                 LIMIT ?
             `).all(batchSize);
-          if (rows.length === 0) return;
+          if (rows.length === 0) return 0;
           for (const r2 of rows) {
             const record2 = {
               id: r2.id,
@@ -24922,10 +25135,13 @@ var init_DurableOutboxService = __esm({
               updatedAt: r2.updated_at
             };
             await this.processRecord(record2);
+            processedCount++;
           }
           this.broadcastOutboxStatus();
+          return processedCount;
         } catch (err) {
           console.error("[DurableOutbox] Exception during drain loop:", err.message);
+          return processedCount;
         } finally {
           this.isDraining = false;
         }
@@ -24964,6 +25180,10 @@ var init_DurableOutboxService = __esm({
               }
             } else {
               const classified = this.classifyError(result.error);
+              if (classified.code === "42703" || classified.message.includes("installation_charge") || classified.message.includes("installation_note")) {
+                this.markDeadLetter(id, `PostgreSQL schema error 42703: Column does not exist on TrueNAS database (${classified.message}). Original financial payload preserved intact. Requires Migration 069.`);
+                return;
+              }
               if (classified.isPermanent) {
                 this.markDeadLetter(id, `NAS permanent error: ${classified.message}`);
                 return;
@@ -24971,6 +25191,10 @@ var init_DurableOutboxService = __esm({
             }
           } catch (err) {
             const classified = this.classifyError(err);
+            if (classified.code === "42703" || classified.message.includes("installation_charge") || classified.message.includes("installation_note")) {
+              this.markDeadLetter(id, `PostgreSQL schema error 42703: Column does not exist on TrueNAS database (${classified.message}). Original financial payload preserved intact. Requires Migration 069.`);
+              return;
+            }
             if (classified.isPermanent) {
               this.markDeadLetter(id, `NAS permanent exception: ${classified.message}`);
               return;
@@ -25052,7 +25276,32 @@ var init_DurableOutboxService = __esm({
       }
       async executeOnClient(client, table, op, payload, primaryKeyCol) {
         try {
+          if (table === "bill_shipping") {
+            const d = payload;
+            const { data: b } = await client.from("bills").select("id").eq("invoice_number", d.invoice_number).maybeSingle();
+            const realBillId = b?.id || d.bill_id;
+            const { data: sh, error: shErr } = await client.from("bill_shipping").upsert({
+              bill_id: realBillId,
+              ship_to_name: d.ship_to_name,
+              ship_to_address: d.ship_to_address,
+              ship_to_phone: d.ship_to_phone || "",
+              ship_from_name: d.ship_from_name || "",
+              ship_from_address: d.ship_from_address || "",
+              shipping_charge: d.shipping_charge || 0,
+              updated_by: d.updated_by,
+              status: "pending_payment"
+            }, { onConflict: "bill_id" }).select("id").maybeSingle();
+            if (shErr) return { success: false, error: shErr };
+            const resolvedId = sh?.id ? String(sh.id) : void 0;
+            return { success: true, resolvedId };
+          }
           if (op === "insert") {
+            if (table === "bills") {
+              const res2 = await client.from(table).upsert(payload, { onConflict: "invoice_number" }).select(primaryKeyCol).maybeSingle();
+              if (res2.error) return { success: false, error: res2.error };
+              const resolvedId2 = res2.data ? String(res2.data[primaryKeyCol]) : void 0;
+              return { success: true, resolvedId: resolvedId2 };
+            }
             const res = await client.from(table).insert(payload).select(primaryKeyCol).maybeSingle();
             if (res.error) return { success: false, error: res.error };
             const resolvedId = res.data ? String(res.data[primaryKeyCol]) : void 0;
@@ -25090,11 +25339,27 @@ var init_DurableOutboxService = __esm({
       markCompleted(id) {
         if (!this.db) return;
         try {
+          const row = this.db.prepare(`SELECT entity_type FROM outbox_operations WHERE id = ?`).get(id);
           this.db.prepare(`
                 UPDATE outbox_operations
                 SET status = 'completed', updated_at = ?
                 WHERE id = ?
             `).run(Date.now(), id);
+          this.invokeCallbacks(id, true, { success: true, id });
+          if (row?.entity_type) {
+            this.broadcastDataUpdated(row.entity_type);
+          }
+          this.broadcastOutboxStatus();
+        } catch {
+        }
+      }
+      broadcastDataUpdated(entityType) {
+        try {
+          import_electron6.BrowserWindow.getAllWindows().forEach((win) => {
+            if (!win.isDestroyed()) {
+              win.webContents.send("data-updated", entityType);
+            }
+          });
         } catch {
         }
       }
@@ -25106,6 +25371,7 @@ var init_DurableOutboxService = __esm({
                 SET status = ?, last_error = ?, updated_at = ?
                 WHERE id = ?
             `).run(status, errorMsg, Date.now(), id);
+          this.broadcastOutboxStatus();
         } catch {
         }
       }
@@ -25118,6 +25384,8 @@ var init_DurableOutboxService = __esm({
                 WHERE id = ?
             `).run(errorMsg, Date.now(), id);
           console.error(`[DurableOutbox] Operation ${id} moved to DEAD_LETTER:`, errorMsg);
+          this.invokeCallbacks(id, false, new Error(errorMsg));
+          this.broadcastOutboxStatus();
         } catch {
         }
       }
@@ -25451,9 +25719,9 @@ var init_DurableUploadService = __esm({
         let nasSuccess = false;
         let authoritativeUrl = null;
         let lastError = null;
-        const nasRes = await this.uploadToNasStorage(buffer, finalStorageName, row.mime_type, row.subfolder);
+        const nasRes = await this.uploadToNasStorage(buffer, finalStorageName, row.mime_type, row.subfolder, row.sha256);
         if (nasRes.success && nasRes.url) {
-          if (nasRes.sha256 && nasRes.sha256 !== row.sha256) {
+          if (nasRes.sha256 && nasRes.sha256.toUpperCase() !== row.sha256.toUpperCase()) {
             lastError = `Checksum mismatch: expected ${row.sha256}, got ${nasRes.sha256}`;
           } else {
             nasSuccess = true;
@@ -25463,22 +25731,26 @@ var init_DurableUploadService = __esm({
           lastError = nasRes.error || "NAS storage failed";
         }
         if (nasSuccess && authoritativeUrl) {
-          this.db.prepare(`
-                UPDATE durable_uploads
-                SET status = 'synced_nas', remote_url_nas = ?, last_error = NULL, updated_at = ?
-                WHERE id = ?
-            `).run(authoritativeUrl, Date.now(), uploadId);
-          await this.updateEntityRecord(row.entity_type, row.entity_id, row.field_name, authoritativeUrl);
-          if (row.status === "buffered_supabase" && row.remote_url_supabase) {
-            await this.pruneCloudCopy(row.subfolder, row.remote_url_supabase, row.size_bytes);
+          const entityUpdated = await this.updateEntityRecord(row.entity_type, row.entity_id, row.field_name, authoritativeUrl);
+          if (!entityUpdated) {
+            lastError = `Entity record update failed for ${row.entity_type} ${row.entity_id}. Retaining staged/buffered copy.`;
+          } else {
+            this.db.prepare(`
+                    UPDATE durable_uploads
+                    SET status = 'synced_nas', remote_url_nas = ?, last_error = NULL, updated_at = ?
+                    WHERE id = ?
+                `).run(authoritativeUrl, Date.now(), uploadId);
+            if (row.status === "buffered_supabase" && row.remote_url_supabase) {
+              await this.pruneCloudCopy(row.subfolder, row.remote_url_supabase, row.size_bytes);
+            }
+            console.log(`[DurableUpload] Upload ${uploadId} successfully synchronized to authoritative NAS Storage: ${authoritativeUrl}`);
+            this.broadcastUploadStatus();
+            return { success: true, url: authoritativeUrl, activeUrl: authoritativeUrl, status: "synced_nas" };
           }
-          console.log(`[DurableUpload] Upload ${uploadId} successfully synchronized to authoritative NAS Storage: ${authoritativeUrl}`);
-          this.broadcastUploadStatus();
-          return { success: true, url: authoritativeUrl, activeUrl: authoritativeUrl, status: "synced_nas" };
         }
         if (!nasSuccess && row.status === "staged_local" && this.supabaseClient && !lastError?.startsWith("Checksum mismatch")) {
           const quotaMgr = SupabaseQuotaManager.getInstance();
-          const canBuffer = quotaMgr.reserveStorageQuota(uploadId, row.size_bytes);
+          const canBuffer = await quotaMgr.reserveStorageQuota(uploadId, row.size_bytes);
           if (canBuffer) {
             try {
               const cloudPath = `${row.subfolder}/${finalStorageName}`;
@@ -25487,12 +25759,12 @@ var init_DurableUploadService = __esm({
                 const { data: pubData } = this.supabaseClient.storage.from("make-order-files").getPublicUrl(cloudPath);
                 const cloudUrl = pubData?.publicUrl || cloudPath;
                 quotaMgr.releaseStorageQuota(uploadId, row.size_bytes);
+                const entityUpdated = await this.updateEntityRecord(row.entity_type, row.entity_id, row.field_name, cloudUrl);
                 this.db.prepare(`
                             UPDATE durable_uploads
-                            SET status = 'buffered_supabase', remote_url_supabase = ?, last_error = NULL, updated_at = ?
+                            SET status = 'buffered_supabase', remote_url_supabase = ?, last_error = ?, updated_at = ?
                             WHERE id = ?
-                        `).run(cloudUrl, Date.now(), uploadId);
-                await this.updateEntityRecord(row.entity_type, row.entity_id, row.field_name, cloudUrl);
+                        `).run(cloudUrl, entityUpdated ? null : "Entity update warning on cloud buffer", Date.now(), uploadId);
                 console.log(`[DurableUpload] Upload ${uploadId} buffered in Supabase Cloud fallback (${(row.size_bytes / 1024).toFixed(1)} KB). Waiting for TrueNAS recovery.`);
                 this.broadcastUploadStatus();
                 return { success: true, url: cloudUrl, activeUrl: cloudUrl, status: "buffered_supabase" };
@@ -25518,21 +25790,38 @@ var init_DurableUploadService = __esm({
         return { success: false, status: row.status, error: lastError || void 0 };
       }
       async updateEntityRecord(entityType, entityId, fieldName, newUrl) {
-        if (!entityType || !entityId || !fieldName) return;
+        if (!entityType || !entityId || !fieldName) return true;
         const client = this.nasClient || this.supabaseClient;
-        if (!client) return;
+        if (!client) {
+          console.warn(`[DurableUpload] Cannot update entity record: No active client`);
+          return false;
+        }
         try {
           if (fieldName === "pdf_urls" || fieldName === "invoice_attachment_urls") {
-            const { data: existing } = await client.from(entityType).select(fieldName).eq("id", entityId).maybeSingle();
+            const { data: existing, error: selectErr } = await client.from(entityType).select(fieldName).eq("id", entityId).maybeSingle();
+            if (selectErr) {
+              console.warn(`[DurableUpload] Could not fetch entity record for ${entityType} ID ${entityId}:`, selectErr.message);
+              return false;
+            }
             const list = Array.isArray(existing?.[fieldName]) ? existing[fieldName] : [];
             if (!list.includes(newUrl)) {
-              await client.from(entityType).update({ [fieldName]: [...list, newUrl] }).eq("id", entityId);
+              const { error: updErr } = await client.from(entityType).update({ [fieldName]: [...list, newUrl] }).eq("id", entityId);
+              if (updErr) {
+                console.warn(`[DurableUpload] Could not update entity array for ${entityType} ID ${entityId}:`, updErr.message);
+                return false;
+              }
             }
           } else {
-            await client.from(entityType).update({ [fieldName]: newUrl }).eq("id", entityId);
+            const { error: updErr } = await client.from(entityType).update({ [fieldName]: newUrl }).eq("id", entityId);
+            if (updErr) {
+              console.warn(`[DurableUpload] Could not update entity field for ${entityType} ID ${entityId}:`, updErr.message);
+              return false;
+            }
           }
+          return true;
         } catch (e2) {
-          console.warn(`[DurableUpload] Could not update entity record for ${entityType} ID ${entityId}:`, e2.message);
+          console.warn(`[DurableUpload] Exception updating entity record for ${entityType} ID ${entityId}:`, e2.message);
+          return false;
         }
       }
       async pruneCloudCopy(subfolder, cloudUrl, sizeBytes) {
@@ -25568,11 +25857,44 @@ var init_DurableUploadService = __esm({
           return { stagedCount: 0, bufferedCount: 0, totalPendingBytes: 0 };
         }
       }
-      async uploadToNasStorage(buffer, fileName, mimeType, subfolder) {
+      async verifyRemoteObject(url2, expectedSha256) {
+        const cfHeaders = getCfAccessHeaders();
+        const isTunnel = url2.startsWith("https://");
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 2e4);
+        try {
+          const resp = await fetch(url2, {
+            method: "GET",
+            headers: isTunnel ? cfHeaders : {},
+            signal: controller.signal
+          });
+          if (!resp.ok) {
+            return { verified: false, error: `Remote verification fetch failed: HTTP ${resp.status} ${resp.statusText}` };
+          }
+          const arrayBuffer = await resp.arrayBuffer();
+          const remoteBuf = Buffer.from(arrayBuffer);
+          const remoteHash = import_crypto6.default.createHash("sha256").update(remoteBuf).digest("hex").toUpperCase();
+          if (expectedSha256 && remoteHash !== expectedSha256.toUpperCase()) {
+            return {
+              verified: false,
+              sha256: remoteHash,
+              error: `Remote digest mismatch: expected ${expectedSha256}, got ${remoteHash}`
+            };
+          }
+          return { verified: true, sha256: remoteHash };
+        } catch (err) {
+          return { verified: false, error: err.message || "Remote read-back verification timeout" };
+        } finally {
+          clearTimeout(timeoutId);
+        }
+      }
+      async uploadToNasStorage(buffer, fileName, mimeType, subfolder, expectedSha256) {
         const candidates = getNasStorageCandidates();
         const cfHeaders = getCfAccessHeaders();
         let lastError = null;
         for (const candidateBase of candidates) {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 2e4);
           try {
             const formData = new FormData();
             formData.append("file", new Blob([new Uint8Array(buffer)], { type: mimeType }), fileName);
@@ -25581,29 +25903,42 @@ var init_DurableUploadService = __esm({
               "x-subfolder": subfolder,
               ...isTunnel ? cfHeaders : {}
             };
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 2e4);
             const response = await fetch(`${candidateBase.replace(/\/$/, "")}/upload`, {
               method: "POST",
               body: formData,
               headers: reqHeaders,
               signal: controller.signal
             });
-            clearTimeout(timeoutId);
             if (response.ok) {
               const data2 = await response.json();
-              if (data2 && data2.success) {
-                const url2 = data2.file_url || data2.url || `https://storage.lenas.me/files/${subfolder}/${fileName}`;
-                const hash2 = import_crypto6.default.createHash("sha256").update(buffer).digest("hex").toUpperCase();
-                return { success: true, url: url2, sha256: hash2 };
+              if (data2 && data2.success && (data2.file_url || data2.url)) {
+                const url2 = data2.file_url || data2.url;
+                const remoteReportedHash = data2.sha256 || data2.checksum || data2.digest;
+                if (remoteReportedHash) {
+                  const hashStr = String(remoteReportedHash).toUpperCase();
+                  if (expectedSha256 && hashStr !== expectedSha256.toUpperCase()) {
+                    lastError = `Remote digest mismatch: expected ${expectedSha256}, got ${hashStr}`;
+                    continue;
+                  }
+                  return { success: true, url: url2, sha256: hashStr };
+                }
+                const verifyRes = await this.verifyRemoteObject(url2, expectedSha256);
+                if (verifyRes.verified) {
+                  return { success: true, url: url2, sha256: verifyRes.sha256 };
+                } else {
+                  lastError = verifyRes.error || "Remote object read-back verification failed";
+                  continue;
+                }
               } else {
-                lastError = data2?.error || "NAS upload reported unsuccessful status";
+                lastError = data2?.error || "NAS upload reported unsuccessful status or missing valid URL";
               }
             } else {
               lastError = `NAS storage HTTP ${response.status} ${response.statusText}`;
             }
           } catch (err) {
             lastError = err.message || "NAS network timeout";
+          } finally {
+            clearTimeout(timeoutId);
           }
         }
         return { success: false, error: lastError || "All NAS storage candidates failed" };
@@ -25688,6 +26023,7 @@ var init_ConsolidatedHealthEngine = __esm({
       nasDbLatencyMs = 0;
       nasStorageLatencyMs = 0;
       isProbing = false;
+      isReconciling = false;
       probeTimer = null;
       constructor() {
       }
@@ -25814,7 +26150,7 @@ var init_ConsolidatedHealthEngine = __esm({
               signal: controller.signal
             }).catch(() => null);
             clearTimeout(timeoutId);
-            if (res && (res.status === 200 || res.status === 404)) {
+            if (res && res.status === 200) {
               return { healthy: true, latency: Date.now() - t0, url: base };
             }
           } catch {
@@ -25824,23 +26160,36 @@ var init_ConsolidatedHealthEngine = __esm({
       }
       async probeSupabaseDatabase() {
         if (!this.supabaseClient) return false;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3e3);
         try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 3e3);
-          const { error: error51 } = await this.supabaseClient.from("companies").select("id").limit(1);
-          clearTimeout(timeoutId);
-          return !error51;
+          const timeoutPromise = new Promise(
+            (_, reject) => setTimeout(() => reject(new Error("Supabase DB timeout")), 3e3)
+          );
+          const queryPromise = this.supabaseClient.from("companies").select("id").abortSignal(controller.signal).limit(1);
+          const res = await Promise.race([queryPromise, timeoutPromise]);
+          return !res.error;
         } catch {
           return false;
+        } finally {
+          clearTimeout(timeoutId);
         }
       }
       async probeSupabaseStorage() {
         if (!this.supabaseClient) return false;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3e3);
         try {
-          const { error: error51 } = await this.supabaseClient.storage.from("make-order-files").list("", { limit: 1 });
-          return !error51;
+          const timeoutPromise = new Promise(
+            (_, reject) => setTimeout(() => reject(new Error("Supabase Storage timeout")), 3e3)
+          );
+          const listPromise = this.supabaseClient.storage.from("make-order-files").list("", { limit: 1 });
+          const res = await Promise.race([listPromise, timeoutPromise]);
+          return !res.error;
         } catch {
           return false;
+        } finally {
+          clearTimeout(timeoutId);
         }
       }
       // ── State Machine Transition Logic ──────────────────────────────────────────
@@ -25874,17 +26223,38 @@ var init_ConsolidatedHealthEngine = __esm({
         }
       }
       async triggerRecoverySynchronization() {
+        if (this.isReconciling) return;
+        this.isReconciling = true;
         try {
-          await DurableOutboxService.getInstance().drainNextBatch(20);
-          await DurableUploadService.getInstance().processNextBatch();
-          const outboxStats = DurableOutboxService.getInstance().getOutboxStats();
-          const uploadStats = DurableUploadService.getInstance().getPendingUploadStats();
-          if (outboxStats.bufferedSupabase === 0 && uploadStats.bufferedCount === 0) {
+          let hasMore = true;
+          let iterations = 0;
+          const maxIterations = 50;
+          while (hasMore && iterations < maxIterations) {
+            iterations++;
+            const drainedCount = await DurableOutboxService.getInstance().drainNextBatch(20);
+            await DurableUploadService.getInstance().processNextBatch();
+            const outboxStats = DurableOutboxService.getInstance().getOutboxStats();
+            const uploadStats = DurableUploadService.getInstance().getPendingUploadStats();
+            const pendingOutbox = outboxStats.bufferedSupabase + outboxStats.pendingLocal;
+            const pendingUploads = uploadStats.bufferedCount + uploadStats.stagedCount;
+            if (pendingOutbox === 0 && pendingUploads === 0) {
+              hasMore = false;
+            } else if (drainedCount === 0 && uploadStats.bufferedCount === 0) {
+              hasMore = false;
+            }
+          }
+          const finalOutboxStats = DurableOutboxService.getInstance().getOutboxStats();
+          const finalUploadStats = DurableUploadService.getInstance().getPendingUploadStats();
+          if (finalOutboxStats.bufferedSupabase === 0 && finalOutboxStats.pendingLocal === 0 && finalUploadStats.bufferedCount === 0 && finalUploadStats.stagedCount === 0) {
             this.currentState = "NORMAL_NAS_AUTHORITATIVE";
             console.log("[ConsolidatedHealth] All pending records and buffered uploads reconciled to TrueNAS master. State: NORMAL_NAS_AUTHORITATIVE.");
+          } else {
+            console.warn(`[ConsolidatedHealth] Incomplete reconciliation (Outbox buffered: ${finalOutboxStats.bufferedSupabase}, pending: ${finalOutboxStats.pendingLocal}; Upload buffered: ${finalUploadStats.bufferedCount}, staged: ${finalUploadStats.stagedCount}). Remaining in RECOVERING_SYNCHRONIZING.`);
           }
         } catch (e2) {
           console.warn("[ConsolidatedHealth] Recovery synchronization warning:", e2.message);
+        } finally {
+          this.isReconciling = false;
         }
       }
       broadcastHealth() {
@@ -113020,44 +113390,6 @@ async function loadTableCache(tableName) {
   }
   return [];
 }
-async function enqueueOfflineWrite(op) {
-  if (!db) return;
-  try {
-    const stmt = db.prepare(`
-            INSERT INTO sync_queue (id, table_name, operation, payload_json, created_at, retry_count)
-            VALUES (?, ?, ?, ?, ?, 0)
-        `);
-    stmt.run(op.id, op.table, op.operation, JSON.stringify(op.payload), Date.now());
-    console.log(`[OfflineDB] Enqueued offline write: ${op.operation} on ${op.table}`);
-  } catch (e2) {
-    console.error(`[OfflineDB] Failed to enqueue offline write:`, e2.message);
-  }
-}
-async function getPendingWrites() {
-  if (!db) return [];
-  try {
-    const rows = db.prepare(`SELECT * FROM sync_queue ORDER BY created_at ASC`).all();
-    return rows.map((r2) => ({
-      id: r2.id,
-      table: r2.table_name,
-      operation: r2.operation,
-      payload: JSON.parse(r2.payload_json),
-      created_at: r2.created_at,
-      retry_count: r2.retry_count
-    }));
-  } catch (e2) {
-    console.error(`[OfflineDB] Failed to get pending writes:`, e2.message);
-    return [];
-  }
-}
-async function removePendingWrite(id) {
-  if (!db) return;
-  db.prepare(`DELETE FROM sync_queue WHERE id = ?`).run(id);
-}
-async function incrementRetryCount(id) {
-  if (!db) return;
-  db.prepare(`UPDATE sync_queue SET retry_count = retry_count + 1 WHERE id = ?`).run(id);
-}
 
 // electron/device-monitor.ts
 var import_electron11 = require("electron");
@@ -113435,16 +113767,6 @@ async function decryptRowsAsync(rows, chunkSize = 200) {
   }
   return result;
 }
-async function encryptRowsAsync(rows, chunkSize = 200) {
-  if (!rows || !Array.isArray(rows)) return [];
-  const result = [];
-  for (let i2 = 0; i2 < rows.length; i2 += chunkSize) {
-    const chunk = rows.slice(i2, i2 + chunkSize);
-    result.push(...chunk.map(encryptObject));
-    await new Promise((resolve2) => setImmediate(resolve2));
-  }
-  return result;
-}
 
 // electron/write-queue.ts
 var import_electron12 = require("electron");
@@ -113452,10 +113774,7 @@ init_supabase();
 init_DurableOutboxService();
 init_SupabaseQuotaManager();
 var queue = [];
-var MAX_QUEUE_SIZE = 2e3;
-var MAX_RETRIES = 4;
 var DRAIN_INTERVAL_MS = 300;
-var FLUSH_TIMEOUT_MS = 15e3;
 var drainTimer = null;
 var isFlushing = false;
 var _seq = 0;
@@ -113463,7 +113782,8 @@ function nextId() {
   return `q-${Date.now()}-${++_seq}`;
 }
 function broadcastStatus() {
-  const pending = queue.length;
+  const stats = DurableOutboxService.getInstance().getOutboxStats();
+  const pending = stats.totalPending;
   try {
     import_electron12.BrowserWindow.getAllWindows().forEach((win) => {
       if (!win.isDestroyed()) {
@@ -113474,239 +113794,37 @@ function broadcastStatus() {
   }
 }
 function enqueue(entry) {
-  if (queue.length >= MAX_QUEUE_SIZE) {
-    console.warn("[WriteQueue] Memory queue at capacity (2000)! Preserving writes in durable SQLite outbox.");
-  }
   const id = nextId();
   const newEntry = { ...entry, id, retries: 0, enqueuedAt: Date.now() };
-  if (queue.length < MAX_QUEUE_SIZE) {
-    queue.push(newEntry);
-  }
-  enqueueOfflineWrite({
-    id: newEntry.id,
-    table: newEntry.table,
-    operation: newEntry.operation,
-    payload: newEntry.data || newEntry.filter || {}
-  }).catch(() => {
-  });
   try {
     DurableOutboxService.getInstance().enqueueSingle({
       id: newEntry.id,
       entityType: newEntry.table,
       operation: newEntry.operation === "custom" ? "insert" : newEntry.operation,
-      payload: newEntry.data || newEntry.filter || {}
+      payload: newEntry.data || newEntry.filter || {},
+      primaryKeyCol: newEntry.upsertConflict
     });
-  } catch {
+  } catch (err) {
+    console.error("[WriteQueue] Failed durable outbox enqueue! Surfacing failure:", err.message);
+    entry.onError?.(err);
+    throw new Error(`[WriteQueue] Failed durable outbox persistence for ${entry.table}: ${err.message}`);
+  }
+  if (newEntry.onSuccess || newEntry.onError) {
+    DurableOutboxService.getInstance().registerCallbacks(newEntry.id, {
+      onSuccess: newEntry.onSuccess,
+      onError: newEntry.onError
+    });
   }
   broadcastStatus();
   return id;
 }
-async function executeWriteOnClient(client, entry, encData, clientName) {
-  const { table, operation, filter: filter4, upsertConflict, data: data2 } = entry;
-  if (clientName === "Supabase") {
-    const quotaMgr = SupabaseQuotaManager.getInstance();
-    if (!quotaMgr.canAcceptDatabaseWrite(500)) {
-      console.warn(`[WriteQueue] Supabase 1 GB buffer ceiling reached. Skipping cloud write for ${table} to protect quota.`);
-      return { code: "QUOTA_EXCEEDED", message: "Supabase quota buffer exceeded 1 GB ceiling" };
-    }
-  }
-  if (operation === "insert") {
-    if (table === "bills") {
-      let res2 = await client.from(table).upsert(encData, { onConflict: "invoice_number" });
-      if (res2?.error && (res2.error.code === "42703" || String(res2.error.message || "").includes("installation_charge") || String(res2.error.message || "").includes("installation_note"))) {
-        console.warn(`[WriteQueue] ${clientName || "Target"} schema missing installation columns (42703). Sanitizing bill payload for backwards-compatibility...`);
-        const sanitizeBill = (row) => {
-          if (!row || typeof row !== "object") return row;
-          const copy = { ...row };
-          delete copy.installation_charge;
-          delete copy.installation_note;
-          return copy;
-        };
-        const sanitized = Array.isArray(encData) ? encData.map(sanitizeBill) : sanitizeBill(encData);
-        res2 = await client.from(table).upsert(sanitized, { onConflict: "invoice_number" });
-      }
-      if (res2?.error && (res2.error.code === "23503" || String(res2.error.message || "").includes("bills_customer_id_fkey") || String(res2.error.message || "").includes("customer_id"))) {
-        console.warn(`[WriteQueue] ${clientName || "Target"} foreign key constraint failed (bills_customer_id_fkey). Resolving missing customer dependency...`);
-        const billRow = Array.isArray(encData) ? encData[0] : encData;
-        const customerId = billRow?.customer_id;
-        if (customerId) {
-          const { nas } = getDbClients();
-          let custData = null;
-          if (nas && client !== nas) {
-            const { data: nasCust } = await nas.from("billing_customers").select("*").eq("id", customerId).maybeSingle();
-            custData = nasCust;
-          }
-          if (!custData) {
-            const localCusts = await loadTableCache("billing_customers").catch(() => []);
-            custData = localCusts.find((c) => c.id === customerId);
-          }
-          if (custData) {
-            console.log(`[WriteQueue] Auto-upserting parent customer ${customerId} ('${custData.name}') into ${clientName || "target"}...`);
-            await client.from("billing_customers").upsert(custData, { onConflict: "id" });
-            res2 = await client.from(table).upsert(encData, { onConflict: "invoice_number" });
-          }
-        }
-      }
-      return res2?.error || null;
-    }
-    const res = await client.from(table).insert(encData);
-    return res?.error || null;
-  } else if (operation === "upsert") {
-    const res = await client.from(table).upsert(
-      encData,
-      upsertConflict ? { onConflict: upsertConflict } : void 0
-    );
-    return res?.error || null;
-  } else if (operation === "update" && filter4) {
-    let q = client.from(table).update(encData);
-    for (const f3 of filter4) q = q.eq(f3.column, f3.value);
-    const res = await q;
-    return res?.error || null;
-  } else if (operation === "delete" && filter4) {
-    let q = client.from(table).delete();
-    for (const f3 of filter4) q = q.eq(f3.column, f3.value);
-    const res = await q;
-    return res?.error || null;
-  } else if (operation === "custom" && table === "bill_shipping") {
-    const d = data2;
-    const { data: b } = await client.from("bills").select("id").eq("invoice_number", d.invoice_number).maybeSingle();
-    const realBillId = b?.id || d.bill_id;
-    const { data: sh, error: shErr } = await client.from("bill_shipping").upsert({
-      bill_id: realBillId,
-      ship_to_name: d.ship_to_name,
-      ship_to_address: d.ship_to_address,
-      ship_to_phone: d.ship_to_phone || "",
-      ship_from_name: d.ship_from_name || "",
-      ship_from_address: d.ship_from_address || "",
-      shipping_charge: d.shipping_charge || 0,
-      updated_by: d.updated_by,
-      status: "pending_payment"
-    }, { onConflict: "bill_id" }).select("id").single();
-    if (shErr) return shErr;
-    if (sh) {
-      await client.from("shipping_status_log").insert({
-        shipment_id: sh.id,
-        bill_id: realBillId,
-        status: "pending_payment",
-        note: "Shipping order created",
-        updated_by: d.updated_by,
-        updated_by_role: d.user_role || "cashier"
-      });
-      await client.from("system_audit_log").insert({
-        module: "Shipping",
-        action: "SHIPPING_CREATED",
-        entity_type: "bill",
-        entity_id: String(realBillId),
-        description: `Shipping added. Destination: ${d.ship_to_address}`,
-        new_value: JSON.stringify(d),
-        performed_by: d.updated_by
-      });
-    }
-    return null;
-  }
-  return null;
-}
-async function processEntry(entry) {
-  try {
-    const { table, data: data2 } = entry;
-    const encData = Array.isArray(data2) ? await encryptRowsAsync(data2, 100) : data2 ? encryptObject(data2) : void 0;
-    const { nas, supabase: sb, active } = getDbClients();
-    const targets = [];
-    if (nas) targets.push({ name: "NAS", client: nas });
-    if (sb) targets.push({ name: "Supabase", client: sb });
-    if (targets.length === 0) {
-      throw new Error("No database clients initialized");
-    }
-    let primaryFailed = false;
-    let primaryError = null;
-    await Promise.all(targets.map(async ({ name, client }) => {
-      try {
-        const error51 = await executeWriteOnClient(client, entry, encData, name);
-        if (error51) {
-          if (error51.code === "QUOTA_EXCEEDED" && client !== active) {
-            console.info(`[WriteQueue] Protected Supabase 1 GB quota; skipped non-primary mirror write for ${entry.table}`);
-            return;
-          }
-          console.error(`[WriteQueue] Write to ${name} failed:`, error51.message);
-          if (client === active) {
-            primaryFailed = true;
-            primaryError = error51;
-          }
-        }
-      } catch (ex) {
-        console.error(`[WriteQueue] Exception during write to ${name}:`, ex.message);
-        if (client === active) {
-          primaryFailed = true;
-          primaryError = ex;
-        }
-      }
-    }));
-    if (primaryFailed) {
-      throw primaryError || new Error("Primary database write failed");
-    }
-    await removePendingWrite(entry.id).catch(() => {
-    });
-    entry.onSuccess?.({ success: true });
-    try {
-      import_electron12.BrowserWindow.getAllWindows().forEach((win) => {
-        if (!win.isDestroyed()) {
-          win.webContents.send("data-updated", entry.table);
-        }
-      });
-    } catch {
-    }
-  } catch (err) {
-    entry.retries++;
-    await incrementRetryCount(entry.id).catch(() => {
-    });
-    if (entry.retries < MAX_RETRIES) {
-      const delay = Math.min(1e3 * Math.pow(2, entry.retries - 1), 8e3);
-      console.warn(`[WriteQueue] Retry ${entry.retries}/${MAX_RETRIES} for ${entry.table} in ${delay}ms`);
-      setTimeout(() => queue.push(entry), delay);
-    } else {
-      console.error(`[WriteQueue] Permanently failed after ${MAX_RETRIES} retries:`, entry.table, err?.message);
-      DurableOutboxService.getInstance().markDeadLetter(
-        entry.id,
-        `WriteQueue retry budget exhausted (${MAX_RETRIES}) on ${entry.table}: ${err?.message || "Unknown error"}`
-      );
-      entry.onError?.(err);
-    }
-  }
-}
-async function drain() {
-  if (queue.length === 0) return;
-  const batch = queue.splice(0, 10);
-  broadcastStatus();
-  await Promise.allSettled(batch.map(processEntry));
-}
 async function startQueue() {
-  if (drainTimer) return;
-  try {
-    const pending = await getPendingWrites();
-    for (const p of pending) {
-      if (!queue.find((q) => q.id === p.id)) {
-        queue.push({
-          id: p.id,
-          table: p.table,
-          operation: p.operation,
-          data: p.operation === "insert" || p.operation === "upsert" ? p.payload : void 0,
-          filter: p.operation === "update" || p.operation === "delete" ? p.payload : void 0,
-          retries: p.retry_count || 0,
-          enqueuedAt: p.created_at || Date.now()
-        });
-      }
-    }
-    if (pending.length > 0) {
-      console.log(`[WriteQueue] Restored ${pending.length} pending offline writes from SQLite.`);
-      broadcastStatus();
-    }
-  } catch (e2) {
-    console.error("[WriteQueue] Failed to load pending offline writes:", e2.message);
-  }
-  drainTimer = setInterval(drain, DRAIN_INTERVAL_MS);
-  console.log("[WriteQueue] Started. Draining every", DRAIN_INTERVAL_MS, "ms.");
+  DurableOutboxService.getInstance().startWorker(DRAIN_INTERVAL_MS);
+  console.log("[WriteQueue] Started via authoritative DurableOutboxService. Draining every", DRAIN_INTERVAL_MS, "ms.");
+  broadcastStatus();
 }
 function stopQueue() {
+  DurableOutboxService.getInstance().stopWorker();
   if (drainTimer) {
     clearInterval(drainTimer);
     drainTimer = null;
@@ -113716,17 +113834,9 @@ async function flush() {
   if (isFlushing) return;
   isFlushing = true;
   stopQueue();
-  console.log(`[WriteQueue] Flushing ${queue.length} pending writes before quit...`);
-  const deadline = Date.now() + FLUSH_TIMEOUT_MS;
-  while (queue.length > 0 && Date.now() < deadline) {
-    const batch = queue.splice(0, 20);
-    await Promise.allSettled(batch.map(processEntry));
-  }
-  if (queue.length > 0) {
-    console.warn(`[WriteQueue] Flushed with ${queue.length} writes still pending (timeout).`);
-  } else {
-    console.log("[WriteQueue] All writes flushed successfully.");
-  }
+  console.log("[WriteQueue] Flushing pending durable writes before quit...");
+  await DurableOutboxService.getInstance().drainNextBatch(100);
+  console.log("[WriteQueue] All durable writes flushed successfully.");
 }
 function getQueueStats() {
   return {

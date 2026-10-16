@@ -57,10 +57,11 @@ export class SupabaseQuotaManager {
     public static readonly WARNING_THRESHOLD_BYTES = 800_000_000;     // 800 MB (80%)
     public static readonly CRITICAL_THRESHOLD_BYTES = 950_000_000;    // 950 MB (95%)
 
+    public clientId: string;
     private client: SupabaseClient | null = null;
     private stateFilePath: string;
 
-    // In-memory atomic reservation tracking
+    // In-memory atomic reservation tracking (local view)
     private activeStorageReservations = new Map<string, number>();
     private activeDatabaseReservations = new Map<string, number>();
 
@@ -70,12 +71,15 @@ export class SupabaseQuotaManager {
     private lastMeasuredAt = 0;
     private oldestPendingTime: number | null = null;
     private blockedOperationsCount = 0;
+    private isMeasurementStale = false;
 
     private isAuditing = false;
 
-    private constructor() {
+    public constructor(clientId?: string, client?: SupabaseClient | null) {
+        this.clientId = clientId || (process.env.LESOFT_CLIENT_ID || (app?.getPath ? app.getPath('userData') : process.cwd()).replace(/[^a-zA-Z0-9_-]/g, '_'));
+        this.client = client || null;
         const userData = app?.getPath ? app.getPath('userData') : path.join(process.env.APPDATA || process.cwd(), 'le-soft');
-        this.stateFilePath = path.join(userData, 'supabase_quota_state.json');
+        this.stateFilePath = path.join(userData, `supabase_quota_state_${this.clientId.slice(0, 16)}.json`);
         this.loadPersistedState();
     }
 
@@ -98,6 +102,7 @@ export class SupabaseQuotaManager {
         this.measuredStorageBytes = storageBytes;
         this.measuredDatabaseBytes = dbBytes;
         this.lastMeasuredAt = Date.now();
+        this.isMeasurementStale = false;
         this.persistState();
     }
 
@@ -133,20 +138,95 @@ export class SupabaseQuotaManager {
 
     /**
      * Attempts to atomically reserve storage quota for a file upload.
-     * Returns true if reservation is accepted, false if capacity would be exceeded.
+     * Enforces shared server-side reservation across multiple desktop clients when client is registered.
+     * Returns true if reservation is accepted, false if capacity would be exceeded or uncertain.
      */
-    public reserveStorageQuota(reservationId: string, bytesNeeded: number): boolean {
+    public async reserveStorageQuota(reservationId: string, bytesNeeded: number): Promise<boolean> {
         if (bytesNeeded <= 0) return true;
 
+        // Shared server-side atomic reservation with PostgreSQL advisory locking
+        if (this.client) {
+            try {
+                // 1. Try PostgreSQL RPC reserve_buffer_capacity
+                const { data, error } = await this.client.rpc('reserve_buffer_capacity', {
+                    p_reservation_id: reservationId,
+                    p_client_id: this.clientId,
+                    p_resource_type: 'storage',
+                    p_bytes: bytesNeeded,
+                    p_storage_ceiling: SupabaseQuotaManager.STORAGE_CEILING_BYTES,
+                    p_db_ceiling: SupabaseQuotaManager.DATABASE_CEILING_BYTES,
+                    p_total_ceiling: SupabaseQuotaManager.HARD_CEILING_BYTES,
+                    p_critical_reserve: SupabaseQuotaManager.CRITICAL_RESERVE_BYTES
+                });
+
+                if (!error && data) {
+                    if (data.success === true) {
+                        this.activeStorageReservations.set(reservationId, bytesNeeded);
+                        return true;
+                    } else {
+                        this.blockedOperationsCount++;
+                        console.warn(`[QUOTA] Shared storage reservation REJECTED for ${reservationId} (${bytesNeeded} B). Reason: ${data.reason}`);
+                        return false;
+                    }
+                }
+
+                // 2. Direct table fallback against supabase_buffer_reservations
+                const { data: activeRes, error: fetchErr } = await this.client
+                    .from('supabase_buffer_reservations')
+                    .select('bytes_reserved, resource_type')
+                    .eq('status', 'active')
+                    .gt('expires_at', new Date().toISOString());
+
+                if (!fetchErr && Array.isArray(activeRes)) {
+                    const sharedActiveStorage = activeRes
+                        .filter((r: any) => r.resource_type === 'storage')
+                        .reduce((acc: number, r: any) => acc + Number(r.bytes_reserved), 0);
+                    const sharedActiveDb = activeRes
+                        .filter((r: any) => r.resource_type === 'database')
+                        .reduce((acc: number, r: any) => acc + Number(r.bytes_reserved), 0);
+                    
+                    if ((sharedActiveStorage + bytesNeeded) > SupabaseQuotaManager.STORAGE_CEILING_BYTES ||
+                        (sharedActiveStorage + sharedActiveDb + bytesNeeded) > (SupabaseQuotaManager.HARD_CEILING_BYTES - SupabaseQuotaManager.CRITICAL_RESERVE_BYTES)) {
+                        this.blockedOperationsCount++;
+                        return false;
+                    }
+
+                    const { error: insErr } = await this.client
+                        .from('supabase_buffer_reservations')
+                        .upsert({
+                            id: reservationId,
+                            client_id: this.clientId,
+                            resource_type: 'storage',
+                            bytes_reserved: bytesNeeded,
+                            status: 'active',
+                            expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString()
+                        });
+
+                    if (!insErr) {
+                        this.activeStorageReservations.set(reservationId, bytesNeeded);
+                        return true;
+                    }
+                }
+                
+                // If capacity cannot be established safely across clients, fail closed!
+                this.blockedOperationsCount++;
+                console.warn(`[QUOTA] Shared quota state could not be verified safely. Retaining work in local outbox.`);
+                return false;
+            } catch (ex: any) {
+                this.blockedOperationsCount++;
+                console.warn(`[QUOTA] Shared quota verification exception. Retaining work locally:`, ex.message);
+                return false;
+            }
+        }
+
+        // Standalone offline or test mode reservation check
         const currentReserved = this.getTotalReservedStorageBytes();
         const prospectiveStorageTotal = this.measuredStorageBytes + currentReserved + bytesNeeded;
         const prospectiveGrandTotal = this.getCurrentTotalUsageBytes() + bytesNeeded;
 
-        // Reject if prospective storage exceeds 600 MB or grand total exceeds 950 MB (critical floor)
         if (prospectiveStorageTotal > SupabaseQuotaManager.STORAGE_CEILING_BYTES ||
             prospectiveGrandTotal > SupabaseQuotaManager.CRITICAL_THRESHOLD_BYTES) {
             this.blockedOperationsCount++;
-            console.warn(`[QUOTA] Storage reservation REJECTED for ${reservationId} (${bytesNeeded} B). Prospective Storage: ${(prospectiveStorageTotal / (1024 * 1024)).toFixed(2)} MB (Max 600 MB), Total: ${(prospectiveGrandTotal / (1024 * 1024)).toFixed(2)} MB.`);
             return false;
         }
 
@@ -154,19 +234,103 @@ export class SupabaseQuotaManager {
         return true;
     }
 
-    public releaseStorageQuota(reservationId: string, confirmedUploadedBytes = 0): void {
+    public async releaseStorageQuota(reservationId: string, confirmedUploadedBytes = 0): Promise<void> {
         this.activeStorageReservations.delete(reservationId);
         if (confirmedUploadedBytes > 0) {
             this.measuredStorageBytes += confirmedUploadedBytes;
             this.persistState();
+        }
+        if (this.client) {
+            try {
+                await this.client.rpc('release_buffer_capacity', {
+                    p_reservation_id: reservationId,
+                    p_status: confirmedUploadedBytes > 0 ? 'committed' : 'released'
+                });
+            } catch {
+                try {
+                    await this.client
+                        .from('supabase_buffer_reservations')
+                        .update({ status: confirmedUploadedBytes > 0 ? 'committed' : 'released' })
+                        .eq('id', reservationId);
+                } catch {}
+            }
         }
     }
 
     /**
      * Attempts to atomically reserve database quota for an offline fallback row batch.
      */
-    public reserveDatabaseQuota(reservationId: string, estimatedBytes: number): boolean {
+    public async reserveDatabaseQuota(reservationId: string, estimatedBytes: number): Promise<boolean> {
         if (estimatedBytes <= 0) return true;
+
+        if (this.client) {
+            try {
+                const { data, error } = await this.client.rpc('reserve_buffer_capacity', {
+                    p_reservation_id: reservationId,
+                    p_client_id: this.clientId,
+                    p_resource_type: 'database',
+                    p_bytes: estimatedBytes,
+                    p_storage_ceiling: SupabaseQuotaManager.STORAGE_CEILING_BYTES,
+                    p_db_ceiling: SupabaseQuotaManager.DATABASE_CEILING_BYTES,
+                    p_total_ceiling: SupabaseQuotaManager.HARD_CEILING_BYTES,
+                    p_critical_reserve: SupabaseQuotaManager.CRITICAL_RESERVE_BYTES
+                });
+
+                if (!error && data) {
+                    if (data.success === true) {
+                        this.activeDatabaseReservations.set(reservationId, estimatedBytes);
+                        return true;
+                    } else {
+                        this.blockedOperationsCount++;
+                        return false;
+                    }
+                }
+
+                // Direct table fallback
+                const { data: activeRes, error: fetchErr } = await this.client
+                    .from('supabase_buffer_reservations')
+                    .select('bytes_reserved, resource_type')
+                    .eq('status', 'active')
+                    .gt('expires_at', new Date().toISOString());
+
+                if (!fetchErr && Array.isArray(activeRes)) {
+                    const sharedActiveStorage = activeRes
+                        .filter((r: any) => r.resource_type === 'storage')
+                        .reduce((acc: number, r: any) => acc + Number(r.bytes_reserved), 0);
+                    const sharedActiveDb = activeRes
+                        .filter((r: any) => r.resource_type === 'database')
+                        .reduce((acc: number, r: any) => acc + Number(r.bytes_reserved), 0);
+                    
+                    if ((sharedActiveDb + estimatedBytes) > SupabaseQuotaManager.DATABASE_CEILING_BYTES ||
+                        (sharedActiveStorage + sharedActiveDb + estimatedBytes) > (SupabaseQuotaManager.HARD_CEILING_BYTES - SupabaseQuotaManager.CRITICAL_RESERVE_BYTES)) {
+                        this.blockedOperationsCount++;
+                        return false;
+                    }
+
+                    const { error: insErr } = await this.client
+                        .from('supabase_buffer_reservations')
+                        .upsert({
+                            id: reservationId,
+                            client_id: this.clientId,
+                            resource_type: 'database',
+                            bytes_reserved: estimatedBytes,
+                            status: 'active',
+                            expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString()
+                        });
+
+                    if (!insErr) {
+                        this.activeDatabaseReservations.set(reservationId, estimatedBytes);
+                        return true;
+                    }
+                }
+
+                this.blockedOperationsCount++;
+                return false;
+            } catch {
+                this.blockedOperationsCount++;
+                return false;
+            }
+        }
 
         const currentReserved = this.getTotalReservedDatabaseBytes();
         const prospectiveDbTotal = this.measuredDatabaseBytes + currentReserved + estimatedBytes;
@@ -175,7 +339,6 @@ export class SupabaseQuotaManager {
         if (prospectiveDbTotal > SupabaseQuotaManager.DATABASE_CEILING_BYTES ||
             prospectiveGrandTotal > SupabaseQuotaManager.CRITICAL_THRESHOLD_BYTES) {
             this.blockedOperationsCount++;
-            console.warn(`[QUOTA] Database write reservation REJECTED for ${reservationId} (${estimatedBytes} B). Exceeds 250 MB DB ceiling or 950 MB total.`);
             return false;
         }
 
@@ -183,11 +346,26 @@ export class SupabaseQuotaManager {
         return true;
     }
 
-    public releaseDatabaseQuota(reservationId: string, confirmedWrittenBytes = 0): void {
+    public async releaseDatabaseQuota(reservationId: string, confirmedWrittenBytes = 0): Promise<void> {
         this.activeDatabaseReservations.delete(reservationId);
         if (confirmedWrittenBytes > 0) {
             this.measuredDatabaseBytes += confirmedWrittenBytes;
             this.persistState();
+        }
+        if (this.client) {
+            try {
+                await this.client.rpc('release_buffer_capacity', {
+                    p_reservation_id: reservationId,
+                    p_status: confirmedWrittenBytes > 0 ? 'committed' : 'released'
+                });
+            } catch {
+                try {
+                    await this.client
+                        .from('supabase_buffer_reservations')
+                        .update({ status: confirmedWrittenBytes > 0 ? 'committed' : 'released' })
+                        .eq('id', reservationId);
+                } catch {}
+            }
         }
     }
 
@@ -207,6 +385,7 @@ export class SupabaseQuotaManager {
 
     public canAcceptStorageUpload(bytesNeeded: number = 0): boolean {
         if (bytesNeeded < 0) return false;
+        if (this.isMeasurementStale && this.getCurrentTotalUsageBytes() > 750_000_000) return false;
         const currentReserved = this.getTotalReservedStorageBytes();
         const prospectiveStorageTotal = this.measuredStorageBytes + currentReserved + bytesNeeded;
         const prospectiveGrandTotal = this.getCurrentTotalUsageBytes() + bytesNeeded;
@@ -217,6 +396,7 @@ export class SupabaseQuotaManager {
 
     public canAcceptDatabaseWrite(bytesNeeded: number = 0): boolean {
         if (bytesNeeded < 0) return false;
+        if (this.isMeasurementStale && this.getCurrentTotalUsageBytes() > 750_000_000) return false;
         const currentReserved = this.getTotalReservedDatabaseBytes();
         const prospectiveDbTotal = this.measuredDatabaseBytes + currentReserved + bytesNeeded;
         const prospectiveGrandTotal = this.getCurrentTotalUsageBytes() + bytesNeeded;
@@ -294,6 +474,53 @@ export class SupabaseQuotaManager {
     // ── Live Audit of Supabase Cloud Usage ───────────────────────────────────────
 
     /**
+     * Recursive crawler that measures all nested Supabase Storage objects.
+     */
+    private async crawlStorageBucketRecursive(bucket: string, prefix = ''): Promise<{ totalBytes: number; fileCount: number }> {
+        let totalBytes = 0;
+        let fileCount = 0;
+        let offset = 0;
+        const limit = 100;
+        let hasMore = true;
+
+        while (hasMore) {
+            try {
+                const { data, error } = await this.client!.storage
+                    .from(bucket)
+                    .list(prefix, { limit, offset, sortBy: { column: 'name', order: 'asc' } });
+
+                if (error || !data || data.length === 0) {
+                    hasMore = false;
+                    break;
+                }
+
+                for (const item of data) {
+                    if (item.metadata && typeof item.metadata.size === 'number') {
+                        totalBytes += item.metadata.size;
+                        fileCount++;
+                    } else if (!item.id || item.id === null) {
+                        // Nested subfolder: recursively traverse
+                        const nestedPath = prefix ? `${prefix}/${item.name}` : item.name;
+                        const subResult = await this.crawlStorageBucketRecursive(bucket, nestedPath);
+                        totalBytes += subResult.totalBytes;
+                        fileCount += subResult.fileCount;
+                    }
+                }
+
+                if (data.length < limit) {
+                    hasMore = false;
+                } else {
+                    offset += limit;
+                }
+            } catch {
+                hasMore = false;
+                break;
+            }
+        }
+        return { totalBytes, fileCount };
+    }
+
+    /**
      * Conducts a read-only live measurement of Supabase Database table footprints
      * and Supabase Storage bucket volume.
      */
@@ -306,35 +533,45 @@ export class SupabaseQuotaManager {
         try {
             console.log('[QUOTA] Performing live measurement of Supabase fallback buffer...');
 
-            // 1. Storage bucket audit (make-order-files)
+            // 1. Recursive storage bucket audit across make-order-files
             let totalStorageBytes = 0;
             try {
-                // List objects recursively in make-order-files bucket
-                const { data: files, error: listErr } = await this.client.storage
-                    .from('make-order-files')
-                    .list('', { limit: 1000, sortBy: { column: 'name', order: 'asc' } });
+                const rootCrawl = await this.crawlStorageBucketRecursive('make-order-files', '');
+                totalStorageBytes = rootCrawl.totalBytes;
 
-                if (!listErr && Array.isArray(files)) {
-                    for (const f of files) {
-                        if (f.metadata && typeof f.metadata.size === 'number') {
-                            totalStorageBytes += f.metadata.size;
-                        }
+                // Explicit check on known nested subfolders
+                const knownSubfolders = ['product-images', 'cad-models', 'technical-drawings', 'order-drawings', 'order-photos', 'bill-attachments', 'temp'];
+                for (const sub of knownSubfolders) {
+                    const subCrawl = await this.crawlStorageBucketRecursive('make-order-files', sub);
+                    if (rootCrawl.fileCount === 0) {
+                        totalStorageBytes += subCrawl.totalBytes;
                     }
                 }
             } catch (storageErr: any) {
-                console.warn('[QUOTA] Could not list storage objects:', storageErr.message);
+                console.warn('[QUOTA] Storage crawl exception:', storageErr.message);
+                this.isMeasurementStale = true;
             }
 
-            // 2. Database table footprint audit
+            // 2. Comprehensive Database table footprint audit with index/WAL overhead
             let totalDatabaseBytes = 0;
+            let hadTableFailure = false;
+
             const tablesToInspect = [
-                { name: 'make_orders', avgBytesPerRow: 1200 },
-                { name: 'make_order_items', avgBytesPerRow: 600 },
-                { name: 'make_products', avgBytesPerRow: 800 },
-                { name: 'bills', avgBytesPerRow: 500 },
-                { name: 'bill_items', avgBytesPerRow: 350 },
-                { name: 'billing_customers', avgBytesPerRow: 400 },
-                { name: 'system_audit_log', avgBytesPerRow: 450 }
+                { name: 'bills', avgBytesPerRow: 600 },
+                { name: 'bill_items', avgBytesPerRow: 400 },
+                { name: 'billing_customers', avgBytesPerRow: 500 },
+                { name: 'customer_payments', avgBytesPerRow: 300 },
+                { name: 'customer_addresses', avgBytesPerRow: 350 },
+                { name: 'exchange_orders', avgBytesPerRow: 500 },
+                { name: 'exchange_items', avgBytesPerRow: 350 },
+                { name: 'make_orders', avgBytesPerRow: 1500 },
+                { name: 'make_order_items', avgBytesPerRow: 800 },
+                { name: 'make_products', avgBytesPerRow: 1000 },
+                { name: 'company_settings', avgBytesPerRow: 1200 },
+                { name: 'system_audit_log', avgBytesPerRow: 500 },
+                { name: 'shipping_status_log', avgBytesPerRow: 400 },
+                { name: 'nas_client_registry', avgBytesPerRow: 300 },
+                { name: 'supabase_buffer_reservations', avgBytesPerRow: 250 }
             ];
 
             await Promise.allSettled(tablesToInspect.map(async t => {
@@ -343,12 +580,17 @@ export class SupabaseQuotaManager {
                         .from(t.name)
                         .select('id', { count: 'exact', head: true });
                     if (!error && typeof count === 'number') {
-                        // Data bytes + ~40% Postgres index/WAL overhead
+                        // Data bytes + conservative 40% Postgres index/WAL multiplier
                         totalDatabaseBytes += Math.round(count * t.avgBytesPerRow * 1.4);
+                    } else if (error) {
+                        hadTableFailure = true;
                     }
-                } catch {}
+                } catch {
+                    hadTableFailure = true;
+                }
             }));
 
+            this.isMeasurementStale = hadTableFailure;
             this.measuredStorageBytes = totalStorageBytes;
             this.measuredDatabaseBytes = totalDatabaseBytes;
             this.lastMeasuredAt = Date.now();
@@ -359,6 +601,7 @@ export class SupabaseQuotaManager {
             return status;
         } catch (err: any) {
             console.error('[QUOTA] Live quota audit error:', err.message);
+            this.isMeasurementStale = true;
             return this.getQuotaStatus();
         } finally {
             this.isAuditing = false;

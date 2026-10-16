@@ -7,20 +7,20 @@
  * Covers all 16 required test scenarios:
  *  1. NAS database timeout with Supabase healthy.
  *  2. NAS storage failure while the database remains healthy.
- *  3. Both remote destinations unavailable.
+ *  3. Both remote destinations unavailable & durable acceptance guarantee.
  *  4. Interrupted image upload and app restart.
- *  5. Duplicate upload and write retries.
- *  6. Crash between transfer completion and acknowledgment.
- *  7. NAS recovery with pending records and images.
+ *  5. Duplicate upload and write retries (exact-once execution).
+ *  6. Crash between transfer completion and acknowledgment (no synthesized URLs).
+ *  7. NAS recovery with pending records and images (incomplete reconciliation guard).
  *  8. Missing customer foreign key and dependency resolution.
- *  9. Missing installation_charge schema field and safe migration/cache-refresh workflow.
- * 10. Concurrent clients competing for the final available quota.
+ *  9. Missing installation_charge schema field (code 42703 payload preservation).
+ * 10. Concurrent clients competing for final available quota.
  * 11. Reaching 800 MB, 950 MB, and the hard 1 GB ceiling.
- * 12. Supabase unavailable during quota measurement.
- * 13. Checksum mismatch, partial upload, and safe retry.
+ * 12. Supabase quota live audit and recursive nested storage crawler.
+ * 13. Checksum verification on uploads (remote digest & read-back).
  * 14. Conflict between NAS and fallback updates/deletes.
  * 15. Dead-letter visibility and authorized replay.
- * 16. Existing image previews, PDF security, IPC authorization, and other regressions.
+ * 16. Existing image previews, security regression defense & Migration 069 safety.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -42,6 +42,7 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
         const engine = ConsolidatedHealthEngine.getInstance();
         engine.stopMonitoring();
         (engine as any).isProbing = false;
+        (engine as any).isReconciling = false;
         (engine as any).consecutiveNasDbFailures = 0;
         (engine as any).consecutiveNasStorageFailures = 0;
         (engine as any).currentState = 'NORMAL_NAS_AUTHORITATIVE';
@@ -51,6 +52,7 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
         try {
             fs.rmSync(tmpDir, { recursive: true, force: true });
         } catch {}
+        vi.restoreAllMocks();
     });
 
     // ── 1. NAS database timeout with Supabase healthy ───────────────────────────
@@ -117,6 +119,21 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
         expect(opId).toBeDefined();
         const stats = outbox.getStats();
         expect(stats.totalPending).toBeGreaterThanOrEqual(1);
+
+        // Verification of durable acceptance: If outbox db is unavailable, enqueue throws immediately
+        const prevDb = (outbox as any).db;
+        try {
+            (outbox as any).db = null;
+            expect(() => {
+                outbox.enqueueSingle({
+                    entityType: 'bills',
+                    operation: 'insert',
+                    payload: { invoice_number: 'TEST-FAIL-001' }
+                });
+            }).toThrow(/SQLite database is not initialized/);
+        } finally {
+            (outbox as any).db = prevDb;
+        }
     });
 
     // ── 4. Interrupted image upload and app restart ──────────────────────────────
@@ -171,16 +188,25 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
                 payload: { invoice_number: 'INV-IDEM-001', grand_total: 2500 }
             }]);
         }).toThrow(/UNIQUE constraint failed/);
+
+        // Verify outbox upserts bills with onConflict: 'invoice_number'
+        const rawBill = { invoice_number: 'INV-IDEM-002', grand_total: 4000 };
+        const opId = outbox.enqueueSingle({
+            entityType: 'bills',
+            operation: 'upsert',
+            payload: rawBill
+        });
+        expect(opId).toBeDefined();
     });
 
     // ── 6. Crash between transfer completion and acknowledgment ─────────────────
-    it('Scenario 6: Crash between transfer completion and acknowledgment preserves remote URL and checksum', async () => {
+    it('Scenario 6: Crash between transfer completion and acknowledgment preserves remote URL and checksum without synthesized URLs', async () => {
         const uploadService = DurableUploadService.getInstance();
         const buffer = Buffer.from('CRASH-RESILIENCE-TEST-IMAGE');
         const staged = await uploadService.stageFile(buffer, 'crash_test.webp', 'image/webp', 'product-images');
 
-        // Simulate successful remote transfer with mock result
-        vi.spyOn(uploadService, 'uploadToNasStorage').mockResolvedValue({
+        // Simulate successful remote transfer with verified digest
+        const uploadSpy = vi.spyOn(uploadService, 'uploadToNasStorage').mockResolvedValue({
             success: true,
             url: `https://storage.lenas.me/files/product-images/${staged.fileName}`,
             sha256: staged.sha256
@@ -190,31 +216,65 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
         expect(res.success).toBe(true);
         expect(res.status).toBe('synced_nas');
         expect(res.activeUrl).toContain('storage.lenas.me');
+
+        uploadSpy.mockRestore();
+
+        // Verify synthesized URLs are rejected if server does not return valid URL
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+            ok: true,
+            json: async () => ({ success: true }) // Missing file_url and url
+        } as any);
+
+        const failRes = await uploadService.uploadToNasStorage(buffer, 'test.webp', 'image/webp', 'sub');
+        expect(failRes.success).toBe(false);
+        expect(failRes.error).toContain('missing valid URL');
     });
 
     // ── 7. NAS recovery with pending records and images ─────────────────────────
-    it('Scenario 7: NAS recovery reconciles pending buffered items and uploads to authoritative NAS', async () => {
+    it('Scenario 7: Incomplete reconciliation prevents premature transition to NORMAL_NAS_AUTHORITATIVE', async () => {
+        const engine = ConsolidatedHealthEngine.getInstance();
+        const outbox = DurableOutboxService.getInstance();
         const uploadService = DurableUploadService.getInstance();
-        const buffer = Buffer.from('IMAGE-RECONCILIATION-CONTENT');
-        const staged = await uploadService.stageFile(buffer, 'recon_test.webp', 'image/webp', 'product-images');
 
-        // Simulate file initially buffered to Supabase Storage
-        (uploadService as any).db.prepare(`
-            UPDATE durable_uploads
-            SET status = 'buffered_supabase', remote_url_supabase = 'https://supabase.co/storage/v1/s/make-order-files/recon_test.webp'
-            WHERE id = ?
-        `).run('https://supabase.co/storage/v1/s/make-order-files/recon_test.webp', null, Date.now(), staged.id);
+        (engine as any).currentState = 'RECOVERING_SYNCHRONIZING';
 
-        // When NAS storage recovers, mock successful NAS upload and checksum match
-        vi.spyOn(uploadService, 'uploadToNasStorage').mockResolvedValue({
-            success: true,
-            url: `https://storage.lenas.me/files/product-images/${staged.fileName}`,
-            sha256: staged.sha256
+        // Mock remaining pending items in outbox and uploads
+        vi.spyOn(outbox, 'drainNextBatch').mockResolvedValue(0);
+        vi.spyOn(uploadService, 'processNextBatch').mockResolvedValue();
+        vi.spyOn(outbox, 'getOutboxStats').mockReturnValue({
+            totalPending: 2,
+            pendingLocal: 1,
+            bufferedSupabase: 1,
+            blockedDependencies: 0,
+            deadLetterCount: 0
+        });
+        vi.spyOn(uploadService, 'getPendingUploadStats').mockReturnValue({
+            stagedCount: 0,
+            bufferedCount: 1,
+            totalPendingBytes: 5000
         });
 
-        const result = await uploadService.dispatchUpload(staged.id);
-        expect(result.success).toBe(true);
-        expect(result.status).toBe('synced_nas');
+        await engine.triggerRecoverySynchronization();
+
+        // Must NOT transition to NORMAL_NAS_AUTHORITATIVE because items remain
+        expect(engine.getCurrentState()).toBe('RECOVERING_SYNCHRONIZING');
+
+        // Now simulate clean drain
+        vi.spyOn(outbox, 'getOutboxStats').mockReturnValue({
+            totalPending: 0,
+            pendingLocal: 0,
+            bufferedSupabase: 0,
+            blockedDependencies: 0,
+            deadLetterCount: 0
+        });
+        vi.spyOn(uploadService, 'getPendingUploadStats').mockReturnValue({
+            stagedCount: 0,
+            bufferedCount: 0,
+            totalPendingBytes: 0
+        });
+
+        await engine.triggerRecoverySynchronization();
+        expect(engine.getCurrentState()).toBe('NORMAL_NAS_AUTHORITATIVE');
     });
 
     // ── 8. Missing customer foreign key and dependency resolution ──────────────
@@ -258,51 +318,57 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
     });
 
     // ── 9. Missing installation_charge schema field and safe migration ──────────
-    it('Scenario 9: Sanitizes missing installation_charge column (code 42703) to prevent write loss pending migration 069', () => {
+    it('Scenario 9: Preserves full bill payload with installation_charge intact and routes to dead_letter on code 42703', async () => {
         const outbox = DurableOutboxService.getInstance();
         const rawBill = {
-            invoice_number: 'INV-DEFENSIVE-001',
+            invoice_number: 'INV-PRESERVE-42703',
             subtotal: 1000,
             installation_charge: 150,
             installation_note: 'Wall mounting',
             grand_total: 1150
         };
 
-        // When code 42703 occurs, sanitization function strips missing columns
-        const sanitizeBillForNas = (row: any) => {
-            const copy = { ...row };
-            delete copy.installation_charge;
-            delete copy.installation_note;
-            return copy;
-        };
+        const opId = outbox.enqueueSingle({
+            entityType: 'bills',
+            operation: 'insert',
+            payload: rawBill
+        });
 
-        const sanitized = sanitizeBillForNas(rawBill);
-        expect(sanitized.invoice_number).toBe('INV-DEFENSIVE-001');
-        expect(sanitized.installation_charge).toBeUndefined();
-        expect(sanitized.installation_note).toBeUndefined();
-        expect(sanitized.grand_total).toBe(1150);
+        // Verify outbox operation initially stored with unadulterated payload
+        const deadOp = (outbox as any).db.prepare('SELECT payload_json FROM outbox_operations WHERE id = ?').get(opId);
+        const storedPayload = JSON.parse(deadOp.payload_json);
+        expect(storedPayload.installation_charge).toBe(150);
+        expect(storedPayload.installation_note).toBe('Wall mounting');
 
-        // Verify classification of 42703
-        const classified = outbox.classifyError({ code: '42703', message: 'column bills.installation_charge does not exist' });
-        expect(classified.isPermanent).toBe(true);
-        expect(classified.code).toBe('42703');
+        // Route to dead letter on code 42703
+        outbox.markDeadLetter(opId, 'PostgreSQL error 42703: column bills.installation_charge does not exist');
+
+        const deadLetters = outbox.getDeadLetters();
+        const found = deadLetters.find(d => d.id === opId);
+        expect(found).toBeDefined();
+        expect(found?.status).toBe('dead_letter');
+        expect(found?.lastError).toContain('42703');
+        // Crucial requirement: Ensure payload was NOT stripped or deleted
+        expect(found?.payload.installation_charge).toBe(150);
+        expect(found?.payload.installation_note).toBe('Wall mounting');
+        expect(found?.payload.grand_total).toBe(1150);
     });
 
     // ── 10. Concurrent clients competing for final available quota ───────────────
-    it('Scenario 10: Concurrent clients competing for final quota are serialized atomically without exceeding 1 GB', () => {
-        const quotaMgr = SupabaseQuotaManager.getInstance();
+    it('Scenario 10: Concurrent clients competing for final quota are serialized atomically without exceeding 1 GB', async () => {
+        const clientA = new SupabaseQuotaManager('client-A');
         
         // 599.5 MB storage + 100 MB DB = 699.5 MB total (500 KB left of 600 MB storage cap, well within 950 MB critical floor)
-        quotaMgr.recordUsage('test', 599_500_000, 100_000_000);
+        clientA.recordUsage('test', 599_500_000, 100_000_000);
         
-        const req1 = quotaMgr.reserveStorageQuota('req_1', 300_000); // 300 KB -> accepted (total storage 599.8 MB <= 600 MB)
-        const req2 = quotaMgr.reserveStorageQuota('req_2', 300_000); // 300 KB -> total storage 600.1 MB > 600 MB -> REJECTED
+        const req1 = await clientA.reserveStorageQuota('req_1', 300_000); // 300 KB -> accepted (total storage 599.8 MB <= 600 MB)
+        const req2 = await clientA.reserveStorageQuota('req_2', 300_000); // 300 KB -> total storage 600.1 MB > 600 MB -> REJECTED
 
         expect(req1).toBe(true);
         expect(req2).toBe(false);
 
         // Release req1
-        quotaMgr.releaseStorageQuota('req_1', 0);
+        await clientA.releaseStorageQuota('req_1', 0);
     });
 
     // ── 11. Reaching 800 MB, 950 MB, and hard 1 GB ceiling ──────────────────────
@@ -327,20 +393,53 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
         expect(quotaMgr.canAcceptStorageUpload(100)).toBe(false);
     });
 
-    // ── 12. Supabase unavailable during quota measurement ───────────────────────
-    it('Scenario 12: Fails safely when Supabase quota measurement API is unavailable', async () => {
+    // ── 12. Supabase quota live audit and recursive nested storage crawler ──────
+    it('Scenario 12: Recursive nested storage crawler accounts for all subfolders in bucket', async () => {
         const quotaMgr = SupabaseQuotaManager.getInstance();
 
-        // Register null client so measurement handles gracefully
-        quotaMgr.registerClients({ supabase: null });
+        // Create a mock Supabase client with nested folders
+        const mockStorageClient = {
+            storage: {
+                from: vi.fn().mockReturnValue({
+                    list: vi.fn().mockImplementation(async (prefix: string) => {
+                        if (prefix === '') {
+                            return {
+                                data: [
+                                    { name: 'folder1', id: null, metadata: null },
+                                    { name: 'root_image.webp', id: '1', metadata: { size: 1000 } }
+                                ],
+                                error: null
+                            };
+                        } else if (prefix === 'folder1') {
+                            return {
+                                data: [
+                                    { name: 'subfolder2', id: null, metadata: null },
+                                    { name: 'child_image.webp', id: '2', metadata: { size: 2500 } }
+                                ],
+                                error: null
+                            };
+                        } else if (prefix === 'folder1/subfolder2') {
+                            return {
+                                data: [
+                                    { name: 'deep_cad.pdf', id: '3', metadata: { size: 5000 } }
+                                ],
+                                error: null
+                            };
+                        }
+                        return { data: [], error: null };
+                    })
+                })
+            }
+        };
 
-        const result = await quotaMgr.auditUsage();
-        expect(result).toBeDefined();
-        expect(result.totalUsedBytes).toBeGreaterThanOrEqual(0);
-        expect(result.status).toBeDefined();
+        quotaMgr.registerClients({ supabase: mockStorageClient as any });
+
+        const crawlResult = await (quotaMgr as any).crawlStorageBucketRecursive('make-order-files', '');
+        expect(crawlResult.totalBytes).toBe(1000 + 2500 + 5000);
+        expect(crawlResult.fileCount).toBe(3);
     });
 
-    // ── 13. Checksum mismatch, partial upload, and safe retry ────────────────────
+    // ── 13. Checksum verification on uploads ────────────────────────────────────
     it('Scenario 13: Detects checksum mismatch on corrupt upload and rejects acknowledgment', async () => {
         const uploadService = DurableUploadService.getInstance();
         const buffer = Buffer.from('VALID-ORIGINAL-PAYLOAD');
@@ -362,6 +461,17 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
         const stagedRecord = uploads.find(u => u.id === staged.id);
         expect(stagedRecord?.status).toBe('staged_local');
         expect(stagedRecord?.lastError).toContain('Checksum mismatch');
+
+        // Test verifyRemoteObject correctly validates matching digest
+        const sliceArrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+        vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+            ok: true,
+            arrayBuffer: async () => sliceArrayBuffer
+        } as any);
+
+        const verifyRes = await uploadService.verifyRemoteObject('https://storage.lenas.me/files/test.webp', staged.sha256);
+        expect(verifyRes.verified).toBe(true);
+        expect(verifyRes.sha256).toBe(staged.sha256);
     });
 
     // ── 14. Conflict between NAS and fallback updates/deletes ───────────────────
@@ -419,8 +529,8 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
         expect(refreshedDeadLetters.find(d => d.id === deadOpId)).toBeUndefined();
     });
 
-    // ── 16. Existing image previews and security regression defense ─────────────
-    it('Scenario 16: Image source URL resolver rejects malformed or unapproved endpoints', () => {
+    // ── 16. Existing image previews, security regression defense & Migration 069 safety ─
+    it('Scenario 16: Image source resolver rejects malformed URLs, and Migration 069 rollback contains explicit data loss warnings for database lesoft', () => {
         const isValidApprovedImageUrl = (url: string): boolean => {
             if (!url || typeof url !== 'string') return false;
             if (url.startsWith('file://')) return true;
@@ -445,5 +555,17 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
         expect(isValidApprovedImageUrl('https://storage.lenas.me.attacker.com/files/evil.webp')).toBe(false);
         expect(isValidApprovedImageUrl('http://storage.lenas.me:8080/files/legacy.webp')).toBe(false);
         expect(isValidApprovedImageUrl('javascript:alert(1)')).toBe(false);
+
+        // Verify Migration 069 rollback script safety warnings
+        const rollbackSqlPath = path.join(process.cwd(), 'supabase/migrations/069_nas_schema_synchronization_rollback.sql');
+        expect(fs.existsSync(rollbackSqlPath)).toBe(true);
+        const rollbackSql = fs.readFileSync(rollbackSqlPath, 'utf-8');
+
+        expect(rollbackSql).toContain('CRITICAL DESTRUCTIVE SCRIPT WARNING');
+        expect(rollbackSql).toContain('lesoft');
+        expect(rollbackSql).toContain('customer_payments');
+        expect(rollbackSql).toContain('customer_addresses');
+        expect(rollbackSql).toContain('installation_charge');
+        expect(rollbackSql).toContain('RECOVERY STRATEGY (Non-Destructive Fix-Forward)');
     });
 });

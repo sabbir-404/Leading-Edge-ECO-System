@@ -256,10 +256,10 @@ export class DurableUploadService {
         let lastError: string | null = null;
 
         // 1. Primary Attempt: TrueNAS Storage
-        const nasRes = await this.uploadToNasStorage(buffer, finalStorageName, row.mime_type, row.subfolder);
+        const nasRes = await this.uploadToNasStorage(buffer, finalStorageName, row.mime_type, row.subfolder, row.sha256);
         if (nasRes.success && nasRes.url) {
             // Checksum verification: ensure payload integrity
-            if (nasRes.sha256 && nasRes.sha256 !== row.sha256) {
+            if (nasRes.sha256 && nasRes.sha256.toUpperCase() !== row.sha256.toUpperCase()) {
                 lastError = `Checksum mismatch: expected ${row.sha256}, got ${nasRes.sha256}`;
             } else {
                 nasSuccess = true;
@@ -271,29 +271,33 @@ export class DurableUploadService {
 
         // 2. If NAS Storage Succeeded: Update Authoritative State
         if (nasSuccess && authoritativeUrl) {
-            this.db.prepare(`
-                UPDATE durable_uploads
-                SET status = 'synced_nas', remote_url_nas = ?, last_error = NULL, updated_at = ?
-                WHERE id = ?
-            `).run(authoritativeUrl, Date.now(), uploadId);
-
             // Update associated database record if metadata exists
-            await this.updateEntityRecord(row.entity_type, row.entity_id, row.field_name, authoritativeUrl);
+            const entityUpdated = await this.updateEntityRecord(row.entity_type, row.entity_id, row.field_name, authoritativeUrl);
 
-            // If it was previously buffered in Supabase Cloud, safely prune the temporary cloud copy
-            if (row.status === 'buffered_supabase' && row.remote_url_supabase) {
-                await this.pruneCloudCopy(row.subfolder, row.remote_url_supabase, row.size_bytes);
+            if (!entityUpdated) {
+                lastError = `Entity record update failed for ${row.entity_type} ${row.entity_id}. Retaining staged/buffered copy.`;
+            } else {
+                this.db.prepare(`
+                    UPDATE durable_uploads
+                    SET status = 'synced_nas', remote_url_nas = ?, last_error = NULL, updated_at = ?
+                    WHERE id = ?
+                `).run(authoritativeUrl, Date.now(), uploadId);
+
+                // If it was previously buffered in Supabase Cloud, safely prune the temporary cloud copy
+                if (row.status === 'buffered_supabase' && row.remote_url_supabase) {
+                    await this.pruneCloudCopy(row.subfolder, row.remote_url_supabase, row.size_bytes);
+                }
+
+                console.log(`[DurableUpload] Upload ${uploadId} successfully synchronized to authoritative NAS Storage: ${authoritativeUrl}`);
+                this.broadcastUploadStatus();
+                return { success: true, url: authoritativeUrl, activeUrl: authoritativeUrl, status: 'synced_nas' };
             }
-
-            console.log(`[DurableUpload] Upload ${uploadId} successfully synchronized to authoritative NAS Storage: ${authoritativeUrl}`);
-            this.broadcastUploadStatus();
-            return { success: true, url: authoritativeUrl, activeUrl: authoritativeUrl, status: 'synced_nas' };
         }
 
         // 3. Secondary Attempt: Supabase Storage Fallback Buffer (if NAS failed and not yet buffered)
         if (!nasSuccess && row.status === 'staged_local' && this.supabaseClient && !lastError?.startsWith('Checksum mismatch')) {
             const quotaMgr = SupabaseQuotaManager.getInstance();
-            const canBuffer = quotaMgr.reserveStorageQuota(uploadId, row.size_bytes);
+            const canBuffer = await quotaMgr.reserveStorageQuota(uploadId, row.size_bytes);
 
             if (canBuffer) {
                 try {
@@ -310,14 +314,14 @@ export class DurableUploadService {
 
                         quotaMgr.releaseStorageQuota(uploadId, row.size_bytes);
 
+                        // Update entity record with temporary cloud URL
+                        const entityUpdated = await this.updateEntityRecord(row.entity_type, row.entity_id, row.field_name, cloudUrl);
+
                         this.db.prepare(`
                             UPDATE durable_uploads
-                            SET status = 'buffered_supabase', remote_url_supabase = ?, last_error = NULL, updated_at = ?
+                            SET status = 'buffered_supabase', remote_url_supabase = ?, last_error = ?, updated_at = ?
                             WHERE id = ?
-                        `).run(cloudUrl, Date.now(), uploadId);
-
-                        // Update entity record with temporary cloud URL
-                        await this.updateEntityRecord(row.entity_type, row.entity_id, row.field_name, cloudUrl);
+                        `).run(cloudUrl, entityUpdated ? null : 'Entity update warning on cloud buffer', Date.now(), uploadId);
 
                         console.log(`[DurableUpload] Upload ${uploadId} buffered in Supabase Cloud fallback (${(row.size_bytes / 1024).toFixed(1)} KB). Waiting for TrueNAS recovery.`);
                         this.broadcastUploadStatus();
@@ -335,7 +339,7 @@ export class DurableUploadService {
             }
         }
 
-        // 4. Offline Hold: Remains safely in 'staged_local' with recorded retry/error
+        // 4. Offline Hold: Remains safely in 'staged_local' or 'buffered_supabase' with recorded retry/error
         const nextRetry = (row.retry_count || 0) + 1;
         this.db.prepare(`
             UPDATE durable_uploads
@@ -347,23 +351,40 @@ export class DurableUploadService {
         return { success: false, status: row.status, error: lastError || undefined };
     }
 
-    private async updateEntityRecord(entityType: string | null, entityId: string | null, fieldName: string | null, newUrl: string): Promise<void> {
-        if (!entityType || !entityId || !fieldName) return;
+    private async updateEntityRecord(entityType: string | null, entityId: string | null, fieldName: string | null, newUrl: string): Promise<boolean> {
+        if (!entityType || !entityId || !fieldName) return true;
         const client = this.nasClient || this.supabaseClient;
-        if (!client) return;
+        if (!client) {
+            console.warn(`[DurableUpload] Cannot update entity record: No active client`);
+            return false;
+        }
 
         try {
             if (fieldName === 'pdf_urls' || fieldName === 'invoice_attachment_urls') {
-                const { data: existing } = await client.from(entityType).select(fieldName).eq('id', entityId).maybeSingle();
+                const { data: existing, error: selectErr } = await client.from(entityType).select(fieldName).eq('id', entityId).maybeSingle();
+                if (selectErr) {
+                    console.warn(`[DurableUpload] Could not fetch entity record for ${entityType} ID ${entityId}:`, selectErr.message);
+                    return false;
+                }
                 const list: string[] = Array.isArray(existing?.[fieldName]) ? existing[fieldName] : [];
                 if (!list.includes(newUrl)) {
-                    await client.from(entityType).update({ [fieldName]: [...list, newUrl] }).eq('id', entityId);
+                    const { error: updErr } = await client.from(entityType).update({ [fieldName]: [...list, newUrl] }).eq('id', entityId);
+                    if (updErr) {
+                        console.warn(`[DurableUpload] Could not update entity array for ${entityType} ID ${entityId}:`, updErr.message);
+                        return false;
+                    }
                 }
             } else {
-                await client.from(entityType).update({ [fieldName]: newUrl }).eq('id', entityId);
+                const { error: updErr } = await client.from(entityType).update({ [fieldName]: newUrl }).eq('id', entityId);
+                if (updErr) {
+                    console.warn(`[DurableUpload] Could not update entity field for ${entityType} ID ${entityId}:`, updErr.message);
+                    return false;
+                }
             }
+            return true;
         } catch (e: any) {
-            console.warn(`[DurableUpload] Could not update entity record for ${entityType} ID ${entityId}:`, e.message);
+            console.warn(`[DurableUpload] Exception updating entity record for ${entityType} ID ${entityId}:`, e.message);
+            return false;
         }
     }
 
@@ -406,17 +427,58 @@ export class DurableUploadService {
         }
     }
 
+    public async verifyRemoteObject(url: string, expectedSha256?: string): Promise<{ verified: boolean; sha256?: string; error?: string }> {
+        const cfHeaders = getCfAccessHeaders();
+        const isTunnel = url.startsWith('https://');
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 20000);
+
+        try {
+            const resp = await fetch(url, {
+                method: 'GET',
+                headers: isTunnel ? cfHeaders : {},
+                signal: controller.signal
+            });
+
+            if (!resp.ok) {
+                return { verified: false, error: `Remote verification fetch failed: HTTP ${resp.status} ${resp.statusText}` };
+            }
+
+            const arrayBuffer = await resp.arrayBuffer();
+            const remoteBuf = Buffer.from(arrayBuffer);
+            const remoteHash = crypto.createHash('sha256').update(remoteBuf).digest('hex').toUpperCase();
+
+            if (expectedSha256 && remoteHash !== expectedSha256.toUpperCase()) {
+                return {
+                    verified: false,
+                    sha256: remoteHash,
+                    error: `Remote digest mismatch: expected ${expectedSha256}, got ${remoteHash}`
+                };
+            }
+
+            return { verified: true, sha256: remoteHash };
+        } catch (err: any) {
+            return { verified: false, error: err.message || 'Remote read-back verification timeout' };
+        } finally {
+            clearTimeout(timeoutId);
+        }
+    }
+
     public async uploadToNasStorage(
         buffer: Buffer,
         fileName: string,
         mimeType: string,
-        subfolder: string
+        subfolder: string,
+        expectedSha256?: string
     ): Promise<{ success: boolean; url?: string; sha256?: string; error?: string }> {
         const candidates = getNasStorageCandidates();
         const cfHeaders = getCfAccessHeaders();
         let lastError: string | null = null;
 
         for (const candidateBase of candidates) {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 20000); // 20s timeout spanning fetch and body read
+
             try {
                 const formData = new FormData();
                 formData.append('file', new Blob([new Uint8Array(buffer)], { type: mimeType }), fileName);
@@ -427,31 +489,47 @@ export class DurableUploadService {
                     ...(isTunnel ? cfHeaders : {})
                 };
 
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 20000); // Realistic 20s timeout
-
                 const response = await fetch(`${candidateBase.replace(/\/$/, '')}/upload`, {
                     method: 'POST',
                     body: formData,
                     headers: reqHeaders,
                     signal: controller.signal
                 });
-                clearTimeout(timeoutId);
 
                 if (response.ok) {
                     const data = await response.json();
-                    if (data && data.success) {
-                        const url = data.file_url || data.url || `https://storage.lenas.me/files/${subfolder}/${fileName}`;
-                        const hash = crypto.createHash('sha256').update(buffer).digest('hex').toUpperCase();
-                        return { success: true, url, sha256: hash };
+                    if (data && data.success && (data.file_url || data.url)) {
+                        const url = (data.file_url || data.url) as string;
+
+                        // Check if remote upload response provided an authoritative server-side digest
+                        const remoteReportedHash = data.sha256 || data.checksum || data.digest;
+                        if (remoteReportedHash) {
+                            const hashStr = String(remoteReportedHash).toUpperCase();
+                            if (expectedSha256 && hashStr !== expectedSha256.toUpperCase()) {
+                                lastError = `Remote digest mismatch: expected ${expectedSha256}, got ${hashStr}`;
+                                continue;
+                            }
+                            return { success: true, url, sha256: hashStr };
+                        }
+
+                        // If remote did not supply a digest in upload response, verify via remote read-back
+                        const verifyRes = await this.verifyRemoteObject(url, expectedSha256);
+                        if (verifyRes.verified) {
+                            return { success: true, url, sha256: verifyRes.sha256 };
+                        } else {
+                            lastError = verifyRes.error || 'Remote object read-back verification failed';
+                            continue;
+                        }
                     } else {
-                        lastError = data?.error || 'NAS upload reported unsuccessful status';
+                        lastError = data?.error || 'NAS upload reported unsuccessful status or missing valid URL';
                     }
                 } else {
                     lastError = `NAS storage HTTP ${response.status} ${response.statusText}`;
                 }
             } catch (err: any) {
                 lastError = err.message || 'NAS network timeout';
+            } finally {
+                clearTimeout(timeoutId);
             }
         }
 

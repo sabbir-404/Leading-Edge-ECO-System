@@ -31,8 +31,8 @@ The implementation resolves critical production risks:
 * **Root Cause**: `installation_charge` and `installation_note` were introduced into the billing frontend and Supabase migrations, but the migration had not been executed against the authoritative TrueNAS PostgreSQL instance. Furthermore, PostgREST caches table metadata in memory upon startup and only refreshes when receiving an explicit PostgreSQL notify channel event (`NOTIFY pgrst, 'reload schema';`). Because no schema reload notification was issued, TrueNAS PostgREST actively rejected bill upserts containing this field.
 * **Code Location**: `LE-SOFT/electron/write-queue.ts:98-120`.
 * **Resolution**:
-  - *Runtime Fallback*: `write-queue.ts` now inspects errors for code `42703`. When detected, it strips `installation_charge` and `installation_note` from the row payload in memory and replays the upsert immediately so the bill is safely committed without blocking.
-  - *Permanent Solution*: Provided `069_nas_schema_synchronization_and_bills.sql` with non-destructive `ALTER TABLE bills ADD COLUMN IF NOT EXISTS ...` and `NOTIFY pgrst, 'reload schema'`.
+  - *Full Financial Payload Preservation*: `write-queue.ts` strictly preserves all financial fields (`installation_charge` and `installation_note`) intact. When PostgreSQL code `42703` is encountered, the write is never silently modified or reported as successful with missing fields. Instead, `DurableOutboxService` classifies code `42703` as a schema blocker and routes the entire unadulterated payload to the operator-visible Dead-Letter Store (`dead_letter`), retaining complete audit trails.
+  - *Permanent Schema Synchronization*: Provided non-destructive PostgreSQL Migration `069_nas_schema_synchronization_and_bills.sql` with `ALTER TABLE bills ADD COLUMN IF NOT EXISTS ...` and `NOTIFY pgrst, 'reload schema'`. Once applied to TrueNAS, operator replay (`replayDeadLetterOperation`) unblocks and completes all pending bills without data loss.
 
 ### 2. Failure of `bills_customer_id_fkey` Foreign Key on Supabase Cloud
 * **Observed Error**: Supabase rejected fallback bill inserts with PostgreSQL code `23503` (`foreign_key_violation: insert or update on table "bills" violates foreign key constraint "bills_customer_id_fkey"`).
@@ -165,7 +165,8 @@ flowchart TD
 | **Phase 7** | Verification Suite (`smart-failover-uploads-buffer.test.ts`) | P0 (Release Gate) | Completed | 16/16 test scenarios passed |
 
 ### 3.2 TrueNAS Schema Migration Requirements (Migration 069)
-* **File**: `LE-SOFT/supabase/migrations/069_nas_schema_synchronization_and_bills.sql`
+* **Target Database**: `lesoft` (PostgreSQL 15 on TrueNAS host `100.88.85.6`, port `5432`)
+* **Migration Script**: `LE-SOFT/supabase/migrations/069_nas_schema_synchronization_and_bills.sql`
 * **Rollback Script**: `LE-SOFT/supabase/migrations/069_nas_schema_synchronization_rollback.sql`
 * **Changes Applied**:
   1. `ALTER TABLE bills ADD COLUMN IF NOT EXISTS installation_charge NUMERIC DEFAULT 0;`
@@ -179,25 +180,40 @@ flowchart TD
   - Non-locking metadata additions (all statements use `IF NOT EXISTS`).
   - Zero downtime for active users.
   - No existing tables, columns, constraints, or rows are deleted or modified.
+* **⚠️ Critical Destructive Rollback Warning**:
+  - The script `069_nas_schema_synchronization_rollback.sql` drops live data-bearing tables (`customer_payments`, `customer_addresses`, `exchange_orders`, `exchange_items`) and drops columns `installation_charge` and `installation_note` from `bills`.
+  - **Executing this rollback script against a populated production `lesoft` database causes IRREVERSIBLE FINANCIAL AND OPERATIONAL DATA LOSS.**
+  - This script is restricted solely to isolated CI/CD test runners and unpopulated staging databases.
+* **Non-Destructive Recovery Strategy**:
+  - If schema or postgREST reload issues occur post-migration, **NEVER run the rollback script**.
+  - Instead, take a backup snapshot, fix forward by re-running `069_nas_schema_synchronization_and_bills.sql` (idempotent), or perform a point-in-time restore from the pre-deployment `pg_dump` archive.
 
 ### 3.3 Safe Production Deployment Runbook for TrueNAS Administrator
-1. **Pre-Deployment Backup**:
+1. **Pre-Deployment Connection & Database Name Check**:
    ```bash
-   pg_dump -U postgres -d lesoft_production -F c -b -v -f /backups/lesoft_pre_069_$(date +%F).dump
+   psql -U postgres -h 100.88.85.6 -p 5432 -d lesoft -c "SELECT current_database(), inet_server_addr(), inet_server_port();"
    ```
-2. **Execute Migration**:
+2. **Pre-Deployment Non-Destructive Backup**:
    ```bash
-   psql -U postgres -d lesoft_production -f 069_nas_schema_synchronization_and_bills.sql
+   pg_dump -U postgres -h 100.88.85.6 -p 5432 -d lesoft -F c -b -v -f /backups/lesoft_pre_069_$(date +%F_%H%M%S).dump
    ```
-3. **Verify Schema & Cache**:
+3. **Execute Non-Destructive Forward Migration**:
+   ```bash
+   psql -U postgres -h 100.88.85.6 -p 5432 -d lesoft -f 069_nas_schema_synchronization_and_bills.sql
+   ```
+4. **Verify Schema & Column Additions**:
    ```sql
    SELECT column_name, data_type FROM information_schema.columns 
    WHERE table_name = 'bills' AND column_name IN ('installation_charge', 'installation_note');
    ```
-4. **Trigger Explicit Cache Reload (if not using NOTIFY)**:
+5. **Reload PostgREST Schema Cache (if NOTIFY did not trigger)**:
    ```bash
    docker restart truenas_postgrest_1
    ```
+6. **Replay Dead-Letter Records**:
+   - In LE-SOFT, inspect dead-letter records: `await window.electron.getDeadLetterOperations();`
+   - Replay queued bills: `await window.electron.replayDeadLetterOperation(opId);`
+   - All financial payloads with `installation_charge` commit without error.
 
 ---
 
@@ -205,31 +221,36 @@ flowchart TD
 
 ### 4.1 Implemented Source Files Summary
 
-1. `LE-SOFT/electron/services/outbox/DurableOutboxService.ts` (659 lines)
-   - SQLite WAL database (`lesoft_durable_outbox.db`).
-   - Atomic batch operations (`enqueueBatch`).
-   - Dependency graph resolution (`dependencyOpId`, `outbox_id_map`).
-   - Postgres error classification (`classifyError`).
-   - Dead-letter routing (`markDeadLetter`, `replayDeadLetterOperation`).
-2. `LE-SOFT/electron/services/media/DurableUploadService.ts` (505 lines)
-   - Local disk staging (`userData/upload_staging/`).
-   - SHA-256 verification on capture and receipt.
-   - Bounded 20s timeouts with candidate failover.
-   - Cloud-to-NAS reconciliation and safe cloud pruning (`pruneCloudCopy`).
-3. `LE-SOFT/electron/services/quota/SupabaseQuotaManager.ts` (368 lines)
-   - 600 MB Storage / 250 MB Database / 150 MB Emergency Reserve.
-   - In-memory atomic reservation tokens (`reserveStorageQuota`, `reserveDatabaseQuota`).
-   - Live measurement of Supabase bucket volume and Postgres table footprints.
-   - 800 MB warning and 950 MB critical ceilings.
-4. `LE-SOFT/electron/services/health/ConsolidatedHealthEngine.ts` (335 lines)
+1. `LE-SOFT/electron/services/outbox/DurableOutboxService.ts`
+   - Single authoritative write execution pipeline across desktop processes.
+   - Preserves complete financial payload on PostgreSQL error `42703` into `dead_letter` without deleting or modifying fields.
+   - Idempotent upserts for bills with `onConflict: 'invoice_number'` and billing customer resolution.
+   - SQLite WAL database (`lesoft_durable_outbox.db`) with atomic batch writes.
+   - Callback registry and window IPC status broadcasts.
+2. `LE-SOFT/electron/services/media/DurableUploadService.ts`
+   - Local disk staging (`userData/upload_staging/`) before network transfer.
+   - True remote digest verification: checks remote-provided SHA-256 or reads back remote object bytes to compute and verify checksum.
+   - Eliminates local buffer hash pretending to be remote digest.
+   - Eliminates synthesized speculative URLs.
+   - Response-body timeouts (20s) spanning network transmission and body consumption.
+   - Cloud copy pruned ONLY after both remote NAS persistence AND entity record updates succeed.
+3. `LE-SOFT/electron/services/quota/SupabaseQuotaManager.ts` & Migration `070`
+   - Strict 600 MB Storage / 250 MB Database / 150 MB Emergency Reserve partitions.
+   - Shared multi-client atomic reservation backed by Supabase RPC `reserve_buffer_capacity()` using PostgreSQL `pg_advisory_xact_lock(84729103)`.
+   - Recursive storage crawler (`crawlStorageBucketRecursive()`) traversing all subfolders.
+   - Comprehensive Postgres table volume audit with ~40% index and WAL overhead accounting.
+   - Fail-closed to local SQLite outbox on stale measurements or network errors during quota check.
+4. `LE-SOFT/electron/services/health/ConsolidatedHealthEngine.ts`
    - Independent database query probe (`make_products`) and storage probe (`/health`).
-   - Anti-flapping logic requiring 2 consecutive failures.
-   - 5 discrete states broadcasted to renderer via IPC.
-5. `LE-SOFT/electron/write-queue.ts` (98 lines changed)
-   - Defensive stripping of `installation_charge` on code `42703`.
-   - Automatic parent customer upsert on code `23503`.
-   - Dead-letter routing when retries exhausted.
-6. `LE-SOFT/electron/services/make/MakeCadService.ts` (41 lines changed)
+   - Storage `/health` strictly requires HTTP 200 (HTTP 404 is treated as unhealthy).
+   - Effective timeouts and query cancellation on Supabase DB and storage probes.
+   - Single recovery reconciliation mutex (`isReconciling`) preventing overlapping concurrent recovery runs.
+   - Multi-batch draining loop ensuring all outbox writes and buffered uploads are synchronized before declaring `NORMAL_NAS_AUTHORITATIVE`.
+5. `LE-SOFT/electron/write-queue.ts`
+   - Zero silent stripping of `installation_charge` or `installation_note`.
+   - `enqueue()` synchronously commits to `DurableOutboxService.enqueueSingle()`, returning ID only after durable acceptance and throwing on failure.
+   - Consolidated single worker: delegates queue drain entirely to `DurableOutboxService`, eliminating duplicate competing workers.
+6. `LE-SOFT/electron/services/make/MakeCadService.ts`
    - Eliminated fake URL generation.
    - 20s network timeout.
    - Quota check before fallback storage uploads.

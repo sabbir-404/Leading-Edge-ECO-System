@@ -69,6 +69,7 @@ export class ConsolidatedHealthEngine {
     private nasStorageLatencyMs = 0;
 
     private isProbing = false;
+    private isReconciling = false;
     private probeTimer: ReturnType<typeof setInterval> | null = null;
 
     private constructor() {}
@@ -225,8 +226,8 @@ export class ConsolidatedHealthEngine {
 
                 clearTimeout(timeoutId);
 
-                // If /health returns ok or 404 (means server is listening and responding), storage is online
-                if (res && (res.status === 200 || res.status === 404)) {
+                // Only HTTP 200 is considered healthy; 404 or errors mean storage is not operational
+                if (res && res.status === 200) {
                     return { healthy: true, latency: Date.now() - t0, url: base };
                 }
             } catch {}
@@ -236,24 +237,37 @@ export class ConsolidatedHealthEngine {
 
     private async probeSupabaseDatabase(): Promise<boolean> {
         if (!this.supabaseClient) return false;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
         try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 3000);
-            const { error } = await this.supabaseClient.from('companies').select('id').limit(1);
-            clearTimeout(timeoutId);
-            return !error;
+            const timeoutPromise = new Promise<any>((_, reject) =>
+                setTimeout(() => reject(new Error('Supabase DB timeout')), 3000)
+            );
+            const queryPromise = this.supabaseClient.from('companies').select('id').abortSignal(controller.signal).limit(1);
+            const res = await Promise.race([queryPromise, timeoutPromise]);
+            return !res.error;
         } catch {
             return false;
+        } finally {
+            clearTimeout(timeoutId);
         }
     }
 
     private async probeSupabaseStorage(): Promise<boolean> {
         if (!this.supabaseClient) return false;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
         try {
-            const { error } = await this.supabaseClient.storage.from('make-order-files').list('', { limit: 1 });
-            return !error;
+            const timeoutPromise = new Promise<any>((_, reject) =>
+                setTimeout(() => reject(new Error('Supabase Storage timeout')), 3000)
+            );
+            const listPromise = this.supabaseClient.storage.from('make-order-files').list('', { limit: 1 });
+            const res = await Promise.race([listPromise, timeoutPromise]);
+            return !res.error;
         } catch {
             return false;
+        } finally {
+            clearTimeout(timeoutId);
         }
     }
 
@@ -298,24 +312,51 @@ export class ConsolidatedHealthEngine {
         }
     }
 
-    private async triggerRecoverySynchronization(): Promise<void> {
+    public async triggerRecoverySynchronization(): Promise<void> {
+        if (this.isReconciling) return;
+        this.isReconciling = true;
+
         try {
-            // 1. Drain pending outbox writes to NAS
-            await DurableOutboxService.getInstance().drainNextBatch(20);
+            let hasMore = true;
+            let iterations = 0;
+            const maxIterations = 50;
 
-            // 2. Process buffered uploads to NAS
-            await DurableUploadService.getInstance().processNextBatch();
+            while (hasMore && iterations < maxIterations) {
+                iterations++;
+                const drainedCount = await DurableOutboxService.getInstance().drainNextBatch(20);
+                await DurableUploadService.getInstance().processNextBatch();
 
-            // Check if all reconciliations completed
-            const outboxStats = DurableOutboxService.getInstance().getOutboxStats();
-            const uploadStats = DurableUploadService.getInstance().getPendingUploadStats();
+                const outboxStats = DurableOutboxService.getInstance().getOutboxStats();
+                const uploadStats = DurableUploadService.getInstance().getPendingUploadStats();
 
-            if (outboxStats.bufferedSupabase === 0 && uploadStats.bufferedCount === 0) {
+                const pendingOutbox = outboxStats.bufferedSupabase + outboxStats.pendingLocal;
+                const pendingUploads = uploadStats.bufferedCount + uploadStats.stagedCount;
+
+                if (pendingOutbox === 0 && pendingUploads === 0) {
+                    hasMore = false;
+                } else if (drainedCount === 0 && uploadStats.bufferedCount === 0) {
+                    // Stalled or unable to drain in this iteration
+                    hasMore = false;
+                }
+            }
+
+            // Check if all reconciliations truly completed
+            const finalOutboxStats = DurableOutboxService.getInstance().getOutboxStats();
+            const finalUploadStats = DurableUploadService.getInstance().getPendingUploadStats();
+
+            if (finalOutboxStats.bufferedSupabase === 0 &&
+                finalOutboxStats.pendingLocal === 0 &&
+                finalUploadStats.bufferedCount === 0 &&
+                finalUploadStats.stagedCount === 0) {
                 this.currentState = 'NORMAL_NAS_AUTHORITATIVE';
                 console.log('[ConsolidatedHealth] All pending records and buffered uploads reconciled to TrueNAS master. State: NORMAL_NAS_AUTHORITATIVE.');
+            } else {
+                console.warn(`[ConsolidatedHealth] Incomplete reconciliation (Outbox buffered: ${finalOutboxStats.bufferedSupabase}, pending: ${finalOutboxStats.pendingLocal}; Upload buffered: ${finalUploadStats.bufferedCount}, staged: ${finalUploadStats.stagedCount}). Remaining in RECOVERING_SYNCHRONIZING.`);
             }
         } catch (e: any) {
             console.warn('[ConsolidatedHealth] Recovery synchronization warning:', e.message);
+        } finally {
+            this.isReconciling = false;
         }
     }
 
