@@ -175,6 +175,29 @@ vi.mock('better-sqlite3', async (importOriginal) => {
             if (r) { r.status = status; r.last_error = err; }
           }
         } else if (table === 'durable_uploads') {
+          if (lower.includes('entity_type = ?')) {
+            const entityType = args[0];
+            const entityId = args[1];
+            const fieldName = args[2];
+            const updatedAt = args[3];
+            const uploadId = args[4];
+            const identifier = args[5];
+            const r = rows.find(x =>
+              x.id === uploadId ||
+              x.id === identifier ||
+              (x.local_path && (x.local_path.includes(uploadId) || (identifier && x.local_path.includes(identifier)))) ||
+              (x.remote_url_supabase && (x.remote_url_supabase.includes(uploadId) || (identifier && x.remote_url_supabase.includes(identifier)))) ||
+              (x.remote_url_nas && (x.remote_url_nas.includes(uploadId) || (identifier && x.remote_url_nas.includes(identifier))))
+            );
+            if (r) {
+              r.entity_type = entityType;
+              r.entity_id = entityId;
+              r.field_name = fieldName;
+              r.updated_at = updatedAt;
+              return { changes: 1 };
+            }
+            return { changes: 0 };
+          }
           const id = args[args.length - 1];
           const r = rows.find(x => x.id === id);
           if (r) {
@@ -197,7 +220,9 @@ vi.mock('better-sqlite3', async (importOriginal) => {
               r.retry_count = args[0];
               r.last_error = args[1];
             }
+            return { changes: 1 };
           }
+          return { changes: 0 };
         }
       } else if (lower.startsWith('delete')) {
         const id = args[0];
@@ -245,13 +270,39 @@ vi.mock('better-sqlite3', async (importOriginal) => {
       if (lower.includes("status = 'dead_letter'")) {
         return rows.filter(r => r.status === 'dead_letter');
       }
+      if (lower.includes("entity_type = ?")) {
+        return rows.filter(r => r.entity_type === args[0]);
+      }
       return [...rows];
     }
   }
 
   class MockDatabase {
     constructor(_path?: string) {}
-    pragma(_cmd: string) {}
+    pragma(cmd?: string) {
+      if (cmd && cmd.includes('table_info(durable_uploads)')) {
+        return [
+          { name: 'id' },
+          { name: 'local_path' },
+          { name: 'file_name' },
+          { name: 'file_size' },
+          { name: 'mime_type' },
+          { name: 'original_filename' },
+          { name: 'subfolder' },
+          { name: 'status' },
+          { name: 'retry_count' },
+          { name: 'last_error' },
+          { name: 'remote_url_supabase' },
+          { name: 'remote_url_nas' },
+          { name: 'created_at' },
+          { name: 'updated_at' },
+          { name: 'entity_type' },
+          { name: 'entity_id' },
+          { name: 'field_name' }
+        ];
+      }
+      return [];
+    }
     exec(_sql: string) {}
     prepare(sql: string) {
       return new MockStatement(sql);

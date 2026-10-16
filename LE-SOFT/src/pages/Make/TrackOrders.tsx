@@ -191,7 +191,7 @@ interface StatusUpdate {
   updated_by: string; 
   created_at: string; 
 }
-interface PdfEntry { path: string; name: string; url: string; }
+interface PdfEntry { path: string; name: string; url: string; isPending?: boolean; }
 interface Part { id: number; part_name: string; length: string; width: string; height: string; notes: string; sort_order: number; }
 
 const TrackOrders: React.FC = () => {
@@ -670,6 +670,10 @@ const TrackOrders: React.FC = () => {
   };
 
   const handleDownloadPdf = async (pdf: PdfEntry) => {
+    if (pdf.isPending || !pdf.url) {
+      alert('This attachment is currently staged locally and waiting for background synchronization.');
+      return;
+    }
     try {
       // @ts-ignore
       if (window.electron?.makeDownloadPdf) {
@@ -1186,9 +1190,34 @@ const TrackOrders: React.FC = () => {
                                             <div key={pdf.path} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 10px', background: 'var(--input-bg)', border: '1px solid var(--border-color)', borderRadius: '6px', fontSize: '0.8rem' }}>
                                               <FileText size={14} color="#f97316" style={{ flexShrink: 0 }} />
                                               <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 600 }} title={pdf.name}>{pdf.name}</span>
+                                              {pdf.isPending && (
+                                                <span style={{ fontSize: '0.65rem', background: '#f59e0b', color: '#fff', padding: '1px 5px', borderRadius: '4px', fontWeight: 700, letterSpacing: '0.5px', flexShrink: 0 }}>
+                                                  PENDING
+                                                </span>
+                                              )}
                                               <div style={{ display: 'flex', gap: '4px' }}>
-                                                <button onClick={() => setPdfViewer(pdf)} style={smallBtn('#3b82f6')} title="View Drawing"><Eye size={12} /></button>
-                                                <button onClick={() => handleDownloadPdf(pdf)} style={smallBtn('#10b981')} title="Download Drawing"><Download size={12} /></button>
+                                                <button
+                                                  onClick={() => {
+                                                    if (pdf.isPending || !pdf.url) {
+                                                      alert('This attachment is currently staged locally and waiting for background synchronization.');
+                                                      return;
+                                                    }
+                                                    setPdfViewer(pdf);
+                                                  }}
+                                                  disabled={pdf.isPending || !pdf.url}
+                                                  style={{ ...smallBtn('#3b82f6'), opacity: (pdf.isPending || !pdf.url) ? 0.5 : 1, cursor: (pdf.isPending || !pdf.url) ? 'not-allowed' : 'pointer' }}
+                                                  title={pdf.isPending ? 'Pending synchronization' : 'View Drawing'}
+                                                >
+                                                  <Eye size={12} />
+                                                </button>
+                                                <button
+                                                  onClick={() => handleDownloadPdf(pdf)}
+                                                  disabled={pdf.isPending || !pdf.url}
+                                                  style={{ ...smallBtn('#10b981'), opacity: (pdf.isPending || !pdf.url) ? 0.5 : 1, cursor: (pdf.isPending || !pdf.url) ? 'not-allowed' : 'pointer' }}
+                                                  title={pdf.isPending ? 'Pending synchronization' : 'Download Drawing'}
+                                                >
+                                                  <Download size={12} />
+                                                </button>
                                                 {userRole === 'admin' && (
                                                   <button onClick={() => handleDeletePdf(order.id, pdf.path)} style={smallBtn('#ef4444')} title="Remove Drawing"><Trash2 size={12} /></button>
                                                 )}
@@ -1359,11 +1388,34 @@ const TrackOrders: React.FC = () => {
                                                     <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 600 }} title={d.name}>
                                                       {d.name}
                                                     </span>
+                                                    {d.isPending && (
+                                                      <span style={{ fontSize: '0.65rem', background: '#f59e0b', color: '#fff', padding: '1px 5px', borderRadius: '4px', fontWeight: 700, letterSpacing: '0.5px', flexShrink: 0 }}>
+                                                        PENDING
+                                                      </span>
+                                                    )}
                                                     <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
-                                                      <button type="button" onClick={() => setPdfViewer(d)} style={smallBtn('#3b82f6')} title="View Drawing">
+                                                      <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                          if (d.isPending || !d.url) {
+                                                            alert('This attachment is currently staged locally and waiting for background synchronization.');
+                                                            return;
+                                                          }
+                                                          setPdfViewer(d);
+                                                        }}
+                                                        disabled={d.isPending || !d.url}
+                                                        style={{ ...smallBtn('#3b82f6'), opacity: (d.isPending || !d.url) ? 0.5 : 1, cursor: (d.isPending || !d.url) ? 'not-allowed' : 'pointer' }}
+                                                        title={d.isPending ? 'Pending synchronization' : 'View Drawing'}
+                                                      >
                                                         <Eye size={12} />
                                                       </button>
-                                                      <button type="button" onClick={() => handleDownloadPdf(d)} style={smallBtn('#10b981')} title="Download Drawing">
+                                                      <button
+                                                        type="button"
+                                                        onClick={() => handleDownloadPdf(d)}
+                                                        disabled={d.isPending || !d.url}
+                                                        style={{ ...smallBtn('#10b981'), opacity: (d.isPending || !d.url) ? 0.5 : 1, cursor: (d.isPending || !d.url) ? 'not-allowed' : 'pointer' }}
+                                                        title={d.isPending ? 'Pending synchronization' : 'Download Drawing'}
+                                                      >
                                                         <Download size={12} />
                                                       </button>
                                                       <button type="button" onClick={() => handleDeleteItemPdf(order.id, item.id, d.path)} style={smallBtn('#ef4444')} title="Remove Drawing">

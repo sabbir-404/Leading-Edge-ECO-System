@@ -104,6 +104,22 @@ export class DurableUploadService {
                 CREATE INDEX IF NOT EXISTS idx_upload_status ON durable_uploads(status);
                 CREATE INDEX IF NOT EXISTS idx_upload_created ON durable_uploads(created_at);
             `);
+
+            // Schema migration: ensure entity tracking columns exist on pre-existing databases
+            const columns = this.db.pragma('table_info(durable_uploads)');
+            if (Array.isArray(columns)) {
+                const colNames = new Set(columns.map((c: any) => c.name));
+                if (!colNames.has('entity_type')) {
+                    this.db.exec(`ALTER TABLE durable_uploads ADD COLUMN entity_type TEXT;`);
+                }
+                if (!colNames.has('entity_id')) {
+                    this.db.exec(`ALTER TABLE durable_uploads ADD COLUMN entity_id TEXT;`);
+                }
+                if (!colNames.has('field_name')) {
+                    this.db.exec(`ALTER TABLE durable_uploads ADD COLUMN field_name TEXT;`);
+                }
+            }
+
             console.log('[DurableUpload] Initialized upload queue at:', dbPath);
         } catch (err: any) {
             console.error('[DurableUpload] Failed to initialize upload database:', err.message);
@@ -304,7 +320,14 @@ export class DurableUploadService {
         // 2. If NAS Storage Succeeded: Update Authoritative State & Metadata
         if (nasSuccess && authoritativeUrl) {
             // Update associated database record if metadata exists
-            const entityUpdated = await this.updateEntityRecord(row.entity_type, row.entity_id, row.field_name, authoritativeUrl);
+            const entityUpdated = await this.updateEntityRecord(
+                row.entity_type,
+                row.entity_id,
+                row.field_name,
+                authoritativeUrl,
+                row.remote_url_supabase || undefined,
+                uploadId
+            );
 
             if (!entityUpdated) {
                 lastError = `Entity record update failed for ${row.entity_type} ${row.entity_id}. Staged copy preserved for retry.`;
@@ -316,7 +339,7 @@ export class DurableUploadService {
                 `).run(authoritativeUrl, lastError, Date.now(), uploadId);
             } else {
                 // If it was previously buffered in Supabase Cloud, safely prune the temporary cloud copy
-                if (row.status === 'buffered_supabase' && row.remote_url_supabase) {
+                if (row.remote_url_supabase) {
                     const pruned = await this.pruneCloudCopy(row.subfolder, row.remote_url_supabase, row.size_bytes, uploadId);
                     if (!pruned) {
                         lastError = 'Authoritative NAS persistence confirmed, but Supabase cloud copy cleanup or quota prune failed. Retaining for cleanup retry.';
@@ -349,7 +372,7 @@ export class DurableUploadService {
 
             if (cloudUrl) {
                 // Cloud copy already exists from prior attempt; retry entity update with durable key
-                const entityUpdated = await this.updateEntityRecord(row.entity_type, row.entity_id, row.field_name, cloudUrl);
+                const entityUpdated = await this.updateEntityRecord(row.entity_type, row.entity_id, row.field_name, cloudUrl, undefined, uploadId);
                 let activeSignedUrl: string | undefined = undefined;
                 try {
                     const { data: signedData } = await this.supabaseClient.storage
@@ -400,7 +423,7 @@ export class DurableUploadService {
                                 } catch {}
                             } else {
                                 // Update entity record with durable object key (never an expiring signed URL)
-                                const entityUpdated = await this.updateEntityRecord(row.entity_type, row.entity_id, row.field_name, cloudUrl);
+                                const entityUpdated = await this.updateEntityRecord(row.entity_type, row.entity_id, row.field_name, cloudUrl, undefined, uploadId);
 
                                 this.db.prepare(`
                                     UPDATE durable_uploads
@@ -449,7 +472,43 @@ export class DurableUploadService {
         };
     }
 
-    private async updateEntityRecord(entityType: string | null, entityId: string | null, fieldName: string | null, newUrl: string): Promise<boolean> {
+    /**
+     * Associates a staged upload with an owning entity and field.
+     * Safe to call after an order or item has been created.
+     */
+    public associateUploadWithEntity(
+        identifier: string,
+        meta: { entityType: string; entityId: string | number; fieldName: string }
+    ): boolean {
+        if (!this.db || !identifier || !meta.entityType || !meta.entityId || !meta.fieldName) return false;
+        try {
+            let uploadId = identifier;
+            const match = identifier.match(/(upl_[0-9]+_[0-9a-f]+)/i);
+            if (match) {
+                uploadId = match[1];
+            }
+
+            const res = this.db.prepare(`
+                UPDATE durable_uploads
+                SET entity_type = ?, entity_id = ?, field_name = ?, updated_at = ?
+                WHERE id = ? OR id = ? OR local_path LIKE ? OR remote_url_supabase LIKE ? OR remote_url_nas LIKE ?
+            `).run(meta.entityType, String(meta.entityId), meta.fieldName, Date.now(), uploadId, identifier, `%${uploadId}%`, `%${uploadId}%`, `%${uploadId}%`);
+
+            return res.changes > 0;
+        } catch (err: any) {
+            console.warn('[DurableUpload] Failed to associate upload with entity:', err.message);
+            return false;
+        }
+    }
+
+    private async updateEntityRecord(
+        entityType: string | null,
+        entityId: string | null,
+        fieldName: string | null,
+        newUrl: string,
+        oldRef?: string,
+        uploadId?: string
+    ): Promise<boolean> {
         if (!entityType || !entityId || !fieldName) return true;
         const client = this.nasClient || this.supabaseClient;
         if (!client) {
@@ -465,15 +524,51 @@ export class DurableUploadService {
                     return false;
                 }
                 const list: string[] = Array.isArray((existing as any)?.[fieldName]) ? (existing as any)[fieldName] : [];
-                if (!list.includes(newUrl)) {
-                    const { error: updErr } = await client.from(entityType).update({ [fieldName]: [...list, newUrl] }).eq('id', entityId);
-                    if (updErr) {
-                        console.warn(`[DurableUpload] Could not update entity array for ${entityType} ID ${entityId}:`, updErr.message);
-                        return false;
+                const uploadPrefix = uploadId ? `${uploadId}_` : null;
+
+                let replaced = false;
+                const updatedList = list.map(item => {
+                    if ((uploadPrefix && item.includes(uploadPrefix)) || (oldRef && item === oldRef)) {
+                        replaced = true;
+                        return newUrl;
                     }
+                    return item;
+                });
+
+                if (!replaced && !updatedList.includes(newUrl)) {
+                    updatedList.push(newUrl);
+                }
+
+                const deduplicated = Array.from(new Set(updatedList));
+                const { error: updErr } = await client.from(entityType).update({ [fieldName]: deduplicated }).eq('id', entityId);
+                if (updErr) {
+                    console.warn(`[DurableUpload] Could not update entity array for ${entityType} ID ${entityId}:`, updErr.message);
+                    return false;
                 }
             } else {
-                const { error: updErr } = await client.from(entityType).update({ [fieldName]: newUrl }).eq('id', entityId);
+                const updatePayload: Record<string, any> = { [fieldName]: newUrl };
+                if (entityType === 'make_order_items' && fieldName === 'technical_drawing_url') {
+                    try {
+                        const { data: item } = await client.from('make_order_items').select('pdf_urls').eq('id', entityId).maybeSingle();
+                        if (item && Array.isArray(item.pdf_urls)) {
+                            const uploadPrefix = uploadId ? `${uploadId}_` : null;
+                            let replaced = false;
+                            const updatedPdfs = item.pdf_urls.map((p: string) => {
+                                if ((uploadPrefix && p.includes(uploadPrefix)) || (oldRef && p === oldRef)) {
+                                    replaced = true;
+                                    return newUrl;
+                                }
+                                return p;
+                            });
+                            if (!replaced && !updatedPdfs.includes(newUrl)) {
+                                updatedPdfs.push(newUrl);
+                            }
+                            updatePayload.pdf_urls = Array.from(new Set(updatedPdfs));
+                        }
+                    } catch {}
+                }
+
+                const { error: updErr } = await client.from(entityType).update(updatePayload).eq('id', entityId);
                 if (updErr) {
                     console.warn(`[DurableUpload] Could not update entity field for ${entityType} ID ${entityId}:`, updErr.message);
                     return false;
@@ -486,17 +581,49 @@ export class DurableUploadService {
         }
     }
 
-    private async pruneCloudCopy(subfolder: string, cloudUrl: string, sizeBytes: number, uploadId?: string): Promise<boolean> {
+    public async pruneCloudCopy(subfolder: string, cloudUrl: string, sizeBytes: number, uploadId?: string): Promise<boolean> {
         if (!this.supabaseClient) return false;
-        try {
-            // Extract storage object key from public URL
-            const urlObj = new URL(cloudUrl);
-            const pathParts = urlObj.pathname.split('/make-order-files/');
-            const objectKey = pathParts[1] || `${subfolder}/${path.basename(urlObj.pathname)}`;
+        if (!cloudUrl || typeof cloudUrl !== 'string') return false;
 
+        try {
+            // Extract storage object key safely from either a relative key, a supabase:// URI, or a full HTTP URL
+            let objectKey = cloudUrl.trim();
+
+            if (/^https?:\/\//i.test(objectKey)) {
+                try {
+                    const urlObj = new URL(objectKey);
+                    const parts = urlObj.pathname.split('/make-order-files/');
+                    if (parts.length > 1) {
+                        objectKey = parts.slice(1).join('/make-order-files/');
+                    } else {
+                        objectKey = urlObj.pathname.replace(/^\/+/, '');
+                    }
+                    objectKey = decodeURIComponent(objectKey);
+                } catch (e: any) {
+                    console.warn(`[DurableUpload] Could not parse URL "${objectKey}":`, e.message);
+                    return false;
+                }
+            } else if (/^supabase:\/\/make-order-files\//i.test(objectKey)) {
+                objectKey = objectKey.replace(/^supabase:\/\/make-order-files\//i, '');
+            } else if (/^supabase:\/\//i.test(objectKey)) {
+                objectKey = objectKey.replace(/^supabase:\/\//i, '');
+            }
+
+            objectKey = objectKey.replace(/^\/+/, '');
+
+            // Candidate keys for Supabase bucket 'make-order-files'
+            const candidateKeys = new Set<string>();
+            candidateKeys.add(objectKey);
+            if (objectKey.startsWith('make-order-files/')) {
+                candidateKeys.add(objectKey.replace(/^make-order-files\//, ''));
+            } else {
+                candidateKeys.add(`make-order-files/${objectKey}`);
+            }
+
+            const keysToRemove = Array.from(candidateKeys).filter(k => k.length > 0);
             const { error } = await this.supabaseClient.storage
                 .from('make-order-files')
-                .remove([objectKey]);
+                .remove(keysToRemove);
 
             if (error) {
                 console.warn(`[DurableUpload] Failed to remove object from Supabase bucket: ${error.message}`);
@@ -512,6 +639,7 @@ export class DurableUploadService {
             } else {
                 SupabaseQuotaManager.getInstance().deductConfirmedPrunedStorage(sizeBytes);
             }
+
             console.log(`[DurableUpload] Safely pruned temporary cloud copy after NAS persistence: ${objectKey}`);
             return true;
         } catch (err: any) {

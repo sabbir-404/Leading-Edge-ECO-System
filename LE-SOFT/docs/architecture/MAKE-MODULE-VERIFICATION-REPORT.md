@@ -10,9 +10,9 @@
 
 ## 1. Executive Summary
 
-This report documents the architectural audit, upload-safety review, and comprehensive verification conducted on the **MAKE Module** of LE-SOFT v1.8.12. In accordance with project instructions, all work was restricted to the MAKE module, CAD and attachment upload dispatch safety, truthful URL resolution for private buckets, named order drafts, global specification image persistence (Migration 066 compatibility), resilient upload staging, and quota-managed cloud storage fallback. Unrelated Sales, Billing, inventory, and MySQL synchronization components were kept untouched.
+This report documents the architectural audit, upload-safety review, and comprehensive verification conducted on the **MAKE Module** of LE-SOFT v1.8.12. In accordance with project instructions, all work was restricted to the MAKE module, CAD and attachment upload dispatch safety, truthful URL resolution for private buckets, named order drafts, global specification image persistence (Migration 066 compatibility), resilient upload staging, failover recovery corrections, durable object key cleanup, and quota-managed cloud storage fallback. Unrelated Sales, Billing, inventory, and MySQL synchronization components were kept untouched.
 
-All 30 MAKE test suites (comprising **494 automated tests**) pass cleanly. In addition, real native SQLite Write-Ahead Logging (WAL) was validated under Electron's Node runtime (ABI 143), real PostgreSQL Migration 070 quota RPC functions were validated against the local PostgreSQL container, and both TypeScript compilation targets (`tsc --noEmit` and `tsc -p tsconfig.electron.json --noEmit`), ESLint (`npm run lint`), Vite production build, and Electron esbuild bundling passed with zero errors or warnings.
+All 30 MAKE test suites (comprising **502 automated tests**) pass cleanly. In addition, real native SQLite Write-Ahead Logging (WAL) was validated under Electron's Node runtime (ABI 143), real PostgreSQL Migration 070 quota RPC functions were validated against the local PostgreSQL container, and both TypeScript compilation targets (`tsc --noEmit` and `tsc -p tsconfig.electron.json --noEmit`), ESLint (`npm run lint`), Vite production build, and Electron esbuild bundling passed with zero errors or warnings.
 
 ---
 
@@ -62,6 +62,19 @@ All 30 MAKE test suites (comprising **494 automated tests**) pass cleanly. In ad
   4. Local staged files return `isPendingUpload: true, publicUrl: undefined`. They are never returned with `file://` or fabricated remote URLs.
   5. Unresolvable or missing files return an empty URL (`''`) and never invent or guess remote storage URLs.
 
+### Defect 6: Cloud-Object Cleanup for Relative Durable Keys, Retry Safety, & Order Reference Reconciliation
+- **Location**: `electron/services/media/DurableUploadService.ts`, `electron/services/make/MakeOrderService.ts`, `electron/ipc/handlers/make.ts`, `src/pages/Make/TrackOrders.tsx`, `src/pages/Make/PlaceOrder.tsx`
+- **Root Cause**:
+  1. `DurableUploadService.pruneCloudCopy()` passed relative object keys (stored in `remote_url_supabase`) directly to `new URL()`, throwing `TypeError: Invalid URL`.
+  2. Entity record updates were executed after cloud deletion, risking orphaned records if updates failed.
+  3. Pre-order staged attachments (invoices, custom CAD) lacked an owning `entity_id` at staging time, causing failover recovery workers to skip updating the newly created order record.
+  4. TrackOrders UI lacked a distinct `PENDING` badge for offline staged attachments, attempting to open undefined or non-existent URLs.
+- **Resolution**:
+  1. Made `pruneCloudCopy()` support both relative object keys (`make-order-files/...` or subfolder keys) and legacy absolute URLs without crashing `new URL()`.
+  2. Implemented strict multi-step failover recovery ordering: (a) verify TrueNAS persistence, (b) update and verify entity record references (replacing temporary keys and deduplicating array fields), (c) remove cloud object from Supabase, and (d) confirm quota release. If either cleanup or quota release fails, the upload is retained for retry rather than falsely marked fully reconciled.
+  3. Added `associateUploadWithEntity(identifier, meta)` to link pre-order staged attachments with the newly created order ID immediately upon order creation.
+  4. Added `PENDING` badge to `TrackOrders.tsx` for pending uploads and disabled viewing/downloading until synced. Updated `PlaceOrder.tsx` to retain persistent local attachment keys during offline order placement.
+
 ---
 
 ## 3. End-to-End MAKE Architectural Audit
@@ -85,11 +98,11 @@ All 30 MAKE test suites (comprising **494 automated tests**) pass cleanly. In ad
 ### 4.1 MAKE Automated Test Suite (Vitest)
 Ran `npx vitest run tests/make`:
 - **Test Files**: 30 passed (30 total)
-- **Individual Tests**: 494 passed (494 total, 0 failed, 0 skipped)
+- **Individual Tests**: 502 passed (502 total, 0 failed, 0 skipped)
 - **Exit Code**: `0`
 - **Duration**: ~15.7 seconds
 - **Covered Test Files**:
-  1. `tests/make/make-module-stability.integration.test.ts` (28/28 passed) **[EXPANDED with Upload-Safety Regressions]**
+  1. `tests/make/make-module-stability.integration.test.ts` (36/36 passed) **[EXPANDED with Upload-Safety & Failover Recovery Regressions]**
   2. `tests/make/attributes.test.ts` (19/19 passed)
   3. `tests/make/catalog-image-regression.test.ts` (11/11 passed)
   4. `tests/make/color-swatch-selector.test.ts` (8/8 passed)
@@ -175,4 +188,11 @@ While all programmatic layers (IPC, schema, services, local storage, quota manag
 - **PR #41**: **OPEN and UNMERGED** (No merge executed; awaiting explicit stakeholder approval).
 - **Production Isolation**: Zero writes directed to production TrueNAS (`100.88.85.6`), hosted production Supabase (`ildkkgjrolcjijwfokek`), or production MySQL.
 - **Credential Hygiene**: Zero credentials, passwords, or privileged service role keys committed to source, bundles, or reports.
+- **Failover Recovery Verification**:
+  1. `DurableUploadService.pruneCloudCopy()` verified against relative keys (`make-order-files/...`), subfolder relative keys, and legacy absolute URLs without `new URL()` runtime crashes.
+  2. Multi-step recovery sequencing verified: TrueNAS persistence confirmed -> entity record updated -> update confirmed -> cloud object pruned -> quota release confirmed. Failures at any stage keep upload retryable.
+  3. Pre-order staged attachments safely linked to orders/items upon creation via `associateUploadWithEntity()`.
+  4. Array fields (`pdf_urls`, `invoice_attachment_urls`) deduplicated during recovery reconciliation.
+  5. Offline pending state represented truthfully (`isPendingUpload: true`, `publicUrl: undefined`, `durableKey: ...`) with `PENDING` badge in TrackOrders UI.
+- **Quality Gates**: All 6 gates passed (TSC frontend 0 errors, TSC electron 0 errors, ESLint 0 warnings, Vite build exit 0, Electron build exit 0, License verification exit 0).
 

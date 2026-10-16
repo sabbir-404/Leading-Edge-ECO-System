@@ -26301,6 +26301,19 @@ var init_DurableUploadService = __esm({
                 CREATE INDEX IF NOT EXISTS idx_upload_status ON durable_uploads(status);
                 CREATE INDEX IF NOT EXISTS idx_upload_created ON durable_uploads(created_at);
             `);
+          const columns = this.db.pragma("table_info(durable_uploads)");
+          if (Array.isArray(columns)) {
+            const colNames = new Set(columns.map((c) => c.name));
+            if (!colNames.has("entity_type")) {
+              this.db.exec(`ALTER TABLE durable_uploads ADD COLUMN entity_type TEXT;`);
+            }
+            if (!colNames.has("entity_id")) {
+              this.db.exec(`ALTER TABLE durable_uploads ADD COLUMN entity_id TEXT;`);
+            }
+            if (!colNames.has("field_name")) {
+              this.db.exec(`ALTER TABLE durable_uploads ADD COLUMN field_name TEXT;`);
+            }
+          }
           console.log("[DurableUpload] Initialized upload queue at:", dbPath);
         } catch (err) {
           console.error("[DurableUpload] Failed to initialize upload database:", err.message);
@@ -26463,7 +26476,14 @@ var init_DurableUploadService = __esm({
           }
         }
         if (nasSuccess && authoritativeUrl) {
-          const entityUpdated = await this.updateEntityRecord(row.entity_type, row.entity_id, row.field_name, authoritativeUrl);
+          const entityUpdated = await this.updateEntityRecord(
+            row.entity_type,
+            row.entity_id,
+            row.field_name,
+            authoritativeUrl,
+            row.remote_url_supabase || void 0,
+            uploadId
+          );
           if (!entityUpdated) {
             lastError = `Entity record update failed for ${row.entity_type} ${row.entity_id}. Staged copy preserved for retry.`;
             this.db.prepare(`
@@ -26472,7 +26492,7 @@ var init_DurableUploadService = __esm({
                     WHERE id = ?
                 `).run(authoritativeUrl, lastError, Date.now(), uploadId);
           } else {
-            if (row.status === "buffered_supabase" && row.remote_url_supabase) {
+            if (row.remote_url_supabase) {
               const pruned = await this.pruneCloudCopy(row.subfolder, row.remote_url_supabase, row.size_bytes, uploadId);
               if (!pruned) {
                 lastError = "Authoritative NAS persistence confirmed, but Supabase cloud copy cleanup or quota prune failed. Retaining for cleanup retry.";
@@ -26499,7 +26519,7 @@ var init_DurableUploadService = __esm({
           const quotaMgr = SupabaseQuotaManager.getInstance();
           let cloudUrl = row.remote_url_supabase || null;
           if (cloudUrl) {
-            const entityUpdated = await this.updateEntityRecord(row.entity_type, row.entity_id, row.field_name, cloudUrl);
+            const entityUpdated = await this.updateEntityRecord(row.entity_type, row.entity_id, row.field_name, cloudUrl, void 0, uploadId);
             let activeSignedUrl = void 0;
             try {
               const { data: signedData } = await this.supabaseClient.storage.from("make-order-files").createSignedUrl(cloudUrl, 3600);
@@ -26538,7 +26558,7 @@ var init_DurableUploadService = __esm({
                     } catch {
                     }
                   } else {
-                    const entityUpdated = await this.updateEntityRecord(row.entity_type, row.entity_id, row.field_name, cloudUrl);
+                    const entityUpdated = await this.updateEntityRecord(row.entity_type, row.entity_id, row.field_name, cloudUrl, void 0, uploadId);
                     this.db.prepare(`
                                     UPDATE durable_uploads
                                     SET status = 'buffered_supabase', remote_url_supabase = ?, last_error = ?, updated_at = ?
@@ -26581,7 +26601,30 @@ var init_DurableUploadService = __esm({
           error: lastError || void 0
         };
       }
-      async updateEntityRecord(entityType, entityId, fieldName, newUrl) {
+      /**
+       * Associates a staged upload with an owning entity and field.
+       * Safe to call after an order or item has been created.
+       */
+      associateUploadWithEntity(identifier, meta3) {
+        if (!this.db || !identifier || !meta3.entityType || !meta3.entityId || !meta3.fieldName) return false;
+        try {
+          let uploadId = identifier;
+          const match = identifier.match(/(upl_[0-9]+_[0-9a-f]+)/i);
+          if (match) {
+            uploadId = match[1];
+          }
+          const res = this.db.prepare(`
+                UPDATE durable_uploads
+                SET entity_type = ?, entity_id = ?, field_name = ?, updated_at = ?
+                WHERE id = ? OR id = ? OR local_path LIKE ? OR remote_url_supabase LIKE ? OR remote_url_nas LIKE ?
+            `).run(meta3.entityType, String(meta3.entityId), meta3.fieldName, Date.now(), uploadId, identifier, `%${uploadId}%`, `%${uploadId}%`, `%${uploadId}%`);
+          return res.changes > 0;
+        } catch (err) {
+          console.warn("[DurableUpload] Failed to associate upload with entity:", err.message);
+          return false;
+        }
+      }
+      async updateEntityRecord(entityType, entityId, fieldName, newUrl, oldRef, uploadId) {
         if (!entityType || !entityId || !fieldName) return true;
         const client = this.nasClient || this.supabaseClient;
         if (!client) {
@@ -26596,15 +26639,48 @@ var init_DurableUploadService = __esm({
               return false;
             }
             const list = Array.isArray(existing?.[fieldName]) ? existing[fieldName] : [];
-            if (!list.includes(newUrl)) {
-              const { error: updErr } = await client.from(entityType).update({ [fieldName]: [...list, newUrl] }).eq("id", entityId);
-              if (updErr) {
-                console.warn(`[DurableUpload] Could not update entity array for ${entityType} ID ${entityId}:`, updErr.message);
-                return false;
+            const uploadPrefix = uploadId ? `${uploadId}_` : null;
+            let replaced = false;
+            const updatedList = list.map((item) => {
+              if (uploadPrefix && item.includes(uploadPrefix) || oldRef && item === oldRef) {
+                replaced = true;
+                return newUrl;
               }
+              return item;
+            });
+            if (!replaced && !updatedList.includes(newUrl)) {
+              updatedList.push(newUrl);
+            }
+            const deduplicated = Array.from(new Set(updatedList));
+            const { error: updErr } = await client.from(entityType).update({ [fieldName]: deduplicated }).eq("id", entityId);
+            if (updErr) {
+              console.warn(`[DurableUpload] Could not update entity array for ${entityType} ID ${entityId}:`, updErr.message);
+              return false;
             }
           } else {
-            const { error: updErr } = await client.from(entityType).update({ [fieldName]: newUrl }).eq("id", entityId);
+            const updatePayload = { [fieldName]: newUrl };
+            if (entityType === "make_order_items" && fieldName === "technical_drawing_url") {
+              try {
+                const { data: item } = await client.from("make_order_items").select("pdf_urls").eq("id", entityId).maybeSingle();
+                if (item && Array.isArray(item.pdf_urls)) {
+                  const uploadPrefix = uploadId ? `${uploadId}_` : null;
+                  let replaced = false;
+                  const updatedPdfs = item.pdf_urls.map((p) => {
+                    if (uploadPrefix && p.includes(uploadPrefix) || oldRef && p === oldRef) {
+                      replaced = true;
+                      return newUrl;
+                    }
+                    return p;
+                  });
+                  if (!replaced && !updatedPdfs.includes(newUrl)) {
+                    updatedPdfs.push(newUrl);
+                  }
+                  updatePayload.pdf_urls = Array.from(new Set(updatedPdfs));
+                }
+              } catch {
+              }
+            }
+            const { error: updErr } = await client.from(entityType).update(updatePayload).eq("id", entityId);
             if (updErr) {
               console.warn(`[DurableUpload] Could not update entity field for ${entityType} ID ${entityId}:`, updErr.message);
               return false;
@@ -26618,11 +26694,38 @@ var init_DurableUploadService = __esm({
       }
       async pruneCloudCopy(subfolder, cloudUrl, sizeBytes, uploadId) {
         if (!this.supabaseClient) return false;
+        if (!cloudUrl || typeof cloudUrl !== "string") return false;
         try {
-          const urlObj = new URL(cloudUrl);
-          const pathParts = urlObj.pathname.split("/make-order-files/");
-          const objectKey = pathParts[1] || `${subfolder}/${import_path8.default.basename(urlObj.pathname)}`;
-          const { error: error51 } = await this.supabaseClient.storage.from("make-order-files").remove([objectKey]);
+          let objectKey = cloudUrl.trim();
+          if (/^https?:\/\//i.test(objectKey)) {
+            try {
+              const urlObj = new URL(objectKey);
+              const parts = urlObj.pathname.split("/make-order-files/");
+              if (parts.length > 1) {
+                objectKey = parts.slice(1).join("/make-order-files/");
+              } else {
+                objectKey = urlObj.pathname.replace(/^\/+/, "");
+              }
+              objectKey = decodeURIComponent(objectKey);
+            } catch (e2) {
+              console.warn(`[DurableUpload] Could not parse URL "${objectKey}":`, e2.message);
+              return false;
+            }
+          } else if (/^supabase:\/\/make-order-files\//i.test(objectKey)) {
+            objectKey = objectKey.replace(/^supabase:\/\/make-order-files\//i, "");
+          } else if (/^supabase:\/\//i.test(objectKey)) {
+            objectKey = objectKey.replace(/^supabase:\/\//i, "");
+          }
+          objectKey = objectKey.replace(/^\/+/, "");
+          const candidateKeys = /* @__PURE__ */ new Set();
+          candidateKeys.add(objectKey);
+          if (objectKey.startsWith("make-order-files/")) {
+            candidateKeys.add(objectKey.replace(/^make-order-files\//, ""));
+          } else {
+            candidateKeys.add(`make-order-files/${objectKey}`);
+          }
+          const keysToRemove = Array.from(candidateKeys).filter((k) => k.length > 0);
+          const { error: error51 } = await this.supabaseClient.storage.from("make-order-files").remove(keysToRemove);
           if (error51) {
             console.warn(`[DurableUpload] Failed to remove object from Supabase bucket: ${error51.message}`);
             return false;
@@ -115741,6 +115844,7 @@ var MakeSearchService = class {
 };
 
 // electron/services/make/MakeOrderService.ts
+init_DurableUploadService();
 var MakeOrderService = class {
   /**
    * Generates a canonical, human-readable order number: MAKE-YYYY-XXXXXX
@@ -115991,6 +116095,43 @@ var MakeOrderService = class {
       } catch (notifErr) {
         console.warn("[MakeOrderService] Notification error (non-fatal):", notifErr);
       }
+    }
+    try {
+      const durableUpload = DurableUploadService.getInstance();
+      const invAttachments = orderHeaderPayload.invoice_attachment_urls;
+      if (Array.isArray(invAttachments)) {
+        for (const att of invAttachments) {
+          if (typeof att === "string") {
+            durableUpload.associateUploadWithEntity(att, {
+              entityType: "make_orders",
+              entityId: orderId,
+              fieldName: "invoice_attachment_urls"
+            });
+          }
+        }
+      }
+      if (Array.isArray(insertedItems)) {
+        for (let idx = 0; idx < insertedItems.length; idx++) {
+          const itemRecord = insertedItems[idx];
+          const rawItem = input.items[idx];
+          if (!itemRecord?.id || !rawItem) continue;
+          const drawings = rawItem.pdf_urls || rawItem.drawings || [rawItem.technical_drawing_url].filter(Boolean);
+          if (Array.isArray(drawings)) {
+            for (const d of drawings) {
+              const dRef = typeof d === "string" ? d : d?.url;
+              if (dRef) {
+                durableUpload.associateUploadWithEntity(dRef, {
+                  entityType: "make_order_items",
+                  entityId: itemRecord.id,
+                  fieldName: "technical_drawing_url"
+                });
+              }
+            }
+          }
+        }
+      }
+    } catch (assocErr) {
+      console.warn("[MakeOrderService] Pre-staged upload association warning (non-fatal):", assocErr.message);
     }
     return {
       success: true,
@@ -116965,7 +117106,7 @@ var MakeCadService = class {
    * Uploads a validated file buffer using DurableUploadService with TrueNAS primary
    * and quota-managed Supabase Storage fallback, or direct pipeline if durable queue is unavailable.
    */
-  static async uploadValidatedBuffer(buffer, fileName, mimeType, subfolder) {
+  static async uploadValidatedBuffer(buffer, fileName, mimeType, subfolder, meta3) {
     try {
       const durableUpload = DurableUploadService.getInstance();
       const staged = await durableUpload.stageFile(
@@ -116973,7 +117114,7 @@ var MakeCadService = class {
         fileName,
         mimeType,
         subfolder,
-        void 0,
+        meta3,
         { autoDispatch: false }
       );
       const result = await durableUpload.dispatchUpload(staged.id);
@@ -117100,9 +117241,6 @@ var MakeCadService = class {
       if (typeof storageBucket.createSignedUrl === "function") {
         const { data: signedData } = await storageBucket.createSignedUrl(storagePath, 3600);
         signedUrl = signedData?.signedUrl;
-      } else if (typeof storageBucket.getPublicUrl === "function") {
-        const { data: pubData } = storageBucket.getPublicUrl(storagePath);
-        signedUrl = pubData?.publicUrl;
       }
     } catch {
     }
@@ -132300,7 +132438,8 @@ async function resolveAttachmentUrl(p) {
   if (p.startsWith("http://") || p.startsWith("https://")) {
     return { path: p, name, url: p };
   }
-  return { path: p, name, url: "" };
+  const isPending = p.includes("upl_") || p.includes("make-order-files/");
+  return { path: p, name, url: "", isPending: isPending || void 0 };
 }
 function registerMakeHandlers() {
   function requireSession() {
@@ -132431,10 +132570,11 @@ function registerMakeHandlers() {
                 fileBuffer,
                 fileName,
                 mimeType,
-                `make-order-files/${parsed.orderId}/stages`
+                `make-order-files/${parsed.orderId}/stages`,
+                { entityType: "make_orders", entityId: parsed.orderId, fieldName: "stage_photo_url" }
               );
-              if (uploadResult.success && uploadResult.publicUrl) {
-                finalPhotoUrl = uploadResult.publicUrl;
+              if (uploadResult.success) {
+                finalPhotoUrl = uploadResult.durableKey || uploadResult.publicUrl || null;
               }
             }
           }
@@ -132492,11 +132632,13 @@ function registerMakeHandlers() {
         return { canceled: true, error: validation.error };
       }
       const subfolder = itemId ? `make-order-files/${orderId}/items/${itemId}` : `make-order-files/${orderId}`;
+      const meta3 = itemId ? { entityType: "make_order_items", entityId: itemId, fieldName: "technical_drawing_url" } : { entityType: "make_orders", entityId: orderId, fieldName: "pdf_urls" };
       const uploadResult = await MakeCadService.uploadValidatedBuffer(
         validation.fileBuffer,
         validation.sanitizedFileName,
         validation.mimeType,
-        subfolder
+        subfolder,
+        meta3
       );
       if (!uploadResult.success) {
         return { success: false, error: uploadResult.error || "Failed to upload to storage" };
@@ -132508,7 +132650,7 @@ function registerMakeHandlers() {
       if (itemId) {
         const { data: item } = await supabase.from("make_order_items").select("pdf_urls, technical_drawing_url").eq("id", itemId).maybeSingle();
         const existing = Array.isArray(item?.pdf_urls) ? item.pdf_urls : [];
-        const combined = [...existing, persistentRef];
+        const combined = Array.from(/* @__PURE__ */ new Set([...existing, persistentRef]));
         await supabase.from("make_order_items").update({
           pdf_urls: combined,
           technical_drawing_url: persistentRef
@@ -132516,12 +132658,12 @@ function registerMakeHandlers() {
       } else {
         const { data: order } = await supabase.from("make_orders").select("pdf_urls").eq("id", orderId).maybeSingle();
         const existing = Array.isArray(order?.pdf_urls) ? order.pdf_urls : [];
-        const combined = [...existing, persistentRef];
+        const combined = Array.from(/* @__PURE__ */ new Set([...existing, persistentRef]));
         await supabase.from("make_orders").update({ pdf_urls: combined }).eq("id", orderId);
       }
       return {
         success: true,
-        publicUrl: uploadResult.publicUrl || persistentRef,
+        publicUrl: uploadResult.publicUrl || void 0,
         durableKey: persistentRef,
         isPendingUpload: uploadResult.isPendingUpload,
         status: uploadResult.status,
@@ -132544,7 +132686,8 @@ function registerMakeHandlers() {
         validation.fileBuffer,
         validation.sanitizedFileName,
         validation.mimeType,
-        `make-order-files/${orderId}/stages`
+        `make-order-files/${orderId}/stages`,
+        { entityType: "make_orders", entityId: orderId, fieldName: "stage_photo_url" }
       );
       if (!uploadResult.success) {
         return { success: false, error: uploadResult.error || "Failed to upload photo" };
@@ -132555,7 +132698,7 @@ function registerMakeHandlers() {
       }
       return {
         success: true,
-        publicUrl: uploadResult.publicUrl || persistentRef,
+        publicUrl: uploadResult.publicUrl || void 0,
         durableKey: persistentRef,
         isPendingUpload: uploadResult.isPendingUpload,
         status: uploadResult.status,
@@ -132580,7 +132723,8 @@ function registerMakeHandlers() {
       validation.fileBuffer,
       validation.sanitizedFileName,
       validation.mimeType,
-      subfolder
+      subfolder,
+      { entityType: "make_order_items", entityId: itemId, fieldName: "technical_drawing_url" }
     );
     if (!uploadResult.success) {
       return { error: uploadResult.error || "Failed to upload drawing" };
@@ -132591,7 +132735,7 @@ function registerMakeHandlers() {
     }
     const { data: item } = await supabase.from("make_order_items").select("pdf_urls").eq("id", itemId).maybeSingle();
     const existing = Array.isArray(item?.pdf_urls) ? item.pdf_urls : [];
-    const combined = [...existing, persistentRef];
+    const combined = Array.from(/* @__PURE__ */ new Set([...existing, persistentRef]));
     await supabase.from("make_order_items").update({
       pdf_urls: combined,
       technical_drawing_url: persistentRef
@@ -132600,7 +132744,7 @@ function registerMakeHandlers() {
       success: true,
       paths: [persistentRef],
       allPaths: combined,
-      publicUrl: uploadResult.publicUrl || persistentRef,
+      publicUrl: uploadResult.publicUrl || void 0,
       durableKey: persistentRef,
       isPendingUpload: uploadResult.isPendingUpload,
       status: uploadResult.status
@@ -132620,7 +132764,8 @@ function registerMakeHandlers() {
       validation.fileBuffer,
       validation.sanitizedFileName,
       validation.mimeType,
-      subfolder
+      subfolder,
+      { entityType: "make_orders", entityId: orderId, fieldName: "pdf_urls" }
     );
     if (!uploadResult.success) {
       return { error: uploadResult.error || "Failed to upload drawing" };
@@ -132631,12 +132776,12 @@ function registerMakeHandlers() {
     }
     const { data: order } = await supabase.from("make_orders").select("pdf_urls").eq("id", orderId).maybeSingle();
     const existing = Array.isArray(order?.pdf_urls) ? order.pdf_urls : [];
-    const combined = [...existing, persistentRef];
+    const combined = Array.from(/* @__PURE__ */ new Set([...existing, persistentRef]));
     await supabase.from("make_orders").update({ pdf_urls: combined }).eq("id", orderId);
     return {
       success: true,
       paths: [persistentRef],
-      publicUrl: uploadResult.publicUrl || persistentRef,
+      publicUrl: uploadResult.publicUrl || void 0,
       durableKey: persistentRef,
       isPendingUpload: uploadResult.isPendingUpload,
       status: uploadResult.status
@@ -133528,7 +133673,8 @@ function registerMakeHandlers() {
         validation.fileBuffer,
         validation.sanitizedFileName,
         validation.mimeType,
-        subfolder
+        subfolder,
+        orderId ? { entityType: "make_orders", entityId: orderId, fieldName: "invoice_attachment_urls" } : void 0
       );
       if (!uploadResult.success) {
         return { success: false, error: uploadResult.error || "Failed to upload invoice image" };
@@ -133540,12 +133686,12 @@ function registerMakeHandlers() {
       if (orderId) {
         const { data: order } = await supabase.from("make_orders").select("invoice_attachment_urls").eq("id", orderId).maybeSingle();
         const existing = Array.isArray(order?.invoice_attachment_urls) ? order.invoice_attachment_urls : [];
-        const combined = [...existing, persistentRef];
+        const combined = Array.from(/* @__PURE__ */ new Set([...existing, persistentRef]));
         await supabase.from("make_orders").update({ invoice_attachment_urls: combined }).eq("id", orderId);
       }
       return {
         success: true,
-        publicUrl: uploadResult.publicUrl || persistentRef,
+        publicUrl: uploadResult.publicUrl || void 0,
         durableKey: persistentRef,
         isPendingUpload: uploadResult.isPendingUpload,
         status: uploadResult.status,
@@ -133576,11 +133722,13 @@ function registerMakeHandlers() {
         return { success: false, error: validation.error };
       }
       const subfolder = itemId ? `make-order-files/${orderId || "general"}/items/${itemId}` : orderId ? `make-order-files/${orderId}/invoices` : "make-order-files/invoices";
+      const meta3 = itemId ? { entityType: "make_order_items", entityId: itemId, fieldName: "technical_drawing_url" } : orderId ? { entityType: "make_orders", entityId: orderId, fieldName: "invoice_attachment_urls" } : void 0;
       const uploadResult = await MakeCadService.uploadValidatedBuffer(
         validation.fileBuffer,
         validation.sanitizedFileName,
         validation.mimeType,
-        subfolder
+        subfolder,
+        meta3
       );
       if (!uploadResult.success) {
         return { success: false, error: uploadResult.error || "Failed to upload attachment" };
@@ -133592,7 +133740,7 @@ function registerMakeHandlers() {
       if (itemId) {
         const { data: item } = await supabase.from("make_order_items").select("pdf_urls, technical_drawing_url").eq("id", itemId).maybeSingle();
         const existing = Array.isArray(item?.pdf_urls) ? item.pdf_urls : [];
-        const combined = [...existing, persistentRef];
+        const combined = Array.from(/* @__PURE__ */ new Set([...existing, persistentRef]));
         await supabase.from("make_order_items").update({
           pdf_urls: combined,
           technical_drawing_url: persistentRef
@@ -133600,12 +133748,12 @@ function registerMakeHandlers() {
       } else if (orderId) {
         const { data: order } = await supabase.from("make_orders").select("invoice_attachment_urls").eq("id", orderId).maybeSingle();
         const existing = Array.isArray(order?.invoice_attachment_urls) ? order.invoice_attachment_urls : [];
-        const combined = [...existing, persistentRef];
+        const combined = Array.from(/* @__PURE__ */ new Set([...existing, persistentRef]));
         await supabase.from("make_orders").update({ invoice_attachment_urls: combined }).eq("id", orderId);
       }
       return {
         success: true,
-        publicUrl: uploadResult.publicUrl || persistentRef,
+        publicUrl: uploadResult.publicUrl || void 0,
         durableKey: persistentRef,
         isPendingUpload: uploadResult.isPendingUpload,
         status: uploadResult.status,
@@ -134387,8 +134535,7 @@ async function uploadOptimizedImage(buffer, filenamePrefix) {
       const storagePath = `product-images/${finalFilename}`;
       const { error: sbErr } = await supabase_default.storage.from("make-order-files").upload(storagePath, optimized, { contentType: "image/webp", upsert: false });
       if (!sbErr) {
-        const { data: pubData } = supabase_default.storage.from("make-order-files").getPublicUrl(storagePath);
-        return pubData?.publicUrl || storagePath;
+        return storagePath;
       }
     }
   } catch {

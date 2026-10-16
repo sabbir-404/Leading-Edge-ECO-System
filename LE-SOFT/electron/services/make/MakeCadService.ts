@@ -320,7 +320,8 @@ export class MakeCadService {
         buffer: Buffer,
         fileName: string,
         mimeType: string,
-        subfolder: string
+        subfolder: string,
+        meta?: { entityType?: string; entityId?: string | number; fieldName?: string }
     ): Promise<MakeUploadResult> {
         // 1. Resilient staging & durable dispatch
         try {
@@ -330,7 +331,7 @@ export class MakeCadService {
                 fileName,
                 mimeType,
                 subfolder,
-                undefined,
+                meta,
                 { autoDispatch: false }
             );
             const result = await durableUpload.dispatchUpload(staged.id);
@@ -476,9 +477,6 @@ export class MakeCadService {
             if (typeof storageBucket.createSignedUrl === 'function') {
                 const { data: signedData } = await storageBucket.createSignedUrl(storagePath, 3600);
                 signedUrl = signedData?.signedUrl;
-            } else if (typeof (storageBucket as any).getPublicUrl === 'function') {
-                const { data: pubData } = (storageBucket as any).getPublicUrl(storagePath);
-                signedUrl = pubData?.publicUrl;
             }
         } catch {}
 

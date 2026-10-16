@@ -673,8 +673,9 @@ export async function resolveAttachmentUrl(p: string): Promise<{ path: string; n
         return { path: p, name, url: p };
     }
 
-    // 5. If missing or unresolvable, NEVER return a guessed URL
-    return { path: p, name, url: '' };
+    // 5. If missing or unresolvable, NEVER return a guessed URL; mark pending if it resembles a durable key or upload reference
+    const isPending = p.includes('upl_') || p.includes('make-order-files/');
+    return { path: p, name, url: '', isPending: isPending || undefined };
 }
 
 export function registerMakeHandlers(): void {
@@ -870,10 +871,11 @@ export function registerMakeHandlers(): void {
                                 fileBuffer,
                                 fileName,
                                 mimeType,
-                                `make-order-files/${parsed.orderId}/stages`
+                                `make-order-files/${parsed.orderId}/stages`,
+                                { entityType: 'make_orders', entityId: parsed.orderId, fieldName: 'stage_photo_url' }
                             );
-                            if (uploadResult.success && uploadResult.publicUrl) {
-                                finalPhotoUrl = uploadResult.publicUrl;
+                            if (uploadResult.success) {
+                                finalPhotoUrl = uploadResult.durableKey || uploadResult.publicUrl || null;
                             }
                         }
                     }
@@ -944,11 +946,16 @@ export function registerMakeHandlers(): void {
                 ? `make-order-files/${orderId}/items/${itemId}`
                 : `make-order-files/${orderId}`;
 
+            const meta = itemId
+                ? { entityType: 'make_order_items', entityId: itemId, fieldName: 'technical_drawing_url' }
+                : { entityType: 'make_orders', entityId: orderId, fieldName: 'pdf_urls' };
+
             const uploadResult = await MakeCadService.uploadValidatedBuffer(
                 validation.fileBuffer,
                 validation.sanitizedFileName,
                 validation.mimeType,
-                subfolder
+                subfolder,
+                meta
             );
 
             if (!uploadResult.success) {
@@ -964,7 +971,7 @@ export function registerMakeHandlers(): void {
             if (itemId) {
                 const { data: item } = await supabase.from('make_order_items').select('pdf_urls, technical_drawing_url').eq('id', itemId).maybeSingle();
                 const existing: string[] = Array.isArray(item?.pdf_urls) ? item.pdf_urls : [];
-                const combined = [...existing, persistentRef];
+                const combined = Array.from(new Set([...existing, persistentRef]));
                 await supabase.from('make_order_items').update({
                     pdf_urls: combined,
                     technical_drawing_url: persistentRef
@@ -972,13 +979,13 @@ export function registerMakeHandlers(): void {
             } else {
                 const { data: order } = await supabase.from('make_orders').select('pdf_urls').eq('id', orderId).maybeSingle();
                 const existing: string[] = Array.isArray(order?.pdf_urls) ? order.pdf_urls : [];
-                const combined = [...existing, persistentRef];
+                const combined = Array.from(new Set([...existing, persistentRef]));
                 await supabase.from('make_orders').update({ pdf_urls: combined }).eq('id', orderId);
             }
 
             return {
                 success: true,
-                publicUrl: uploadResult.publicUrl || persistentRef,
+                publicUrl: uploadResult.publicUrl || undefined,
                 durableKey: persistentRef,
                 isPendingUpload: uploadResult.isPendingUpload,
                 status: uploadResult.status,
@@ -1004,7 +1011,8 @@ export function registerMakeHandlers(): void {
                 validation.fileBuffer,
                 validation.sanitizedFileName,
                 validation.mimeType,
-                `make-order-files/${orderId}/stages`
+                `make-order-files/${orderId}/stages`,
+                { entityType: 'make_orders', entityId: orderId, fieldName: 'stage_photo_url' }
             );
 
             if (!uploadResult.success) {
@@ -1018,7 +1026,7 @@ export function registerMakeHandlers(): void {
 
             return {
                 success: true,
-                publicUrl: uploadResult.publicUrl || persistentRef,
+                publicUrl: uploadResult.publicUrl || undefined,
                 durableKey: persistentRef,
                 isPendingUpload: uploadResult.isPendingUpload,
                 status: uploadResult.status,
@@ -1047,7 +1055,8 @@ export function registerMakeHandlers(): void {
             validation.fileBuffer,
             validation.sanitizedFileName,
             validation.mimeType,
-            subfolder
+            subfolder,
+            { entityType: 'make_order_items', entityId: itemId, fieldName: 'technical_drawing_url' }
         );
 
         if (!uploadResult.success) {
@@ -1061,7 +1070,7 @@ export function registerMakeHandlers(): void {
 
         const { data: item } = await supabase.from('make_order_items').select('pdf_urls').eq('id', itemId).maybeSingle();
         const existing: string[] = Array.isArray(item?.pdf_urls) ? item.pdf_urls : [];
-        const combined = [...existing, persistentRef];
+        const combined = Array.from(new Set([...existing, persistentRef]));
         await supabase.from('make_order_items').update({
             pdf_urls: combined,
             technical_drawing_url: persistentRef
@@ -1071,7 +1080,7 @@ export function registerMakeHandlers(): void {
             success: true,
             paths: [persistentRef],
             allPaths: combined,
-            publicUrl: uploadResult.publicUrl || persistentRef,
+            publicUrl: uploadResult.publicUrl || undefined,
             durableKey: persistentRef,
             isPendingUpload: uploadResult.isPendingUpload,
             status: uploadResult.status
@@ -1094,7 +1103,8 @@ export function registerMakeHandlers(): void {
             validation.fileBuffer,
             validation.sanitizedFileName,
             validation.mimeType,
-            subfolder
+            subfolder,
+            { entityType: 'make_orders', entityId: orderId, fieldName: 'pdf_urls' }
         );
 
         if (!uploadResult.success) {
@@ -1108,13 +1118,13 @@ export function registerMakeHandlers(): void {
 
         const { data: order } = await supabase.from('make_orders').select('pdf_urls').eq('id', orderId).maybeSingle();
         const existing: string[] = Array.isArray(order?.pdf_urls) ? order.pdf_urls : [];
-        const combined = [...existing, persistentRef];
+        const combined = Array.from(new Set([...existing, persistentRef]));
         await supabase.from('make_orders').update({ pdf_urls: combined }).eq('id', orderId);
 
         return {
             success: true,
             paths: [persistentRef],
-            publicUrl: uploadResult.publicUrl || persistentRef,
+            publicUrl: uploadResult.publicUrl || undefined,
             durableKey: persistentRef,
             isPendingUpload: uploadResult.isPendingUpload,
             status: uploadResult.status
@@ -2167,7 +2177,8 @@ export function registerMakeHandlers(): void {
                 validation.fileBuffer,
                 validation.sanitizedFileName,
                 validation.mimeType,
-                subfolder
+                subfolder,
+                orderId ? { entityType: 'make_orders', entityId: orderId, fieldName: 'invoice_attachment_urls' } : undefined
             );
 
             if (!uploadResult.success) {
@@ -2182,13 +2193,13 @@ export function registerMakeHandlers(): void {
             if (orderId) {
                 const { data: order } = await supabase.from('make_orders').select('invoice_attachment_urls').eq('id', orderId).maybeSingle();
                 const existing: string[] = Array.isArray(order?.invoice_attachment_urls) ? order.invoice_attachment_urls : [];
-                const combined = [...existing, persistentRef];
+                const combined = Array.from(new Set([...existing, persistentRef]));
                 await supabase.from('make_orders').update({ invoice_attachment_urls: combined }).eq('id', orderId);
             }
 
             return {
                 success: true,
-                publicUrl: uploadResult.publicUrl || persistentRef,
+                publicUrl: uploadResult.publicUrl || undefined,
                 durableKey: persistentRef,
                 isPendingUpload: uploadResult.isPendingUpload,
                 status: uploadResult.status,
@@ -2225,11 +2236,16 @@ export function registerMakeHandlers(): void {
             const subfolder = itemId
                 ? `make-order-files/${orderId || 'general'}/items/${itemId}`
                 : (orderId ? `make-order-files/${orderId}/invoices` : 'make-order-files/invoices');
+            const meta = itemId
+                ? { entityType: 'make_order_items', entityId: itemId, fieldName: 'technical_drawing_url' }
+                : (orderId ? { entityType: 'make_orders', entityId: orderId, fieldName: 'invoice_attachment_urls' } : undefined);
+
             const uploadResult = await MakeCadService.uploadValidatedBuffer(
                 validation.fileBuffer,
                 validation.sanitizedFileName,
                 validation.mimeType,
-                subfolder
+                subfolder,
+                meta
             );
 
             if (!uploadResult.success) {
@@ -2244,7 +2260,7 @@ export function registerMakeHandlers(): void {
             if (itemId) {
                 const { data: item } = await supabase.from('make_order_items').select('pdf_urls, technical_drawing_url').eq('id', itemId).maybeSingle();
                 const existing: string[] = Array.isArray(item?.pdf_urls) ? item.pdf_urls : [];
-                const combined = [...existing, persistentRef];
+                const combined = Array.from(new Set([...existing, persistentRef]));
                 await supabase.from('make_order_items').update({
                     pdf_urls: combined,
                     technical_drawing_url: persistentRef
@@ -2252,13 +2268,13 @@ export function registerMakeHandlers(): void {
             } else if (orderId) {
                 const { data: order } = await supabase.from('make_orders').select('invoice_attachment_urls').eq('id', orderId).maybeSingle();
                 const existing: string[] = Array.isArray(order?.invoice_attachment_urls) ? order.invoice_attachment_urls : [];
-                const combined = [...existing, persistentRef];
+                const combined = Array.from(new Set([...existing, persistentRef]));
                 await supabase.from('make_orders').update({ invoice_attachment_urls: combined }).eq('id', orderId);
             }
 
             return {
                 success: true,
-                publicUrl: uploadResult.publicUrl || persistentRef,
+                publicUrl: uploadResult.publicUrl || undefined,
                 durableKey: persistentRef,
                 isPendingUpload: uploadResult.isPendingUpload,
                 status: uploadResult.status,

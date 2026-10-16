@@ -16,6 +16,7 @@ import { MakePricingService, PricingItem, PricingOverride } from './MakePricingS
 import { MakeVersionService } from './MakeVersionService';
 import { MakeSearchService } from './MakeSearchService';
 import { SessionManager } from '../../session-manager';
+import { DurableUploadService } from '../media/DurableUploadService';
 
 export interface CreateMakeOrderInput {
     furniture_name: string;
@@ -417,6 +418,47 @@ export class MakeOrderService {
             } catch (notifErr) {
                 console.warn('[MakeOrderService] Notification error (non-fatal):', notifErr);
             }
+        }
+
+        // 6. Associate any pre-staged uploads with the newly created order and item records
+        try {
+            const durableUpload = DurableUploadService.getInstance();
+            const invAttachments = orderHeaderPayload.invoice_attachment_urls;
+            if (Array.isArray(invAttachments)) {
+                for (const att of invAttachments) {
+                    if (typeof att === 'string') {
+                        durableUpload.associateUploadWithEntity(att, {
+                            entityType: 'make_orders',
+                            entityId: orderId,
+                            fieldName: 'invoice_attachment_urls'
+                        });
+                    }
+                }
+            }
+
+            if (Array.isArray(insertedItems)) {
+                for (let idx = 0; idx < insertedItems.length; idx++) {
+                    const itemRecord = insertedItems[idx];
+                    const rawItem = input.items[idx];
+                    if (!itemRecord?.id || !rawItem) continue;
+
+                    const drawings = (rawItem as any).pdf_urls || (rawItem as any).drawings || [(rawItem as any).technical_drawing_url].filter(Boolean);
+                    if (Array.isArray(drawings)) {
+                        for (const d of drawings) {
+                            const dRef = typeof d === 'string' ? d : d?.url;
+                            if (dRef) {
+                                durableUpload.associateUploadWithEntity(dRef, {
+                                    entityType: 'make_order_items',
+                                    entityId: itemRecord.id,
+                                    fieldName: 'technical_drawing_url'
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (assocErr: any) {
+            console.warn('[MakeOrderService] Pre-staged upload association warning (non-fatal):', assocErr.message);
         }
 
         return {

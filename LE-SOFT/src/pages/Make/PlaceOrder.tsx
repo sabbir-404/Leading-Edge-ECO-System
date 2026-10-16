@@ -781,8 +781,9 @@ const PlaceOrder: React.FC = () => {
     try {
       if (window.electron?.makePickAndUploadInvoiceAttachment) {
         const res = await window.electron.makePickAndUploadInvoiceAttachment();
-        if (res && res.success && res.publicUrl) {
-          setInvoiceAttachments(prev => [...prev, { name: res.fileName || 'Invoice Image', url: res.publicUrl }]);
+        const persistentUrl = res.publicUrl || res.durableKey;
+        if (res && res.success && persistentUrl) {
+          setInvoiceAttachments(prev => [...prev, { name: res.fileName || 'Invoice Image', url: persistentUrl }]);
         } else if (res && res.error) {
           alert('Upload failed: ' + res.error);
         }
@@ -813,8 +814,9 @@ const PlaceOrder: React.FC = () => {
             fileName: file.name,
             fileBase64: base64
           });
-          if (res && res.success && res.publicUrl) {
-            setInvoiceAttachments(prev => [...prev, { name: file.name, url: res.publicUrl }]);
+          const persistentUrl = res.publicUrl || res.durableKey;
+          if (res && res.success && persistentUrl) {
+            setInvoiceAttachments(prev => [...prev, { name: file.name, url: persistentUrl }]);
           } else if (res && res.error) {
             alert('Upload failed: ' + res.error);
           }
@@ -989,8 +991,9 @@ const PlaceOrder: React.FC = () => {
             fileName: file.name,
             fileBase64: base64
           });
-          if (res && res.success && res.publicUrl) {
-            setInvoiceAttachments(prev => [...prev, { name: file.name, url: res.publicUrl }]);
+          const persistentUrl = res.publicUrl || res.durableKey;
+          if (res && res.success && persistentUrl) {
+            setInvoiceAttachments(prev => [...prev, { name: file.name, url: persistentUrl }]);
           } else if (res && res.error) {
             alert('Upload failed: ' + res.error);
           }

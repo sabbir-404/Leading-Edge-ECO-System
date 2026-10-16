@@ -68,6 +68,10 @@ const h = vi.hoisted(() => {
                 })),
                 getPublicUrl: vi.fn((filePath: string) => ({
                     data: { publicUrl: `https://mock.supabase.co/storage/v1/object/public/${bucket}/${filePath}` }
+                })),
+                remove: vi.fn(async (paths: string[]) => ({
+                    data: paths,
+                    error: null
                 }))
             };
         }
@@ -635,6 +639,260 @@ describe('MAKE Module Stability & Verification Suite (LE-SOFT v1.8.12)', () => {
             const resNotFound = await resolveAttachmentUrl('unknown-file.pdf');
             expect(resNotFound.url).toBe('');
             expect(resNotFound.url).not.toContain('storage.lenas.me');
+        });
+
+        it('cleanup: new relative object keys are pruned correctly after authoritative persistence', async () => {
+            const uploadService = DurableUploadService.getInstance();
+            (uploadService as any).supabaseClient = supabase;
+
+            const relativeKey = 'make-order-files/101/drawing.pdf';
+            const mockStorage = (supabase.storage.from as any)('make-order-files');
+            const removeSpy = vi.spyOn(mockStorage, 'remove').mockResolvedValue({ data: ['101/drawing.pdf'], error: null });
+
+            const pruned = await uploadService.pruneCloudCopy('make-order-files/101', relativeKey, 1024, 'upl_test_rel_key');
+            expect(pruned).toBe(true);
+            expect(removeSpy).toHaveBeenCalledWith(expect.arrayContaining(['make-order-files/101/drawing.pdf', '101/drawing.pdf']));
+        });
+
+        it('cleanup: existing legacy absolute URLs are handled safely without new URL() crash', async () => {
+            const uploadService = DurableUploadService.getInstance();
+            (uploadService as any).supabaseClient = supabase;
+
+            const legacyUrl = 'https://mock.supabase.co/storage/v1/object/public/make-order-files/101/legacy_drawing.pdf';
+            const mockStorage = (supabase.storage.from as any)('make-order-files');
+            const removeSpy = vi.spyOn(mockStorage, 'remove').mockResolvedValue({ data: ['101/legacy_drawing.pdf'], error: null });
+
+            const pruned = await uploadService.pruneCloudCopy('make-order-files/101', legacyUrl, 2048, 'upl_test_legacy_url');
+            expect(pruned).toBe(true);
+            expect(removeSpy).toHaveBeenCalledWith(expect.arrayContaining(['101/legacy_drawing.pdf']));
+        });
+
+        it('cloud-buffer -> TrueNAS recovery updates the owning entity record before cloud cleanup and deduplicates array fields', async () => {
+            const uploadService = DurableUploadService.getInstance();
+            (uploadService as any).supabaseClient = supabase;
+            (uploadService as any).nasClient = supabase;
+
+            const buffer = Buffer.from('%PDF-1.7 recovery flow test');
+            const staged = await uploadService.stageFile(
+                buffer,
+                'recovery_test.pdf',
+                'application/pdf',
+                'make-order-files/101',
+                { entityType: 'make_orders', entityId: 101, fieldName: 'pdf_urls' },
+                { autoDispatch: false }
+            );
+
+            const tempCloudUrl = `make-order-files/101/${staged.id}_recovery_test.pdf`;
+            (uploadService as any).db.prepare(`
+                UPDATE durable_uploads
+                SET status = 'buffered_supabase', remote_url_supabase = ?
+                WHERE id = ?
+            `).run(tempCloudUrl, staged.id);
+
+            const sequence: string[] = [];
+            let orderPdfs: string[] = [tempCloudUrl, 'https://storage.lenas.me/files/existing_blueprint.pdf'];
+
+            h.state.responder = (table: string, op: string, body?: any) => {
+                if (table === 'make_orders') {
+                    if (op === 'select') {
+                        return { data: { id: 101, pdf_urls: orderPdfs }, error: null };
+                    }
+                    if (op === 'update') {
+                        sequence.push('update_entity_record');
+                        orderPdfs = body.pdf_urls;
+                        return { data: { id: 101, ...body }, error: null };
+                    }
+                }
+                return { data: null, error: null };
+            };
+
+            const nasConfirmedUrl = `https://storage.lenas.me/files/make-order-files/101/${staged.id}_recovery_test.pdf`;
+            vi.spyOn(uploadService as any, 'uploadToNasStorage').mockImplementation(async () => {
+                sequence.push('upload_nas');
+                return { success: true, url: nasConfirmedUrl, sha256: staged.sha256 };
+            });
+
+            const mockStorage = (supabase.storage.from as any)('make-order-files');
+            vi.spyOn(mockStorage, 'remove').mockImplementation(async (paths: string[]) => {
+                sequence.push('prune_cloud');
+                return { data: paths, error: null };
+            });
+
+            const quotaMgr = SupabaseQuotaManager.getInstance();
+            vi.spyOn(quotaMgr, 'pruneConfirmedStorage').mockImplementation(async () => {
+                sequence.push('prune_quota');
+                return true;
+            });
+
+            const res = await uploadService.dispatchUpload(staged.id);
+
+            expect(res.success).toBe(true);
+            expect(res.status).toBe('synced_nas');
+            expect(res.url).toBe(nasConfirmedUrl);
+
+            // Strict sequence verification
+            expect(sequence.indexOf('upload_nas')).toBeLessThan(sequence.indexOf('update_entity_record'));
+            expect(sequence.indexOf('update_entity_record')).toBeLessThan(sequence.indexOf('prune_cloud'));
+
+            // Owning record updated with TrueNAS URL, replacing temporary cloud reference without duplicates
+            expect(orderPdfs).toContain(nasConfirmedUrl);
+            expect(orderPdfs).not.toContain(tempCloudUrl);
+            expect(orderPdfs.filter(u => u === nasConfirmedUrl).length).toBe(1);
+        });
+
+        it('cleanup failure retains valid attachment and quota accounting for retry', async () => {
+            const uploadService = DurableUploadService.getInstance();
+            (uploadService as any).supabaseClient = supabase;
+            (uploadService as any).nasClient = supabase;
+
+            const buffer = Buffer.from('%PDF-1.7 cleanup failure test');
+            const staged = await uploadService.stageFile(
+                buffer,
+                'cleanup_fail.pdf',
+                'application/pdf',
+                'make-order-files/101',
+                { entityType: 'make_orders', entityId: 101, fieldName: 'pdf_urls' },
+                { autoDispatch: false }
+            );
+
+            const tempCloudUrl = `make-order-files/101/${staged.id}_cleanup_fail.pdf`;
+            (uploadService as any).db.prepare(`
+                UPDATE durable_uploads
+                SET status = 'buffered_supabase', remote_url_supabase = ?
+                WHERE id = ?
+            `).run(tempCloudUrl, staged.id);
+
+            const nasConfirmedUrl = `https://storage.lenas.me/files/make-order-files/101/${staged.id}_cleanup_fail.pdf`;
+            vi.spyOn(uploadService as any, 'uploadToNasStorage').mockResolvedValue({
+                success: true,
+                url: nasConfirmedUrl,
+                sha256: staged.sha256
+            });
+
+            h.state.responder = (table: string, op: string, body?: any) => {
+                if (table === 'make_orders') {
+                    return { data: { id: 101, pdf_urls: [] }, error: null };
+                }
+                return { data: null, error: null };
+            };
+
+            // Simulate cloud prune failure
+            const mockStorage = (supabase.storage.from as any)('make-order-files');
+            vi.spyOn(mockStorage, 'remove').mockResolvedValue({ data: null, error: new Error('Supabase Storage 503') });
+
+            const res = await uploadService.dispatchUpload(staged.id);
+
+            expect(res.success).toBe(false);
+            expect(res.error).toContain('cleanup retry');
+
+            // SQLite record retains remote_url_nas so next retry skips re-uploading to NAS
+            const row = (uploadService as any).db.prepare(`SELECT * FROM durable_uploads WHERE id = ?`).get(staged.id);
+            expect(row.status).toBe('buffered_supabase');
+            expect(row.remote_url_nas).toBe(nasConfirmedUrl);
+            expect(row.remote_url_supabase).toBe(tempCloudUrl);
+
+            // Resolve failure and retry
+            vi.spyOn(mockStorage, 'remove').mockResolvedValue({ data: [tempCloudUrl], error: null });
+            vi.spyOn(SupabaseQuotaManager.getInstance(), 'pruneConfirmedStorage').mockResolvedValue(true);
+
+            const retryRes = await uploadService.dispatchUpload(staged.id);
+            expect(retryRes.success).toBe(true);
+            expect(retryRes.status).toBe('synced_nas');
+
+            const finalRow = (uploadService as any).db.prepare(`SELECT * FROM durable_uploads WHERE id = ?`).get(staged.id);
+            expect(finalRow.status).toBe('synced_nas');
+            expect(finalRow.last_error).toBeNull();
+        });
+
+        it('successful cleanup releases quota exactly once', async () => {
+            const uploadService = DurableUploadService.getInstance();
+            (uploadService as any).supabaseClient = supabase;
+            const quotaMgr = SupabaseQuotaManager.getInstance();
+
+            const pruneSpy = vi.spyOn(quotaMgr, 'pruneConfirmedStorage').mockResolvedValue(true);
+            pruneSpy.mockClear();
+
+            const mockStorage = (supabase.storage.from as any)('make-order-files');
+            vi.spyOn(mockStorage, 'remove').mockResolvedValue({ data: ['101/file.pdf'], error: null });
+
+            const pruned = await uploadService.pruneCloudCopy('make-order-files/101', 'make-order-files/101/file.pdf', 5000, 'upl_quota_once');
+            expect(pruned).toBe(true);
+            expect(pruneSpy).toHaveBeenCalledTimes(1);
+            expect(pruneSpy).toHaveBeenCalledWith('upl_quota_once', 5000);
+        });
+
+        it('offline drawing and stage-photo flows preserve pending owner association', async () => {
+            const quotaMgr = SupabaseQuotaManager.getInstance();
+            vi.spyOn(quotaMgr, 'canAcceptStorageUpload').mockReturnValue(false);
+            vi.spyOn(quotaMgr, 'reserveStorageQuota').mockResolvedValue(false);
+
+            const uploadService = DurableUploadService.getInstance();
+            vi.spyOn(uploadService as any, 'uploadToNasStorage').mockResolvedValue({ success: false, error: 'TrueNAS offline' });
+
+            const buffer = Buffer.from('%PDF-1.7 offline drawing test');
+            const uploadRes = await MakeCadService.uploadValidatedBuffer(
+                buffer,
+                'offline_blueprint.pdf',
+                'application/pdf',
+                'make-order-files/101/items/55',
+                { entityType: 'make_order_items', entityId: 55, fieldName: 'technical_drawing_url' }
+            );
+
+            expect(uploadRes.status).toBe('staged_local');
+            expect(uploadRes.isPendingUpload).toBe(true);
+            expect(uploadRes.publicUrl).toBeUndefined();
+            expect(uploadRes.durableKey).toBeDefined();
+
+            // Verify owner association is preserved in SQLite
+            const row = (uploadService as any).db.prepare(`
+                SELECT * FROM durable_uploads WHERE id = ?
+            `).get(uploadRes.uploadId);
+            expect(row).toBeDefined();
+            expect(row.field_name).toBe('technical_drawing_url');
+            expect(row.status).toBe('staged_local');
+        });
+
+        it('associateUploadWithEntity safely links pre-order staged attachments upon order creation', async () => {
+            const uploadService = DurableUploadService.getInstance();
+            const buffer = Buffer.from('%PDF-1.7 pre-order invoice');
+            const staged = await uploadService.stageFile(
+                buffer,
+                'pre_order_invoice.pdf',
+                'application/pdf',
+                'make-order-files/invoices',
+                undefined,
+                { autoDispatch: false }
+            );
+
+            expect(staged.entityType).toBeNull();
+            expect(staged.entityId).toBeNull();
+
+            // Link to order via associateUploadWithEntity
+            const associated = uploadService.associateUploadWithEntity(staged.id, {
+                entityType: 'make_orders',
+                entityId: 999,
+                fieldName: 'invoice_attachment_urls'
+            });
+
+            expect(associated).toBe(true);
+
+            const row = (uploadService as any).db.prepare(`SELECT * FROM durable_uploads WHERE id = ?`).get(staged.id);
+            expect(row.entity_type).toBe('make_orders');
+            expect(row.entity_id).toBe('999');
+            expect(row.field_name).toBe('invoice_attachment_urls');
+        });
+
+        it('signed URL failure never falls back to a public URL', async () => {
+            const mockStorage = (supabase.storage.from as any)('make-order-files');
+            vi.spyOn(mockStorage, 'createSignedUrl').mockResolvedValue({
+                data: null,
+                error: new Error('Permission denied')
+            } as any);
+
+            const resolved = await resolveAttachmentUrl('make-order-files/101/private_plan.dwg');
+            expect(resolved.url).toBe('');
+            expect(resolved.url).not.toContain('/public/');
+            expect(resolved.isPending).toBe(true);
         });
     });
 

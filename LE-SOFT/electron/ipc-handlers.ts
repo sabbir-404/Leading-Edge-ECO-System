@@ -146,8 +146,8 @@ async function uploadOptimizedImage(buffer: Buffer, filenamePrefix: string): Pro
                 .from('make-order-files')
                 .upload(storagePath, optimized, { contentType: 'image/webp', upsert: false });
             if (!sbErr) {
-                const { data: pubData } = supabase.storage.from('make-order-files').getPublicUrl(storagePath);
-                return pubData?.publicUrl || storagePath;
+                // Return durable object key for private storage; never an unauthenticated public URL
+                return storagePath;
             }
         }
     } catch {}
