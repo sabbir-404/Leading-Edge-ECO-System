@@ -24610,40 +24610,63 @@ var init_SupabaseQuotaManager = __esm({
       }
       async releaseStorageQuota(reservationId, confirmedUploadedBytes = 0, statusOverride) {
         this.activeStorageReservations.delete(reservationId);
-        if (confirmedUploadedBytes > 0) {
-          this.measuredStorageBytes += confirmedUploadedBytes;
-          this.persistState();
-        }
         if (this.client) {
           try {
             const finalStatus = statusOverride || (confirmedUploadedBytes > 0 ? "committed" : "released");
-            await this.client.rpc("release_buffer_capacity", {
+            const { data: data2, error: error51 } = await this.client.rpc("release_buffer_capacity", {
               p_reservation_id: reservationId,
               p_client_id: this.clientId,
               p_status: finalStatus,
               p_actual_bytes: confirmedUploadedBytes
             });
+            if (error51 || !data2 || data2.success !== true) {
+              console.warn(`[QUOTA] Failed to transition storage capacity via RPC for ${reservationId} (status=${finalStatus}): ${error51?.message || data2?.reason || "Unknown error"}`);
+              return false;
+            }
+            if (confirmedUploadedBytes > 0) {
+              this.measuredStorageBytes += confirmedUploadedBytes;
+              this.persistState();
+            }
+            return true;
           } catch (err) {
             console.warn("[QUOTA] Failed to release storage capacity via RPC:", err.message);
+            return false;
           }
         }
-      }
-      async pruneConfirmedStorage(reservationId, bytesPruned) {
-        if (bytesPruned > 0) {
-          this.measuredStorageBytes = Math.max(0, this.measuredStorageBytes - bytesPruned);
+        if (confirmedUploadedBytes > 0) {
+          this.measuredStorageBytes += confirmedUploadedBytes;
           this.persistState();
         }
+        return true;
+      }
+      async pruneConfirmedStorage(reservationId, bytesPruned) {
         if (this.client) {
           try {
-            await this.client.rpc("release_buffer_capacity", {
+            const { data: data2, error: error51 } = await this.client.rpc("release_buffer_capacity", {
               p_reservation_id: reservationId,
               p_client_id: this.clientId,
               p_status: "pruned",
               p_actual_bytes: 0
             });
-          } catch {
+            if (error51 || !data2 || data2.success !== true) {
+              console.warn(`[QUOTA] Failed to prune storage buffer capacity via RPC for ${reservationId}: ${error51?.message || data2?.reason || "Unknown error"}`);
+              return false;
+            }
+            if (bytesPruned > 0) {
+              this.measuredStorageBytes = Math.max(0, this.measuredStorageBytes - bytesPruned);
+              this.persistState();
+            }
+            return true;
+          } catch (err) {
+            console.warn("[QUOTA] Exception pruning storage capacity:", err.message);
+            return false;
           }
         }
+        if (bytesPruned > 0) {
+          this.measuredStorageBytes = Math.max(0, this.measuredStorageBytes - bytesPruned);
+          this.persistState();
+        }
+        return true;
       }
       /**
        * Attempts to atomically reserve database quota for an offline fallback row batch.
@@ -24689,40 +24712,63 @@ var init_SupabaseQuotaManager = __esm({
       }
       async releaseDatabaseQuota(reservationId, confirmedWrittenBytes = 0, statusOverride) {
         this.activeDatabaseReservations.delete(reservationId);
-        if (confirmedWrittenBytes > 0) {
-          this.measuredDatabaseBytes += confirmedWrittenBytes;
-          this.persistState();
-        }
         if (this.client) {
           try {
             const finalStatus = statusOverride || (confirmedWrittenBytes > 0 ? "committed" : "released");
-            await this.client.rpc("release_buffer_capacity", {
+            const { data: data2, error: error51 } = await this.client.rpc("release_buffer_capacity", {
               p_reservation_id: reservationId,
               p_client_id: this.clientId,
               p_status: finalStatus,
               p_actual_bytes: confirmedWrittenBytes
             });
+            if (error51 || !data2 || data2.success !== true) {
+              console.warn(`[QUOTA] Failed to transition database capacity via RPC for ${reservationId} (status=${finalStatus}): ${error51?.message || data2?.reason || "Unknown error"}`);
+              return false;
+            }
+            if (confirmedWrittenBytes > 0) {
+              this.measuredDatabaseBytes += confirmedWrittenBytes;
+              this.persistState();
+            }
+            return true;
           } catch (err) {
             console.warn("[QUOTA] Failed to release database capacity via RPC:", err.message);
+            return false;
           }
         }
-      }
-      async pruneConfirmedDatabase(reservationId, bytesPruned) {
-        if (bytesPruned > 0) {
-          this.measuredDatabaseBytes = Math.max(0, this.measuredDatabaseBytes - bytesPruned);
+        if (confirmedWrittenBytes > 0) {
+          this.measuredDatabaseBytes += confirmedWrittenBytes;
           this.persistState();
         }
+        return true;
+      }
+      async pruneConfirmedDatabase(reservationId, bytesPruned) {
         if (this.client) {
           try {
-            await this.client.rpc("release_buffer_capacity", {
+            const { data: data2, error: error51 } = await this.client.rpc("release_buffer_capacity", {
               p_reservation_id: reservationId,
               p_client_id: this.clientId,
               p_status: "pruned",
               p_actual_bytes: 0
             });
-          } catch {
+            if (error51 || !data2 || data2.success !== true) {
+              console.warn(`[QUOTA] Failed to prune database buffer capacity via RPC for ${reservationId}: ${error51?.message || data2?.reason || "Unknown error"}`);
+              return false;
+            }
+            if (bytesPruned > 0) {
+              this.measuredDatabaseBytes = Math.max(0, this.measuredDatabaseBytes - bytesPruned);
+              this.persistState();
+            }
+            return true;
+          } catch (err) {
+            console.warn("[QUOTA] Exception pruning database capacity:", err.message);
+            return false;
           }
         }
+        if (bytesPruned > 0) {
+          this.measuredDatabaseBytes = Math.max(0, this.measuredDatabaseBytes - bytesPruned);
+          this.persistState();
+        }
+        return true;
       }
       deductConfirmedPrunedStorage(bytesRemoved) {
         if (bytesRemoved > 0) {
@@ -25250,10 +25296,14 @@ var init_DurableOutboxService = __esm({
     init_field_encryption();
     DurableOutboxService = class _DurableOutboxService {
       static instance = null;
+      static customHandlers = /* @__PURE__ */ new Map();
       db = null;
       dbPath;
       nasClient = null;
       supabaseClient = null;
+      static registerCustomHandler(entityType, handler) {
+        _DurableOutboxService.customHandlers.set(entityType, handler);
+      }
       drainTimer = null;
       isDraining = false;
       constructor() {
@@ -25505,10 +25555,35 @@ var init_DurableOutboxService = __esm({
       }
       async processRecord(record2) {
         const { id, entityType, operation, target, status } = record2;
+        if (_DurableOutboxService.customHandlers.has(entityType)) {
+          const handler = _DurableOutboxService.customHandlers.get(entityType);
+          const alreadyDone = this.hasTargetRecord(id, "custom");
+          if (alreadyDone) {
+            this.markCompleted(id);
+            this.invokeCallbacks(id, true, { completed: true });
+            return;
+          }
+          try {
+            await handler(record2.payload);
+            this.recordResolvedId(id, "custom", "completed");
+            this.markCompleted(id);
+            this.invokeCallbacks(id, true, { completed: true });
+            return;
+          } catch (err) {
+            console.warn(`[DurableOutbox] Custom operation ${entityType} failed for op ${id}:`, err.message);
+            const nextRetry = record2.retryCount + 1;
+            if (nextRetry >= record2.maxRetries) {
+              this.markDeadLetter(id, `Custom operation ${entityType} failed after ${nextRetry} retries: ${err.message}`);
+            } else {
+              this.incrementRetry(id, record2.retryCount, record2.maxRetries);
+            }
+            return;
+          }
+        }
         const isNasTarget = target === "nas" || target === "both";
         const isSbTarget = target === "supabase" || target === "both";
-        let nasSuccess = status === "synced_nas";
-        let sbSuccess = status === "buffered_supabase";
+        let nasSuccess = status === "synced_nas" || this.hasTargetRecord(id, "nas");
+        let sbSuccess = status === "buffered_supabase" || this.hasTargetRecord(id, "supabase");
         if (isNasTarget && !nasSuccess && this.nasClient) {
           const nasPayload = record2.dependencyOpId ? this.resolveDependentPayload(record2.dependencyOpId, record2.payload, "nas") : record2.payload;
           try {
@@ -25566,10 +25641,15 @@ var init_DurableOutboxService = __esm({
                 record2.upsertConflict
               );
               if (result.success) {
-                sbSuccess = true;
-                await quotaMgr.releaseDatabaseQuota(`db_${id}`, estBytes, "committed");
-                if (result.resolvedId) {
-                  this.recordResolvedId(id, "supabase", result.resolvedId);
+                const committed = await quotaMgr.releaseDatabaseQuota(`db_${id}`, estBytes, "committed");
+                if (committed) {
+                  sbSuccess = true;
+                  if (result.resolvedId) {
+                    this.recordResolvedId(id, "supabase", result.resolvedId);
+                  }
+                } else {
+                  console.warn(`[Outbox] Supabase buffer quota commit rejected or ambiguous for op ${id}. Retaining in local outbox.`);
+                  sbSuccess = false;
                 }
               } else {
                 await quotaMgr.releaseDatabaseQuota(`db_${id}`, 0, "released");
@@ -25682,6 +25762,17 @@ var init_DurableOutboxService = __esm({
         } catch {
         }
       }
+      hasTargetRecord(opId, target) {
+        if (!this.db) return false;
+        try {
+          const row = this.db.prepare(`
+                SELECT 1 FROM outbox_id_map WHERE op_id = ? AND target = ?
+            `).get(opId, target);
+          return !!row;
+        } catch {
+          return false;
+        }
+      }
       async executeOnClient(client, table, op, payload, primaryKeyCol = "id", filter4, upsertConflict) {
         try {
           const encData = Array.isArray(payload) ? await encryptRowsAsync(payload, 100) : payload && typeof payload === "object" ? encryptObject(payload) : payload;
@@ -25698,7 +25789,7 @@ var init_DurableOutboxService = __esm({
               const { error: updErr } = await client.from("products").update({ quantity: newQty }).eq("id", pId);
               if (updErr) return { success: false, error: updErr };
             }
-            return { success: true, affectedRows: 1 };
+            return { success: true, resolvedId: `dec_${pId}_${qty}`, affectedRows: 1 };
           }
           if (table === "bill_shipping") {
             const d = encData;
@@ -25728,6 +25819,55 @@ var init_DurableOutboxService = __esm({
               if (res.error) return { success: false, error: res.error };
               const resolvedId = res.data ? String(res.data[primaryKeyCol]) : void 0;
               return { success: true, resolvedId, affectedRows: 1 };
+            }
+            if (table === "bill_items") {
+              const items = Array.isArray(encData) ? encData : [encData];
+              const firstBillId = items[0]?.bill_id;
+              if (firstBillId) {
+                try {
+                  const query = client.from("bill_items");
+                  if (query && typeof query.select === "function") {
+                    const sel = query.select("id");
+                    if (sel && typeof sel.eq === "function") {
+                      const { data: existing } = await sel.eq("bill_id", firstBillId);
+                      if (existing && existing.length >= items.length) {
+                        return { success: true, resolvedId: String(existing[0].id), affectedRows: existing.length };
+                      }
+                      if (existing && existing.length > 0 && typeof query.delete === "function") {
+                        const del = query.delete();
+                        if (del && typeof del.eq === "function") {
+                          await del.eq("bill_id", firstBillId);
+                        }
+                      }
+                    }
+                  }
+                } catch {
+                }
+              }
+            }
+            if (table === "make_orders") {
+              const d = encData;
+              if (d.bill_id && d.description) {
+                try {
+                  const query = client.from("make_orders");
+                  if (query && typeof query.select === "function") {
+                    const sel = query.select("id");
+                    if (sel && typeof sel.eq === "function") {
+                      const eq1 = sel.eq("bill_id", d.bill_id);
+                      if (eq1 && typeof eq1.eq === "function") {
+                        const eq2 = eq1.eq("description", d.description);
+                        if (eq2 && typeof eq2.maybeSingle === "function") {
+                          const { data: existing } = await eq2.maybeSingle();
+                          if (existing?.id) {
+                            return { success: true, resolvedId: String(existing.id), affectedRows: 1 };
+                          }
+                        }
+                      }
+                    }
+                  }
+                } catch {
+                }
+              }
             }
             if (Array.isArray(encData)) {
               const res = await client.from(table).insert(encData).select(primaryKeyCol);
@@ -26252,16 +26392,25 @@ var init_DurableUploadService = __esm({
                 if (!sbErr) {
                   const { data: pubData } = this.supabaseClient.storage.from(cloudBucket).getPublicUrl(cloudPath);
                   cloudUrl = pubData?.publicUrl || cloudPath;
-                  await quotaMgr.releaseStorageQuota(uploadId, row.size_bytes, "committed");
-                  const entityUpdated = await this.updateEntityRecord(row.entity_type, row.entity_id, row.field_name, cloudUrl);
-                  this.db.prepare(`
-                                UPDATE durable_uploads
-                                SET status = 'buffered_supabase', remote_url_supabase = ?, last_error = ?, updated_at = ?
-                                WHERE id = ?
-                            `).run(cloudUrl, entityUpdated ? null : "Entity update warning on cloud buffer", Date.now(), uploadId);
-                  console.log(`[DurableUpload] Upload ${uploadId} buffered in Supabase Cloud fallback (${(row.size_bytes / 1024).toFixed(1)} KB). Waiting for TrueNAS recovery.`);
-                  this.broadcastUploadStatus();
-                  return { success: true, url: cloudUrl, activeUrl: cloudUrl, status: "buffered_supabase" };
+                  const committed = await quotaMgr.releaseStorageQuota(uploadId, row.size_bytes, "committed");
+                  if (!committed) {
+                    console.warn(`[DurableUpload] Storage quota commit rejected or ambiguous for upload ${uploadId}. Retaining local staging.`);
+                    lastError = "Supabase quota commit transition failed or ambiguous; retained in local staging";
+                    try {
+                      await this.supabaseClient.storage.from(cloudBucket).remove([cloudPath]);
+                    } catch {
+                    }
+                  } else {
+                    const entityUpdated = await this.updateEntityRecord(row.entity_type, row.entity_id, row.field_name, cloudUrl);
+                    this.db.prepare(`
+                                    UPDATE durable_uploads
+                                    SET status = 'buffered_supabase', remote_url_supabase = ?, last_error = ?, updated_at = ?
+                                    WHERE id = ?
+                                `).run(cloudUrl, entityUpdated ? null : "Entity update warning on cloud buffer", Date.now(), uploadId);
+                    console.log(`[DurableUpload] Upload ${uploadId} buffered in Supabase Cloud fallback (${(row.size_bytes / 1024).toFixed(1)} KB). Waiting for TrueNAS recovery.`);
+                    this.broadcastUploadStatus();
+                    return { success: true, url: cloudUrl, activeUrl: cloudUrl, status: "buffered_supabase" };
+                  }
                 } else {
                   await quotaMgr.releaseStorageQuota(uploadId, 0, "released");
                   lastError = `Supabase storage error: ${sbErr.message}`;
@@ -114055,6 +114204,43 @@ function enqueue(entry) {
   broadcastStatus();
   return id;
 }
+function enqueueGraph(entries) {
+  if (!entries || entries.length === 0) return [];
+  const mappedEntries = entries.map((entry) => {
+    const id = entry.id || nextId();
+    return {
+      id,
+      entry,
+      outboxOp: {
+        id,
+        entityType: entry.table,
+        operation: entry.operation === "custom" ? "insert" : entry.operation,
+        payload: entry.data || {},
+        filter: entry.filter,
+        upsertConflict: entry.upsertConflict,
+        primaryKeyCol: entry.upsertConflict || "id",
+        dependencyOpId: entry.dependencyOpId,
+        metadata: entry.metadata
+      }
+    };
+  });
+  try {
+    const generatedIds = DurableOutboxService.getInstance().enqueueBatch(mappedEntries.map((m2) => m2.outboxOp));
+    mappedEntries.forEach((m2) => {
+      if (m2.entry.onSuccess || m2.entry.onError) {
+        DurableOutboxService.getInstance().registerCallbacks(m2.id, {
+          onSuccess: m2.entry.onSuccess,
+          onError: m2.entry.onError
+        });
+      }
+    });
+    broadcastStatus();
+    return generatedIds;
+  } catch (err) {
+    console.error("[WriteQueue] Failed atomic enqueueGraph transaction:", err.message);
+    throw new Error(`[WriteQueue] Failed atomic enqueueGraph persistence: ${err.message}`);
+  }
+}
 async function startQueue() {
   DurableOutboxService.getInstance().startWorker(DRAIN_INTERVAL_MS);
   console.log("[WriteQueue] Started via authoritative DurableOutboxService. Draining every", DRAIN_INTERVAL_MS, "ms.");
@@ -134131,6 +134317,13 @@ function registerHandlers() {
   } catch (e2) {
   }
   registerMakeHandlers();
+  DurableOutboxService.registerCustomHandler("mysql_stock_sync", async (payload) => {
+    const { product_id, quantity } = payload || {};
+    if (product_id && quantity) {
+      await syncStockToMySQL(Number(product_id), Number(quantity));
+      await checkLowStockForProduct(Number(product_id));
+    }
+  });
   function requireSession() {
     const session2 = SessionManager.getSession();
     if (!session2) {
@@ -135635,8 +135828,9 @@ function registerHandlers() {
       grand_total,
       platform: "desktop"
     };
+    const billGraphOps = [];
     const billOpId = `bill_${invoiceNumber}`;
-    enqueue({
+    billGraphOps.push({
       id: billOpId,
       table: "bills",
       operation: "insert",
@@ -135673,7 +135867,7 @@ function registerHandlers() {
         notes: item.notes || null,
         customization: item.customization || {}
       }));
-      enqueue({
+      billGraphOps.push({
         id: itemsOpId,
         table: "bill_items",
         operation: "insert",
@@ -135688,7 +135882,7 @@ function registerHandlers() {
           const costP = Number(item.cost_price || item.item_cost_price || 0);
           const saleP = Number(item.sale_price || item.price || item.mrp || 0);
           const orderOpId = `make_order_${invoiceNumber}_${idx}`;
-          enqueue({
+          billGraphOps.push({
             id: orderOpId,
             table: "make_orders",
             operation: "insert",
@@ -135716,7 +135910,8 @@ function registerHandlers() {
           const pId = Number(item.product_id);
           const qty = Number(item.quantity || 0);
           const stockOpId = `stock_dec_${invoiceNumber}_${pId}_${idx}`;
-          enqueue({
+          const mysqlSyncOpId = `mysql_stock_sync_${invoiceNumber}_${pId}_${idx}`;
+          billGraphOps.push({
             id: stockOpId,
             table: "inventory_decrement",
             operation: "custom",
@@ -135726,16 +135921,19 @@ function registerHandlers() {
               invoice_number: invoiceNumber
             },
             dependencyOpId: billOpId,
-            metadata: { invoiceNumber, product_id: pId, quantity: qty },
-            onSuccess: async () => {
-              try {
-                await checkLowStockForProduct(pId).catch(() => {
-                });
-                await syncStockToMySQL(pId, qty).catch(() => {
-                });
-              } catch {
-              }
-            }
+            metadata: { invoiceNumber, product_id: pId, quantity: qty }
+          });
+          billGraphOps.push({
+            id: mysqlSyncOpId,
+            table: "mysql_stock_sync",
+            operation: "custom",
+            data: {
+              product_id: pId,
+              quantity: qty,
+              invoice_number: invoiceNumber
+            },
+            dependencyOpId: stockOpId,
+            metadata: { invoiceNumber, product_id: pId, quantity: qty }
           });
         }
       });
@@ -135755,7 +135953,7 @@ function registerHandlers() {
         updated_by: actor,
         status: "pending_payment"
       };
-      enqueue({
+      billGraphOps.push({
         id: shippingOpId,
         table: "bill_shipping",
         operation: "insert",
@@ -135765,7 +135963,7 @@ function registerHandlers() {
         metadata: { invoiceNumber }
       });
       const shippingLogOpId = `shipping_log_${invoiceNumber}`;
-      enqueue({
+      billGraphOps.push({
         id: shippingLogOpId,
         table: "shipping_status_log",
         operation: "insert",
@@ -135782,6 +135980,7 @@ function registerHandlers() {
         metadata: { invoiceNumber }
       });
     }
+    enqueueGraph(billGraphOps);
     await writeAuditLog({
       module: "Billing",
       action: "CREATE",

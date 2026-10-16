@@ -3,8 +3,17 @@
  * ─────────────────────────────────────────────────────────────────────────────
  * Atomic Quota Accounting & Hard Ceiling Enforcement Engine for Supabase Fallback Buffer.
  *
- * Enforces a strict total maximum of 1,000,000,000 bytes (1 GB) for all temporary
- * fallback operations hosted on Supabase Cloud:
+ * SCOPE SPECIFICATION:
+ * The 1,000,000,000 bytes (1 GB) cap is an application-enforced ceiling specifically
+ * governing application-managed temporary fallback data (cloud-buffered image/CAD uploads
+ * and temporary fallback database records pending TrueNAS sync).
+ * It does NOT represent global project infrastructure storage (auth tokens, project telemetry,
+ * platform audit logs), which is managed independently by Supabase project tiers.
+ * While atomic reservation provides fast pre-write gatekeeping based on conservative payload
+ * bounds, authoritative ground truth is established via recursive live bucket crawls and
+ * database footprint audits.
+ *
+ * Buffer Partition Allocations:
  *  - 600 MB (600,000,000 B) max allocation for temporary cloud-buffered image & CAD objects.
  *  - 250 MB (250,000,000 B) max allocation for temporary fallback database records & indexes.
  *  - 150 MB (150,000,000 B) hard reserve for critical system logs, auth sessions & telemetry.
@@ -15,8 +24,8 @@
  *  - 1,000,000,000 B: Hard limit; absolute freeze on new Supabase buffer writes.
  *
  * Guarantees:
- *  - Atomic capacity reservation across concurrent workers & uploads.
- *  - Independent accounting of database table/index sizes and storage bucket objects.
+ *  - Atomic capacity reservation across concurrent workers & desktop clients.
+ *  - Explicit validation of every Supabase RPC { data, error } response.
  *  - Safe cleanup: Cloud copies are NEVER deleted until authoritative TrueNAS persistence
  *    and byte/checksum verification are confirmed.
  *  - Never evicts unreplicated writes or sole copies of files.
@@ -192,42 +201,72 @@ export class SupabaseQuotaManager {
         return true;
     }
 
-    public async releaseStorageQuota(reservationId: string, confirmedUploadedBytes = 0, statusOverride?: 'committed' | 'released' | 'pruned'): Promise<void> {
+    public async releaseStorageQuota(reservationId: string, confirmedUploadedBytes = 0, statusOverride?: 'committed' | 'released' | 'pruned'): Promise<boolean> {
         this.activeStorageReservations.delete(reservationId);
-        if (confirmedUploadedBytes > 0) {
-            this.measuredStorageBytes += confirmedUploadedBytes;
-            this.persistState();
-        }
         if (this.client) {
             try {
                 const finalStatus = statusOverride || (confirmedUploadedBytes > 0 ? 'committed' : 'released');
-                await this.client.rpc('release_buffer_capacity', {
+                const { data, error } = await this.client.rpc('release_buffer_capacity', {
                     p_reservation_id: reservationId,
                     p_client_id: this.clientId,
                     p_status: finalStatus,
                     p_actual_bytes: confirmedUploadedBytes
                 });
+
+                if (error || !data || data.success !== true) {
+                    console.warn(`[QUOTA] Failed to transition storage capacity via RPC for ${reservationId} (status=${finalStatus}): ${error?.message || data?.reason || 'Unknown error'}`);
+                    return false;
+                }
+
+                if (confirmedUploadedBytes > 0) {
+                    this.measuredStorageBytes += confirmedUploadedBytes;
+                    this.persistState();
+                }
+                return true;
             } catch (err: any) {
                 console.warn('[QUOTA] Failed to release storage capacity via RPC:', err.message);
+                return false;
             }
         }
-    }
 
-    public async pruneConfirmedStorage(reservationId: string, bytesPruned: number): Promise<void> {
-        if (bytesPruned > 0) {
-            this.measuredStorageBytes = Math.max(0, this.measuredStorageBytes - bytesPruned);
+        if (confirmedUploadedBytes > 0) {
+            this.measuredStorageBytes += confirmedUploadedBytes;
             this.persistState();
         }
+        return true;
+    }
+
+    public async pruneConfirmedStorage(reservationId: string, bytesPruned: number): Promise<boolean> {
         if (this.client) {
             try {
-                await this.client.rpc('release_buffer_capacity', {
+                const { data, error } = await this.client.rpc('release_buffer_capacity', {
                     p_reservation_id: reservationId,
                     p_client_id: this.clientId,
                     p_status: 'pruned',
                     p_actual_bytes: 0
                 });
-            } catch {}
+
+                if (error || !data || data.success !== true) {
+                    console.warn(`[QUOTA] Failed to prune storage buffer capacity via RPC for ${reservationId}: ${error?.message || data?.reason || 'Unknown error'}`);
+                    return false;
+                }
+
+                if (bytesPruned > 0) {
+                    this.measuredStorageBytes = Math.max(0, this.measuredStorageBytes - bytesPruned);
+                    this.persistState();
+                }
+                return true;
+            } catch (err: any) {
+                console.warn('[QUOTA] Exception pruning storage capacity:', err.message);
+                return false;
+            }
         }
+
+        if (bytesPruned > 0) {
+            this.measuredStorageBytes = Math.max(0, this.measuredStorageBytes - bytesPruned);
+            this.persistState();
+        }
+        return true;
     }
 
     /**
@@ -281,42 +320,72 @@ export class SupabaseQuotaManager {
         return true;
     }
 
-    public async releaseDatabaseQuota(reservationId: string, confirmedWrittenBytes = 0, statusOverride?: 'committed' | 'released' | 'pruned'): Promise<void> {
+    public async releaseDatabaseQuota(reservationId: string, confirmedWrittenBytes = 0, statusOverride?: 'committed' | 'released' | 'pruned'): Promise<boolean> {
         this.activeDatabaseReservations.delete(reservationId);
-        if (confirmedWrittenBytes > 0) {
-            this.measuredDatabaseBytes += confirmedWrittenBytes;
-            this.persistState();
-        }
         if (this.client) {
             try {
                 const finalStatus = statusOverride || (confirmedWrittenBytes > 0 ? 'committed' : 'released');
-                await this.client.rpc('release_buffer_capacity', {
+                const { data, error } = await this.client.rpc('release_buffer_capacity', {
                     p_reservation_id: reservationId,
                     p_client_id: this.clientId,
                     p_status: finalStatus,
                     p_actual_bytes: confirmedWrittenBytes
                 });
+
+                if (error || !data || data.success !== true) {
+                    console.warn(`[QUOTA] Failed to transition database capacity via RPC for ${reservationId} (status=${finalStatus}): ${error?.message || data?.reason || 'Unknown error'}`);
+                    return false;
+                }
+
+                if (confirmedWrittenBytes > 0) {
+                    this.measuredDatabaseBytes += confirmedWrittenBytes;
+                    this.persistState();
+                }
+                return true;
             } catch (err: any) {
                 console.warn('[QUOTA] Failed to release database capacity via RPC:', err.message);
+                return false;
             }
         }
-    }
 
-    public async pruneConfirmedDatabase(reservationId: string, bytesPruned: number): Promise<void> {
-        if (bytesPruned > 0) {
-            this.measuredDatabaseBytes = Math.max(0, this.measuredDatabaseBytes - bytesPruned);
+        if (confirmedWrittenBytes > 0) {
+            this.measuredDatabaseBytes += confirmedWrittenBytes;
             this.persistState();
         }
+        return true;
+    }
+
+    public async pruneConfirmedDatabase(reservationId: string, bytesPruned: number): Promise<boolean> {
         if (this.client) {
             try {
-                await this.client.rpc('release_buffer_capacity', {
+                const { data, error } = await this.client.rpc('release_buffer_capacity', {
                     p_reservation_id: reservationId,
                     p_client_id: this.clientId,
                     p_status: 'pruned',
                     p_actual_bytes: 0
                 });
-            } catch {}
+
+                if (error || !data || data.success !== true) {
+                    console.warn(`[QUOTA] Failed to prune database buffer capacity via RPC for ${reservationId}: ${error?.message || data?.reason || 'Unknown error'}`);
+                    return false;
+                }
+
+                if (bytesPruned > 0) {
+                    this.measuredDatabaseBytes = Math.max(0, this.measuredDatabaseBytes - bytesPruned);
+                    this.persistState();
+                }
+                return true;
+            } catch (err: any) {
+                console.warn('[QUOTA] Exception pruning database capacity:', err.message);
+                return false;
+            }
         }
+
+        if (bytesPruned > 0) {
+            this.measuredDatabaseBytes = Math.max(0, this.measuredDatabaseBytes - bytesPruned);
+            this.persistState();
+        }
+        return true;
     }
 
     public deductConfirmedPrunedStorage(bytesRemoved: number): void {

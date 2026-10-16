@@ -79,11 +79,16 @@ export interface OutboxStats {
 
 export class DurableOutboxService {
     private static instance: DurableOutboxService | null = null;
+    private static customHandlers = new Map<string, (payload: any) => Promise<void>>();
     private db: Database.Database | null = null;
     private dbPath: string;
 
     private nasClient: SupabaseClient | null = null;
     private supabaseClient: SupabaseClient | null = null;
+
+    public static registerCustomHandler(entityType: string, handler: (payload: any) => Promise<void>): void {
+        DurableOutboxService.customHandlers.set(entityType, handler);
+    }
 
     private drainTimer: ReturnType<typeof setInterval> | null = null;
     private isDraining = false;
@@ -366,11 +371,39 @@ export class DurableOutboxService {
     private async processRecord(record: OutboxRecord): Promise<void> {
         const { id, entityType, operation, target, status } = record;
 
+        // Custom standalone operations (e.g. mysql_stock_sync, external syncs)
+        if (DurableOutboxService.customHandlers.has(entityType)) {
+            const handler = DurableOutboxService.customHandlers.get(entityType)!;
+            const alreadyDone = this.hasTargetRecord(id, 'custom');
+            if (alreadyDone) {
+                this.markCompleted(id);
+                this.invokeCallbacks(id, true, { completed: true });
+                return;
+            }
+
+            try {
+                await handler(record.payload);
+                this.recordResolvedId(id, 'custom', 'completed');
+                this.markCompleted(id);
+                this.invokeCallbacks(id, true, { completed: true });
+                return;
+            } catch (err: any) {
+                console.warn(`[DurableOutbox] Custom operation ${entityType} failed for op ${id}:`, err.message);
+                const nextRetry = record.retryCount + 1;
+                if (nextRetry >= record.maxRetries) {
+                    this.markDeadLetter(id, `Custom operation ${entityType} failed after ${nextRetry} retries: ${err.message}`);
+                } else {
+                    this.incrementRetry(id, record.retryCount, record.maxRetries);
+                }
+                return;
+            }
+        }
+
         const isNasTarget = target === 'nas' || target === 'both';
         const isSbTarget = target === 'supabase' || target === 'both';
 
-        let nasSuccess = status === 'synced_nas';
-        let sbSuccess = status === 'buffered_supabase';
+        let nasSuccess = status === 'synced_nas' || this.hasTargetRecord(id, 'nas');
+        let sbSuccess = status === 'buffered_supabase' || this.hasTargetRecord(id, 'supabase');
 
         // 1. Primary Attempt: TrueNAS PostgREST
         if (isNasTarget && !nasSuccess && this.nasClient) {
@@ -445,10 +478,15 @@ export class DurableOutboxService {
                         record.upsertConflict
                     );
                     if (result.success) {
-                        sbSuccess = true;
-                        await quotaMgr.releaseDatabaseQuota(`db_${id}`, estBytes, 'committed');
-                        if (result.resolvedId) {
-                            this.recordResolvedId(id, 'supabase', result.resolvedId);
+                        const committed = await quotaMgr.releaseDatabaseQuota(`db_${id}`, estBytes, 'committed');
+                        if (committed) {
+                            sbSuccess = true;
+                            if (result.resolvedId) {
+                                this.recordResolvedId(id, 'supabase', result.resolvedId);
+                            }
+                        } else {
+                            console.warn(`[Outbox] Supabase buffer quota commit rejected or ambiguous for op ${id}. Retaining in local outbox.`);
+                            sbSuccess = false;
                         }
                     } else {
                         await quotaMgr.releaseDatabaseQuota(`db_${id}`, 0, 'released');
@@ -573,6 +611,18 @@ export class DurableOutboxService {
         } catch {}
     }
 
+    public hasTargetRecord(opId: string, target: string): boolean {
+        if (!this.db) return false;
+        try {
+            const row = this.db.prepare(`
+                SELECT 1 FROM outbox_id_map WHERE op_id = ? AND target = ?
+            `).get(opId, target);
+            return !!row;
+        } catch {
+            return false;
+        }
+    }
+
     public async executeOnClient(
         client: SupabaseClient,
         table: string,
@@ -603,7 +653,7 @@ export class DurableOutboxService {
                     const { error: updErr } = await client.from('products').update({ quantity: newQty }).eq('id', pId);
                     if (updErr) return { success: false, error: updErr };
                 }
-                return { success: true, affectedRows: 1 };
+                return { success: true, resolvedId: `dec_${pId}_${qty}`, affectedRows: 1 };
             }
 
             if (table === 'bill_shipping') {
@@ -638,6 +688,56 @@ export class DurableOutboxService {
                     const resolvedId = res.data ? String((res.data as any)[primaryKeyCol]) : undefined;
                     return { success: true, resolvedId, affectedRows: 1 };
                 }
+
+                if (table === 'bill_items') {
+                    const items = Array.isArray(encData) ? encData : [encData];
+                    const firstBillId = items[0]?.bill_id;
+                    if (firstBillId) {
+                        try {
+                            const query = client.from('bill_items');
+                            if (query && typeof query.select === 'function') {
+                                const sel = query.select('id');
+                                if (sel && typeof sel.eq === 'function') {
+                                    const { data: existing } = await sel.eq('bill_id', firstBillId);
+                                    if (existing && existing.length >= items.length) {
+                                        return { success: true, resolvedId: String(existing[0].id), affectedRows: existing.length };
+                                    }
+                                    if (existing && existing.length > 0 && typeof query.delete === 'function') {
+                                        const del = query.delete();
+                                        if (del && typeof del.eq === 'function') {
+                                            await del.eq('bill_id', firstBillId);
+                                        }
+                                    }
+                                }
+                            }
+                        } catch {}
+                    }
+                }
+
+                if (table === 'make_orders') {
+                    const d = encData as Record<string, any>;
+                    if (d.bill_id && d.description) {
+                        try {
+                            const query = client.from('make_orders');
+                            if (query && typeof query.select === 'function') {
+                                const sel = query.select('id');
+                                if (sel && typeof sel.eq === 'function') {
+                                    const eq1 = sel.eq('bill_id', d.bill_id);
+                                    if (eq1 && typeof eq1.eq === 'function') {
+                                        const eq2 = eq1.eq('description', d.description);
+                                        if (eq2 && typeof eq2.maybeSingle === 'function') {
+                                            const { data: existing } = await eq2.maybeSingle();
+                                            if (existing?.id) {
+                                                return { success: true, resolvedId: String(existing.id), affectedRows: 1 };
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } catch {}
+                    }
+                }
+
                 if (Array.isArray(encData)) {
                     // Multi-row insert: DO NOT use maybeSingle()!
                     const res = await client.from(table).insert(encData).select(primaryKeyCol);

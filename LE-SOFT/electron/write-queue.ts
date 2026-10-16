@@ -114,6 +114,51 @@ export function enqueue(entry: Omit<QueueEntry, 'id' | 'retries' | 'enqueuedAt'>
     return id;
 }
 
+/**
+ * Atomically enqueues an entire graph of dependent operations in a single SQLite transaction.
+ * Guarantees that either all parent and child operations (bill, items, customized orders,
+ * stock decrements, side effects, shipping) are durably committed, or none are.
+ */
+export function enqueueGraph(entries: (Omit<QueueEntry, 'id' | 'retries' | 'enqueuedAt'> & { id?: string })[]): string[] {
+    if (!entries || entries.length === 0) return [];
+
+    const mappedEntries = entries.map(entry => {
+        const id = entry.id || nextId();
+        return {
+            id,
+            entry,
+            outboxOp: {
+                id,
+                entityType: entry.table,
+                operation: (entry.operation === 'custom' ? 'insert' : entry.operation) as any,
+                payload: (entry.data || {}) as any,
+                filter: entry.filter,
+                upsertConflict: entry.upsertConflict,
+                primaryKeyCol: entry.upsertConflict || 'id',
+                dependencyOpId: entry.dependencyOpId,
+                metadata: entry.metadata
+            }
+        };
+    });
+
+    try {
+        const generatedIds = DurableOutboxService.getInstance().enqueueBatch(mappedEntries.map(m => m.outboxOp));
+        mappedEntries.forEach(m => {
+            if (m.entry.onSuccess || m.entry.onError) {
+                DurableOutboxService.getInstance().registerCallbacks(m.id, {
+                    onSuccess: m.entry.onSuccess,
+                    onError: m.entry.onError
+                });
+            }
+        });
+        broadcastStatus();
+        return generatedIds;
+    } catch (err: any) {
+        console.error('[WriteQueue] Failed atomic enqueueGraph transaction:', err.message);
+        throw new Error(`[WriteQueue] Failed atomic enqueueGraph persistence: ${err.message}`);
+    }
+}
+
 async function executeWriteOnClient(client: any, entry: QueueEntry, encData: any, clientName?: string): Promise<any> {
     const { table, operation, filter, upsertConflict, data } = entry;
 

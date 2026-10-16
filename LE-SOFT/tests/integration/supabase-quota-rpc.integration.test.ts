@@ -1,18 +1,23 @@
 /**
  * tests/integration/supabase-quota-rpc.integration.test.ts
  * ─────────────────────────────────────────────────────────────────────────────
- * Integration Test Suite for Migration 070 Supabase Quota Reservation RPCs.
+ * [UNIT SIMULATION TEST]
+ * Simulation of Migration 070 Supabase Quota Reservation PL/pgSQL Logic.
  *
- * Simulates server-side PostgreSQL execution of:
+ * NOTE: This is an in-memory TypeScript unit simulation of the PostgreSQL RPCs:
  *   - reserve_buffer_capacity(reservation_id, client_id, resource_type, bytes)
  *   - release_buffer_capacity(reservation_id, client_id, status, actual_bytes)
+ *
+ * For live integration tests against an actual PostgreSQL/Supabase staging database,
+ * see: tests/integration/supabase-quota-rpc.pg-integration.test.ts.
  *
  * Covers:
  *   1. Authoritative limits (600 MB storage, 250 MB db, 150 MB emergency reserve).
  *   2. Strict client isolation and ownership enforcement (UNAUTHORIZED_CLIENT_MISMATCH).
- *   3. Concurrent capacity race between independent clients.
- *   4. Committed quota accounting: committed data continues to count after active release.
- *   5. State machine transition enforcement: committed reservations can only be pruned.
+ *   3. Caller-supplied identity mismatch rejection (CLIENT_IDENTITY_MISMATCH).
+ *   4. Client pruning restriction: clients cannot prune; only trusted reconciliation can (UNAUTHORIZED_PRUNING_DENIED).
+ *   5. Concurrent capacity race between independent clients.
+ *   6. Committed quota retention: committed data continues to count until pruned.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
@@ -59,9 +64,19 @@ class StagingPostgresQuotaEnvironment {
             return { success: false, reason: 'INVALID_RESERVATION_ID' };
         }
 
-        const caller = authUid || (clientId ? clientId.trim() : '');
+        // Enforce authoritative identity resolution
+        let caller = '';
+        if (authUid) {
+            caller = authUid;
+            if (clientId && clientId.trim() !== '' && clientId.trim() !== caller) {
+                return { success: false, reason: 'CLIENT_IDENTITY_MISMATCH' };
+            }
+        } else {
+            caller = clientId ? clientId.trim() : '';
+        }
+
         if (!caller) {
-            return { success: false, reason: 'INVALID_CLIENT_ID' };
+            return { success: false, reason: 'AUTHENTICATION_REQUIRED' };
         }
 
         if (resourceType !== 'storage' && resourceType !== 'database') {
@@ -74,7 +89,7 @@ class StagingPostgresQuotaEnvironment {
 
         // 2. Client Ownership Check
         const existing = this.reservations.get(reservationId);
-        if (existing && existing.client_id !== caller && existing.client_id !== clientId) {
+        if (existing && existing.client_id !== caller) {
             return { success: false, reason: 'UNAUTHORIZED_CLIENT_MISMATCH' };
         }
 
@@ -149,25 +164,44 @@ class StagingPostgresQuotaEnvironment {
         clientId: string,
         status: string,
         actualBytes?: number,
-        authUid?: string
+        authUid?: string,
+        isTrustedReconciliation = false
     ): { success: boolean; reason?: string; status?: string } {
-        if (!reservationId || !clientId) {
+        if (!reservationId) {
             return { success: false, reason: 'INVALID_IDENTIFIER' };
         }
 
-        const caller = authUid || clientId.trim();
-        const existing = this.reservations.get(reservationId);
-        if (!existing) {
-            return { success: false, reason: 'NOT_FOUND' };
+        let caller = '';
+        if (authUid) {
+            caller = authUid;
+            if (clientId && clientId.trim() !== '' && clientId.trim() !== caller) {
+                return { success: false, reason: 'CLIENT_IDENTITY_MISMATCH' };
+            }
+        } else {
+            caller = clientId ? clientId.trim() : '';
         }
 
-        if (existing.client_id !== caller && existing.client_id !== clientId) {
-            return { success: false, reason: 'UNAUTHORIZED_CLIENT_MISMATCH' };
+        if (!caller) {
+            return { success: false, reason: 'AUTHENTICATION_REQUIRED' };
         }
 
         const targetStatus = (status === 'committed' || status === 'released' || status === 'pruned')
             ? status
             : 'released';
+
+        // Pruning restriction
+        if (targetStatus === 'pruned' && !isTrustedReconciliation) {
+            return { success: false, reason: 'UNAUTHORIZED_PRUNING_DENIED' };
+        }
+
+        const existing = this.reservations.get(reservationId);
+        if (!existing) {
+            return { success: false, reason: 'NOT_FOUND' };
+        }
+
+        if (existing.client_id !== caller && !isTrustedReconciliation) {
+            return { success: false, reason: 'UNAUTHORIZED_CLIENT_MISMATCH' };
+        }
 
         // State Machine Transition Enforcement
         if (existing.status === 'active') {
@@ -204,7 +238,7 @@ class StagingPostgresQuotaEnvironment {
     }
 }
 
-describe('Migration 070 Supabase Quota RPC Integration Suite', () => {
+describe('[Unit Simulation] Migration 070 Supabase Quota Reservation Logic', () => {
     let stagingEnv: StagingPostgresQuotaEnvironment;
 
     beforeEach(() => {
@@ -275,10 +309,33 @@ describe('Migration 070 Supabase Quota RPC Integration Suite', () => {
         // Quota is still counted
         expect(stagingEnv.getCommittedUsage('storage')).toBe(30_000_000);
 
-        // Only after NAS reconciliation and file removal can it transition to 'pruned'
-        const pruneRes = stagingEnv.releaseBufferCapacity('comm_1', 'client_1', 'pruned', 0);
+        // Only after NAS reconciliation and file removal by trusted operator can it transition to 'pruned'
+        const pruneRes = stagingEnv.releaseBufferCapacity('comm_1', 'client_1', 'pruned', 0, undefined, true);
         expect(pruneRes.success).toBe(true);
         expect(pruneRes.status).toBe('pruned');
         expect(stagingEnv.getCommittedUsage('storage')).toBe(0);
     });
+
+    it('5. Rejects spoofed client_id when authenticated user mismatch occurs', () => {
+        // Authenticated user 'user_auth_123' passes spoofed client_id 'victim_456'
+        const res = stagingEnv.reserveBufferCapacity('spoof_1', 'victim_456', 'database', 1_000_000, 'user_auth_123');
+        expect(res.success).toBe(false);
+        expect(res.reason).toBe('CLIENT_IDENTITY_MISMATCH');
+    });
+
+    it('6. Rejects client attempt to prune committed buffer quota without trusted reconciliation credentials', () => {
+        stagingEnv.reserveBufferCapacity('comm_prune_test', 'client_1', 'storage', 10_000_000);
+        stagingEnv.releaseBufferCapacity('comm_prune_test', 'client_1', 'committed', 10_000_000);
+
+        // Standard client tries to mark as 'pruned' -> denied!
+        const clientPrune = stagingEnv.releaseBufferCapacity('comm_prune_test', 'client_1', 'pruned', 0, undefined, false);
+        expect(clientPrune.success).toBe(false);
+        expect(clientPrune.reason).toBe('UNAUTHORIZED_PRUNING_DENIED');
+
+        // Trusted reconciliation operator succeeds
+        const trustedPrune = stagingEnv.releaseBufferCapacity('comm_prune_test', 'client_1', 'pruned', 0, undefined, true);
+        expect(trustedPrune.success).toBe(true);
+        expect(trustedPrune.status).toBe('pruned');
+    });
 });
+

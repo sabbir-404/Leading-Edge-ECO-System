@@ -1233,9 +1233,9 @@ export function registerMakeHandlers(): void {
                 'resolve-category-name'
             );
             if (catRow) {
-                resolvedCategoryId = catRow.id;
-                resolvedCategoryName = catRow.name;
-                categoryIds.push(catRow.id);
+                resolvedCategoryId = (catRow as any).id;
+                resolvedCategoryName = (catRow as any).name;
+                categoryIds.push((catRow as any).id);
             } else {
                 resolvedCategoryName = product.category.trim();
             }
@@ -1407,7 +1407,7 @@ export function registerMakeHandlers(): void {
             async client => client.from('make_product_specifications').select('product_id').eq('id', id).maybeSingle(),
             'check-spec-global'
         );
-        const isGlobal = !spec || spec.product_id === null;
+        const isGlobal = !spec || (spec as any).product_id === null;
         if (isGlobal ? !canManageGlobalProductAttributes(session) : !canManageCatalog(session)) {
             throw new Error(`Forbidden: ${isGlobal ? 'Global specification deletion requires "manage_global_product_attributes" permission.' : 'Catalog modification requires Administrator or Manager privileges.'}`);
         }
@@ -1466,7 +1466,7 @@ export function registerMakeHandlers(): void {
             async client => client.from('make_product_sizes').select('product_id').eq('id', id).maybeSingle(),
             'check-size-global'
         );
-        const isGlobal = !size || size.product_id === null;
+        const isGlobal = !size || (size as any).product_id === null;
         if (isGlobal ? !canManageGlobalProductAttributes(session) : !canManageCatalog(session)) {
             throw new Error(`Forbidden: ${isGlobal ? 'Global size deletion requires "manage_global_product_attributes" permission.' : 'Catalog modification requires Administrator or Manager privileges.'}`);
         }
@@ -1522,7 +1522,7 @@ export function registerMakeHandlers(): void {
             async client => client.from('make_product_colors').select('product_id').eq('id', id).maybeSingle(),
             'check-color-global'
         );
-        const isGlobal = !color || color.product_id === null;
+        const isGlobal = !color || (color as any).product_id === null;
         if (isGlobal ? !canManageGlobalProductAttributes(session) : !canManageCatalog(session)) {
             throw new Error(`Forbidden: ${isGlobal ? 'Global color deletion requires "manage_global_product_attributes" permission.' : 'Catalog modification requires Administrator or Manager privileges.'}`);
         }

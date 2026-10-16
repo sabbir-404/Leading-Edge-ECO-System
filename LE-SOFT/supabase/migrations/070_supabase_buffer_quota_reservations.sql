@@ -61,16 +61,15 @@ BEGIN
     END LOOP;
 END $$;
 
--- Revoke direct table mutations from public, anon, and authenticated
-REVOKE ALL ON TABLE public.supabase_buffer_reservations FROM PUBLIC, anon, authenticated;
-GRANT SELECT ON TABLE public.supabase_buffer_reservations TO anon, authenticated, service_role;
+-- Revoke direct table mutations and SELECT from public and anon
+REVOKE ALL ON TABLE public.supabase_buffer_reservations FROM PUBLIC, anon;
+GRANT SELECT ON TABLE public.supabase_buffer_reservations TO authenticated, service_role;
 
--- RLS: Clients can only read their own reservation metadata
+-- RLS: Authenticated clients can only read their own reservation metadata verified via auth.uid()
 CREATE POLICY "client_read_own_reservations" ON public.supabase_buffer_reservations
-    FOR SELECT TO anon, authenticated
+    FOR SELECT TO authenticated
     USING (
-        client_id = current_setting('request.headers', true)::json->>'x-client-id'
-        OR client_id = auth.uid()::text
+        client_id = auth.uid()::text
     );
 
 -- ── Transactional Atomic Reservation RPC ──────────────────────────────────────
@@ -107,12 +106,27 @@ BEGIN
         RETURN jsonb_build_object('success', false, 'reason', 'INVALID_RESERVATION_ID');
     END IF;
 
-    -- Authoritative client identity: Prefer server-verified JWT subject or auth.uid()
-    v_caller := COALESCE(
-        auth.uid()::text,
-        NULLIF(current_setting('request.jwt.claim.sub', true), ''),
-        NULLIF(TRIM(p_client_id), '')
-    );
+    -- Reject unauthenticated / anon callers
+    IF auth.uid() IS NULL 
+       AND (auth.jwt() ->> 'role' IS DISTINCT FROM 'service_role') 
+       AND current_user NOT IN ('service_role', 'postgres') THEN
+        RETURN jsonb_build_object('success', false, 'reason', 'AUTHENTICATION_REQUIRED');
+    END IF;
+
+    -- Authoritative client identity: strictly bound to authenticated auth.uid()
+    IF auth.uid() IS NOT NULL THEN
+        v_caller := auth.uid()::text;
+        IF p_client_id IS NOT NULL AND TRIM(p_client_id) <> '' AND TRIM(p_client_id) <> v_caller THEN
+            RETURN jsonb_build_object(
+                'success', false, 
+                'reason', 'CLIENT_IDENTITY_MISMATCH',
+                'detail', 'Caller cannot reserve capacity on behalf of a different client ID'
+            );
+        END IF;
+    ELSE
+        -- Trusted server-side execution (service_role or postgres)
+        v_caller := COALESCE(NULLIF(TRIM(p_client_id), ''), 'service_role');
+    END IF;
 
     IF v_caller IS NULL OR TRIM(v_caller) = '' THEN
         RETURN jsonb_build_object('success', false, 'reason', 'INVALID_CLIENT_ID');
@@ -135,11 +149,16 @@ BEGIN
     FROM public.supabase_buffer_reservations
     WHERE id = p_reservation_id;
 
-    IF FOUND AND v_existing_client <> v_caller AND v_existing_client <> p_client_id THEN
-        RETURN jsonb_build_object(
-            'success', false,
-            'reason', 'UNAUTHORIZED_CLIENT_MISMATCH'
-        );
+    IF FOUND THEN
+        -- If not service_role, caller MUST match existing reservation owner
+        IF (auth.jwt() ->> 'role' IS DISTINCT FROM 'service_role')
+           AND current_user NOT IN ('service_role', 'postgres')
+           AND v_existing_client <> v_caller THEN
+            RETURN jsonb_build_object(
+                'success', false,
+                'reason', 'UNAUTHORIZED_CLIENT_MISMATCH'
+            );
+        END IF;
     END IF;
 
     -- 4. Expire stale active reservations (> 5 minutes old)
@@ -244,21 +263,49 @@ DECLARE
     v_target_status TEXT;
 BEGIN
     -- 1. Input Validation & Identity Verification
-    IF p_reservation_id IS NULL OR TRIM(p_reservation_id) = '' OR
-       p_client_id IS NULL OR TRIM(p_client_id) = '' THEN
+    IF p_reservation_id IS NULL OR TRIM(p_reservation_id) = '' THEN
         RETURN jsonb_build_object('success', false, 'reason', 'INVALID_IDENTIFIER');
     END IF;
 
-    v_caller := COALESCE(
-        auth.uid()::text,
-        NULLIF(current_setting('request.jwt.claim.sub', true), ''),
-        NULLIF(TRIM(p_client_id), '')
-    );
+    -- Reject unauthenticated / anon callers
+    IF auth.uid() IS NULL 
+       AND (auth.jwt() ->> 'role' IS DISTINCT FROM 'service_role') 
+       AND current_user NOT IN ('service_role', 'postgres') THEN
+        RETURN jsonb_build_object('success', false, 'reason', 'AUTHENTICATION_REQUIRED');
+    END IF;
+
+    -- Authoritative caller identity: strictly bound to authenticated auth.uid()
+    IF auth.uid() IS NOT NULL THEN
+        v_caller := auth.uid()::text;
+        IF p_client_id IS NOT NULL AND TRIM(p_client_id) <> '' AND TRIM(p_client_id) <> v_caller THEN
+            RETURN jsonb_build_object(
+                'success', false,
+                'reason', 'CLIENT_IDENTITY_MISMATCH',
+                'detail', 'Caller cannot release capacity on behalf of a different client ID'
+            );
+        END IF;
+    ELSE
+        -- Trusted server-side execution (service_role or postgres)
+        v_caller := COALESCE(NULLIF(TRIM(p_client_id), ''), 'service_role');
+    END IF;
 
     v_target_status := CASE 
         WHEN p_status IN ('committed', 'released', 'pruned') THEN p_status 
         ELSE 'released' 
     END;
+
+    -- Pruning committed data requires trusted server-side reconciliation (service_role, postgres, or reconciliation_operator)
+    IF v_target_status = 'pruned' THEN
+        IF (auth.jwt() ->> 'role' IS DISTINCT FROM 'service_role')
+           AND current_user NOT IN ('service_role', 'postgres')
+           AND COALESCE((auth.jwt() -> 'app_metadata' ->> 'role'), '') NOT IN ('reconciliation_operator', 'service_role') THEN
+            RETURN jsonb_build_object(
+                'success', false,
+                'reason', 'UNAUTHORIZED_PRUNING_DENIED',
+                'detail', 'Clients cannot mark committed quota as pruned. Trusted reconciliation verification required.'
+            );
+        END IF;
+    END IF;
 
     -- Acquire transaction-level lock
     PERFORM pg_advisory_xact_lock(84729103);
@@ -273,7 +320,10 @@ BEGIN
         RETURN jsonb_build_object('success', false, 'reason', 'NOT_FOUND');
     END IF;
 
-    IF v_existing_client <> v_caller AND v_existing_client <> p_client_id THEN
+    -- Strict ownership check: Only owner or service_role can modify
+    IF (auth.jwt() ->> 'role' IS DISTINCT FROM 'service_role')
+       AND current_user NOT IN ('service_role', 'postgres')
+       AND v_existing_client <> v_caller THEN
         RETURN jsonb_build_object(
             'success', false,
             'reason', 'UNAUTHORIZED_CLIENT_MISMATCH'
@@ -314,11 +364,11 @@ BEGIN
 END;
 $$;
 
--- Explicit Function Permissions
-REVOKE ALL ON FUNCTION public.reserve_buffer_capacity FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.reserve_buffer_capacity TO anon, authenticated, service_role;
+-- Explicit Function Permissions: Strictly revoke from PUBLIC and anon
+REVOKE ALL ON FUNCTION public.reserve_buffer_capacity FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.reserve_buffer_capacity TO authenticated, service_role;
 
-REVOKE ALL ON FUNCTION public.release_buffer_capacity FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.release_buffer_capacity TO anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION public.release_buffer_capacity FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.release_buffer_capacity TO authenticated, service_role;
 
 NOTIFY pgrst, 'reload schema';

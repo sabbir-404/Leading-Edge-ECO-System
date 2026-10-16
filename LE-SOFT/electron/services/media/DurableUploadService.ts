@@ -339,20 +339,27 @@ export class DurableUploadService {
                                 .getPublicUrl(cloudPath);
                             cloudUrl = pubData?.publicUrl || cloudPath;
 
-                            await quotaMgr.releaseStorageQuota(uploadId, row.size_bytes, 'committed');
+                            const committed = await quotaMgr.releaseStorageQuota(uploadId, row.size_bytes, 'committed');
+                            if (!committed) {
+                                console.warn(`[DurableUpload] Storage quota commit rejected or ambiguous for upload ${uploadId}. Retaining local staging.`);
+                                lastError = 'Supabase quota commit transition failed or ambiguous; retained in local staging';
+                                try {
+                                    await this.supabaseClient.storage.from(cloudBucket).remove([cloudPath]);
+                                } catch {}
+                            } else {
+                                // Update entity record with temporary cloud URL
+                                const entityUpdated = await this.updateEntityRecord(row.entity_type, row.entity_id, row.field_name, cloudUrl);
 
-                            // Update entity record with temporary cloud URL
-                            const entityUpdated = await this.updateEntityRecord(row.entity_type, row.entity_id, row.field_name, cloudUrl);
+                                this.db.prepare(`
+                                    UPDATE durable_uploads
+                                    SET status = 'buffered_supabase', remote_url_supabase = ?, last_error = ?, updated_at = ?
+                                    WHERE id = ?
+                                `).run(cloudUrl, entityUpdated ? null : 'Entity update warning on cloud buffer', Date.now(), uploadId);
 
-                            this.db.prepare(`
-                                UPDATE durable_uploads
-                                SET status = 'buffered_supabase', remote_url_supabase = ?, last_error = ?, updated_at = ?
-                                WHERE id = ?
-                            `).run(cloudUrl, entityUpdated ? null : 'Entity update warning on cloud buffer', Date.now(), uploadId);
-
-                            console.log(`[DurableUpload] Upload ${uploadId} buffered in Supabase Cloud fallback (${(row.size_bytes / 1024).toFixed(1)} KB). Waiting for TrueNAS recovery.`);
-                            this.broadcastUploadStatus();
-                            return { success: true, url: cloudUrl, activeUrl: cloudUrl, status: 'buffered_supabase' };
+                                console.log(`[DurableUpload] Upload ${uploadId} buffered in Supabase Cloud fallback (${(row.size_bytes / 1024).toFixed(1)} KB). Waiting for TrueNAS recovery.`);
+                                this.broadcastUploadStatus();
+                                return { success: true, url: cloudUrl, activeUrl: cloudUrl, status: 'buffered_supabase' };
+                            }
                         } else {
                             await quotaMgr.releaseStorageQuota(uploadId, 0, 'released');
                             lastError = `Supabase storage error: ${sbErr.message}`;

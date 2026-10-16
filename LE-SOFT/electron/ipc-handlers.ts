@@ -26,7 +26,7 @@ import mysql from 'mysql2/promise';
 import * as licenseManager from './license-manager';
 import { getConnectedDevices, setBackupNode, DEVICE_ID } from './device-monitor';
 import { encryptObject, encryptField, decryptRows, decryptObject, decryptField } from './field-encryption';
-import { enqueue, getQueueStats } from './write-queue';
+import { enqueue, enqueueGraph, getQueueStats } from './write-queue';
 import * as cache from './cache-manager';
 import { saveSession, loadSession, clearSession } from './session-vault';
 import { encryptStandardSecret, decryptStandardSecret } from './secure-storage';
@@ -470,6 +470,15 @@ export function registerHandlers() {
 
     // Register Fortified MAKE Module Handlers
     registerMakeHandlers();
+
+    // Register durable custom handlers for background outbox processing
+    DurableOutboxService.registerCustomHandler('mysql_stock_sync', async (payload: any) => {
+        const { product_id, quantity } = payload || {};
+        if (product_id && quantity) {
+            await syncStockToMySQL(Number(product_id), Number(quantity));
+            await checkLowStockForProduct(Number(product_id));
+        }
+    });
 
     /**
      * Resolves the active authenticated session strictly from the Electron Main Process.
@@ -2323,9 +2332,11 @@ export function registerHandlers() {
         };
 
         // ── Single Authoritative Durable Operation Graph for Create-Bill ─────
+        const billGraphOps: any[] = [];
+
         // 1. Authoritative Bill Operation
         const billOpId = `bill_${invoiceNumber}`;
-        enqueue({
+        billGraphOps.push({
             id: billOpId,
             table: 'bills',
             operation: 'insert',
@@ -2364,7 +2375,7 @@ export function registerHandlers() {
                 customization: item.customization || {},
             }));
 
-            enqueue({
+            billGraphOps.push({
                 id: itemsOpId,
                 table: 'bill_items',
                 operation: 'insert',
@@ -2384,7 +2395,7 @@ export function registerHandlers() {
                     const saleP = Number(item.sale_price || item.price || item.mrp || 0);
 
                     const orderOpId = `make_order_${invoiceNumber}_${idx}`;
-                    enqueue({
+                    billGraphOps.push({
                         id: orderOpId,
                         table: 'make_orders',
                         operation: 'insert',
@@ -2407,14 +2418,16 @@ export function registerHandlers() {
                 }
             });
 
-            // 4. Authoritative Inventory Decrement & Stock Sync
+            // 4. Authoritative Inventory Decrement & Durable MySQL Stock Sync
             items.forEach((item: any, idx: number) => {
                 if (item.product_id && item.quantity) {
                     const pId = Number(item.product_id);
                     const qty = Number(item.quantity || 0);
                     const stockOpId = `stock_dec_${invoiceNumber}_${pId}_${idx}`;
+                    const mysqlSyncOpId = `mysql_stock_sync_${invoiceNumber}_${pId}_${idx}`;
 
-                    enqueue({
+                    // Database stock decrement
+                    billGraphOps.push({
                         id: stockOpId,
                         table: 'inventory_decrement',
                         operation: 'custom',
@@ -2424,13 +2437,21 @@ export function registerHandlers() {
                             invoice_number: invoiceNumber
                         },
                         dependencyOpId: billOpId,
-                        metadata: { invoiceNumber, product_id: pId, quantity: qty },
-                        onSuccess: async () => {
-                            try {
-                                await checkLowStockForProduct(pId).catch(() => {});
-                                await syncStockToMySQL(pId, qty).catch(() => {});
-                            } catch {}
-                        }
+                        metadata: { invoiceNumber, product_id: pId, quantity: qty }
+                    });
+
+                    // Durable MySQL stock sync & low stock check as a dependent outbox operation!
+                    billGraphOps.push({
+                        id: mysqlSyncOpId,
+                        table: 'mysql_stock_sync',
+                        operation: 'custom',
+                        data: {
+                            product_id: pId,
+                            quantity: qty,
+                            invoice_number: invoiceNumber
+                        },
+                        dependencyOpId: stockOpId,
+                        metadata: { invoiceNumber, product_id: pId, quantity: qty }
                     });
                 }
             });
@@ -2452,7 +2473,7 @@ export function registerHandlers() {
                 status: 'pending_payment'
             };
 
-            enqueue({
+            billGraphOps.push({
                 id: shippingOpId,
                 table: 'bill_shipping',
                 operation: 'insert',
@@ -2464,7 +2485,7 @@ export function registerHandlers() {
 
             // 6. Authoritative Initial Shipping Status Log
             const shippingLogOpId = `shipping_log_${invoiceNumber}`;
-            enqueue({
+            billGraphOps.push({
                 id: shippingLogOpId,
                 table: 'shipping_status_log',
                 operation: 'insert',
@@ -2480,6 +2501,9 @@ export function registerHandlers() {
                 metadata: { invoiceNumber }
             });
         }
+
+        // Atomically commit full bill graph into durable SQLite outbox
+        enqueueGraph(billGraphOps);
 
         await writeAuditLog({
             module: 'Billing',

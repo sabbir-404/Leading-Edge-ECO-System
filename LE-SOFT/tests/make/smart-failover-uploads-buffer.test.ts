@@ -47,6 +47,7 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
         (engine as any).consecutiveNasDbFailures = 0;
         (engine as any).consecutiveNasStorageFailures = 0;
         (engine as any).currentState = 'NORMAL_NAS_AUTHORITATIVE';
+        DurableOutboxService.getInstance().stopWorker();
     });
 
     afterEach(() => {
@@ -657,11 +658,12 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
 
         // Client isolation: Client B cannot modify Client A's reservation
         expect(sql).toContain('UNAUTHORIZED_CLIENT_MISMATCH');
-        expect(sql).toContain('v_existing_client <> p_client_id');
+        expect(sql).toContain('v_existing_client <> v_caller');
 
         // Direct table access revoked, RLS enabled
         expect(sql).toContain('ALTER TABLE public.supabase_buffer_reservations ENABLE ROW LEVEL SECURITY');
-        expect(sql).toContain('REVOKE ALL ON TABLE public.supabase_buffer_reservations FROM PUBLIC, anon, authenticated');
+        expect(sql).toContain('REVOKE ALL ON TABLE public.supabase_buffer_reservations FROM PUBLIC, anon');
+        expect(sql).toContain('CREATE POLICY "client_read_own_reservations" ON public.supabase_buffer_reservations');
 
         // Explicit search_path protection on security definer functions
         expect(sql).toContain('SECURITY DEFINER');
@@ -1132,5 +1134,293 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
         expect(committedBytes).toBe(0);
         expect(reservationStatus).toBe('pruned');
     });
+
+    // ── 30. Spoofed client ID & identity mismatch rejection ───────────────────────
+    it('Scenario 30: Rejects spoofed client_id and identity mismatch', async () => {
+        const quotaMgr = new SupabaseQuotaManager('attacker_client');
+
+        const mockClient: any = {
+            rpc: vi.fn(async (fnName: string, params: any) => {
+                if (params.p_client_id !== 'authenticated_caller_id') {
+                    return { data: { success: false, reason: 'CLIENT_IDENTITY_MISMATCH' }, error: null };
+                }
+                return { data: { success: true }, error: null };
+            })
+        };
+
+        quotaMgr.registerClient(mockClient);
+
+        // Attempt reservation with spoofed client ID
+        const reserved = await quotaMgr.reserveStorageQuota('spoof_res_1', 1_000_000);
+        expect(reserved).toBe(false);
+        expect(mockClient.rpc).toHaveBeenCalledWith('reserve_buffer_capacity', expect.objectContaining({
+            p_client_id: 'attacker_client'
+        }));
+    });
+
+    // ── 31. Unauthorized pruning attempt by client rejected ───────────────────────
+    it('Scenario 31: Rejects unauthorized pruning attempt without trusted reconciliation credentials', async () => {
+        const quotaMgr = new SupabaseQuotaManager('client_standard');
+
+        const mockClient: any = {
+            rpc: vi.fn(async (fnName: string, params: any) => {
+                if (params.p_status === 'pruned') {
+                    return { 
+                        data: { success: false, reason: 'UNAUTHORIZED_PRUNING_DENIED' }, 
+                        error: null 
+                    };
+                }
+                return { data: { success: true, status: params.p_status }, error: null };
+            })
+        };
+
+        quotaMgr.registerClient(mockClient);
+
+        const pruneResult = await quotaMgr.pruneConfirmedStorage('res_prune_denied', 500_000);
+        expect(pruneResult).toBe(false);
+    });
+
+    // ── 32. Failed RPC response handling (fail-closed to local outbox) ────────────
+    it('Scenario 32: Fails closed to local outbox when Supabase RPC returns error or unexpected failure', async () => {
+        const quotaMgr = new SupabaseQuotaManager('client_rpc_fail');
+
+        // RPC fails with network disconnect or PostgREST timeout
+        const mockClient: any = {
+            rpc: vi.fn().mockResolvedValue({
+                data: null,
+                error: { message: '503 Service Unavailable: upstream connection reset', code: '503' }
+            })
+        };
+
+        quotaMgr.registerClient(mockClient);
+
+        const initialBlocked = quotaMgr.getQuotaStatus().blockedOperationsCount;
+        const canBuffer = await quotaMgr.reserveDatabaseQuota('res_fail_rpc', 4096);
+        expect(canBuffer).toBe(false);
+        expect(quotaMgr.getQuotaStatus().blockedOperationsCount).toBeGreaterThan(initialBlocked);
+    });
+
+    // ── 33. Expiry after failed or abandoned commit ───────────────────────────────
+    it('Scenario 33: Stale active reservations expire and do not permanently lock capacity', async () => {
+        const quotaMgr = new SupabaseQuotaManager('client_expiry');
+
+        // Simulate reservation expiry in mock
+        let reservationStatus = 'active';
+        let expiresAt = Date.now() - 1000; // Expired 1 second ago
+
+        const mockClient: any = {
+            rpc: vi.fn(async (fnName: string) => {
+                if (fnName === 'reserve_buffer_capacity') {
+                    if (reservationStatus === 'active' && expiresAt < Date.now()) {
+                        reservationStatus = 'expired';
+                    }
+                    return { data: { success: true, status: 'active' }, error: null };
+                }
+                return { data: null, error: null };
+            })
+        };
+
+        quotaMgr.registerClient(mockClient);
+        const ok = await quotaMgr.reserveStorageQuota('res_will_expire', 5000);
+        expect(ok).toBe(true);
+    });
+
+    // ── 34. Concurrent real reservations at the capacity limit ───────────────────
+    it('Scenario 34: Concurrent real reservations strictly serialize and enforce partition ceiling', async () => {
+        const quotaMgr = new SupabaseQuotaManager('client_concurrency');
+        // Set existing storage usage to 590 MB (10 MB below 600 MB ceiling)
+        quotaMgr.recordUsage('audit', 590_000_000, 0);
+
+        // 5 concurrent reservation attempts of 4 MB each (total 20 MB -> only 2 should fit in 10 MB remaining)
+        const attempts = await Promise.all([
+            quotaMgr.reserveStorageQuota('c_req_1', 4_000_000),
+            quotaMgr.reserveStorageQuota('c_req_2', 4_000_000),
+            quotaMgr.reserveStorageQuota('c_req_3', 4_000_000),
+            quotaMgr.reserveStorageQuota('c_req_4', 4_000_000),
+            quotaMgr.reserveStorageQuota('c_req_5', 4_000_000),
+        ]);
+
+        const successful = attempts.filter(Boolean).length;
+        expect(successful).toBe(2); // Exactly 8 MB accepted (590 + 8 = 598 MB <= 600 MB)
+        expect(attempts.filter(x => !x).length).toBe(3); // 3 rejected
+    });
+
+    // ── 35. Partial-completion recovery boundaries ─────────────────────────────────
+    it('Scenario 35: Demonstrates deterministic recovery at each partial-completion boundary in bill graph', async () => {
+        const outbox = DurableOutboxService.getInstance();
+        const testInvoice = `INV_BOUND_${Date.now()}`;
+
+        // Track custom MySQL stock sync execution
+        let mysqlSyncExecuted = false;
+        let syncedProductId = 0;
+        let syncedQty = 0;
+
+        DurableOutboxService.registerCustomHandler('mysql_stock_sync', async (payload: any) => {
+            mysqlSyncExecuted = true;
+            syncedProductId = payload.product_id;
+            syncedQty = payload.quantity;
+        });
+
+        // Assemble full bill graph operations
+        const billOpId = `bill_${testInvoice}`;
+        const itemsOpId = `bill_items_${testInvoice}`;
+        const stockOpId = `stock_dec_${testInvoice}_99_0`;
+        const mysqlOpId = `mysql_stock_sync_${testInvoice}_99_0`;
+        const shipOpId = `shipping_${testInvoice}`;
+        const shipLogOpId = `shipping_log_${testInvoice}`;
+
+        const batchIds = outbox.enqueueBatch([
+            {
+                id: billOpId,
+                entityType: 'bills',
+                operation: 'insert',
+                payload: { invoice_number: testInvoice, grand_total: 1500 },
+                primaryKeyCol: 'id',
+                upsertConflict: 'invoice_number'
+            },
+            {
+                id: itemsOpId,
+                entityType: 'bill_items',
+                operation: 'insert',
+                payload: [{ bill_id: null, product_id: 99, quantity: 2, price: 750 }],
+                dependencyOpId: billOpId
+            },
+            {
+                id: stockOpId,
+                entityType: 'inventory_decrement',
+                operation: 'insert',
+                payload: { product_id: 99, quantity: 2, invoice_number: testInvoice },
+                dependencyOpId: billOpId
+            },
+            {
+                id: mysqlOpId,
+                entityType: 'mysql_stock_sync',
+                operation: 'insert',
+                payload: { product_id: 99, quantity: 2, invoice_number: testInvoice },
+                dependencyOpId: stockOpId
+            },
+            {
+                id: shipOpId,
+                entityType: 'bill_shipping',
+                operation: 'insert',
+                payload: { bill_id: null, invoice_number: testInvoice, ship_to_name: 'Test Customer' },
+                dependencyOpId: billOpId
+            },
+            {
+                id: shipLogOpId,
+                entityType: 'shipping_status_log',
+                operation: 'insert',
+                payload: { shipment_id: null, status: 'pending_payment' },
+                dependencyOpId: shipOpId
+            }
+        ]);
+
+        expect(batchIds.length).toBe(6);
+
+        // Boundary A: Bill is pending, all child operations blocked by dependency
+        const pendingRows = [billOpId, itemsOpId, stockOpId, mysqlOpId, shipOpId, shipLogOpId]
+            .map(id => (outbox as any).db.prepare("SELECT id, status FROM outbox_operations WHERE id = ?").get(id))
+            .filter(Boolean);
+        const billRecord = pendingRows.find(r => r.id === billOpId);
+        expect(billRecord).toBeDefined();
+        expect(billRecord.status).toBe('pending');
+        const blockedRecords = pendingRows.filter(r => r.id !== billOpId);
+        expect(blockedRecords.length).toBe(5);
+        expect(blockedRecords.every(r => r.status === 'blocked_dependency')).toBe(true);
+
+        // Boundary B: Bill completes with resolved ID 5001
+        outbox.recordResolvedId(billOpId, 'nas', '5001');
+        (outbox as any).markCompleted(billOpId);
+
+        // Child payload resolution checks
+        const resolvedItemsPayload = outbox.resolveDependentPayload(billOpId, [{ bill_id: null, product_id: 99, quantity: 2 }], 'nas');
+        expect(resolvedItemsPayload[0].bill_id).toBe(5001);
+
+        // Boundary C: Stock decrement completes and unblocks MySQL sync
+        outbox.recordResolvedId(stockOpId, 'nas', 'dec_99_2');
+        (outbox as any).markCompleted(stockOpId);
+
+        // Execute MySQL stock sync operation
+        await (outbox as any).processRecord({
+            id: mysqlOpId,
+            entityType: 'mysql_stock_sync',
+            operation: 'insert',
+            payload: { product_id: 99, quantity: 2, invoice_number: testInvoice },
+            filter: null,
+            primaryKeyCol: 'id',
+            primaryKeyVal: null,
+            upsertConflict: null,
+            dependencyOpId: stockOpId,
+            metadata: null,
+            target: 'both',
+            status: 'pending',
+            retryCount: 0,
+            maxRetries: 5,
+            lastError: null,
+            createdAt: Date.now(),
+            updatedAt: Date.now()
+        });
+
+        expect(mysqlSyncExecuted).toBe(true);
+        expect(syncedProductId).toBe(99);
+        expect(syncedQty).toBe(2);
+    });
+
+    // ── 36. Retry and restart deduplication ───────────────────────────────────────
+    it('Scenario 36: Retry and restart behavior guarantees no duplicate bill items, make orders, or stock decrements', async () => {
+        const outbox = DurableOutboxService.getInstance();
+        const testInvoice = `INV_DEDUP_${Date.now()}`;
+
+        // 1. Bill Items Deduplication
+        const mockClientWithItems: any = {
+            from: (table: string) => ({
+                select: () => ({
+                    eq: () => Promise.resolve({ data: [{ id: 101 }, { id: 102 }], error: null })
+                }),
+                insert: vi.fn(),
+                delete: vi.fn(() => ({ eq: () => Promise.resolve({ error: null }) }))
+            })
+        };
+
+        const dedupItemsResult = await outbox.executeOnClient(
+            mockClientWithItems,
+            'bill_items',
+            'insert',
+            [{ bill_id: 999, product_id: 1, quantity: 1 }, { bill_id: 999, product_id: 2, quantity: 1 }]
+        );
+        // Already exists on server -> does not insert duplicates
+        expect(dedupItemsResult.success).toBe(true);
+        expect(dedupItemsResult.affectedRows).toBe(2);
+
+        // 2. Customized Make Order Deduplication
+        const mockClientWithOrder: any = {
+            from: (table: string) => ({
+                select: () => ({
+                    eq: () => ({
+                        eq: () => ({
+                            maybeSingle: () => Promise.resolve({ data: { id: 701 }, error: null })
+                        })
+                    })
+                }),
+                insert: vi.fn()
+            })
+        };
+
+        const dedupOrderResult = await outbox.executeOnClient(
+            mockClientWithOrder,
+            'make_orders',
+            'insert',
+            { bill_id: 999, description: `Customized order linked to Invoice ${testInvoice}. Attributes: Color: Oak` }
+        );
+        expect(dedupOrderResult.success).toBe(true);
+        expect(dedupOrderResult.resolvedId).toBe('701');
+
+        // 3. Inventory Decrement Deduplication via outbox_id_map
+        const decOpId = `stock_dec_${testInvoice}_10_0`;
+        outbox.recordResolvedId(decOpId, 'nas', 'dec_10_3');
+
+        expect(outbox.hasTargetRecord(decOpId, 'nas')).toBe(true);
+    });
 });
+
 

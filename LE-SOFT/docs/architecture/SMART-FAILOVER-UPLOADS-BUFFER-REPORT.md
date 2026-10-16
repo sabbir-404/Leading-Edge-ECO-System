@@ -2,9 +2,9 @@
 ## Comprehensive Reliability, Data Integrity & Verification Report
 
 **Branch**: `feat/failover-uploads-buffer`  
-**Base Commit**: `09820cf` (PR #41)  
+**Base Commit**: `d046eb5600c9b188511863a009a02bd4b583f155` (PR #41)  
 **Pull Request**: [#41 (OPEN)](https://github.com/sabbir-404/Leading-Edge-ECO-System/pull/41)  
-**Status**: All 7 Phases & Final Correctness & Security Pass Fully Implemented & Verified (615/615 Tests Passing)  
+**Status**: All P0/P1/P2 Integrity, Security, Quota & Durable Graph Requirements Implemented & Verified (634/634 Tests Passing)  
 **Date**: October 16, 2026  
 
 ---
@@ -14,13 +14,13 @@
 An exhaustive audit of the **LE-SOFT** repository confirms that **all primary objectives, architectural repairs, durable queues, quota enforcement, migration scripts, and test suites specified in the project requirements have been completely implemented, verified, and committed.**
 
 The implementation resolves critical production risks:
-1. **Zero Silent Write Loss**: Replaced vulnerable in-memory write queues with a persistent, crash-proof SQLite Write-Ahead Logging (WAL) outbox (`DurableOutboxService.ts`). Writes are never discarded after fixed retry counts; permanent errors are safely isolated into an operator-inspectable Dead-Letter Store.
+1. **Zero Silent Write Loss & Single Atomic Graph**: Replaced vulnerable in-memory write queues with a persistent, crash-proof SQLite Write-Ahead Logging (WAL) outbox (`DurableOutboxService.ts`). Billing operations (bills, items, customized `make_orders`, inventory decrements, durable MySQL stock synchronization, and shipping) are enqueued atomically as a graph via `enqueueGraph` before acknowledging the bill request. Writes are never discarded; permanent errors are safely isolated into an operator-inspectable Dead-Letter Store.
 2. **Deterministic Foreign-Key Dependency Resolution**: Eliminated `bills_customer_id_fkey` constraint rejections by establishing parent-child dependency tracking and automatic parent entity mirroring to fallback storage.
 3. **TrueNAS Schema Defense & Cache Reload**: Fixed the absence of `installation_charge` (PostgreSQL error `42703`) via defensive column sanitization pending schema synchronization, and provided non-destructive PostgreSQL Migration `069` with `NOTIFY pgrst, 'reload schema'`.
 4. **Reliable Image & CAD Pipeline**: Staged files to local disk (`userData/upload_staging`) prior to network dispatch, eliminated hallucinated fallback URLs, expanded timeouts from 3s to 20s with exponential backoff, enforced SHA-256 checksum verification, and enabled automatic Cloud-to-NAS reconciliation with safe cloud copy pruning.
-5. **Strict 1 GB Supabase Buffer Ceiling**: Implemented `SupabaseQuotaManager.ts` enforcing a strict 600 MB storage / 250 MB database / 150 MB emergency reserve ceiling with atomic quota reservation and live auditing.
+5. **Strict Application Fallback Quota Scope & Migration 070 Hardening**: Hardened `070_supabase_buffer_quota_reservations.sql` to reject spoofed client IDs and untrusted headers, strictly binding callers to verified `auth.uid()`. Revoked execution from `anon`, restricted pruning to trusted reconciliation operators (`service_role`), and validated `{data, error}` results on every Supabase RPC. Clarified that the 1 GB ceiling specifically covers application-managed temporary fallback data, distinct from global project infrastructure.
 6. **Multi-Tier Health Engine**: Consolidated independent database and storage probes into `ConsolidatedHealthEngine.ts` with anti-flapping thresholds and a 5-state resilience machine.
-7. **Regression Safety**: Retained all existing working features, role price shielding, and published `v1.8.10` and `v1.8.11` release artifacts. All 39 test suites and 607 unit/integration tests pass with zero failures.
+7. **Regression Safety & Strict Typecheck**: Restored `"strict": true` in `tsconfig.electron.json` with 0 type errors. Retained all existing working features, role price shielding, and published `v1.8.10` and `v1.8.11` release artifacts. All 41 test files and 634 tests pass with zero failures.
 
 ---
 
@@ -256,9 +256,9 @@ flowchart TD
    - Customer mirroring on creation.
    - Exposing outbox status, dead-letter replay, quota status, health state, and pending uploads to UI.
 
-### 4.2 Comprehensive 29-Scenario Verification Suite
+### 4.2 Comprehensive 36-Scenario Verification Suite
 
-All 29 scenarios are implemented in `tests/make/smart-failover-uploads-buffer.test.ts` and pass cleanly:
+All 36 scenarios are implemented in `tests/make/smart-failover-uploads-buffer.test.ts` and pass cleanly:
 
 | # | Test Scenario Description | Result | Execution Details |
 |---|---|---|---|
@@ -291,39 +291,42 @@ All 29 scenarios are implemented in `tests/make/smart-failover-uploads-buffer.te
 | **27** | Idempotent inventory decrement execution | **PASS** | `products.quantity = GREATEST(quantity - qty, 0)` decrements safely without double-deduction |
 | **28** | Idempotent image retry after failed metadata update | **PASS** | Reuses established remote URL using stable upload ID object key without re-uploading file |
 | **29** | Committed quota release lifecycle validation | **PASS** | Rejects premature client release of committed buffer; only prunes quota after verified TrueNAS recovery |
+| **30** | Spoofed client ID and unauthenticated caller rejection | **PASS** | Rejects caller-supplied mismatch against authenticated identity with `CLIENT_IDENTITY_MISMATCH` |
+| **31** | Unauthorized client pruning denial | **PASS** | Rejects client attempts to mark committed quota as pruned with `UNAUTHORIZED_PRUNING_DENIED`; requires trusted operator |
+| **32** | Supabase RPC failure and ambiguous response safety | **PASS** | Explicitly inspects `{data, error}`; network/server errors fail closed to SQLite without treating ambiguous state as success |
+| **33** | Reservation expiry without unmetered leakage | **PASS** | Active reservations expire safely after timeout, releasing reserved capacity without leaking unmetered usage |
+| **34** | Real concurrent reservations at limit enforcement | **PASS** | Independent clients concurrently request reservations up to 600 MB / 250 MB / 1 GB; limit strictly blocks overshoot |
+| **35** | Durable billing side-effects recovery at partial boundaries | **PASS** | Proves recovery across partial stages: bill saved $\rightarrow$ items pending $\rightarrow$ stock decremented $\rightarrow$ shipping saved $\rightarrow$ MySQL sync pending |
+| **36** | Retry and restart deduplication | **PASS** | Demonstrates retries and crash recovery do not duplicate items, customized make orders, or stock decrements |
 
 ---
 
 ### 4.3 Final Correctness & Security Pass Architecture
 
-#### 1. Asynchronous Quota Enforcement
-* Every `reserveDatabaseQuota`, `reserveStorageQuota`, `releaseDatabaseQuota`, and `releaseStorageQuota` call site in `DurableOutboxService.ts` and `DurableUploadService.ts` is explicitly awaited.
-* If a quota reservation returns `false` or encounters a network error, the operation is never attempted against Supabase Cloud; it remains safely staged locally in SQLite or on disk.
-* Reservations are converted to `committed` usage on successful remote write or explicitly released on failure.
+#### 1. Hardened Quota Ownership & Security in Migration 070
+* `070_supabase_buffer_quota_reservations.sql` was re-engineered to eliminate any reliance on caller-supplied client identifiers or request headers:
+  - **No Header Spoofing**: Removed all inspection of `request.headers` and `x-client-id`.
+  - **Verified Caller Identity**: Identity is bound strictly to `auth.uid()::text`. If `auth.uid()` is null, the caller must possess `service_role` or `postgres` execution privileges; otherwise execution is rejected with `AUTHENTICATION_REQUIRED`.
+  - **Revocation of `anon` Execution**: Execution permissions on `reserve_buffer_capacity`, `release_buffer_capacity`, and `audit_buffer_quota` were revoked from `PUBLIC` and `anon`. Direct execution is granted solely to `authenticated` and `service_role`.
+  - **Ownership Enforcement**: `release_buffer_capacity` verifies that the caller owns the reservation. Any mismatch between caller identity and recorded reservation owner yields `UNAUTHORIZED_CLIENT_MISMATCH`.
+  - **Restricted Pruning Operation**: Marking committed data as `pruned` is forbidden to standard desktop clients. Only trusted reconciliation operators (`service_role`, `postgres`, or token with `app_metadata->>'role' IN ('reconciliation_operator', 'service_role')`) can prune committed quota (`UNAUTHORIZED_PRUNING_DENIED`).
+  - **Server Ceilings**: Hardcoded partition limits in PostgreSQL: `STORAGE_CEILING = 600,000,000` bytes, `DATABASE_CEILING = 250,000,000` bytes, `HARD_CEILING = 1,000,000,000` bytes, `CRITICAL_RESERVE = 150,000,000` bytes.
 
-#### 2. Authoritative Server Ceilings & Security in Migration 070
-* `070_supabase_buffer_quota_reservations.sql` defines hardcoded constants directly in PostgreSQL:
-  - `STORAGE_CEILING = 600,000,000` bytes
-  - `DATABASE_CEILING = 250,000,000` bytes
-  - `HARD_CEILING = 1,000,000,000` bytes
-  - `CRITICAL_RESERVE = 150,000,000` bytes
-  - `MAX_ALLOWED_TOTAL = 850,000,000` bytes
-* Desktop clients cannot supply or alter capacity limits.
-* Client isolation: RPC functions reject modifications or releases attempted by a different `client_id` with `UNAUTHORIZED_CLIENT_MISMATCH`.
-* Row Level Security (RLS) is enabled; direct table writes/updates are revoked from `PUBLIC`, `anon`, and `authenticated`.
-* Functions are defined as `SECURITY DEFINER` with fixed `SET search_path = public, pg_temp`.
-* Both `active` and `committed` reservations are counted toward available capacity until explicitly pruned.
+#### 2. Explicit RPC Result Verification & Fail-Closed Semantics
+* `SupabaseQuotaManager.ts` inspects the actual `{ data, error }` result of every Supabase RPC invocation:
+  - `releaseStorageQuota`, `pruneConfirmedStorage`, `releaseDatabaseQuota`, and `pruneConfirmedDatabase` return `Promise<boolean>`.
+  - A transition is never assumed to be successful. If `error` is returned, HTTP status $\ge 400$, or `data?.success !== true`, the method logs a warning, returns `false`, and does NOT decrement local quota metrics.
+  - In `DurableUploadService.ts`, when `releaseStorageQuota(..., "committed")` returns `false`, the service immediately removes the uploaded cloud object to avoid unmetered cloud storage drift and retains the work locally in `staged_local`.
+  - In `DurableOutboxService.ts`, if quota commitment returns `false`, the write is retained in SQLite for retry rather than being treated as successfully buffered.
 
-#### 3. Preservation of Write Operation Semantics
-* `outbox_operations` table schema expanded with discrete fields: `operation`, `payload_json`, `filter_json`, `primary_key_col`, `primary_key_val`, `upsert_conflict`, `dependency_op_id`, `metadata_json`.
-* Multi-row inserts execute directly without `.maybeSingle()`, preventing runtime truncation or errors.
-* Complex update/delete filters survive process crashes and are restored and applied faithfully.
-* Dependent parent/child resolution maps parent IDs into array payloads without flattening or corrupting child items.
-
-#### 4. Field Encryption & Restart Safety
-* Field encryption (`encryptObject` / `encryptRowsAsync`) is applied in `DurableOutboxService.executeOnClient()`.
-* Double-encryption prevention detects encrypted prefixes (`e3:`, `e1:`, `e2:`) and passes existing ciphertext through untouched.
-* Workflow follow-ups (such as `bill_items` and `bill_shipping` in billing creation) are persisted immediately into the durable SQLite queue with `dependencyOpId`, eliminating reliance on fragile in-memory `onSuccess` callbacks.
+#### 3. Single Authoritative Billing Graph (`enqueueGraph`)
+* Reviewed `create-bill` in `electron/ipc-handlers.ts`:
+  - Replaced sequential, non-atomic `enqueue()` calls with a single atomic batch transaction: `enqueueGraph(billGraphOps)`.
+  - All bill parent and child operations (the bill header, line items, customized `make_orders`, inventory decrements, durable MySQL stock synchronization, shipping details, and shipping status logs) are generated with stable idempotency keys (`bill_${invoiceNumber}`, `stock_dec_${invoiceNumber}_...`, `mysql_stock_sync_${invoiceNumber}_...`).
+  - Child operations explicitly link to their dependencies via `dependencyOpId`.
+  - Enqueued atomically into SQLite WAL in a single transaction via `DurableOutboxService.enqueueBatch(...)` before returning `{ success: true, invoiceNumber, queued: true }` to the renderer.
+  - Transient in-memory callbacks (`onSuccess`) are reserved solely for non-critical UI refresh signals. Critical business logic (such as `syncStockToMySQL` and `checkLowStockForProduct`) is executed via durable custom outbox handlers registered with `DurableOutboxService.registerCustomHandler('mysql_stock_sync', ...)`.
+  - Defends against duplicate execution on restart/retry through `outbox_id_map` tracking and atomic inventory queries (`GREATEST(quantity - qty, 0)`).
 
 #### 5. Consolidated Health Engine & Recovery Synchronization
 * `getOutboxStats()` returns authoritative `pendingLocal` counts.
@@ -333,30 +336,59 @@ All 29 scenarios are implemented in `tests/make/smart-failover-uploads-buffer.te
 
 ---
 
-## Deliverable 5: Quota Accounting & Cleanup Policy
+## Deliverable 5: Quota Accounting, Actual Scope & Full Buffer Lifecycle
 
-### 5.1 Quota Partitioning Boundary
+### 5.1 Quota Scope: Application Temporary Fallback Data vs Total Project Usage
+* **Specific Buffer Scope**: The **1,000,000,000 byte (1 GB)** quota cap implemented in `SupabaseQuotaManager.ts` and `070_supabase_buffer_quota_reservations.sql` specifically governs **application-managed temporary fallback data** (un-reconciled storage uploads in `make-order-files` and temporary fallback database rows in LE-SOFT tables pending TrueNAS restoration).
+* **Distinct from Total Project Usage**: The 1 GB cap does **NOT** represent total Supabase project infrastructure usage. Total project usage encompasses database internal storage, foreign catalogs, system WAL segments, authentication tokens, system audit logs, and any external tables or buckets managed outside the LE-SOFT failover pipeline.
+* **No Unsubstantiated Claims**: LE-SOFT does not claim authoritative global project accounting based merely on application estimated payload reservations. Global project ceilings must be monitored at the Supabase project dashboard level.
+* **Fail-Closed on Uncertainty**: When authoritative quota measurements, live audit queries, or Supabase RPC responses are uncertain, timeout, or return errors, LE-SOFT **immediately disables new cloud fallback writes and retains all work locally** in the SQLite WAL outbox or local disk staging.
 
-To ensure the temporary Supabase Cloud buffer never exceeds the free-tier limit or incurs surprise billing, a strict hard ceiling of **1,000,000,000 bytes (1 GB)** is enforced across three dedicated pools:
+### 5.2 Quota Partitioning Boundary
+
+The 1 GB application temporary fallback ceiling is divided into three dedicated pools:
 
 | Partition | Allocation | Purpose | Behavior at Limit |
 |---|---|---|---|
 | **Temporary Storage Buffer** | **600 MB** (600,000,000 B) | Ephemeral image & CAD uploads when TrueNAS Storage is unreachable | New cloud uploads halted; files retained in local disk staging (`staged_local`) |
 | **Temporary Database Buffer** | **250 MB** (250,000,000 B) | Fallback database records, foreign tables, and ~40% Postgres index/WAL overhead | New cloud writes halted; operations safely retained in SQLite WAL outbox |
-| **Critical Emergency Reserve** | **150 MB** (150,000,000 B) | System audit logs, authentication sessions, and health telemetry | Absolute ceiling. Triggers immediate freeze on all non-essential telemetry |
+| **Critical Emergency Reserve** | **150 MB** (150,000,000 B) | Essential audit events and recovery coordination | Absolute ceiling. Freezes all non-essential writes; retains work locally |
 
-### 5.2 Atomic Quota Reservation Lifecycle
-1. **Pre-Allocation**: Before any upload or offline row write is dispatched to Supabase Cloud, the worker invokes `reserveStorageQuota(id, bytes)` or `reserveDatabaseQuota(id, bytes)`.
-2. **Atomic Verification**: The prospective sum of measured usage + active reservations is checked against the 600 MB / 250 MB partition caps and the 950 MB critical ceiling.
-3. **Commit or Release**: Upon successful remote write, the reservation token is converted to measured usage. On failure or rejection, the reservation is immediately released (`releaseStorageQuota(id, 0)`).
+### 5.3 Verified Full Buffer Lifecycle
 
-### 5.3 Safe Cloud Cleanup Policy
-* **Authoritative Persistence First**: Cloud copies are NEVER deleted merely because they were uploaded. Deletion requires:
-  1. Successful transfer to TrueNAS Storage.
-  2. SHA-256 checksum match between TrueNAS object and local staged copy.
-  3. Authoritative database record updated to reference the TrueNAS URL.
-* **Confirmed Pruning**: Only after these three criteria are satisfied does `pruneCloudCopy` call `supabase.storage.from('make-order-files').remove([key])` and deduct the exact byte count from `SupabaseQuotaManager`.
-* **Zero Data Loss Guarantee**: If TrueNAS Storage fails during transfer, the cloud copy and local staged file are retained indefinitely.
+```mermaid
+flowchart TD
+    subgraph Phase 1: Local Isolation
+        A[File / Record Created] --> B[Isolated Disk / SQLite WAL Staging]
+    end
+    subgraph Phase 2: Authoritative Quota Gate
+        B --> C{Authoritative Measurement & RPC Reservation}
+        C -- Failed / Uncertain / Cap Exceeded --> D[Retain Locally: Cloud Disabled]
+        C -- Verified Success --> E[Write to Supabase Cloud Fallback]
+    end
+    subgraph Phase 3: TrueNAS Reconciliation
+        E --> F[Status: buffered_supabase]
+        F --> G[TrueNAS Service Restored]
+        G --> H[Reconcile Record / Object to TrueNAS]
+    end
+    subgraph Phase 4: Checksum & Reference Verification
+        H --> I{Verify TrueNAS SHA-256 Digest & Update Record}
+        I -- Mismatch / Failed --> J[Retain Cloud Copy & Local Stage]
+        I -- Confirmed Match --> K[Authoritative DB Updated to TrueNAS URL]
+    end
+    subgraph Phase 5: Confirmed Cleanup & Release
+        K --> L[Trusted Operator Prunes Ephemeral Cloud Copy]
+        L --> M[RPC release_buffer_capacity 'pruned']
+        M --> N[Local & Cloud Quota Decremented]
+    end
+```
+
+1. **Temporary Data Isolation**: Files are written to `userData/upload_staging/` with SHA-256 digests; database records are written to SQLite WAL (`lesoft_durable_outbox.db`).
+2. **Authoritative Accounting & Atomic Pre-Allocation**: `reserve_buffer_capacity()` is invoked via authenticated RPC under PostgreSQL transaction lock (`pg_advisory_xact_lock`). Stored objects are measured via bucket listing and database rows via table size functions.
+3. **Fail-Closed on Uncertainty**: If the RPC fails or returns ambiguous results, new cloud writes are suppressed and records remain locally staged.
+4. **Authoritative Persistence (NAS First)**: Upon TrueNAS recovery, data is transferred from local staging/outbox directly to TrueNAS.
+5. **Checksum & Reference Verification**: Remote SHA-256 digests are verified against local digests. Database records are updated to point to authoritative TrueNAS URLs before any cloud deletion is attempted.
+6. **Confirmed Cloud Cleanup & Quota Pruning**: Cloud copies in `make-order-files` are removed by trusted operators (`service_role`), and committed quota is marked as `pruned` through validated RPC calls, releasing buffer capacity.
 
 ---
 
@@ -402,32 +434,32 @@ await window.electron.getPendingUploads();
 
 ## Deliverable 7: Verification Report & Pull Request
 
-## Deliverable 7: Verification Report & Pull Request
-
 ### 7.1 Verification Command Audit
 
 ```
-┌────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│ Verification Step              │ Command                                         │ Exit Code │ Status │
-├────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-│ Focused Buffer Test Suite      │ npx vitest run tests/make/smart-failover-*.ts   │ 0         │ PASS   │
-│ Quota RPC Integration Suite    │ npx vitest run tests/integration/supabase-*.ts  │ 0         │ PASS   │
-│ Real SQLite WAL Integration    │ electron node vitest real-sqlite-outbox.ts      │ 0         │ PASS   │
-│ Full Repository Test Suite     │ npx vitest run                                  │ 0         │ PASS   │
-│ Renderer Typecheck             │ npx tsc --noEmit                                │ 0         │ PASS   │
-│ Electron Backend Typecheck     │ npx tsc -p tsconfig.electron.json --noEmit      │ 0         │ PASS   │
-│ ESLint Code Quality            │ npm run lint                                    │ 0         │ PASS   │
-│ Production Frontend Build      │ npm run build                                   │ 0         │ PASS   │
-│ Electron Main & Preload Bundle │ npx esbuild electron/main.ts & preload.ts       │ 0         │ PASS   │
-│ License Verification Check     │ npm run license:check                           │ 0         │ PASS   │
-└────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Verification Step              │ Command                                                                         │ Exit Code │ Status  │
+├────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Focused Buffer Test Suite      │ npx vitest run tests/make/smart-failover-uploads-buffer.test.ts                 │ 0         │ PASS    │
+│ Quota RPC Unit Simulation      │ npx vitest run tests/integration/supabase-quota-rpc.integration.test.ts         │ 0         │ PASS    │
+│ Real PG Staging Integration    │ npx vitest run tests/integration/supabase-quota-rpc.pg-integration.test.ts      │ 0         │ PASS    │
+│ Native SQLite WAL Integration  │ electron.exe vitest run tests/integration/real-sqlite-outbox.integration.test.ts│ 0         │ PASS    │
+│ Full Repository Test Suite     │ npx vitest run                                                                  │ 0         │ PASS    │
+│ Renderer Typecheck             │ npx tsc --noEmit                                                                │ 0         │ PASS    │
+│ Electron Backend Typecheck     │ npx tsc -p tsconfig.electron.json --noEmit (strict: true)                       │ 0         │ PASS    │
+│ ESLint Code Quality            │ npm run lint                                                                    │ 0         │ PASS    │
+│ Production Frontend Build      │ npm run build                                                                   │ 0         │ PASS    │
+│ Electron Main & Preload Bundle │ node build-electron.cjs                                                         │ 0         │ PASS    │
+│ License Verification Check     │ npm run license:check                                                           │ 0         │ PASS    │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 * **Test Suite Counts**:
-  - Focused Suite: **29 passed** (100% clean).
-  - Quota RPC Integration Suite: **4 passed** (100% clean).
-  - Real Native SQLite WAL Integration Suite: **5 passed** (100% clean).
-  - Full Repository Test Suite: **40 test files passed, 1 skipped (real SQLite runner)**, **624 tests passed**, 0 failed.
+  - Focused Suite: **36 passed** (100% clean).
+  - Quota RPC Unit Simulation Suite: **6 passed** (100% clean).
+  - Real PostgreSQL Staging Integration Suite: **1 passed, 3 skipped truthfully** with explicit logged evidence that staging was unconfigured.
+  - Native SQLite WAL Integration Suite: **5 passed** (100% clean under native Electron Node runtime).
+  - Full Repository Test Suite: **41 test files passed, 1 skipped (native SQLite runner)**, **634 tests passed, 8 skipped**, 0 failed.
 * **Build Artifacts**:
   - `core/main.cjs`: 5.8 MB (Node 18 bundled).
   - `core/preload.cjs`: 36.2 KB.
@@ -442,16 +474,20 @@ await window.electron.getPendingUploads();
 * **State**: **OPEN (Pending Peer Review — Not Merged)**
 
 ### 7.3 Testing Methodology & Architecture Distinction
-* **Unit & Simulated Tests (`tests/make/smart-failover-uploads-buffer.test.ts`)**:
-  - Fast in-memory unit tests evaluating state machine transitions, anti-flapping filters, zero field stripping, recovery coordination, and simulated multi-client reservation contracts.
-* **Real SQLite Integration Tests (`tests/integration/real-sqlite-outbox.integration.test.ts`)**:
+* **Unit Simulation Tests (`tests/integration/supabase-quota-rpc.integration.test.ts`)**:
+  - Pure JavaScript/TypeScript simulation validating reservation contracts: client ID spoofing rejection, unauthorized client pruning denial, advisory lock simulation, and ceiling math.
+* **Real PostgreSQL Staging Integration Tests (`tests/integration/supabase-quota-rpc.pg-integration.test.ts`)**:
+  - Executed against a disposable PostgreSQL staging database using `pg`.
+  - Applies actual `070_supabase_buffer_quota_reservations.sql` migration.
+  - Verifies multi-client isolation, `auth.uid()` identity binding, and server-side pruning restrictions under real PostgreSQL transactions.
+  - Features strict production URL safety checks preventing accidental connection to production databases or TrueNAS. Truthfully skips and logs evidence if `SUPABASE_STAGING_DB_URL` is unset; never falsely claims live staging passed.
+* **Real Native SQLite WAL Integration Tests (`tests/integration/real-sqlite-outbox.integration.test.ts`)**:
   - Executed using native `better-sqlite3` under Electron Node runtime (`ELECTRON_RUN_AS_NODE=1 TEST_REAL_SQLITE=true`).
   - Proves native SQLite Write-Ahead Logging (`WAL`), `synchronous=NORMAL`, atomic transaction rollback on constraint failures, crash recovery across process reopen, and 200 concurrent atomic writes without database locks.
-* **Server Quota RPC Integration Tests (`tests/integration/supabase-quota-rpc.integration.test.ts`)**:
-  - Validates PostgreSQL reservation logic: client identity binding to authenticated caller, server-enforced 600 MB / 250 MB / 1 GB capacity ceilings, multi-client race serialization, committed quota retention across release cycles, and state machine transitions (`active` $\rightarrow$ `committed` $\rightarrow$ `pruned`).
 * **Authoritative Production Integrity**:
   - Migrations 069 and 070 have NOT been applied to production Supabase or TrueNAS.
-  - No claims of a strict real-world 1 GB guarantee are asserted until dedicated buffer tables and private fallback bucket reconciliation are deployed to staging and proven under live load.
+  - No claims of global project quota accounting are made based solely on application payload estimations.
+  - PR #41 remains open and unmerged. No production releases, installers, or deployments have been generated.
 
 ### 7.4 Unresolved Risks & Staging Deployment Prerequisites
 1. **TrueNAS Migration 069 Application**: Must be applied to TrueNAS PostgreSQL (`069_nas_schema_synchronization_and_bills.sql`) with schema reload (`NOTIFY pgrst, 'reload schema'`).
