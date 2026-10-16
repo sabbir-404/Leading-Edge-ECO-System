@@ -559,7 +559,7 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
         expect(isValidApprovedImageUrl('javascript:alert(1)')).toBe(false);
 
         // Verify Migration 069 rollback script safety warnings
-        const rollbackSqlPath = path.join(process.cwd(), 'supabase/migrations/069_nas_schema_synchronization_rollback.sql');
+        const rollbackSqlPath = path.join(process.cwd(), 'database/truenas/rollback/069_nas_schema_synchronization_rollback.sql');
         expect(fs.existsSync(rollbackSqlPath)).toBe(true);
         const rollbackSql = fs.readFileSync(rollbackSqlPath, 'utf-8');
 

@@ -164,8 +164,8 @@ flowchart TD
 
 ### 3.2 TrueNAS Schema Migration Requirements (Migration 069)
 * **Target Database**: `lesoft` (PostgreSQL 15 on TrueNAS host `100.88.85.6`, port `5432`)
-* **Migration Script**: `LE-SOFT/supabase/migrations/069_nas_schema_synchronization_and_bills.sql`
-* **Rollback Script**: `LE-SOFT/supabase/migrations/069_nas_schema_synchronization_rollback.sql`
+* **Migration Script**: `LE-SOFT/database/truenas/migrations/069_nas_schema_synchronization_and_bills.sql`
+* **Rollback Script**: `LE-SOFT/database/truenas/rollback/069_nas_schema_synchronization_rollback.sql` (Manual, Destructive — Prohibited in Production)
 * **Changes Applied**:
   1. `ALTER TABLE bills ADD COLUMN IF NOT EXISTS installation_charge NUMERIC DEFAULT 0;`
   2. `ALTER TABLE bills ADD COLUMN IF NOT EXISTS installation_note TEXT;`
@@ -181,7 +181,7 @@ flowchart TD
 * **⚠️ Critical Destructive Rollback Warning**:
   - The script `069_nas_schema_synchronization_rollback.sql` drops live data-bearing tables (`customer_payments`, `customer_addresses`, `exchange_orders`, `exchange_items`) and drops columns `installation_charge` and `installation_note` from `bills`.
   - **Executing this rollback script against a populated production `lesoft` database causes IRREVERSIBLE FINANCIAL AND OPERATIONAL DATA LOSS.**
-  - This script is restricted solely to isolated CI/CD test runners and unpopulated staging databases.
+  - This script is completely segregated into `database/truenas/rollback/` outside of any automated migration or deployment path, and restricted solely to isolated CI/CD test runners and unpopulated staging databases.
 * **Non-Destructive Recovery Strategy**:
   - If schema or postgREST reload issues occur post-migration, **NEVER run the rollback script**.
   - Instead, take a backup snapshot, fix forward by re-running `069_nas_schema_synchronization_and_bills.sql` (idempotent), or perform a point-in-time restore from the pre-deployment `pg_dump` archive.
@@ -197,7 +197,7 @@ flowchart TD
    ```
 3. **Execute Non-Destructive Forward Migration**:
    ```bash
-   psql -U postgres -h 100.88.85.6 -p 5432 -d lesoft -f 069_nas_schema_synchronization_and_bills.sql
+   psql -U postgres -h 100.88.85.6 -p 5432 -d lesoft -f database/truenas/migrations/069_nas_schema_synchronization_and_bills.sql
    ```
 4. **Verify Schema & Column Additions**:
    ```sql
@@ -340,19 +340,28 @@ All 36 scenarios are implemented in `tests/make/smart-failover-uploads-buffer.te
 
 ### 5.1 Quota Scope: Application Temporary Fallback Data vs Total Project Usage
 * **Specific Buffer Scope**: The **1,000,000,000 byte (1 GB)** quota cap implemented in `SupabaseQuotaManager.ts` and `070_supabase_buffer_quota_reservations.sql` specifically governs **application-managed temporary fallback data** (un-reconciled storage uploads in `make-order-files` and temporary fallback database rows in LE-SOFT tables pending TrueNAS restoration).
+* **SI Decimal Byte Standard ($10^9$)**:
+  - LE-SOFT strictly uses the **SI decimal unit** for gigabytes: **$1\text{ GB} = 10^9 = 1,000,000,000\text{ bytes}$** (in contrast to binary GiB where $1\text{ GiB} = 2^{30} = 1,073,741,824\text{ bytes}$).
+  - **Rationale**: Supabase Cloud billing, storage quotas, egress allowances, and S3-compatible storage tiers meter and enforce capacity using SI decimal metrics ($1\text{ GB} = 10^9\text{ bytes}$). Adopting SI decimal units ensures that LE-SOFT never exceeds cloud-provider tier boundaries due to binary-to-decimal unit divergence.
 * **Distinct from Total Project Usage**: The 1 GB cap does **NOT** represent total Supabase project infrastructure usage. Total project usage encompasses database internal storage, foreign catalogs, system WAL segments, authentication tokens, system audit logs, and any external tables or buckets managed outside the LE-SOFT failover pipeline.
 * **No Unsubstantiated Claims**: LE-SOFT does not claim authoritative global project accounting based merely on application estimated payload reservations. Global project ceilings must be monitored at the Supabase project dashboard level.
 * **Fail-Closed on Uncertainty**: When authoritative quota measurements, live audit queries, or Supabase RPC responses are uncertain, timeout, or return errors, LE-SOFT **immediately disables new cloud fallback writes and retains all work locally** in the SQLite WAL outbox or local disk staging.
 
-### 5.2 Quota Partitioning Boundary
+### 5.2 Quota Partitioning Boundary & Mathematical Ceiling Proof
 
 The 1 GB application temporary fallback ceiling is divided into three dedicated pools:
 
-| Partition | Allocation | Purpose | Behavior at Limit |
-|---|---|---|---|
-| **Temporary Storage Buffer** | **600 MB** (600,000,000 B) | Ephemeral image & CAD uploads when TrueNAS Storage is unreachable | New cloud uploads halted; files retained in local disk staging (`staged_local`) |
-| **Temporary Database Buffer** | **250 MB** (250,000,000 B) | Fallback database records, foreign tables, and ~40% Postgres index/WAL overhead | New cloud writes halted; operations safely retained in SQLite WAL outbox |
-| **Critical Emergency Reserve** | **150 MB** (150,000,000 B) | Essential audit events and recovery coordination | Absolute ceiling. Freezes all non-essential writes; retains work locally |
+| Partition | Allocation | Metric (SI Decimal) | Purpose | Behavior at Limit |
+|---|---|---|---|---|
+| **Temporary Storage Buffer** | **600 MB** | $600,000,000\text{ B}$ | Ephemeral image & CAD uploads when TrueNAS Storage is unreachable | New cloud uploads halted; files retained in local disk staging (`staged_local`) |
+| **Temporary Database Buffer** | **250 MB** | $250,000,000\text{ B}$ | Fallback database records, foreign tables, and ~40% Postgres index/WAL overhead | New cloud writes halted; operations safely retained in SQLite WAL outbox |
+| **Critical Emergency Reserve** | **150 MB** | $150,000,000\text{ B}$ | Essential audit events, recovery coordination, and system catalog buffer | Absolute ceiling. Freezes all non-essential writes; retains work locally |
+
+* **Mathematical Ceiling Proof**:
+  $$\text{Storage Ceiling } (600,000,000\text{ B}) + \text{Database Ceiling } (250,000,000\text{ B}) = 850,000,000\text{ B}$$
+  $$\text{Maximum Allocatable Application Total} = 850,000,000\text{ B} \le 850,000,000\text{ B} < 1,000,000,000\text{ B}$$
+  $$\text{Inviolable Emergency Reserve} = 1,000,000,000\text{ B} - 850,000,000\text{ B} = 150,000,000\text{ B}$$
+  Because application reservations are strictly partitioned by resource type and independently bounded by their respective ceilings (`STORAGE_CEILING` and `DATABASE_CEILING`), the sum of active and committed application reservations can **never** exceed $850,000,000\text{ bytes}$ under any concurrent workload combination. The $150,000,000\text{ byte}$ emergency reserve remains mathematically unreachable by routine fallback writes.
 
 ### 5.3 Verified Full Buffer Lifecycle
 
@@ -459,9 +468,9 @@ await window.electron.getPendingUploads();
   - Focused Suite: **39 passed** (100% clean, Scenarios 1–39 including Scenario 39 runtime reconciliation lifecycle).
   - Quota RPC Unit Simulation Suite: **8 passed** (100% clean, Tests 1–8).
   - Real PostgreSQL Staging Integration Suite: **1 passed (environment check), 10 skipped truthfully (NOT VERIFIED)** with explicit logged evidence that staging was unconfigured (`ALLOW_DISPOSABLE_STAGING_TESTS` not set).
-  - MySQL Stock Idempotency Integration Suite: **7 passed** (100% clean, testing concurrent duplicate entry, connection drops, crash recovery, transaction rollbacks, and schema prerequisite validation).
+  - MySQL Stock Idempotency Suite: **8 passed (7 unit simulation + 1 environment check), 2 skipped truthfully (NOT VERIFIED)** with explicit logged evidence that disposable MySQL staging was unconfigured (`ALLOW_DISPOSABLE_MYSQL_TESTS` not set).
   - Native SQLite WAL Integration Suite: **8 passed** (100% clean under native Electron Node runtime, Tests 1–8).
-  - Full Repository Test Suite: **42 test files passed, 1 skipped (native SQLite runner)**, **646 tests passed, 18 skipped**, 0 failed.
+  - Full Repository Test Suite: **42 test files passed, 1 skipped (native SQLite runner)**, **647 tests passed, 20 skipped**, 0 failed.
 * **Build Artifacts**:
   - `core/main.cjs`: 5.9 MB (Node 18 bundled).
   - `core/preload.cjs`: 36.2 KB.
@@ -485,6 +494,9 @@ await window.electron.getPendingUploads();
   - Asserts failure if unauthorized pruning unexpectedly succeeds.
   - Verifies closed reservation ID reuse rejection, resource type/ownership immutability, concurrent ceiling capping, authorized operator pruning, and atomic partition ceiling separation.
   - Features strict production URL safety checks aborting if pointing to production or TrueNAS. Truthfully skips and logs evidence if `ALLOW_DISPOSABLE_STAGING_TESTS !== 'true'`; never falsely claims live staging passed.
+* **MySQL Stock Idempotency Unit vs Staging Tests (`tests/integration/mysql-stock-idempotency.integration.test.ts`)**:
+  - Unit / Simulated suite tests error propagation, atomic rollbacks, concurrent deduplication markers, and schema precondition checks (7 tests passed).
+  - Opt-in Staging suite provides a real-server test harness against `TEST_MYSQL_URL` strictly guarded by `ALLOW_DISPOSABLE_MYSQL_TESTS=true` and non-production hostname checks (truthfully skipped when unconfigured).
 * **Real Native SQLite WAL Integration Tests (`tests/integration/real-sqlite-outbox.integration.test.ts`)**:
   - Executed using native `better-sqlite3` under Electron Node runtime (`cmd /c "set ELECTRON_RUN_AS_NODE=1&& set TEST_REAL_SQLITE=true&& .\node_modules\electron\dist\electron.exe .\node_modules\vitest\vitest.mjs run tests/integration/real-sqlite-outbox.integration.test.ts"`).
   - Proves native SQLite Write-Ahead Logging (`WAL`), `synchronous=NORMAL`, atomic transaction rollback on constraint failures, crash recovery across process reopen, 200 concurrent atomic writes without database locks, atomic billing operation graph enqueue across ungraceful process restarts, temporary database buffer lifecycle reconciliation (`cleanup_pending` on failure), and destination-enforced idempotency (`le_stock_sync_idempotency`).
@@ -493,26 +505,28 @@ await window.electron.getPendingUploads();
   - No claims of global project quota accounting are made based solely on application payload estimations.
   - PR #41 remains open and unmerged. No production releases, installers, or deployments have been generated.
 
-### 7.4 Migration Reconcile & Safe Application Order
-1. **Migration 069 Forward vs Rollback Reconcile**:
-   - `069_nas_schema_synchronization_and_bills.sql` is the **AUTHORITATIVE FORWARD MIGRATION**. It is fully idempotent, non-destructive, and additive (`ADD COLUMN IF NOT EXISTS`, `CREATE TABLE IF NOT EXISTS`, `NOTIFY pgrst, 'reload schema'`).
-   - `069_nas_schema_synchronization_rollback.sql` is a **DESTRUCTIVE ROLLBACK SCRIPT** containing `DROP TABLE CASCADE` and `ALTER TABLE DROP COLUMN`. Per engineering safety rules, **NEVER EXECUTE A ROLLBACK MIGRATION IN PRODUCTION**. In case of issue, forward-fix with idempotent additions and `pg_dump` backups.
+### 7.4 Migration Reorganization & Safe Application Order
+1. **Migration File Organization by Target System**:
+   - `database/truenas/migrations/069_nas_schema_synchronization_and_bills.sql`: Authoritative TrueNAS PostgreSQL forward DDL.
+   - `database/truenas/rollback/069_nas_schema_synchronization_rollback.sql`: Destructive manual rollback script (completely quarantined from automated tools).
+   - `supabase/migrations/070_supabase_buffer_quota_reservations.sql`: Exclusive Supabase Cloud CLI PostgreSQL migration.
+   - `database/mysql/migrations/mysql_001_stock_sync_idempotency.sql`: Remote MySQL web store DDL.
 2. **Safe Application Sequence**:
-   - **Step 1: NAS Schema Forward Migration** (`supabase/migrations/069_nas_schema_synchronization_and_bills.sql`):
+   - **Step 1: NAS Schema Forward Migration** (`database/truenas/migrations/069_nas_schema_synchronization_and_bills.sql`):
      - Target: TrueNAS PostgreSQL database (`lesoft` on port 5432).
      - Execution: Adds `installation_charge`, `installation_note`, `customer_addresses`, `customer_payments`, `exchange_orders`, `exchange_items`, and triggers `NOTIFY pgrst, 'reload schema'`.
    - **Step 2: Supabase Buffer Quota Security Migration** (`supabase/migrations/070_supabase_buffer_quota_reservations.sql`):
-     - Target: Supabase Cloud PostgreSQL database.
+     - Target: Supabase Cloud PostgreSQL database via Supabase CLI (`supabase db push`).
      - Execution: Provisions `supabase_buffer_reservations` table and installs `reserve_buffer_capacity` and `release_buffer_capacity` RPC functions with transaction advisory locking and security definer protections.
-   - **Step 3: MySQL Destination Stock Synchronization Idempotency** (`supabase/migrations/mysql_001_stock_sync_idempotency.sql`):
+   - **Step 3: MySQL Destination Stock Synchronization Idempotency** (`database/mysql/migrations/mysql_001_stock_sync_idempotency.sql`):
      - Target: Remote MySQL database (e.g. `le_wordpress_db`).
      - Execution: Provisions `le_stock_sync_idempotency` table with `InnoDB`, `utf8mb4`, and PRIMARY KEY `dedup_key` to guarantee exactly-once stock decrement semantics.
-3. **Server-Side Reconciliation Architecture**:
-   - Desktop client applications must **NEVER** embed Supabase `service_role` secrets.
-   - For routine desktop clients, temporary fallback data is written under authenticated user JWTs. Upon NAS restoration, cloud copies are deleted and actively verified before pruning is requested.
+3. **Decoupled Server-Side Reconciliation Architecture**:
+   - Desktop client applications must **NEVER** embed or inspect Supabase `service_role` secrets.
+   - `electron/supabase.ts` was audited and stripped of any service key references. The desktop client runtime operates exclusively with anonymous/authenticated user credentials.
    - Quota pruning is privileged (`UNAUTHORIZED_PRUNING_DENIED` for regular clients). It can be executed via:
-     - Logged-in operators possessing the `reconciliation_operator` role in `app_metadata`.
-     - An autonomous backend server daemon running on internal infrastructure configured with `SUPABASE_RECONCILIATION_SERVICE_KEY`.
+     - Logged-in operators possessing the `reconciliation_operator` role in `app_metadata` (enforced via PostgreSQL RLS).
+     - The standalone backend server daemon (`scripts/server-reconciliation-daemon.cjs`) running in an isolated secure environment with `SUPABASE_RECONCILIATION_SERVICE_KEY`.
    - If a client cannot prune, the operation transitions to `cleanup_pending`, preserving full auditability and allowing the backend daemon or operator session to complete quota pruning without repeating NAS writes.
 
 ---

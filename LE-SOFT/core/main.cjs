@@ -27651,20 +27651,9 @@ function reinitSupabaseClients() {
         const { DurableUploadService: DurableUploadService2 } = await Promise.resolve().then(() => (init_DurableUploadService(), DurableUploadService_exports));
         const { SupabaseQuotaManager: SupabaseQuotaManager2 } = await Promise.resolve().then(() => (init_SupabaseQuotaManager(), SupabaseQuotaManager_exports));
         const { ConsolidatedHealthEngine: ConsolidatedHealthEngine2 } = await Promise.resolve().then(() => (init_ConsolidatedHealthEngine(), ConsolidatedHealthEngine_exports));
-        let reconciliationClient = null;
-        const recKey = process.env.SUPABASE_RECONCILIATION_SERVICE_KEY || process.env.LESOFT_RECONCILIATION_KEY;
-        if (recKey && config2.url) {
-          const { createClient: createClient2 } = await Promise.resolve().then(() => (init_dist4(), dist_exports));
-          reconciliationClient = createClient2(config2.url, recKey, {
-            auth: { persistSession: false, autoRefreshToken: false }
-          });
-        }
         DurableOutboxService2.getInstance().registerClients({ nas: nasClient, supabase: supabaseClient });
         DurableUploadService2.getInstance().registerClients({ nas: nasClient, supabase: supabaseClient });
-        SupabaseQuotaManager2.getInstance().registerClients({
-          supabase: supabaseClient,
-          reconciliation: reconciliationClient
-        });
+        SupabaseQuotaManager2.getInstance().registerClients({ supabase: supabaseClient });
         ConsolidatedHealthEngine2.getInstance().registerClients({ nas: nasClient, supabase: supabaseClient });
         if (process.env.NODE_ENV !== "test") {
           DurableOutboxService2.getInstance().startWorker(1e3);
