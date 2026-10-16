@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Plus, AlertCircle, CheckCircle, Paperclip, X, FileText, 
   Trash2, MapPin, User, ShoppingBag, 
-  Palette, Maximize2, Tag, Shield, DollarSign, Lock, Box, Search, Save, FolderOpen, ChevronDown
+  Palette, Maximize2, Tag, Shield, DollarSign, Lock, Box, Search, Save, FolderOpen, ChevronDown, Copy
 } from 'lucide-react';
 import DashboardLayout from '../../components/DashboardLayout';
 import { 
@@ -446,6 +446,18 @@ const PlaceOrder: React.FC = () => {
     setSavedDrafts(loadSavedPlaceOrderDrafts());
     if (activeSavedDraftId === savedDraft.id) setActiveSavedDraftId(null);
     showToast('Saved draft deleted.', 'success');
+  };
+
+  const handleDuplicateSavedDraft = (savedDraft: SavedPlaceOrderDraft) => {
+    try {
+      const duplicatedData = JSON.parse(JSON.stringify(savedDraft.data));
+      const duplicatedTitle = `${savedDraft.title} (Copy)`;
+      const saved = saveNamedPlaceOrderDraft(duplicatedData, duplicatedTitle);
+      setSavedDrafts(loadSavedPlaceOrderDrafts());
+      showToast('Draft duplicated: ' + saved.draft.title, 'success');
+    } catch (err: any) {
+      showToast('Could not duplicate draft: ' + (err?.message || 'Storage error'), 'error');
+    }
   };
 
 
@@ -2472,6 +2484,14 @@ const PlaceOrder: React.FC = () => {
                               style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '6px 9px', marginRight: '6px', borderRadius: '7px', border: '1px solid var(--border-color)', background: 'var(--card-bg, #fff)', color: 'var(--text-primary)', cursor: 'pointer', fontWeight: 700 }}
                             >
                               <FolderOpen size={14} /> Load
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDuplicateSavedDraft(savedDraft)}
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '6px 9px', marginRight: '6px', borderRadius: '7px', border: '1px solid var(--border-color)', background: 'var(--card-bg, #fff)', color: 'var(--text-primary)', cursor: 'pointer', fontWeight: 700 }}
+                              title="Duplicate draft"
+                            >
+                              <Copy size={14} /> Duplicate
                             </button>
                             <button
                               type="button"

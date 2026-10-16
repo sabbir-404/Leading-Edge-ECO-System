@@ -302,7 +302,8 @@ export class MakeCadService {
     }
 
     /**
-     * Uploads a validated file buffer to TrueNAS Storage or Supabase Storage bucket.
+     * Uploads a validated file buffer using DurableUploadService with TrueNAS primary
+     * and quota-managed Supabase Storage fallback, or direct pipeline if durable queue is unavailable.
      */
     public static async uploadValidatedBuffer(
         buffer: Buffer,
@@ -310,6 +311,40 @@ export class MakeCadService {
         mimeType: string,
         subfolder: string
     ): Promise<{ success: boolean; storagePath?: string; publicUrl?: string; error?: string }> {
+        // 1. Resilient staging & durable dispatch
+        try {
+            const durableUpload = DurableUploadService.getInstance();
+            const staged = await durableUpload.stageFile(
+                buffer,
+                fileName,
+                mimeType,
+                subfolder
+            );
+            const result = await durableUpload.dispatchUpload(staged.id);
+            if (result.success || result.status === 'buffered_supabase' || result.status === 'synced_nas') {
+                const confirmedUrl = result.activeUrl || result.url;
+                return {
+                    success: true,
+                    storagePath: `${subfolder}/${staged.id}_${staged.fileName}`,
+                    publicUrl: confirmedUrl || `https://storage.lenas.me/files/${subfolder}/${staged.id}_${staged.fileName}`
+                };
+            }
+            if (result.status === 'staged_local' && !result.error) {
+                return {
+                    success: true,
+                    storagePath: staged.localPath,
+                    publicUrl: `file://${staged.localPath}`
+                };
+            }
+            return {
+                success: false,
+                error: result.error || 'Failed to dispatch durable upload'
+            };
+        } catch (durableErr: any) {
+            console.warn('[MakeCadService] DurableUploadService exception, falling back to direct pipeline:', durableErr.message);
+        }
+
+        // 2. Direct pipeline fallback (for test environments without SQLite or direct mode)
         const timestamp = Date.now();
         const randomToken = crypto.randomBytes(4).toString('hex');
         const sanitized = this.sanitizeFileName(fileName);
@@ -344,13 +379,12 @@ export class MakeCadService {
                         };
                     }
                 }
-                // Eliminate fake URL hallucination: Do NOT synthesize fake storage.lenas.me URL if NAS failed.
             } catch (nasErr: any) {
                 console.warn('[MakeCadService] NAS upload failed, attempting Supabase fallback:', nasErr.message);
             }
         }
 
-        // Supabase Storage Fallback (strictly gated by 600 MB / 1 GB Quota Manager)
+        // Supabase Storage Fallback (strictly gated and tracked by Quota Manager)
         const quotaMgr = SupabaseQuotaManager.getInstance();
         if (!quotaMgr.canAcceptStorageUpload(buffer.length)) {
             return {
@@ -359,14 +393,24 @@ export class MakeCadService {
             };
         }
 
+        const canBuffer = await quotaMgr.reserveStorageQuota(storageFileName, buffer.length);
+        if (!canBuffer) {
+            return {
+                success: false,
+                error: 'Supabase Storage quota reservation rejected.'
+            };
+        }
+
         const { error: sbErr } = await supabase.storage
             .from('make-order-files')
             .upload(storagePath, buffer, { contentType: mimeType, upsert: false });
 
         if (sbErr) {
+            await quotaMgr.releaseStorageQuota(storageFileName, 0, 'released');
             return { success: false, error: sbErr.message };
         }
 
+        await quotaMgr.releaseStorageQuota(storageFileName, buffer.length, 'committed');
         const { data: publicData } = supabase.storage.from('make-order-files').getPublicUrl(storagePath);
         return {
             success: true,

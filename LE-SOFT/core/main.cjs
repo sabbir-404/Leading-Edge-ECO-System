@@ -116696,6 +116696,7 @@ var import_path15 = __toESM(require("path"), 1);
 var import_crypto11 = __toESM(require("crypto"), 1);
 init_supabase();
 init_SupabaseQuotaManager();
+init_DurableUploadService();
 var ALLOWED_CAD_EXTENSIONS = /* @__PURE__ */ new Set([
   "pdf",
   "dwg",
@@ -116917,9 +116918,41 @@ var MakeCadService = class {
     };
   }
   /**
-   * Uploads a validated file buffer to TrueNAS Storage or Supabase Storage bucket.
+   * Uploads a validated file buffer using DurableUploadService with TrueNAS primary
+   * and quota-managed Supabase Storage fallback, or direct pipeline if durable queue is unavailable.
    */
   static async uploadValidatedBuffer(buffer, fileName, mimeType, subfolder) {
+    try {
+      const durableUpload = DurableUploadService.getInstance();
+      const staged = await durableUpload.stageFile(
+        buffer,
+        fileName,
+        mimeType,
+        subfolder
+      );
+      const result = await durableUpload.dispatchUpload(staged.id);
+      if (result.success || result.status === "buffered_supabase" || result.status === "synced_nas") {
+        const confirmedUrl = result.activeUrl || result.url;
+        return {
+          success: true,
+          storagePath: `${subfolder}/${staged.id}_${staged.fileName}`,
+          publicUrl: confirmedUrl || `https://storage.lenas.me/files/${subfolder}/${staged.id}_${staged.fileName}`
+        };
+      }
+      if (result.status === "staged_local" && !result.error) {
+        return {
+          success: true,
+          storagePath: staged.localPath,
+          publicUrl: `file://${staged.localPath}`
+        };
+      }
+      return {
+        success: false,
+        error: result.error || "Failed to dispatch durable upload"
+      };
+    } catch (durableErr) {
+      console.warn("[MakeCadService] DurableUploadService exception, falling back to direct pipeline:", durableErr.message);
+    }
     const timestamp = Date.now();
     const randomToken = import_crypto11.default.randomBytes(4).toString("hex");
     const sanitized = this.sanitizeFileName(fileName);
@@ -116962,10 +116995,19 @@ var MakeCadService = class {
         error: "Supabase Storage quota limit reached (600 MB / 1 GB ceiling)."
       };
     }
+    const canBuffer = await quotaMgr.reserveStorageQuota(storageFileName, buffer.length);
+    if (!canBuffer) {
+      return {
+        success: false,
+        error: "Supabase Storage quota reservation rejected."
+      };
+    }
     const { error: sbErr } = await supabase.storage.from("make-order-files").upload(storagePath, buffer, { contentType: mimeType, upsert: false });
     if (sbErr) {
+      await quotaMgr.releaseStorageQuota(storageFileName, 0, "released");
       return { success: false, error: sbErr.message };
     }
+    await quotaMgr.releaseStorageQuota(storageFileName, buffer.length, "committed");
     const { data: publicData } = supabase.storage.from("make-order-files").getPublicUrl(storagePath);
     return {
       success: true,
@@ -132718,34 +132760,31 @@ function registerMakeHandlers() {
     if (isGlobal ? !canManageGlobalProductAttributes(session2) : !canManageCatalog(session2)) {
       throw new Error(`Forbidden: ${isGlobal ? 'Global specification modification requires "manage_global_product_attributes" permission.' : "Catalog modification requires Administrator or Manager privileges."}`);
     }
-    if (spec.id) {
-      const { data: data2, error: error51 } = await supabase.from("make_product_specifications").update({
-        spec_code: spec.spec_code || null,
-        spec_name: spec.spec_name,
-        spec_details: spec.spec_details || null,
-        is_active: spec.is_active !== void 0 ? spec.is_active : true
-      }).eq("id", spec.id).select().single();
-      if (error51) throw error51;
-      MakeSearchService.invalidateCache();
-      if (supabaseAdmin && data2) {
-        supabaseAdmin.from("make_product_specifications").upsert(data2).catch((e2) => console.warn("[SYNC] Cloud spec sync:", e2.message));
+    const specImageUrl = spec.image_url || null;
+    const payload = {
+      spec_code: spec.spec_code || null,
+      spec_name: spec.spec_name,
+      spec_details: spec.spec_details || null,
+      is_active: spec.is_active !== void 0 ? spec.is_active : true
+    };
+    const isMissingImageColumn = (e2) => !!e2 && (e2.code === "PGRST204" || e2.code === "42703") && /image_url/i.test(String(e2.message || ""));
+    const writeSpec = async (body) => {
+      const q = supabase.from("make_product_specifications");
+      return spec.id ? await q.update(body).eq("id", spec.id).select().single() : await q.insert({ ...body, product_id: spec.product_id }).select().single();
+    };
+    const result = await writeSpec(specImageUrl ? { ...payload, image_url: specImageUrl } : payload);
+    if (result.error) {
+      if (specImageUrl && isMissingImageColumn(result.error)) {
+        throw new Error("Saving specification with an image requires database migration 066 (image_url column). Please contact your administrator.");
       }
-      return data2;
-    } else {
-      const { data: data2, error: error51 } = await supabase.from("make_product_specifications").insert({
-        product_id: spec.product_id,
-        spec_code: spec.spec_code || null,
-        spec_name: spec.spec_name,
-        spec_details: spec.spec_details || null,
-        is_active: spec.is_active !== void 0 ? spec.is_active : true
-      }).select().single();
-      if (error51) throw error51;
-      MakeSearchService.invalidateCache();
-      if (supabaseAdmin && data2) {
-        supabaseAdmin.from("make_product_specifications").upsert(data2).catch((e2) => console.warn("[SYNC] Cloud spec sync:", e2.message));
-      }
-      return data2;
+      throw result.error;
     }
+    const data2 = result.data;
+    MakeSearchService.invalidateCache();
+    if (supabaseAdmin && data2) {
+      supabaseAdmin.from("make_product_specifications").upsert(data2).catch((e2) => console.warn("[SYNC] Cloud spec sync:", e2.message));
+    }
+    return data2;
   });
   import_electron18.ipcMain.handle("make-delete-spec", async (_e, id) => {
     const session2 = requireSession();

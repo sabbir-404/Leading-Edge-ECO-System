@@ -1371,34 +1371,38 @@ export function registerMakeHandlers(): void {
             throw new Error(`Forbidden: ${isGlobal ? 'Global specification modification requires "manage_global_product_attributes" permission.' : 'Catalog modification requires Administrator or Manager privileges.'}`);
         }
 
-        if (spec.id) {
-            const { data, error } = await supabase.from('make_product_specifications').update({
-                spec_code: spec.spec_code || null,
-                spec_name: spec.spec_name,
-                spec_details: spec.spec_details || null,
-                is_active: spec.is_active !== undefined ? spec.is_active : true
-            }).eq('id', spec.id).select().single();
-            if (error) throw error;
-            MakeSearchService.invalidateCache();
-            if (supabaseAdmin && data) {
-                (supabaseAdmin as any).from('make_product_specifications').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud spec sync:', e.message));
+        const specImageUrl = spec.image_url || null;
+        const payload: Record<string, any> = {
+            spec_code: spec.spec_code || null,
+            spec_name: spec.spec_name,
+            spec_details: spec.spec_details || null,
+            is_active: spec.is_active !== undefined ? spec.is_active : true
+        };
+
+        const isMissingImageColumn = (e: any) =>
+            !!e && (e.code === 'PGRST204' || e.code === '42703') && /image_url/i.test(String(e.message || ''));
+
+        const writeSpec = async (body: any) => {
+            const q = supabase.from('make_product_specifications');
+            return spec.id
+                ? await q.update(body).eq('id', spec.id).select().single()
+                : await q.insert({ ...body, product_id: spec.product_id }).select().single();
+        };
+
+        const result = await writeSpec(specImageUrl ? { ...payload, image_url: specImageUrl } : payload);
+        if (result.error) {
+            if (specImageUrl && isMissingImageColumn(result.error)) {
+                throw new Error('Saving specification with an image requires database migration 066 (image_url column). Please contact your administrator.');
             }
-            return data;
-        } else {
-            const { data, error } = await supabase.from('make_product_specifications').insert({
-                product_id: spec.product_id,
-                spec_code: spec.spec_code || null,
-                spec_name: spec.spec_name,
-                spec_details: spec.spec_details || null,
-                is_active: spec.is_active !== undefined ? spec.is_active : true
-            }).select().single();
-            if (error) throw error;
-            MakeSearchService.invalidateCache();
-            if (supabaseAdmin && data) {
-                (supabaseAdmin as any).from('make_product_specifications').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud spec sync:', e.message));
-            }
-            return data;
+            throw result.error;
         }
+
+        const data = result.data;
+        MakeSearchService.invalidateCache();
+        if (supabaseAdmin && data) {
+            (supabaseAdmin as any).from('make_product_specifications').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud spec sync:', e.message));
+        }
+        return data;
     });
 
     ipcMain.handle('make-delete-spec', async (_e, id: number) => {
