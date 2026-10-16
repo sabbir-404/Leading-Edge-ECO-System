@@ -1703,6 +1703,154 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
 
         pruneSpy.mockRestore();
     });
+
+    // ── 39. Full Runtime Reconciliation Workflow with Quota Manager ─────────────
+    it('Scenario 39: Runtime reconciliation workflow: unprivileged client fails pruning to cleanup_pending, retry avoids repeated NAS write, and trusted operator prunes quota to completed', async () => {
+        const outbox = DurableOutboxService.getInstance();
+        const quotaMgr = SupabaseQuotaManager.getInstance();
+
+        const testInvoice = `INV-RECON-PHASE4-${Date.now()}`;
+        const opId = `bill_recon_${testInvoice}`;
+
+        // 1. Initial State: record buffered in Supabase fallback with committed quota
+        outbox.enqueueBatch([{
+            id: opId,
+            entityType: 'bills',
+            operation: 'insert',
+            payload: { invoice_number: testInvoice, total: 4500 }
+        }]);
+
+        // Mark as buffered_supabase
+        (outbox as any).markStatus(opId, 'buffered_supabase');
+        (outbox as any).recordResolvedId(opId, 'supabase', 'sb_row_recon_1');
+
+        let nasWriteCallCount = 0;
+        const mockNasClient: any = {
+            from: vi.fn(() => ({
+                upsert: vi.fn(() => {
+                    nasWriteCallCount++;
+                    return {
+                        select: vi.fn(() => ({
+                            maybeSingle: vi.fn(() => Promise.resolve({ data: { id: 'nas_persisted_1' }, error: null })),
+                            single: vi.fn(() => Promise.resolve({ data: { id: 'nas_persisted_1' }, error: null }))
+                        }))
+                    };
+                }),
+                insert: vi.fn(() => {
+                    nasWriteCallCount++;
+                    return {
+                        select: vi.fn(() => ({
+                            maybeSingle: vi.fn(() => Promise.resolve({ data: { id: 'nas_persisted_1' }, error: null })),
+                            single: vi.fn(() => Promise.resolve({ data: { id: 'nas_persisted_1' }, error: null }))
+                        }))
+                    };
+                })
+            }))
+        };
+
+        // Unprivileged Supabase client: allows delete, but pruning RPC fails with UNAUTHORIZED_PRUNING_DENIED
+        let cloudRowExists = true;
+        const unprivilegedSupabase: any = {
+            rpc: vi.fn(async (fnName: string, args: any) => {
+                if (fnName === 'release_buffer_capacity' && args.p_status === 'pruned') {
+                    return {
+                        data: {
+                            success: false,
+                            reason: 'UNAUTHORIZED_PRUNING_DENIED',
+                            detail: 'Clients cannot mark committed quota as pruned. Trusted reconciliation verification required.'
+                        },
+                        error: null
+                    };
+                }
+                return { data: { success: true }, error: null };
+            }),
+            from: vi.fn(() => ({
+                delete: vi.fn(() => {
+                    cloudRowExists = false;
+                    return { eq: vi.fn(() => Promise.resolve({ error: null })) };
+                }),
+                select: vi.fn(() => ({
+                    eq: vi.fn(() => Promise.resolve({
+                        data: cloudRowExists ? [{ id: 'sb_row_recon_1' }] : [],
+                        error: null
+                    }))
+                }))
+            }))
+        };
+
+        // Unprivileged client in QuotaManager
+        quotaMgr.registerClients({ supabase: unprivilegedSupabase });
+        quotaMgr.registerReconciliationClient(null); // Ensure unprivileged
+
+        outbox.registerClients({
+            nas: mockNasClient,
+            supabase: unprivilegedSupabase
+        });
+
+        const mapRowToRecord = (r: any) => ({
+            id: r.id,
+            entityType: r.entity_type,
+            operation: r.operation,
+            payload: JSON.parse(r.payload_json),
+            filter: r.filter_json ? JSON.parse(r.filter_json) : null,
+            primaryKeyCol: r.primary_key_col || 'id',
+            primaryKeyVal: r.primary_key_val,
+            upsertConflict: r.upsert_conflict || null,
+            dependencyOpId: r.dependency_op_id,
+            metadata: r.metadata_json ? JSON.parse(r.metadata_json) : null,
+            target: r.target,
+            status: r.status,
+            retryCount: r.retry_count,
+            maxRetries: r.max_retries,
+            lastError: r.last_error,
+            createdAt: r.created_at,
+            updatedAt: r.updated_at
+        });
+
+        // 2. Step 1: Unprivileged desktop client executes processRecord
+        // - NAS write succeeds (count = 1)
+        // - Cloud delete & verify succeeds
+        // - BUT quota prune fails due to lack of privileged reconciliation role
+        const recordStep1 = (outbox as any).db.prepare('SELECT * FROM outbox_operations WHERE id = ?').get(opId);
+        await (outbox as any).processRecord(mapRowToRecord(recordStep1));
+
+        expect(nasWriteCallCount).toBe(1);
+        const opStep1 = (outbox as any).db.prepare('SELECT status, last_error FROM outbox_operations WHERE id = ?').get(opId);
+        expect(opStep1.status).toBe('cleanup_pending');
+        expect(opStep1.last_error).toContain('Supabase temporary quota pruning rejected or failed');
+
+        // 3. Step 2: Retry without repeating completed NAS write
+        // Register trusted reconciliation identity (simulating reconciliation operator or daemon login)
+        const trustedReconciliationClient: any = {
+            rpc: vi.fn(async (fnName: string, args: any) => {
+                if (fnName === 'release_buffer_capacity' && args.p_status === 'pruned') {
+                    return {
+                        data: {
+                            success: true,
+                            status: 'pruned',
+                            allocated_bytes: 0
+                        },
+                        error: null
+                    };
+                }
+                return { data: { success: true }, error: null };
+            })
+        };
+
+        quotaMgr.registerReconciliationClient(trustedReconciliationClient);
+
+        // Run next retry for the cleanup_pending record
+        const recordStep2 = (outbox as any).db.prepare('SELECT * FROM outbox_operations WHERE id = ?').get(opId);
+        await (outbox as any).processRecord(mapRowToRecord(recordStep2));
+
+        // CRITICAL ASSERTION: NAS write must NOT have been called again!
+        expect(nasWriteCallCount).toBe(1);
+
+        // Operation must now be cleanly completed
+        const opStep2 = (outbox as any).db.prepare('SELECT status, last_error FROM outbox_operations WHERE id = ?').get(opId);
+        expect(opStep2.status).toBe('completed');
+        expect(opStep2.last_error).toBeNull();
+    });
 });
 
 

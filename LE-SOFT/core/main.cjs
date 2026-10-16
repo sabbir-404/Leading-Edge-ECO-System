@@ -25709,12 +25709,29 @@ var init_DurableOutboxService = __esm({
               if (delError) {
                 cloudCleanupError = `Supabase temporary copy removal failed: ${delError.message}`;
               } else {
-                const pruned = await quotaMgr.pruneConfirmedDatabase(`db_${id}`, estBytes);
-                if (pruned) {
-                  cloudCleanupSuccess = true;
-                  console.log(`[Outbox] Reconciled temporary database buffer op ${id}: NAS confirmed, Supabase copy removed, quota pruned.`);
+                let verifyQuery = this.supabaseClient.from(entityType).select(pkCol);
+                if (sbResolvedId) {
+                  verifyQuery = verifyQuery.eq(pkCol, sbResolvedId);
+                } else if (record2.primaryKeyVal) {
+                  verifyQuery = verifyQuery.eq(pkCol, record2.primaryKeyVal);
+                } else if (record2.payload && !Array.isArray(record2.payload) && record2.payload[pkCol]) {
+                  verifyQuery = verifyQuery.eq(pkCol, record2.payload[pkCol]);
+                } else if (record2.upsertConflict && record2.payload && !Array.isArray(record2.payload) && record2.payload[record2.upsertConflict]) {
+                  verifyQuery = verifyQuery.eq(record2.upsertConflict, record2.payload[record2.upsertConflict]);
+                }
+                const { data: remainingRows, error: verifyErr } = await verifyQuery;
+                if (verifyErr) {
+                  cloudCleanupError = `Failed to verify Supabase temporary copy removal: ${verifyErr.message}`;
+                } else if (remainingRows && remainingRows.length > 0) {
+                  cloudCleanupError = "Supabase temporary copy still exists after delete; cannot prune quota until deletion is confirmed.";
                 } else {
-                  cloudCleanupError = `Supabase temporary quota pruning rejected or failed for db_${id}.`;
+                  const pruned = await quotaMgr.pruneConfirmedDatabase(`db_${id}`, estBytes);
+                  if (pruned) {
+                    cloudCleanupSuccess = true;
+                    console.log(`[Outbox] Reconciled temporary database buffer op ${id}: NAS confirmed, Supabase copy verified removed, quota pruned.`);
+                  } else {
+                    cloudCleanupError = `Supabase temporary quota pruning rejected or failed for db_${id}.`;
+                  }
                 }
               }
             } catch (err) {
@@ -27634,9 +27651,20 @@ function reinitSupabaseClients() {
         const { DurableUploadService: DurableUploadService2 } = await Promise.resolve().then(() => (init_DurableUploadService(), DurableUploadService_exports));
         const { SupabaseQuotaManager: SupabaseQuotaManager2 } = await Promise.resolve().then(() => (init_SupabaseQuotaManager(), SupabaseQuotaManager_exports));
         const { ConsolidatedHealthEngine: ConsolidatedHealthEngine2 } = await Promise.resolve().then(() => (init_ConsolidatedHealthEngine(), ConsolidatedHealthEngine_exports));
+        let reconciliationClient = null;
+        const recKey = process.env.SUPABASE_RECONCILIATION_SERVICE_KEY || process.env.LESOFT_RECONCILIATION_KEY;
+        if (recKey && config2.url) {
+          const { createClient: createClient2 } = await Promise.resolve().then(() => (init_dist4(), dist_exports));
+          reconciliationClient = createClient2(config2.url, recKey, {
+            auth: { persistSession: false, autoRefreshToken: false }
+          });
+        }
         DurableOutboxService2.getInstance().registerClients({ nas: nasClient, supabase: supabaseClient });
         DurableUploadService2.getInstance().registerClients({ nas: nasClient, supabase: supabaseClient });
-        SupabaseQuotaManager2.getInstance().registerClients({ supabase: supabaseClient });
+        SupabaseQuotaManager2.getInstance().registerClients({
+          supabase: supabaseClient,
+          reconciliation: reconciliationClient
+        });
         ConsolidatedHealthEngine2.getInstance().registerClients({ nas: nasClient, supabase: supabaseClient });
         if (process.env.NODE_ENV !== "test") {
           DurableOutboxService2.getInstance().startWorker(1e3);
@@ -134383,15 +134411,23 @@ async function syncStockToMySQL(localId, soldQty, syncId, invoiceNumber) {
     throw new Error("[MySQLSync] MySQL connection pool is not configured or offline; cannot sync stock");
   }
   const dedupKey = syncId || (invoiceNumber ? `sync_${invoiceNumber}_${localId}` : `sync_p${localId}_q${soldQty}_${Date.now()}`);
-  await mysqlPool.query(`
-        CREATE TABLE IF NOT EXISTS le_stock_sync_idempotency (
-            dedup_key VARCHAR(191) PRIMARY KEY,
-            invoice_number VARCHAR(100),
-            product_id INT NOT NULL,
-            quantity INT NOT NULL,
-            synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        ) ENGINE=InnoDB;
-    `);
+  try {
+    await mysqlPool.query(`
+            CREATE TABLE IF NOT EXISTS le_stock_sync_idempotency (
+                dedup_key VARCHAR(191) PRIMARY KEY,
+                invoice_number VARCHAR(100),
+                product_id INT NOT NULL,
+                quantity INT NOT NULL,
+                synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB;
+        `);
+  } catch (createErr) {
+    try {
+      await mysqlPool.query("SELECT 1 FROM le_stock_sync_idempotency LIMIT 1");
+    } catch {
+      throw new Error(`[MySQLSync] Idempotency schema prerequisite missing: table 'le_stock_sync_idempotency' does not exist on MySQL destination and cannot be auto-provisioned: ${createErr.message}`);
+    }
+  }
   const connection = await mysqlPool.getConnection();
   try {
     await connection.beginTransaction();
@@ -134404,10 +134440,19 @@ async function syncStockToMySQL(localId, soldQty, syncId, invoiceNumber) {
       await connection.commit();
       return;
     }
-    await connection.query(
-      "INSERT INTO le_stock_sync_idempotency (dedup_key, invoice_number, product_id, quantity) VALUES (?, ?, ?, ?)",
-      [dedupKey, invoiceNumber || null, localId, soldQty]
-    );
+    try {
+      await connection.query(
+        "INSERT INTO le_stock_sync_idempotency (dedup_key, invoice_number, product_id, quantity) VALUES (?, ?, ?, ?)",
+        [dedupKey, invoiceNumber || null, localId, soldQty]
+      );
+    } catch (insertErr) {
+      if (insertErr.code === "ER_DUP_ENTRY" || insertErr.errno === 1062 || insertErr.message?.includes("Duplicate entry")) {
+        console.log(`[MySQLSync] Operation ${dedupKey} concurrently applied on MySQL destination. Skipping duplicate decrement.`);
+        await connection.rollback();
+        return;
+      }
+      throw insertErr;
+    }
     await connection.query(
       "UPDATE products SET quantity = GREATEST(quantity - ?, 0) WHERE le_local_id = ?",
       [soldQty, localId]
@@ -136995,6 +137040,12 @@ function registerHandlers() {
         }
       }
       await supabase_default.from("users").update({ is_online: true, device_type: "PC" }).eq("id", row.id);
+      const userAppRole = authData.user?.app_metadata?.role;
+      if (userAppRole === "reconciliation_operator" || userAppRole === "service_role") {
+        SupabaseQuotaManager.getInstance().registerReconciliationClient(supabase_default);
+      } else {
+        SupabaseQuotaManager.getInstance().registerReconciliationClient(null);
+      }
       const { password_hash: _omit, user_groups, ...safeUser } = row;
       safeUser.permissions = user_groups?.is_active === false ? {} : user_groups?.permissions ?? {};
       resetLoginAttempts(username);
@@ -137060,6 +137111,7 @@ function registerHandlers() {
   import_electron24.ipcMain.handle("clear-session", async () => {
     try {
       await supabase_default.auth.signOut();
+      SupabaseQuotaManager.getInstance().registerReconciliationClient(null);
       clearSession();
       SessionManager.clearSession();
       return { success: true };

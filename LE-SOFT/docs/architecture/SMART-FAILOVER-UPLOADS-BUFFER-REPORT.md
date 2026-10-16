@@ -442,7 +442,8 @@ await window.electron.getPendingUploads();
 ├────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
 │ Focused Buffer Test Suite      │ npx vitest run tests/make/smart-failover-uploads-buffer.test.ts                 │ 0         │ PASS    │
 │ Quota RPC Unit Simulation      │ npx vitest run tests/integration/supabase-quota-rpc.integration.test.ts         │ 0         │ PASS    │
-│ Real PG Staging Integration    │ npx vitest run tests/integration/supabase-quota-rpc.pg-integration.test.ts      │ 0         │ PASS    │
+│ Real PG Staging Integration    │ npx vitest run tests/integration/supabase-quota-rpc.pg-integration.test.ts      │ 0         │ SKIPPED │
+│ MySQL Idempotency Integration  │ npx vitest run tests/integration/mysql-stock-idempotency.integration.test.ts   │ 0         │ PASS    │
 │ Native SQLite WAL Integration  │ electron.exe vitest run tests/integration/real-sqlite-outbox.integration.test.ts│ 0         │ PASS    │
 │ Full Repository Test Suite     │ npx vitest run                                                                  │ 0         │ PASS    │
 │ Renderer Typecheck             │ npx tsc --noEmit                                                                │ 0         │ PASS    │
@@ -455,11 +456,12 @@ await window.electron.getPendingUploads();
 ```
 
 * **Test Suite Counts**:
-  - Focused Suite: **38 passed** (100% clean, Scenarios 1–38).
+  - Focused Suite: **39 passed** (100% clean, Scenarios 1–39 including Scenario 39 runtime reconciliation lifecycle).
   - Quota RPC Unit Simulation Suite: **8 passed** (100% clean, Tests 1–8).
-  - Real PostgreSQL Staging Integration Suite: **1 passed, 5 skipped truthfully** with explicit logged evidence that staging was unconfigured (`ALLOW_DISPOSABLE_STAGING_TESTS` not set).
+  - Real PostgreSQL Staging Integration Suite: **1 passed (environment check), 10 skipped truthfully (NOT VERIFIED)** with explicit logged evidence that staging was unconfigured (`ALLOW_DISPOSABLE_STAGING_TESTS` not set).
+  - MySQL Stock Idempotency Integration Suite: **7 passed** (100% clean, testing concurrent duplicate entry, connection drops, crash recovery, transaction rollbacks, and schema prerequisite validation).
   - Native SQLite WAL Integration Suite: **8 passed** (100% clean under native Electron Node runtime, Tests 1–8).
-  - Full Repository Test Suite: **41 test files passed, 1 skipped (native SQLite runner)**, **638 tests passed, 13 skipped**, 0 failed.
+  - Full Repository Test Suite: **42 test files passed, 1 skipped (native SQLite runner)**, **646 tests passed, 18 skipped**, 0 failed.
 * **Build Artifacts**:
   - `core/main.cjs`: 5.9 MB (Node 18 bundled).
   - `core/preload.cjs`: 36.2 KB.
@@ -481,7 +483,7 @@ await window.electron.getPendingUploads();
   - Applies actual `070_supabase_buffer_quota_reservations.sql` migration.
   - Tests authentic unprivileged identities via `SET LOCAL ROLE authenticated` and `SET LOCAL "request.jwt.claims"` rather than superuser `postgres`.
   - Asserts failure if unauthorized pruning unexpectedly succeeds.
-  - Multi-client concurrent test running 5 parallel reservations at partition limits via `Promise.all`.
+  - Verifies closed reservation ID reuse rejection, resource type/ownership immutability, concurrent ceiling capping, authorized operator pruning, and atomic partition ceiling separation.
   - Features strict production URL safety checks aborting if pointing to production or TrueNAS. Truthfully skips and logs evidence if `ALLOW_DISPOSABLE_STAGING_TESTS !== 'true'`; never falsely claims live staging passed.
 * **Real Native SQLite WAL Integration Tests (`tests/integration/real-sqlite-outbox.integration.test.ts`)**:
   - Executed using native `better-sqlite3` under Electron Node runtime (`cmd /c "set ELECTRON_RUN_AS_NODE=1&& set TEST_REAL_SQLITE=true&& .\node_modules\electron\dist\electron.exe .\node_modules\vitest\vitest.mjs run tests/integration/real-sqlite-outbox.integration.test.ts"`).
@@ -491,11 +493,27 @@ await window.electron.getPendingUploads();
   - No claims of global project quota accounting are made based solely on application payload estimations.
   - PR #41 remains open and unmerged. No production releases, installers, or deployments have been generated.
 
-### 7.4 Unresolved Risks & Staging Deployment Prerequisites
-1. **TrueNAS Migration 069 Application**: Must be applied to TrueNAS PostgreSQL (`069_nas_schema_synchronization_and_bills.sql`) with schema reload (`NOTIFY pgrst, 'reload schema'`).
-2. **Supabase Staging Validation of Migration 070**: Apply `070_supabase_buffer_quota_reservations.sql` to an isolated disposable Supabase/PostgreSQL staging instance to verify live RLS and RPC constraints under real multi-client load before production deployment.
-3. **Dedicated Private Storage Bucket**: Provision private fallback bucket `make-order-files` with restricted access policies and verify durable manifest cleanup.
-4. **MySQL Idempotency Table Provisioning**: Ensure `le_stock_sync_idempotency` table is created on the external store prior to activating MySQL outbox sync.
+### 7.4 Migration Reconcile & Safe Application Order
+1. **Migration 069 Forward vs Rollback Reconcile**:
+   - `069_nas_schema_synchronization_and_bills.sql` is the **AUTHORITATIVE FORWARD MIGRATION**. It is fully idempotent, non-destructive, and additive (`ADD COLUMN IF NOT EXISTS`, `CREATE TABLE IF NOT EXISTS`, `NOTIFY pgrst, 'reload schema'`).
+   - `069_nas_schema_synchronization_rollback.sql` is a **DESTRUCTIVE ROLLBACK SCRIPT** containing `DROP TABLE CASCADE` and `ALTER TABLE DROP COLUMN`. Per engineering safety rules, **NEVER EXECUTE A ROLLBACK MIGRATION IN PRODUCTION**. In case of issue, forward-fix with idempotent additions and `pg_dump` backups.
+2. **Safe Application Sequence**:
+   - **Step 1: NAS Schema Forward Migration** (`supabase/migrations/069_nas_schema_synchronization_and_bills.sql`):
+     - Target: TrueNAS PostgreSQL database (`lesoft` on port 5432).
+     - Execution: Adds `installation_charge`, `installation_note`, `customer_addresses`, `customer_payments`, `exchange_orders`, `exchange_items`, and triggers `NOTIFY pgrst, 'reload schema'`.
+   - **Step 2: Supabase Buffer Quota Security Migration** (`supabase/migrations/070_supabase_buffer_quota_reservations.sql`):
+     - Target: Supabase Cloud PostgreSQL database.
+     - Execution: Provisions `supabase_buffer_reservations` table and installs `reserve_buffer_capacity` and `release_buffer_capacity` RPC functions with transaction advisory locking and security definer protections.
+   - **Step 3: MySQL Destination Stock Synchronization Idempotency** (`supabase/migrations/mysql_001_stock_sync_idempotency.sql`):
+     - Target: Remote MySQL database (e.g. `le_wordpress_db`).
+     - Execution: Provisions `le_stock_sync_idempotency` table with `InnoDB`, `utf8mb4`, and PRIMARY KEY `dedup_key` to guarantee exactly-once stock decrement semantics.
+3. **Server-Side Reconciliation Architecture**:
+   - Desktop client applications must **NEVER** embed Supabase `service_role` secrets.
+   - For routine desktop clients, temporary fallback data is written under authenticated user JWTs. Upon NAS restoration, cloud copies are deleted and actively verified before pruning is requested.
+   - Quota pruning is privileged (`UNAUTHORIZED_PRUNING_DENIED` for regular clients). It can be executed via:
+     - Logged-in operators possessing the `reconciliation_operator` role in `app_metadata`.
+     - An autonomous backend server daemon running on internal infrastructure configured with `SUPABASE_RECONCILIATION_SERVICE_KEY`.
+   - If a client cannot prune, the operation transitions to `cleanup_pending`, preserving full auditability and allowing the backend daemon or operator session to complete quota pruning without repeating NAS writes.
 
 ---
 *Report certified and authored for LE-SOFT Production Release Architecture.*

@@ -541,13 +541,32 @@ export class DurableOutboxService {
                     if (delError) {
                         cloudCleanupError = `Supabase temporary copy removal failed: ${delError.message}`;
                     } else {
-                        // Invoke trusted reservation-pruning path
-                        const pruned = await quotaMgr.pruneConfirmedDatabase(`db_${id}`, estBytes);
-                        if (pruned) {
-                            cloudCleanupSuccess = true;
-                            console.log(`[Outbox] Reconciled temporary database buffer op ${id}: NAS confirmed, Supabase copy removed, quota pruned.`);
+                        // Actively verify cloud copy removal before invoking trusted pruning
+                        let verifyQuery = this.supabaseClient.from(entityType).select(pkCol);
+                        if (sbResolvedId) {
+                            verifyQuery = verifyQuery.eq(pkCol, sbResolvedId);
+                        } else if (record.primaryKeyVal) {
+                            verifyQuery = verifyQuery.eq(pkCol, record.primaryKeyVal);
+                        } else if (record.payload && !Array.isArray(record.payload) && record.payload[pkCol]) {
+                            verifyQuery = verifyQuery.eq(pkCol, record.payload[pkCol]);
+                        } else if (record.upsertConflict && record.payload && !Array.isArray(record.payload) && record.payload[record.upsertConflict]) {
+                            verifyQuery = verifyQuery.eq(record.upsertConflict, record.payload[record.upsertConflict]);
+                        }
+
+                        const { data: remainingRows, error: verifyErr } = await verifyQuery;
+                        if (verifyErr) {
+                            cloudCleanupError = `Failed to verify Supabase temporary copy removal: ${verifyErr.message}`;
+                        } else if (remainingRows && remainingRows.length > 0) {
+                            cloudCleanupError = 'Supabase temporary copy still exists after delete; cannot prune quota until deletion is confirmed.';
                         } else {
-                            cloudCleanupError = `Supabase temporary quota pruning rejected or failed for db_${id}.`;
+                            // Deletion verified! Now invoke trusted reservation-pruning path
+                            const pruned = await quotaMgr.pruneConfirmedDatabase(`db_${id}`, estBytes);
+                            if (pruned) {
+                                cloudCleanupSuccess = true;
+                                console.log(`[Outbox] Reconciled temporary database buffer op ${id}: NAS confirmed, Supabase copy verified removed, quota pruned.`);
+                            } else {
+                                cloudCleanupError = `Supabase temporary quota pruning rejected or failed for db_${id}.`;
+                            }
                         }
                     }
                 } catch (err: any) {

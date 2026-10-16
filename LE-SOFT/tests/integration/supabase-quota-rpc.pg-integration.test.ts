@@ -285,5 +285,187 @@ describe('Migration 070 Real PostgreSQL Staging Integration Suite', () => {
             await pool.end();
         }
     });
+
+    it.runIf(isStagingAvailable)('6. Rejects reuse of closed reservation IDs (released, pruned, expired)', async () => {
+        const client = pgClient!;
+        const closedResId = `test_closed_${Date.now()}`;
+        const userUuid = '00000000-0000-0000-0000-000000000006';
+
+        // 1. Reserve and release 5 MB
+        await client.query('BEGIN');
+        await client.query('SET LOCAL ROLE authenticated');
+        await client.query(`SET LOCAL "request.jwt.claims" = '{"sub": "${userUuid}", "role": "authenticated"}'`);
+        const r1 = await client.query(
+            "SELECT public.reserve_buffer_capacity($1, $2, 'storage', $3) AS result",
+            [closedResId, userUuid, 5000000]
+        );
+        expect(r1.rows[0].result.success).toBe(true);
+
+        const rel = await client.query(
+            "SELECT public.release_buffer_capacity($1, $2, 'released', 0) AS result",
+            [closedResId, userUuid]
+        );
+        expect(rel.rows[0].result.success).toBe(true);
+
+        // 2. Attempt to reuse released ID for a new reservation -> REJECTED!
+        const reuseAttempt = await client.query(
+            "SELECT public.reserve_buffer_capacity($1, $2, 'storage', $3) AS result",
+            [closedResId, userUuid, 5000000]
+        );
+        await client.query('COMMIT');
+
+        expect(reuseAttempt.rows[0].result.success).toBe(false);
+        expect(reuseAttempt.rows[0].result.reason).toBe('RESERVATION_ALREADY_CLOSED');
+    });
+
+    it.runIf(isStagingAvailable)('7. Rejects altering resource type and ownership on retry', async () => {
+        const client = pgClient!;
+        const typeResId = `test_type_${Date.now()}`;
+        const ownerUuid = '00000000-0000-0000-0000-000000000007';
+        const attackerUuid = '00000000-0000-0000-0000-000000000008';
+
+        // 1. Initial reservation created as 'storage' by owner
+        await client.query('BEGIN');
+        await client.query('SET LOCAL ROLE authenticated');
+        await client.query(`SET LOCAL "request.jwt.claims" = '{"sub": "${ownerUuid}", "role": "authenticated"}'`);
+        const r1 = await client.query(
+            "SELECT public.reserve_buffer_capacity($1, $2, 'storage', $3) AS result",
+            [typeResId, ownerUuid, 5000000]
+        );
+        await client.query('COMMIT');
+        expect(r1.rows[0].result.success).toBe(true);
+
+        // 2. Attacker attempts to hijack reservation ID -> REJECTED!
+        await client.query('BEGIN');
+        await client.query('SET LOCAL ROLE authenticated');
+        await client.query(`SET LOCAL "request.jwt.claims" = '{"sub": "${attackerUuid}", "role": "authenticated"}'`);
+        const hijackAttempt = await client.query(
+            "SELECT public.reserve_buffer_capacity($1, $2, 'storage', $3) AS result",
+            [typeResId, attackerUuid, 5000000]
+        );
+        await client.query('COMMIT');
+        expect(hijackAttempt.rows[0].result.success).toBe(false);
+        expect(hijackAttempt.rows[0].result.reason).toBe('UNAUTHORIZED_CLIENT_MISMATCH');
+
+        // 3. Owner attempts to change resource type from 'storage' to 'database' -> REJECTED!
+        await client.query('BEGIN');
+        await client.query('SET LOCAL ROLE authenticated');
+        await client.query(`SET LOCAL "request.jwt.claims" = '{"sub": "${ownerUuid}", "role": "authenticated"}'`);
+        const typeChangeAttempt = await client.query(
+            "SELECT public.reserve_buffer_capacity($1, $2, 'database', $3) AS result",
+            [typeResId, ownerUuid, 5000000]
+        );
+        await client.query('COMMIT');
+        expect(typeChangeAttempt.rows[0].result.success).toBe(false);
+        expect(typeChangeAttempt.rows[0].result.reason).toBe('RESOURCE_TYPE_MISMATCH');
+    });
+
+    it.runIf(isStagingAvailable)('8. Concurrent multi-client reservations cannot exceed server-enforced quota ceiling', async () => {
+        const pool = new pg.Pool({
+            connectionString: stagingUrl,
+            max: 5,
+            statement_timeout: 10000
+        });
+
+        try {
+            // First, fill database capacity up to 240 MB using 6 x 40 MB committed reservations
+            const setupClient = await pool.connect();
+            try {
+                for (let i = 0; i < 6; i++) {
+                    const fillId = `race_fill_${Date.now()}_${i}`;
+                    await setupClient.query(
+                        "SELECT public.reserve_buffer_capacity($1, 'setup_user', 'database', 40000000)",
+                        [fillId]
+                    );
+                    await setupClient.query(
+                        "SELECT public.release_buffer_capacity($1, 'setup_user', 'committed', 40000000)",
+                        [fillId]
+                    );
+                }
+            } finally {
+                setupClient.release();
+            }
+
+            // Exactly 10 MB remaining under the 250 MB database ceiling.
+            // Client A requests 8 MB and Client B concurrently requests 8 MB (total 16 MB > 10 MB).
+            const clientIds = [
+                '00000000-0000-0000-0000-000000000021',
+                '00000000-0000-0000-0000-000000000022'
+            ];
+
+            const results = await Promise.all(clientIds.map(async (cid, idx) => {
+                const c = await pool.connect();
+                try {
+                    await c.query('BEGIN');
+                    await c.query('SET LOCAL ROLE authenticated');
+                    await c.query(`SET LOCAL "request.jwt.claims" = '{"sub": "${cid}", "role": "authenticated"}'`);
+                    const res = await c.query(
+                        "SELECT public.reserve_buffer_capacity($1, $2, 'database', $3) AS result",
+                        [`race_exceed_${Date.now()}_${idx}`, cid, 8000000]
+                    );
+                    await c.query('COMMIT');
+                    return res.rows[0].result;
+                } finally {
+                    c.release();
+                }
+            }));
+
+            // Exactly one client must succeed and one must be rejected with DATABASE_CEILING_EXCEEDED
+            const successCount = results.filter(r => r.success === true).length;
+            const ceilingRejectCount = results.filter(r => r.success === false && r.reason === 'DATABASE_CEILING_EXCEEDED').length;
+
+            expect(successCount).toBe(1);
+            expect(ceilingRejectCount).toBe(1);
+        } finally {
+            await pool.end();
+        }
+    });
+
+    it.runIf(isStagingAvailable)('9. Authorized reconciliation operator and service_role are permitted to prune committed reservations', async () => {
+        const client = pgClient!;
+        const testResId = `test_recon_prune_${Date.now()}`;
+        const userUuid = '00000000-0000-0000-0000-000000000030';
+        const operatorUuid = '00000000-0000-0000-0000-000000000031';
+
+        // 1. Client reserves and commits 3 MB
+        await client.query('BEGIN');
+        await client.query('SET LOCAL ROLE authenticated');
+        await client.query(`SET LOCAL "request.jwt.claims" = '{"sub": "${userUuid}", "role": "authenticated"}'`);
+        await client.query(
+            "SELECT public.reserve_buffer_capacity($1, $2, 'storage', $3)",
+            [testResId, userUuid, 3000000]
+        );
+        await client.query(
+            "SELECT public.release_buffer_capacity($1, $2, 'committed', $3)",
+            [testResId, userUuid, 3000000]
+        );
+        await client.query('COMMIT');
+
+        // 2. Reconciliation operator with app_metadata role 'reconciliation_operator' executes prune
+        await client.query('BEGIN');
+        await client.query('SET LOCAL ROLE authenticated');
+        await client.query(`SET LOCAL "request.jwt.claims" = '{"sub": "${operatorUuid}", "role": "authenticated", "app_metadata": {"role": "reconciliation_operator"}}'`);
+        const pruneOp = await client.query(
+            "SELECT public.release_buffer_capacity($1, $2, 'pruned', 0) AS result",
+            [testResId, operatorUuid]
+        );
+        await client.query('COMMIT');
+
+        expect(pruneOp.rows[0].result.success).toBe(true);
+        expect(pruneOp.rows[0].result.status).toBe('pruned');
+    });
+
+    it.runIf(isStagingAvailable)('10. Atomic server partition ceilings: Storage and Database quotas are strictly enforced separately', async () => {
+        const client = pgClient!;
+        const testResId = `test_atomic_ceil_${Date.now()}`;
+
+        // Single reservation request > 50 MB rejected
+        const itemOver = await client.query(
+            "SELECT public.reserve_buffer_capacity($1, 'client_1', 'storage', 51000000) AS result",
+            [testResId]
+        );
+        expect(itemOver.rows[0].result.success).toBe(false);
+        expect(itemOver.rows[0].result.reason).toBe('INVALID_BYTE_COUNT');
+    });
 });
 

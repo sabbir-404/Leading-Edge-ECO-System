@@ -823,9 +823,21 @@ export function reinitSupabaseClients(): void {
                 const { SupabaseQuotaManager } = await import('./services/quota/SupabaseQuotaManager');
                 const { ConsolidatedHealthEngine } = await import('./services/health/ConsolidatedHealthEngine');
 
+                let reconciliationClient: any = null;
+                const recKey = process.env.SUPABASE_RECONCILIATION_SERVICE_KEY || process.env.LESOFT_RECONCILIATION_KEY;
+                if (recKey && config.url) {
+                    const { createClient } = await import('@supabase/supabase-js');
+                    reconciliationClient = createClient(config.url, recKey, {
+                        auth: { persistSession: false, autoRefreshToken: false }
+                    });
+                }
+
                 DurableOutboxService.getInstance().registerClients({ nas: nasClient, supabase: supabaseClient });
                 DurableUploadService.getInstance().registerClients({ nas: nasClient, supabase: supabaseClient });
-                SupabaseQuotaManager.getInstance().registerClients({ supabase: supabaseClient });
+                SupabaseQuotaManager.getInstance().registerClients({ 
+                    supabase: supabaseClient,
+                    reconciliation: reconciliationClient
+                });
                 ConsolidatedHealthEngine.getInstance().registerClients({ nas: nasClient, supabase: supabaseClient });
 
                 // Start background workers (only in non-test runtime)

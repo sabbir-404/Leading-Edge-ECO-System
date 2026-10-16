@@ -414,6 +414,10 @@ try {
 } catch { /* MySQL optional */ }
 
 // ── MySQL sync helpers ────────────────────────────────────────────────────────
+export function setMySQLPool(pool: any): void {
+    mysqlPool = pool;
+}
+
 async function syncProductToMySQL(p: { localId: number; name: string; sku: string; category: string; sellingPrice: number; description: string; imagePath: string; quantity: number }) {
     if (!mysqlPool) return;
     const { localId, name, sku, category, sellingPrice, description, imagePath, quantity } = p;
@@ -427,22 +431,31 @@ async function syncProductToMySQL(p: { localId: number; name: string; sku: strin
         if (category) await mysqlPool.query('INSERT IGNORE INTO product_categories (product_id, category_name) VALUES (?,?)', [id, category]);
     }
 }
-async function syncStockToMySQL(localId: number, soldQty: number, syncId?: string, invoiceNumber?: string): Promise<void> {
+export async function syncStockToMySQL(localId: number, soldQty: number, syncId?: string, invoiceNumber?: string): Promise<void> {
     if (!mysqlPool) {
         throw new Error('[MySQLSync] MySQL connection pool is not configured or offline; cannot sync stock');
     }
     const dedupKey = syncId || (invoiceNumber ? `sync_${invoiceNumber}_${localId}` : `sync_p${localId}_q${soldQty}_${Date.now()}`);
 
     // Destination-enforced idempotency: ensure table exists on MySQL destination
-    await mysqlPool.query(`
-        CREATE TABLE IF NOT EXISTS le_stock_sync_idempotency (
-            dedup_key VARCHAR(191) PRIMARY KEY,
-            invoice_number VARCHAR(100),
-            product_id INT NOT NULL,
-            quantity INT NOT NULL,
-            synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        ) ENGINE=InnoDB;
-    `);
+    try {
+        await mysqlPool.query(`
+            CREATE TABLE IF NOT EXISTS le_stock_sync_idempotency (
+                dedup_key VARCHAR(191) PRIMARY KEY,
+                invoice_number VARCHAR(100),
+                product_id INT NOT NULL,
+                quantity INT NOT NULL,
+                synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB;
+        `);
+    } catch (createErr: any) {
+        // If CREATE TABLE fails (e.g. read-only/DML-only user), check if table already exists
+        try {
+            await mysqlPool.query('SELECT 1 FROM le_stock_sync_idempotency LIMIT 1');
+        } catch {
+            throw new Error(`[MySQLSync] Idempotency schema prerequisite missing: table 'le_stock_sync_idempotency' does not exist on MySQL destination and cannot be auto-provisioned: ${createErr.message}`);
+        }
+    }
 
     const connection = await mysqlPool.getConnection();
     try {
@@ -461,10 +474,19 @@ async function syncStockToMySQL(localId: number, soldQty: number, syncId?: strin
         }
 
         // 2. Record the idempotency marker on the MySQL destination inside the same transaction
-        await connection.query(
-            'INSERT INTO le_stock_sync_idempotency (dedup_key, invoice_number, product_id, quantity) VALUES (?, ?, ?, ?)',
-            [dedupKey, invoiceNumber || null, localId, soldQty]
-        );
+        try {
+            await connection.query(
+                'INSERT INTO le_stock_sync_idempotency (dedup_key, invoice_number, product_id, quantity) VALUES (?, ?, ?, ?)',
+                [dedupKey, invoiceNumber || null, localId, soldQty]
+            );
+        } catch (insertErr: any) {
+            if (insertErr.code === 'ER_DUP_ENTRY' || insertErr.errno === 1062 || insertErr.message?.includes('Duplicate entry')) {
+                console.log(`[MySQLSync] Operation ${dedupKey} concurrently applied on MySQL destination. Skipping duplicate decrement.`);
+                await connection.rollback();
+                return;
+            }
+            throw insertErr;
+        }
 
         // 3. Decrement stock safely on destination
         await connection.query(
@@ -3640,6 +3662,14 @@ export function registerHandlers() {
 
             await supabase.from('users').update({ is_online: true, device_type: 'PC' }).eq('id', row.id);
 
+            // Register trusted reconciliation identity if user holds authorized role
+            const userAppRole = authData.user?.app_metadata?.role;
+            if (userAppRole === 'reconciliation_operator' || userAppRole === 'service_role') {
+                SupabaseQuotaManager.getInstance().registerReconciliationClient(supabase);
+            } else {
+                SupabaseQuotaManager.getInstance().registerReconciliationClient(null);
+            }
+
             const { password_hash: _omit, user_groups, ...safeUser } = row;
             // BUG-11: Fall back to empty object (not string '{}') so JSON.stringify in Login.tsx
             // produces valid permissions JSON and doesn't double-encode the value.
@@ -3735,6 +3765,7 @@ export function registerHandlers() {
     ipcMain.handle('clear-session', async () => {
         try {
             await supabase.auth.signOut();
+            SupabaseQuotaManager.getInstance().registerReconciliationClient(null);
             clearSession();
             SessionManager.clearSession();
             return { success: true };
