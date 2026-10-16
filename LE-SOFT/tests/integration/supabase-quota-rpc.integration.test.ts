@@ -87,10 +87,21 @@ class StagingPostgresQuotaEnvironment {
             return { success: false, reason: 'INVALID_BYTE_COUNT' };
         }
 
-        // 2. Client Ownership Check
+        // 2. Client Ownership, State, and Resource Type Check
         const existing = this.reservations.get(reservationId);
-        if (existing && existing.client_id !== caller) {
-            return { success: false, reason: 'UNAUTHORIZED_CLIENT_MISMATCH' };
+        if (existing) {
+            if (existing.client_id !== caller) {
+                return { success: false, reason: 'UNAUTHORIZED_CLIENT_MISMATCH' };
+            }
+            if (existing.resource_type !== resourceType) {
+                return { success: false, reason: 'RESOURCE_TYPE_MISMATCH' };
+            }
+            if (existing.status === 'committed') {
+                return { success: false, reason: 'CANNOT_REOPEN_COMMITTED_RESERVATION' };
+            }
+            if (['released', 'pruned', 'expired'].includes(existing.status)) {
+                return { success: false, reason: 'RESERVATION_ALREADY_CLOSED' };
+            }
         }
 
         // 3. Expire stale active reservations (> 5 minutes old)
@@ -112,8 +123,8 @@ class StagingPostgresQuotaEnvironment {
             }
         }
 
-        // If renewing existing reservation, subtract previous contribution
-        if (existing && (existing.status === 'active' || existing.status === 'committed')) {
+        // If renewing existing active reservation, subtract previous contribution
+        if (existing && existing.status === 'active') {
             if (resourceType === 'storage') totalStorage = Math.max(0, totalStorage - existing.bytes_reserved);
             if (resourceType === 'database') totalDb = Math.max(0, totalDb - existing.bytes_reserved);
         }
@@ -136,17 +147,23 @@ class StagingPostgresQuotaEnvironment {
             return { success: false, reason: 'CRITICAL_CEILING_REACHED' };
         }
 
-        // 7. Insert or update active reservation
-        this.reservations.set(reservationId, {
-            id: reservationId,
-            client_id: caller,
-            resource_type: resourceType as 'storage' | 'database',
-            bytes_reserved: bytes,
-            status: 'active',
-            expires_at: now + 5 * 60 * 1000,
-            created_at: existing ? existing.created_at : now,
-            updated_at: now
-        });
+        // 7. Insert new or update existing active reservation
+        if (existing && existing.status === 'active') {
+            existing.bytes_reserved = bytes;
+            existing.expires_at = now + 5 * 60 * 1000;
+            existing.updated_at = now;
+        } else {
+            this.reservations.set(reservationId, {
+                id: reservationId,
+                client_id: caller,
+                resource_type: resourceType as 'storage' | 'database',
+                bytes_reserved: bytes,
+                status: 'active',
+                expires_at: now + 5 * 60 * 1000,
+                created_at: now,
+                updated_at: now
+            });
+        }
 
         return {
             success: true,
@@ -336,6 +353,53 @@ describe('[Unit Simulation] Migration 070 Supabase Quota Reservation Logic', () 
         const trustedPrune = stagingEnv.releaseBufferCapacity('comm_prune_test', 'client_1', 'pruned', 0, undefined, true);
         expect(trustedPrune.success).toBe(true);
         expect(trustedPrune.status).toBe('pruned');
+    });
+
+    it('7. Regression Test: commit -> same-ID reserve -> release cannot free committed quota without verified pruning', () => {
+        const resId = 'exploit_test_res_1';
+        // 1. Client reserves 20 MB database quota
+        const r1 = stagingEnv.reserveBufferCapacity(resId, 'client_1', 'database', 20_000_000);
+        expect(r1.success).toBe(true);
+
+        // 2. Client commits 20 MB database quota
+        const c1 = stagingEnv.releaseBufferCapacity(resId, 'client_1', 'committed', 20_000_000);
+        expect(c1.success).toBe(true);
+        expect(c1.status).toBe('committed');
+        expect(stagingEnv.getCommittedUsage('database')).toBe(20_000_000);
+
+        // 3. Client attempts to reopen committed reservation as active using reserve_buffer_capacity -> REJECTED!
+        const r2 = stagingEnv.reserveBufferCapacity(resId, 'client_1', 'database', 20_000_000);
+        expect(r2.success).toBe(false);
+        expect(r2.reason).toBe('CANNOT_REOPEN_COMMITTED_RESERVATION');
+
+        // 4. Committed quota is still strictly retained
+        expect(stagingEnv.getCommittedUsage('database')).toBe(20_000_000);
+
+        // 5. Client attempts to call release -> REJECTED because it is still committed!
+        const relAttempt = stagingEnv.releaseBufferCapacity(resId, 'client_1', 'released', 0);
+        expect(relAttempt.success).toBe(false);
+        expect(relAttempt.reason).toBe('COMMITTED_QUOTA_CAN_ONLY_BE_PRUNED');
+
+        // 6. Quota remains intact until trusted pruning
+        expect(stagingEnv.getCommittedUsage('database')).toBe(20_000_000);
+    });
+
+    it('8. Rejects reservation-ID reuse for closed states and mismatched resource types', () => {
+        // Closed state rejection
+        const closedId = 'closed_res_1';
+        stagingEnv.reserveBufferCapacity(closedId, 'client_1', 'storage', 5_000_000);
+        stagingEnv.releaseBufferCapacity(closedId, 'client_1', 'released');
+
+        const reuse = stagingEnv.reserveBufferCapacity(closedId, 'client_1', 'storage', 5_000_000);
+        expect(reuse.success).toBe(false);
+        expect(reuse.reason).toBe('RESERVATION_ALREADY_CLOSED');
+
+        // Mismatched resource type rejection on active reservation
+        const mismatchId = 'mismatch_res_1';
+        stagingEnv.reserveBufferCapacity(mismatchId, 'client_1', 'storage', 5_000_000);
+        const typeMismatch = stagingEnv.reserveBufferCapacity(mismatchId, 'client_1', 'database', 5_000_000);
+        expect(typeMismatch.success).toBe(false);
+        expect(typeMismatch.reason).toBe('RESOURCE_TYPE_MISMATCH');
     });
 });
 

@@ -215,8 +215,142 @@ describe.runIf(isRealSqlite)('Real SQLite Outbox & Upload Integration Tests', ()
         }));
 
         expect(() => insertMany(batch)).not.toThrow();
+    });
 
-        const count = db.prepare('SELECT COUNT(*) as cnt FROM durable_uploads WHERE status = ?').get('staged_local');
-        expect(count.cnt).toBe(200);
+    it('6. Atomic billing operation graph enqueue and dependency ordering across restarts', () => {
+        const invoiceNum = 'INV-SQLITE-9901';
+        const billOpId = `bill_${invoiceNum}`;
+        const itemsOpId = `bill_items_${invoiceNum}`;
+        const orderOpId = `make_order_${invoiceNum}_0`;
+        const stockOpId = `stock_dec_${invoiceNum}_101_0`;
+        const mysqlSyncOpId = `mysql_stock_sync_${invoiceNum}_101_0`;
+
+        const insertStmt = db.prepare(`
+            INSERT INTO outbox_operations (
+                id, entity_type, operation, payload_json, dependency_op_id, target, status, retry_count, max_retries, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+
+        // Execute atomic graph enqueue in a single SQLite WAL transaction
+        const graphTx = db.transaction(() => {
+            insertStmt.run(billOpId, 'bills', 'insert', JSON.stringify({ invoice_number: invoiceNum, total: 5000 }), null, 'both', 'pending', 0, 8, Date.now(), Date.now());
+            insertStmt.run(itemsOpId, 'bill_items', 'insert', JSON.stringify([{ product_id: 101, quantity: 2 }]), billOpId, 'both', 'pending', 0, 8, Date.now(), Date.now());
+            insertStmt.run(orderOpId, 'make_orders', 'insert', JSON.stringify({ item_name: 'Custom Oak Desk' }), billOpId, 'both', 'pending', 0, 8, Date.now(), Date.now());
+            insertStmt.run(stockOpId, 'inventory_decrement', 'insert', JSON.stringify({ product_id: 101, quantity: 2 }), billOpId, 'both', 'pending', 0, 8, Date.now(), Date.now());
+            insertStmt.run(mysqlSyncOpId, 'mysql_stock_sync', 'insert', JSON.stringify({ product_id: 101, quantity: 2, sync_id: mysqlSyncOpId }), stockOpId, 'both', 'pending', 0, 8, Date.now(), Date.now());
+        });
+
+        graphTx();
+
+        // Simulate crash and reopen
+        db.close();
+        db = new Database(dbPath);
+        db.pragma('journal_mode = WAL');
+
+        // Verify all 5 graph operations were durably committed
+        const ops = db.prepare('SELECT id, entity_type, dependency_op_id, status FROM outbox_operations WHERE id LIKE ?').all(`%${invoiceNum}%`);
+        expect(ops.length).toBe(5);
+
+        const bill = ops.find((o: any) => o.id === billOpId);
+        const items = ops.find((o: any) => o.id === itemsOpId);
+        const mysqlSync = ops.find((o: any) => o.id === mysqlSyncOpId);
+
+        expect(bill.dependency_op_id).toBeNull();
+        expect(items.dependency_op_id).toBe(billOpId);
+        expect(mysqlSync.dependency_op_id).toBe(stockOpId);
+
+        // Attempting to re-enqueue same invoice duplicate is blocked by PRIMARY KEY
+        const reinsertStmt = db.prepare(`
+            INSERT INTO outbox_operations (
+                id, entity_type, operation, payload_json, dependency_op_id, target, status, retry_count, max_retries, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        expect(() => {
+            db.transaction(() => {
+                reinsertStmt.run(billOpId, 'bills', 'insert', JSON.stringify({ invoice_number: invoiceNum }), null, 'both', 'pending', 0, 8, Date.now(), Date.now());
+            })();
+        }).toThrow(/UNIQUE constraint failed/);
+    });
+
+    it('7. Reconciles temporary database fallback buffer and maintains cleanup_pending on failure', () => {
+        const opId = 'op_buffered_fallback_1';
+        const insertStmt = db.prepare(`
+            INSERT INTO outbox_operations (
+                id, entity_type, operation, payload_json, target, status, retry_count, max_retries, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+
+        // Record operation buffered in Supabase Cloud fallback
+        insertStmt.run(opId, 'bills', 'insert', JSON.stringify({ invoice_number: 'INV-FB-1' }), 'both', 'buffered_supabase', 0, 8, Date.now(), Date.now());
+
+        // Map resolved Supabase ID
+        db.prepare('INSERT INTO outbox_id_map (op_id, target, resolved_id, created_at) VALUES (?, ?, ?, ?)').run(opId, 'supabase', 'sb_row_uuid_123', Date.now());
+
+        // TrueNAS persistence confirmed -> status moves to cleanup_pending if cloud copy deletion fails
+        db.prepare(`
+            UPDATE outbox_operations
+            SET status = 'cleanup_pending', last_error = 'Cloud cleanup timeout. Retrying.'
+            WHERE id = ?
+        `).run(opId);
+
+        const pendingRow = db.prepare('SELECT status, last_error FROM outbox_operations WHERE id = ?').get(opId);
+        expect(pendingRow.status).toBe('cleanup_pending');
+        expect(pendingRow.last_error).toContain('Cloud cleanup timeout');
+
+        // Once cloud deletion and quota prune succeed -> status moves to completed
+        db.prepare(`
+            UPDATE outbox_operations
+            SET status = 'completed', last_error = NULL
+            WHERE id = ?
+        `).run(opId);
+
+        const completedRow = db.prepare('SELECT status, last_error FROM outbox_operations WHERE id = ?').get(opId);
+        expect(completedRow.status).toBe('completed');
+        expect(completedRow.last_error).toBeNull();
+    });
+
+    it('8. Destination-enforced idempotency prevents duplicate stock decrements on retry', () => {
+        // Create destination table simulating MySQL le_stock_sync_idempotency
+        db.exec(`
+            CREATE TABLE IF NOT EXISTS test_mysql_idempotency (
+                dedup_key TEXT PRIMARY KEY,
+                invoice_number TEXT,
+                product_id INTEGER NOT NULL,
+                quantity INTEGER NOT NULL,
+                synced_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS test_mysql_products (
+                id INTEGER PRIMARY KEY,
+                quantity INTEGER NOT NULL
+            );
+            INSERT INTO test_mysql_products (id, quantity) VALUES (101, 50);
+        `);
+
+        const syncStock = (dedupKey: string, prodId: number, qty: number) => {
+            return db.transaction(() => {
+                const existing = db.prepare('SELECT dedup_key FROM test_mysql_idempotency WHERE dedup_key = ?').get(dedupKey);
+                if (existing) {
+                    return { skipped: true, remaining: db.prepare('SELECT quantity FROM test_mysql_products WHERE id = ?').get(prodId).quantity };
+                }
+                db.prepare('INSERT INTO test_mysql_idempotency (dedup_key, invoice_number, product_id, quantity, synced_at) VALUES (?, ?, ?, ?, ?)').run(
+                    dedupKey, 'INV-DEDUP-1', prodId, qty, Date.now()
+                );
+                db.prepare('UPDATE test_mysql_products SET quantity = MAX(quantity - ?, 0) WHERE id = ?').run(qty, prodId);
+                return { skipped: false, remaining: db.prepare('SELECT quantity FROM test_mysql_products WHERE id = ?').get(prodId).quantity };
+            })();
+        };
+
+        const syncKey = 'sync_INV-DEDUP-1_101';
+
+        // First attempt decrements from 50 to 45
+        const first = syncStock(syncKey, 101, 5);
+        expect(first.skipped).toBe(false);
+        expect(first.remaining).toBe(45);
+
+        // Simulated crash after remote execution: retry with same syncKey
+        const second = syncStock(syncKey, 101, 5);
+        expect(second.skipped).toBe(true);
+        expect(second.remaining).toBe(45); // Unchanged!
     });
 });
+

@@ -27,6 +27,7 @@ export type OutboxStatus =
     | 'pending'
     | 'synced_nas'
     | 'buffered_supabase'
+    | 'cleanup_pending'
     | 'completed'
     | 'blocked_dependency'
     | 'dead_letter';
@@ -287,7 +288,7 @@ export class DurableOutboxService {
             // 2. Fetch actionable operations in strict chronological order
             const rows = this.db.prepare(`
                 SELECT * FROM outbox_operations
-                WHERE status IN ('pending', 'buffered_supabase')
+                WHERE status IN ('pending', 'buffered_supabase', 'cleanup_pending')
                 ORDER BY created_at ASC
                 LIMIT ?
             `).all(batchSize) as any[];
@@ -402,7 +403,7 @@ export class DurableOutboxService {
         const isNasTarget = target === 'nas' || target === 'both';
         const isSbTarget = target === 'supabase' || target === 'both';
 
-        let nasSuccess = status === 'synced_nas' || this.hasTargetRecord(id, 'nas');
+        let nasSuccess = status === 'synced_nas' || status === 'cleanup_pending' || this.hasTargetRecord(id, 'nas');
         let sbSuccess = status === 'buffered_supabase' || this.hasTargetRecord(id, 'supabase');
 
         // 1. Primary Attempt: TrueNAS PostgREST
@@ -506,6 +507,65 @@ export class DurableOutboxService {
                     await quotaMgr.releaseDatabaseQuota(`db_${id}`, 0, 'released');
                 }
             }
+        }
+
+        // 3. Reconciliation of Temporary Database Fallback Buffer
+        const wasTemporaryBuffer = status === 'buffered_supabase' || status === 'cleanup_pending';
+        if (nasSuccess && wasTemporaryBuffer) {
+            let cloudCleanupSuccess = false;
+            let cloudCleanupError: string | null = null;
+            const quotaMgr = SupabaseQuotaManager.getInstance();
+            const estBytes = DurableOutboxService.estimateDatabaseBytes(record.payload, operation);
+
+            if (this.supabaseClient) {
+                try {
+                    let deleteQuery = this.supabaseClient.from(entityType).delete();
+                    const sbResolvedId = this.getResolvedId(id, 'supabase');
+                    const pkCol = record.primaryKeyCol || 'id';
+
+                    if (sbResolvedId) {
+                        deleteQuery = deleteQuery.eq(pkCol, sbResolvedId);
+                    } else if (record.primaryKeyVal) {
+                        deleteQuery = deleteQuery.eq(pkCol, record.primaryKeyVal);
+                    } else if (record.payload && !Array.isArray(record.payload) && record.payload[pkCol]) {
+                        deleteQuery = deleteQuery.eq(pkCol, record.payload[pkCol]);
+                    } else if (record.filter && Array.isArray(record.filter)) {
+                        for (const f of record.filter) {
+                            deleteQuery = deleteQuery.eq(f.column, f.value);
+                        }
+                    } else if (record.upsertConflict && record.payload && !Array.isArray(record.payload) && record.payload[record.upsertConflict]) {
+                        deleteQuery = deleteQuery.eq(record.upsertConflict, record.payload[record.upsertConflict]);
+                    }
+
+                    const { error: delError } = await deleteQuery;
+                    if (delError) {
+                        cloudCleanupError = `Supabase temporary copy removal failed: ${delError.message}`;
+                    } else {
+                        // Invoke trusted reservation-pruning path
+                        const pruned = await quotaMgr.pruneConfirmedDatabase(`db_${id}`, estBytes);
+                        if (pruned) {
+                            cloudCleanupSuccess = true;
+                            console.log(`[Outbox] Reconciled temporary database buffer op ${id}: NAS confirmed, Supabase copy removed, quota pruned.`);
+                        } else {
+                            cloudCleanupError = `Supabase temporary quota pruning rejected or failed for db_${id}.`;
+                        }
+                    }
+                } catch (err: any) {
+                    cloudCleanupError = `Exception during temporary cloud cleanup: ${err.message}`;
+                }
+            } else {
+                cloudCleanupError = 'Supabase client unavailable for temporary buffer cleanup';
+            }
+
+            if (!cloudCleanupSuccess) {
+                // Keep reconciliation and quota cleanup failures retryable and observable
+                console.warn(`[Outbox] Cleanup pending for op ${id}: ${cloudCleanupError}`);
+                this.markStatus(id, 'cleanup_pending', `Authoritative NAS persistence confirmed; temporary cloud copy cleanup or quota prune failed: ${cloudCleanupError}`);
+                return;
+            }
+
+            this.markCompleted(id);
+            return;
         }
 
         // Update outbox state based on outcomes
@@ -620,6 +680,21 @@ export class DurableOutboxService {
             return !!row;
         } catch {
             return false;
+        }
+    }
+
+    public getResolvedId(opId: string, target: string): string | null {
+        if (!this.db) return null;
+        try {
+            const row = this.db.prepare(`
+                SELECT resolved_id FROM outbox_id_map
+                WHERE op_id = ? AND target = ?
+                ORDER BY created_at DESC
+                LIMIT 1
+            `).get(opId, target) as any;
+            return row?.resolved_id ? String(row.resolved_id) : null;
+        } catch {
+            return null;
         }
     }
 
@@ -833,7 +908,7 @@ export class DurableOutboxService {
             const row = this.db.prepare(`SELECT entity_type FROM outbox_operations WHERE id = ?`).get(id) as any;
             this.db.prepare(`
                 UPDATE outbox_operations
-                SET status = 'completed', updated_at = ?
+                SET status = 'completed', last_error = NULL, updated_at = ?
                 WHERE id = ?
             `).run(Date.now(), id);
             this.invokeCallbacks(id, true, { success: true, id });
@@ -915,10 +990,10 @@ export class DurableOutboxService {
             const counts = this.db.prepare(`
                 SELECT 
                     COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_cnt,
-                    COUNT(CASE WHEN status = 'buffered_supabase' THEN 1 END) as buffered_cnt,
+                    COUNT(CASE WHEN status IN ('buffered_supabase', 'cleanup_pending') THEN 1 END) as buffered_cnt,
                     COUNT(CASE WHEN status = 'blocked_dependency' THEN 1 END) as blocked_cnt,
                     COUNT(CASE WHEN status = 'dead_letter' THEN 1 END) as dead_letter_cnt,
-                    MIN(CASE WHEN status IN ('pending', 'buffered_supabase', 'blocked_dependency') THEN created_at END) as oldest_pending
+                    MIN(CASE WHEN status IN ('pending', 'buffered_supabase', 'cleanup_pending', 'blocked_dependency') THEN created_at END) as oldest_pending
                 FROM outbox_operations
             `).get() as any;
 

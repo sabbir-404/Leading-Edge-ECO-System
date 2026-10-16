@@ -153,7 +153,7 @@ vi.mock('better-sqlite3', async (importOriginal) => {
           if (lower.includes("status = 'completed'")) {
             const id = args[1];
             const r = rows.find(x => x.id === id);
-            if (r) { r.status = 'completed'; r.updated_at = args[0]; }
+            if (r) { r.status = 'completed'; r.last_error = null; r.updated_at = args[0]; }
           } else if (lower.includes("status = 'pending'")) {
             for (const r of rows) {
               if (r.status === 'blocked_dependency') r.status = 'pending';
@@ -169,7 +169,7 @@ vi.mock('better-sqlite3', async (importOriginal) => {
             if (r) { r.status = 'dead_letter'; r.last_error = err; }
           } else if (lower.includes('status = ?')) {
             const status = args[0];
-            const err = args[1];
+            const err = args[1] !== undefined ? args[1] : null;
             const id = args[3];
             const r = rows.find(x => x.id === id);
             if (r) { r.status = status; r.last_error = err; }
@@ -236,8 +236,8 @@ vi.mock('better-sqlite3', async (importOriginal) => {
       const table = this.getTargetTable();
       const rows = globalTables.get(table) || [];
       const lower = this.sql.toLowerCase();
-      if (lower.includes("status in ('pending', 'buffered_supabase')")) {
-        return rows.filter(r => r.status === 'pending' || r.status === 'buffered_supabase');
+      if (lower.includes("status in ('pending', 'buffered_supabase'")) {
+        return rows.filter(r => r.status === 'pending' || r.status === 'buffered_supabase' || r.status === 'cleanup_pending');
       }
       if (lower.includes("status in ('staged_local', 'buffered_supabase')")) {
         return rows.filter(r => r.status === 'staged_local' || r.status === 'buffered_supabase');

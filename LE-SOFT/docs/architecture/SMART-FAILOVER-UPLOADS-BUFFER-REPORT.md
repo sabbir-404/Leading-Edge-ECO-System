@@ -455,13 +455,13 @@ await window.electron.getPendingUploads();
 ```
 
 * **Test Suite Counts**:
-  - Focused Suite: **36 passed** (100% clean).
-  - Quota RPC Unit Simulation Suite: **6 passed** (100% clean).
-  - Real PostgreSQL Staging Integration Suite: **1 passed, 3 skipped truthfully** with explicit logged evidence that staging was unconfigured.
-  - Native SQLite WAL Integration Suite: **5 passed** (100% clean under native Electron Node runtime).
-  - Full Repository Test Suite: **41 test files passed, 1 skipped (native SQLite runner)**, **634 tests passed, 8 skipped**, 0 failed.
+  - Focused Suite: **38 passed** (100% clean, Scenarios 1–38).
+  - Quota RPC Unit Simulation Suite: **8 passed** (100% clean, Tests 1–8).
+  - Real PostgreSQL Staging Integration Suite: **1 passed, 5 skipped truthfully** with explicit logged evidence that staging was unconfigured (`ALLOW_DISPOSABLE_STAGING_TESTS` not set).
+  - Native SQLite WAL Integration Suite: **8 passed** (100% clean under native Electron Node runtime, Tests 1–8).
+  - Full Repository Test Suite: **41 test files passed, 1 skipped (native SQLite runner)**, **638 tests passed, 13 skipped**, 0 failed.
 * **Build Artifacts**:
-  - `core/main.cjs`: 5.8 MB (Node 18 bundled).
+  - `core/main.cjs`: 5.9 MB (Node 18 bundled).
   - `core/preload.cjs`: 36.2 KB.
   - `resource/assets/index-5nmN6pTb.js`: 3,444.71 kB.
 * **Published Release Preservation**: Release artifacts for `v1.8.10` and `v1.8.11` were verified and remain completely untouched.
@@ -475,15 +475,17 @@ await window.electron.getPendingUploads();
 
 ### 7.3 Testing Methodology & Architecture Distinction
 * **Unit Simulation Tests (`tests/integration/supabase-quota-rpc.integration.test.ts`)**:
-  - Pure JavaScript/TypeScript simulation validating reservation contracts: client ID spoofing rejection, unauthorized client pruning denial, advisory lock simulation, and ceiling math.
+  - Pure JavaScript/TypeScript simulation validating reservation contracts: client ID spoofing rejection, unauthorized client pruning denial, advisory lock simulation, commit $\rightarrow$ reserve $\rightarrow$ release exploit prevention, closed state reuse rejection, and ceiling math.
 * **Real PostgreSQL Staging Integration Tests (`tests/integration/supabase-quota-rpc.pg-integration.test.ts`)**:
-  - Executed against a disposable PostgreSQL staging database using `pg`.
+  - Executed against an approved disposable PostgreSQL staging database using `pg`.
   - Applies actual `070_supabase_buffer_quota_reservations.sql` migration.
-  - Verifies multi-client isolation, `auth.uid()` identity binding, and server-side pruning restrictions under real PostgreSQL transactions.
-  - Features strict production URL safety checks preventing accidental connection to production databases or TrueNAS. Truthfully skips and logs evidence if `SUPABASE_STAGING_DB_URL` is unset; never falsely claims live staging passed.
+  - Tests authentic unprivileged identities via `SET LOCAL ROLE authenticated` and `SET LOCAL "request.jwt.claims"` rather than superuser `postgres`.
+  - Asserts failure if unauthorized pruning unexpectedly succeeds.
+  - Multi-client concurrent test running 5 parallel reservations at partition limits via `Promise.all`.
+  - Features strict production URL safety checks aborting if pointing to production or TrueNAS. Truthfully skips and logs evidence if `ALLOW_DISPOSABLE_STAGING_TESTS !== 'true'`; never falsely claims live staging passed.
 * **Real Native SQLite WAL Integration Tests (`tests/integration/real-sqlite-outbox.integration.test.ts`)**:
-  - Executed using native `better-sqlite3` under Electron Node runtime (`ELECTRON_RUN_AS_NODE=1 TEST_REAL_SQLITE=true`).
-  - Proves native SQLite Write-Ahead Logging (`WAL`), `synchronous=NORMAL`, atomic transaction rollback on constraint failures, crash recovery across process reopen, and 200 concurrent atomic writes without database locks.
+  - Executed using native `better-sqlite3` under Electron Node runtime (`cmd /c "set ELECTRON_RUN_AS_NODE=1&& set TEST_REAL_SQLITE=true&& .\node_modules\electron\dist\electron.exe .\node_modules\vitest\vitest.mjs run tests/integration/real-sqlite-outbox.integration.test.ts"`).
+  - Proves native SQLite Write-Ahead Logging (`WAL`), `synchronous=NORMAL`, atomic transaction rollback on constraint failures, crash recovery across process reopen, 200 concurrent atomic writes without database locks, atomic billing operation graph enqueue across ungraceful process restarts, temporary database buffer lifecycle reconciliation (`cleanup_pending` on failure), and destination-enforced idempotency (`le_stock_sync_idempotency`).
 * **Authoritative Production Integrity**:
   - Migrations 069 and 070 have NOT been applied to production Supabase or TrueNAS.
   - No claims of global project quota accounting are made based solely on application payload estimations.
@@ -491,8 +493,9 @@ await window.electron.getPendingUploads();
 
 ### 7.4 Unresolved Risks & Staging Deployment Prerequisites
 1. **TrueNAS Migration 069 Application**: Must be applied to TrueNAS PostgreSQL (`069_nas_schema_synchronization_and_bills.sql`) with schema reload (`NOTIFY pgrst, 'reload schema'`).
-2. **Supabase Staging Validation of Migration 070**: Apply `070_supabase_buffer_quota_reservations.sql` to an isolated Supabase/PostgreSQL staging instance to verify live RLS and RPC constraints under real multi-client load before production deployment.
+2. **Supabase Staging Validation of Migration 070**: Apply `070_supabase_buffer_quota_reservations.sql` to an isolated disposable Supabase/PostgreSQL staging instance to verify live RLS and RPC constraints under real multi-client load before production deployment.
 3. **Dedicated Private Storage Bucket**: Provision private fallback bucket `make-order-files` with restricted access policies and verify durable manifest cleanup.
+4. **MySQL Idempotency Table Provisioning**: Ensure `le_stock_sync_idempotency` table is created on the external store prior to activating MySQL outbox sync.
 
 ---
 *Report certified and authored for LE-SOFT Production Release Architecture.*

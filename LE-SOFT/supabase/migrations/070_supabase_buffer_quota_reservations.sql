@@ -100,6 +100,7 @@ DECLARE
     v_existing_client TEXT;
     v_existing_status TEXT;
     v_existing_bytes BIGINT;
+    v_existing_resource_type TEXT;
 BEGIN
     -- 1. Input Validation & Trusted Identity Resolution
     IF p_reservation_id IS NULL OR TRIM(p_reservation_id) = '' THEN
@@ -143,9 +144,9 @@ BEGIN
     -- 2. Acquire transaction-level advisory lock for atomic multi-client serialization
     PERFORM pg_advisory_xact_lock(84729103);
 
-    -- 3. Check for existing reservation ID and enforce client ownership
-    SELECT client_id, status, bytes_reserved
-    INTO v_existing_client, v_existing_status, v_existing_bytes
+    -- 3. Check for existing reservation ID and enforce client ownership, state and resource type
+    SELECT client_id, status, bytes_reserved, resource_type
+    INTO v_existing_client, v_existing_status, v_existing_bytes, v_existing_resource_type
     FROM public.supabase_buffer_reservations
     WHERE id = p_reservation_id;
 
@@ -157,6 +158,33 @@ BEGIN
             RETURN jsonb_build_object(
                 'success', false,
                 'reason', 'UNAUTHORIZED_CLIENT_MISMATCH'
+            );
+        END IF;
+
+        -- Reject resource type mismatch
+        IF v_existing_resource_type <> p_resource_type THEN
+            RETURN jsonb_build_object(
+                'success', false,
+                'reason', 'RESOURCE_TYPE_MISMATCH',
+                'detail', 'Existing reservation ID is associated with a different resource type'
+            );
+        END IF;
+
+        -- Prevent a committed reservation from being reopened as active
+        IF v_existing_status = 'committed' THEN
+            RETURN jsonb_build_object(
+                'success', false,
+                'reason', 'CANNOT_REOPEN_COMMITTED_RESERVATION',
+                'detail', 'A committed reservation cannot be reopened as active without verified reconciliation and pruning'
+            );
+        END IF;
+
+        -- Reject reservation-ID reuse for closed states
+        IF v_existing_status IN ('released', 'pruned', 'expired') THEN
+            RETURN jsonb_build_object(
+                'success', false,
+                'reason', 'RESERVATION_ALREADY_CLOSED',
+                'detail', 'Closed reservation ID cannot be reused for new reservations'
             );
         END IF;
     END IF;
@@ -178,8 +206,8 @@ BEGIN
     FROM public.supabase_buffer_reservations
     WHERE status IN ('active', 'committed') AND resource_type = 'database';
 
-    -- If this is an existing reservation renewal by the same client, subtract its previous contribution
-    IF FOUND AND v_existing_status IN ('active', 'committed') THEN
+    -- If this is an existing active reservation renewal by the same client, subtract its previous contribution
+    IF FOUND AND v_existing_status = 'active' THEN
         IF p_resource_type = 'storage' THEN
             v_total_storage := GREATEST(0, v_total_storage - v_existing_bytes);
         ELSE
@@ -221,17 +249,20 @@ BEGIN
         );
     END IF;
 
-    -- 9. Insert or update active reservation with 5-minute auto-expiry window
-    INSERT INTO public.supabase_buffer_reservations (
-        id, client_id, resource_type, bytes_reserved, status, expires_at
-    ) VALUES (
-        p_reservation_id, v_caller, p_resource_type, p_bytes, 'active', NOW() + INTERVAL '5 minutes'
-    )
-    ON CONFLICT (id) DO UPDATE SET
-        bytes_reserved = EXCLUDED.bytes_reserved,
-        status = 'active',
-        expires_at = NOW() + INTERVAL '5 minutes',
-        updated_at = NOW();
+    -- 9. Insert new or update existing active reservation with 5-minute auto-expiry window
+    IF FOUND THEN
+        UPDATE public.supabase_buffer_reservations
+        SET bytes_reserved = p_bytes,
+            expires_at = NOW() + INTERVAL '5 minutes',
+            updated_at = NOW()
+        WHERE id = p_reservation_id AND status = 'active';
+    ELSE
+        INSERT INTO public.supabase_buffer_reservations (
+            id, client_id, resource_type, bytes_reserved, status, expires_at
+        ) VALUES (
+            p_reservation_id, v_caller, p_resource_type, p_bytes, 'active', NOW() + INTERVAL '5 minutes'
+        );
+    END IF;
 
     RETURN jsonb_build_object(
         'success', true,

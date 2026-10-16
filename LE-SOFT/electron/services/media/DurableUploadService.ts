@@ -289,16 +289,26 @@ export class DurableUploadService {
                     WHERE id = ?
                 `).run(authoritativeUrl, lastError, Date.now(), uploadId);
             } else {
+                // If it was previously buffered in Supabase Cloud, safely prune the temporary cloud copy
+                if (row.status === 'buffered_supabase' && row.remote_url_supabase) {
+                    const pruned = await this.pruneCloudCopy(row.subfolder, row.remote_url_supabase, row.size_bytes, uploadId);
+                    if (!pruned) {
+                        lastError = 'Authoritative NAS persistence confirmed, but Supabase cloud copy cleanup or quota prune failed. Retaining for cleanup retry.';
+                        this.db.prepare(`
+                            UPDATE durable_uploads
+                            SET remote_url_nas = ?, last_error = ?, updated_at = ?
+                            WHERE id = ?
+                        `).run(authoritativeUrl, lastError, Date.now(), uploadId);
+                        this.broadcastUploadStatus();
+                        return { success: false, url: authoritativeUrl, activeUrl: authoritativeUrl, status: row.status, error: lastError };
+                    }
+                }
+
                 this.db.prepare(`
                     UPDATE durable_uploads
                     SET status = 'synced_nas', remote_url_nas = ?, last_error = NULL, updated_at = ?
                     WHERE id = ?
                 `).run(authoritativeUrl, Date.now(), uploadId);
-
-                // If it was previously buffered in Supabase Cloud, safely prune the temporary cloud copy
-                if (row.status === 'buffered_supabase' && row.remote_url_supabase) {
-                    await this.pruneCloudCopy(row.subfolder, row.remote_url_supabase, row.size_bytes, uploadId);
-                }
 
                 console.log(`[DurableUpload] Upload ${uploadId} successfully synchronized to authoritative NAS Storage: ${authoritativeUrl}`);
                 this.broadcastUploadStatus();
@@ -423,8 +433,8 @@ export class DurableUploadService {
         }
     }
 
-    private async pruneCloudCopy(subfolder: string, cloudUrl: string, sizeBytes: number, uploadId?: string): Promise<void> {
-        if (!this.supabaseClient) return;
+    private async pruneCloudCopy(subfolder: string, cloudUrl: string, sizeBytes: number, uploadId?: string): Promise<boolean> {
+        if (!this.supabaseClient) return false;
         try {
             // Extract storage object key from public URL
             const urlObj = new URL(cloudUrl);
@@ -435,15 +445,26 @@ export class DurableUploadService {
                 .from('make-order-files')
                 .remove([objectKey]);
 
-            if (!error) {
-                if (uploadId) {
-                    await SupabaseQuotaManager.getInstance().pruneConfirmedStorage(uploadId, sizeBytes);
-                } else {
-                    SupabaseQuotaManager.getInstance().deductConfirmedPrunedStorage(sizeBytes);
-                }
-                console.log(`[DurableUpload] Safely pruned temporary cloud copy after NAS persistence: ${objectKey}`);
+            if (error) {
+                console.warn(`[DurableUpload] Failed to remove object from Supabase bucket: ${error.message}`);
+                return false;
             }
-        } catch {}
+
+            if (uploadId) {
+                const pruned = await SupabaseQuotaManager.getInstance().pruneConfirmedStorage(uploadId, sizeBytes);
+                if (!pruned) {
+                    console.warn(`[DurableUpload] Storage quota prune RPC failed for ${uploadId}`);
+                    return false;
+                }
+            } else {
+                SupabaseQuotaManager.getInstance().deductConfirmedPrunedStorage(sizeBytes);
+            }
+            console.log(`[DurableUpload] Safely pruned temporary cloud copy after NAS persistence: ${objectKey}`);
+            return true;
+        } catch (err: any) {
+            console.warn(`[DurableUpload] Exception during cloud copy pruning:`, err.message);
+            return false;
+        }
     }
 
     public getPendingUploadStats(): { stagedCount: number; bufferedCount: number; totalPendingBytes: number } {

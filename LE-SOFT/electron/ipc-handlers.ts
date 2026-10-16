@@ -427,9 +427,58 @@ async function syncProductToMySQL(p: { localId: number; name: string; sku: strin
         if (category) await mysqlPool.query('INSERT IGNORE INTO product_categories (product_id, category_name) VALUES (?,?)', [id, category]);
     }
 }
-async function syncStockToMySQL(localId: number, soldQty: number) {
-    if (!mysqlPool) return;
-    await mysqlPool.query('UPDATE products SET quantity = GREATEST(quantity - ?, 0) WHERE le_local_id = ?', [soldQty, localId]).catch(() => { });
+async function syncStockToMySQL(localId: number, soldQty: number, syncId?: string, invoiceNumber?: string): Promise<void> {
+    if (!mysqlPool) {
+        throw new Error('[MySQLSync] MySQL connection pool is not configured or offline; cannot sync stock');
+    }
+    const dedupKey = syncId || (invoiceNumber ? `sync_${invoiceNumber}_${localId}` : `sync_p${localId}_q${soldQty}_${Date.now()}`);
+
+    // Destination-enforced idempotency: ensure table exists on MySQL destination
+    await mysqlPool.query(`
+        CREATE TABLE IF NOT EXISTS le_stock_sync_idempotency (
+            dedup_key VARCHAR(191) PRIMARY KEY,
+            invoice_number VARCHAR(100),
+            product_id INT NOT NULL,
+            quantity INT NOT NULL,
+            synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB;
+    `);
+
+    const connection = await mysqlPool.getConnection();
+    try {
+        await connection.beginTransaction();
+
+        // 1. Check if this exact sync operation was already applied on the MySQL destination
+        const [existing]: any = await connection.query(
+            'SELECT dedup_key FROM le_stock_sync_idempotency WHERE dedup_key = ? FOR UPDATE',
+            [dedupKey]
+        );
+
+        if (existing && existing.length > 0) {
+            console.log(`[MySQLSync] Operation ${dedupKey} was already applied on MySQL destination. Skipping duplicate decrement.`);
+            await connection.commit();
+            return;
+        }
+
+        // 2. Record the idempotency marker on the MySQL destination inside the same transaction
+        await connection.query(
+            'INSERT INTO le_stock_sync_idempotency (dedup_key, invoice_number, product_id, quantity) VALUES (?, ?, ?, ?)',
+            [dedupKey, invoiceNumber || null, localId, soldQty]
+        );
+
+        // 3. Decrement stock safely on destination
+        await connection.query(
+            'UPDATE products SET quantity = GREATEST(quantity - ?, 0) WHERE le_local_id = ?',
+            [soldQty, localId]
+        );
+
+        await connection.commit();
+    } catch (err: any) {
+        await connection.rollback();
+        throw new Error(`[MySQLSync] Failed to decrement MySQL stock for product ${localId}: ${err.message}`);
+    } finally {
+        connection.release();
+    }
 }
 
 // ── In-memory presence stores ─────────────────────────────────────────────────
@@ -473,10 +522,10 @@ export function registerHandlers() {
 
     // Register durable custom handlers for background outbox processing
     DurableOutboxService.registerCustomHandler('mysql_stock_sync', async (payload: any) => {
-        const { product_id, quantity } = payload || {};
+        const { product_id, quantity, invoice_number, sync_id } = payload || {};
         if (product_id && quantity) {
-            await syncStockToMySQL(Number(product_id), Number(quantity));
-            await checkLowStockForProduct(Number(product_id));
+            await syncStockToMySQL(Number(product_id), Number(quantity), sync_id, invoice_number);
+            await checkLowStockForProduct(Number(product_id)).catch(() => {});
         }
     });
 
@@ -2448,7 +2497,8 @@ export function registerHandlers() {
                         data: {
                             product_id: pId,
                             quantity: qty,
-                            invoice_number: invoiceNumber
+                            invoice_number: invoiceNumber,
+                            sync_id: mysqlSyncOpId
                         },
                         dependencyOpId: stockOpId,
                         metadata: { invoiceNumber, product_id: pId, quantity: qty }

@@ -1421,6 +1421,288 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
 
         expect(outbox.hasTargetRecord(decOpId, 'nas')).toBe(true);
     });
+
+    // ── 37. Quota reservation state transitions & trusted reconciliation ──────────
+    it('Scenario 37: Quota reservation state prevents commit -> same-ID reserve -> release exploit, enforces resource types, and isolates trusted pruning', async () => {
+        const reservations = new Map<string, { status: string; bytes: number; client_id: string; resource_type: string }>();
+
+        const mockClient: any = {
+            rpc: vi.fn(async (fn: string, args: any) => {
+                if (fn === 'reserve_buffer_capacity') {
+                    const existing = reservations.get(args.p_reservation_id);
+                    if (existing) {
+                        if (existing.resource_type !== args.p_resource_type) {
+                            return { data: { success: false, reason: 'RESOURCE_TYPE_MISMATCH' }, error: null };
+                        }
+                        if (existing.status === 'committed') {
+                            return { data: { success: false, reason: 'CANNOT_REOPEN_COMMITTED_RESERVATION' }, error: null };
+                        }
+                        if (['released', 'pruned', 'expired'].includes(existing.status)) {
+                            return { data: { success: false, reason: 'RESERVATION_ALREADY_CLOSED' }, error: null };
+                        }
+                    }
+                    reservations.set(args.p_reservation_id, {
+                        status: 'active',
+                        bytes: args.p_bytes,
+                        client_id: args.p_client_id,
+                        resource_type: args.p_resource_type
+                    });
+                    return { data: { success: true }, error: null };
+                }
+
+                if (fn === 'release_buffer_capacity') {
+                    const existing = reservations.get(args.p_reservation_id);
+                    if (!existing) {
+                        return { data: { success: false, reason: 'RESERVATION_NOT_FOUND' }, error: null };
+                    }
+                    if (args.p_status === 'pruned') {
+                        // Desktop client without reconciliation role cannot prune
+                        return { data: { success: false, reason: 'PRUNE_REQUIRES_RECONCILIATION_ROLE' }, error: null };
+                    }
+                    if (existing.status === 'committed' && args.p_status === 'released') {
+                        // Cannot release committed reservation without trusted pruning
+                        return { data: { success: false, reason: 'CANNOT_RELEASE_COMMITTED_RESERVATION' }, error: null };
+                    }
+                    existing.status = args.p_status;
+                    return { data: { success: true }, error: null };
+                }
+                return { data: null, error: new Error('Unknown RPC') };
+            })
+        };
+
+        const mockReconciliationClient: any = {
+            rpc: vi.fn(async (fn: string, args: any) => {
+                if (fn === 'release_buffer_capacity' && args.p_status === 'pruned') {
+                    const existing = reservations.get(args.p_reservation_id);
+                    if (existing && existing.status === 'committed') {
+                        existing.status = 'pruned';
+                        return { data: { success: true }, error: null };
+                    }
+                    return { data: { success: false, reason: 'INVALID_PRUNE_TARGET' }, error: null };
+                }
+                return { data: null, error: new Error('Unknown RPC') };
+            })
+        };
+
+        const quotaMgr = new SupabaseQuotaManager('test-client-37', mockClient);
+        const resId = 'res_37_safety_test';
+
+        // 1. Initial reservation succeeds
+        const reserved = await quotaMgr.reserveStorageQuota(resId, 50_000_000);
+        expect(reserved).toBe(true);
+        expect(reservations.get(resId)?.status).toBe('active');
+
+        // 2. Commit reservation after upload
+        const committed = await quotaMgr.releaseStorageQuota(resId, 50_000_000, 'committed');
+        expect(committed).toBe(true);
+        expect(reservations.get(resId)?.status).toBe('committed');
+
+        // 3. Exploit attempt: Try to re-reserve using the same reservation ID
+        const exploitReserve = await quotaMgr.reserveStorageQuota(resId, 50_000_000);
+        expect(exploitReserve).toBe(false);
+        expect(reservations.get(resId)?.status).toBe('committed'); // Must remain committed
+
+        // 4. Direct release attempt on committed quota without pruning is rejected
+        const unauthorizedRelease = await quotaMgr.releaseStorageQuota(resId, 0, 'released');
+        expect(unauthorizedRelease).toBe(false);
+        expect(reservations.get(resId)?.status).toBe('committed');
+
+        // 5. Attempting to prune via standard desktop client is rejected
+        const clientPrune = await quotaMgr.pruneConfirmedStorage(resId, 50_000_000);
+        expect(clientPrune).toBe(false);
+        expect(reservations.get(resId)?.status).toBe('committed');
+
+        // 6. Prune via registered trusted reconciliation client succeeds
+        quotaMgr.registerReconciliationClient(mockReconciliationClient);
+        const trustedPrune = await quotaMgr.pruneConfirmedStorage(resId, 50_000_000);
+        expect(trustedPrune).toBe(true);
+        expect(reservations.get(resId)?.status).toBe('pruned');
+
+        // 7. Closed state: cannot re-reserve after pruned
+        const closedReserve = await quotaMgr.reserveStorageQuota(resId, 10_000_000);
+        expect(closedReserve).toBe(false);
+
+        // 8. Resource type mismatch: cannot reserve database quota on storage reservation
+        const mismatchReserve = await quotaMgr.reserveDatabaseQuota(resId, 10_000);
+        expect(mismatchReserve).toBe(false);
+    });
+
+    // ── 38. Database buffer lifecycle & retryable cleanup_pending ────────────────
+    it('Scenario 38: Database buffer lifecycle reconciles temporary fallback copy after NAS success, verifies removal, and handles cleanup_pending', async () => {
+        const outbox = DurableOutboxService.getInstance();
+        const testInvoice = `INV_BUFFER_LIFECYCLE_${Date.now()}`;
+        const opId = `bill_fallback_${testInvoice}`;
+
+        let cloudRowExists = true;
+        let pruneCalled = false;
+
+        const mockSupabase: any = {
+            from: vi.fn(() => ({
+                delete: vi.fn(() => ({
+                    eq: vi.fn(() => {
+                        cloudRowExists = false;
+                        return Promise.resolve({ error: null });
+                    })
+                })),
+                select: vi.fn(() => ({
+                    eq: vi.fn(() => Promise.resolve({ data: cloudRowExists ? [{ id: 1 }] : [], error: null }))
+                }))
+            }))
+        };
+
+        const mockNasClient: any = {
+            from: vi.fn(() => ({
+                upsert: vi.fn(() => ({
+                    select: vi.fn(() => ({
+                        maybeSingle: vi.fn(() => Promise.resolve({ data: { id: 888 }, error: null })),
+                        single: vi.fn(() => Promise.resolve({ data: { id: 888 }, error: null }))
+                    }))
+                })),
+                insert: vi.fn(() => ({
+                    select: vi.fn(() => ({
+                        maybeSingle: vi.fn(() => Promise.resolve({ data: { id: 888 }, error: null })),
+                        single: vi.fn(() => Promise.resolve({ data: { id: 888 }, error: null }))
+                    }))
+                }))
+            }))
+        };
+
+        const quotaMgr = SupabaseQuotaManager.getInstance();
+        const pruneSpy = vi.spyOn(quotaMgr, 'pruneConfirmedDatabase').mockImplementation(async () => {
+            pruneCalled = true;
+            return true;
+        });
+
+        outbox.registerClients({
+            nas: mockNasClient,
+            supabase: mockSupabase
+        });
+
+        // 1. Enqueue operation originally buffered to Supabase
+        outbox.enqueueBatch([{
+            id: opId,
+            entityType: 'bills',
+            operation: 'insert',
+            payload: { invoice_number: testInvoice, total: 1000 }
+        }]);
+
+        // Mark as buffered_supabase (temporary cloud fallback)
+        (outbox as any).markStatus(opId, 'buffered_supabase');
+        (outbox as any).recordResolvedId(opId, 'supabase', 'sb_row_888');
+
+        // 2. Run processRecord when NAS is available
+        const mapRowToRecord = (r: any): any => ({
+            id: r.id,
+            entityType: r.entity_type,
+            operation: r.operation,
+            payload: JSON.parse(r.payload_json || '{}'),
+            filter: r.filter_json ? JSON.parse(r.filter_json) : null,
+            primaryKeyCol: r.primary_key_col || 'id',
+            primaryKeyVal: r.primary_key_val,
+            upsertConflict: r.upsert_conflict || null,
+            dependencyOpId: r.dependency_op_id,
+            metadata: r.metadata_json ? JSON.parse(r.metadata_json) : null,
+            target: r.target,
+            status: r.status,
+            retryCount: r.retry_count,
+            maxRetries: r.max_retries,
+            lastError: r.last_error,
+            createdAt: r.created_at,
+            updatedAt: r.updated_at
+        });
+
+        const opRecord = (outbox as any).db.prepare('SELECT * FROM outbox_operations WHERE id = ?').get(opId);
+        await (outbox as any).processRecord(mapRowToRecord(opRecord));
+
+        // Verify: temporary copy removed from Supabase, prune invoked, status completed
+        expect(cloudRowExists).toBe(false);
+        expect(pruneCalled).toBe(true);
+        const finalOp = (outbox as any).db.prepare('SELECT status, last_error FROM outbox_operations WHERE id = ?').get(opId);
+        expect(finalOp.status).toBe('completed');
+        expect(finalOp.last_error).toBeNull();
+
+        // 3. Test failure path: when cloud delete fails, op moves to retryable cleanup_pending
+        const opIdFail = `bill_fallback_fail_${testInvoice}`;
+        outbox.enqueueBatch([{
+            id: opIdFail,
+            entityType: 'bills',
+            operation: 'insert',
+            payload: { invoice_number: `${testInvoice}-FAIL`, total: 2000 }
+        }]);
+        (outbox as any).markStatus(opIdFail, 'buffered_supabase');
+        (outbox as any).recordResolvedId(opIdFail, 'supabase', 'sb_row_999');
+
+        const failingSupabase: any = {
+            from: vi.fn(() => ({
+                delete: vi.fn(() => ({
+                    eq: vi.fn(() => Promise.resolve({ error: new Error('Network timeout during cloud copy deletion') }))
+                })),
+                select: vi.fn(() => ({
+                    eq: vi.fn(() => Promise.resolve({ data: [{ id: 1 }], error: null }))
+                }))
+            }))
+        };
+
+        outbox.registerClients({
+            nas: mockNasClient,
+            supabase: failingSupabase
+        });
+
+        const failRecord = (outbox as any).db.prepare('SELECT * FROM outbox_operations WHERE id = ?').get(opIdFail);
+        await (outbox as any).processRecord(mapRowToRecord(failRecord));
+
+        const pendingCleanupOp = (outbox as any).db.prepare('SELECT status, last_error FROM outbox_operations WHERE id = ?').get(opIdFail);
+        expect(pendingCleanupOp.status).toBe('cleanup_pending');
+        expect(pendingCleanupOp.lastError || pendingCleanupOp.last_error).toContain('Network timeout');
+
+        // 4. Test persistent mirror preservation:
+        // Persistent mirror writes (status === 'pending', target === 'both') must NOT delete their Supabase mirror
+        let mirrorDeleted = false;
+        const mirrorSupabase: any = {
+            rpc: vi.fn().mockResolvedValue({ data: { success: true }, error: null }),
+            from: vi.fn(() => ({
+                delete: vi.fn(() => {
+                    mirrorDeleted = true;
+                    return { eq: vi.fn(() => Promise.resolve({ error: null })) };
+                }),
+                upsert: vi.fn(() => ({
+                    select: vi.fn(() => ({
+                        maybeSingle: vi.fn(() => Promise.resolve({ data: { id: 999 }, error: null })),
+                        single: vi.fn(() => Promise.resolve({ data: { id: 999 }, error: null }))
+                    }))
+                })),
+                insert: vi.fn(() => ({
+                    select: vi.fn(() => ({
+                        maybeSingle: vi.fn(() => Promise.resolve({ data: { id: 999 }, error: null })),
+                        single: vi.fn(() => Promise.resolve({ data: { id: 999 }, error: null }))
+                    }))
+                }))
+            }))
+        };
+
+        outbox.registerClients({
+            nas: mockNasClient,
+            supabase: mirrorSupabase
+        });
+        quotaMgr.registerClients({ supabase: mirrorSupabase });
+
+        const mirrorOpId = `bill_mirror_${testInvoice}`;
+        outbox.enqueueBatch([{
+            id: mirrorOpId,
+            entityType: 'bills',
+            operation: 'insert',
+            payload: { invoice_number: `${testInvoice}-MIRROR`, total: 3000 }
+        }]);
+
+        const mirrorRecord = (outbox as any).db.prepare('SELECT * FROM outbox_operations WHERE id = ?').get(mirrorOpId);
+        await (outbox as any).processRecord(mapRowToRecord(mirrorRecord));
+
+        expect(mirrorDeleted).toBe(false);
+        const finalMirrorOp = (outbox as any).db.prepare('SELECT status FROM outbox_operations WHERE id = ?').get(mirrorOpId);
+        expect(finalMirrorOp.status).toBe('completed');
+
+        pruneSpy.mockRestore();
+    });
 });
 
 

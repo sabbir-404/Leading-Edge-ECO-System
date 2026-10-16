@@ -68,6 +68,7 @@ export class SupabaseQuotaManager {
 
     public clientId: string;
     private client: SupabaseClient | null = null;
+    private reconciliationClient: SupabaseClient | null = null;
     private stateFilePath: string;
 
     // In-memory atomic reservation tracking (local view)
@@ -103,8 +104,19 @@ export class SupabaseQuotaManager {
         this.client = client;
     }
 
-    public registerClients(clients: { supabase: SupabaseClient | null }): void {
+    public registerClients(clients: { supabase: SupabaseClient | null; reconciliation?: SupabaseClient | null }): void {
         this.client = clients.supabase;
+        if (clients.reconciliation !== undefined) {
+            this.reconciliationClient = clients.reconciliation;
+        }
+    }
+
+    /**
+     * Registers a trusted reconciliation client (e.g. an authenticated reconciliation operator session)
+     * for pruning committed buffer capacity without embedding service-role secrets in desktop client config.
+     */
+    public registerReconciliationClient(client: SupabaseClient | null): void {
+        this.reconciliationClient = client;
     }
 
     public recordUsage(_source: string, storageBytes: number, dbBytes: number): void {
@@ -237,9 +249,10 @@ export class SupabaseQuotaManager {
     }
 
     public async pruneConfirmedStorage(reservationId: string, bytesPruned: number): Promise<boolean> {
-        if (this.client) {
+        const activeClient = this.reconciliationClient || this.client;
+        if (activeClient) {
             try {
-                const { data, error } = await this.client.rpc('release_buffer_capacity', {
+                const { data, error } = await activeClient.rpc('release_buffer_capacity', {
                     p_reservation_id: reservationId,
                     p_client_id: this.clientId,
                     p_status: 'pruned',
@@ -356,9 +369,10 @@ export class SupabaseQuotaManager {
     }
 
     public async pruneConfirmedDatabase(reservationId: string, bytesPruned: number): Promise<boolean> {
-        if (this.client) {
+        const activeClient = this.reconciliationClient || this.client;
+        if (activeClient) {
             try {
-                const { data, error } = await this.client.rpc('release_buffer_capacity', {
+                const { data, error } = await activeClient.rpc('release_buffer_capacity', {
                     p_reservation_id: reservationId,
                     p_client_id: this.clientId,
                     p_status: 'pruned',

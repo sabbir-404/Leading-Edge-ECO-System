@@ -24498,6 +24498,7 @@ var init_SupabaseQuotaManager = __esm({
       // 950 MB (95%)
       clientId;
       client = null;
+      reconciliationClient = null;
       stateFilePath;
       // In-memory atomic reservation tracking (local view)
       activeStorageReservations = /* @__PURE__ */ new Map();
@@ -24528,6 +24529,16 @@ var init_SupabaseQuotaManager = __esm({
       }
       registerClients(clients) {
         this.client = clients.supabase;
+        if (clients.reconciliation !== void 0) {
+          this.reconciliationClient = clients.reconciliation;
+        }
+      }
+      /**
+       * Registers a trusted reconciliation client (e.g. an authenticated reconciliation operator session)
+       * for pruning committed buffer capacity without embedding service-role secrets in desktop client config.
+       */
+      registerReconciliationClient(client) {
+        this.reconciliationClient = client;
       }
       recordUsage(_source, storageBytes, dbBytes) {
         this.measuredStorageBytes = storageBytes;
@@ -24640,9 +24651,10 @@ var init_SupabaseQuotaManager = __esm({
         return true;
       }
       async pruneConfirmedStorage(reservationId, bytesPruned) {
-        if (this.client) {
+        const activeClient = this.reconciliationClient || this.client;
+        if (activeClient) {
           try {
-            const { data: data2, error: error51 } = await this.client.rpc("release_buffer_capacity", {
+            const { data: data2, error: error51 } = await activeClient.rpc("release_buffer_capacity", {
               p_reservation_id: reservationId,
               p_client_id: this.clientId,
               p_status: "pruned",
@@ -24742,9 +24754,10 @@ var init_SupabaseQuotaManager = __esm({
         return true;
       }
       async pruneConfirmedDatabase(reservationId, bytesPruned) {
-        if (this.client) {
+        const activeClient = this.reconciliationClient || this.client;
+        if (activeClient) {
           try {
-            const { data: data2, error: error51 } = await this.client.rpc("release_buffer_capacity", {
+            const { data: data2, error: error51 } = await activeClient.rpc("release_buffer_capacity", {
               p_reservation_id: reservationId,
               p_client_id: this.clientId,
               p_status: "pruned",
@@ -25481,7 +25494,7 @@ var init_DurableOutboxService = __esm({
           this.unblockResolvedDependencies();
           const rows = this.db.prepare(`
                 SELECT * FROM outbox_operations
-                WHERE status IN ('pending', 'buffered_supabase')
+                WHERE status IN ('pending', 'buffered_supabase', 'cleanup_pending')
                 ORDER BY created_at ASC
                 LIMIT ?
             `).all(batchSize);
@@ -25582,7 +25595,7 @@ var init_DurableOutboxService = __esm({
         }
         const isNasTarget = target === "nas" || target === "both";
         const isSbTarget = target === "supabase" || target === "both";
-        let nasSuccess = status === "synced_nas" || this.hasTargetRecord(id, "nas");
+        let nasSuccess = status === "synced_nas" || status === "cleanup_pending" || this.hasTargetRecord(id, "nas");
         let sbSuccess = status === "buffered_supabase" || this.hasTargetRecord(id, "supabase");
         if (isNasTarget && !nasSuccess && this.nasClient) {
           const nasPayload = record2.dependencyOpId ? this.resolveDependentPayload(record2.dependencyOpId, record2.payload, "nas") : record2.payload;
@@ -25667,6 +25680,56 @@ var init_DurableOutboxService = __esm({
               await quotaMgr.releaseDatabaseQuota(`db_${id}`, 0, "released");
             }
           }
+        }
+        const wasTemporaryBuffer = status === "buffered_supabase" || status === "cleanup_pending";
+        if (nasSuccess && wasTemporaryBuffer) {
+          let cloudCleanupSuccess = false;
+          let cloudCleanupError = null;
+          const quotaMgr = SupabaseQuotaManager.getInstance();
+          const estBytes = _DurableOutboxService.estimateDatabaseBytes(record2.payload, operation);
+          if (this.supabaseClient) {
+            try {
+              let deleteQuery = this.supabaseClient.from(entityType).delete();
+              const sbResolvedId = this.getResolvedId(id, "supabase");
+              const pkCol = record2.primaryKeyCol || "id";
+              if (sbResolvedId) {
+                deleteQuery = deleteQuery.eq(pkCol, sbResolvedId);
+              } else if (record2.primaryKeyVal) {
+                deleteQuery = deleteQuery.eq(pkCol, record2.primaryKeyVal);
+              } else if (record2.payload && !Array.isArray(record2.payload) && record2.payload[pkCol]) {
+                deleteQuery = deleteQuery.eq(pkCol, record2.payload[pkCol]);
+              } else if (record2.filter && Array.isArray(record2.filter)) {
+                for (const f3 of record2.filter) {
+                  deleteQuery = deleteQuery.eq(f3.column, f3.value);
+                }
+              } else if (record2.upsertConflict && record2.payload && !Array.isArray(record2.payload) && record2.payload[record2.upsertConflict]) {
+                deleteQuery = deleteQuery.eq(record2.upsertConflict, record2.payload[record2.upsertConflict]);
+              }
+              const { error: delError } = await deleteQuery;
+              if (delError) {
+                cloudCleanupError = `Supabase temporary copy removal failed: ${delError.message}`;
+              } else {
+                const pruned = await quotaMgr.pruneConfirmedDatabase(`db_${id}`, estBytes);
+                if (pruned) {
+                  cloudCleanupSuccess = true;
+                  console.log(`[Outbox] Reconciled temporary database buffer op ${id}: NAS confirmed, Supabase copy removed, quota pruned.`);
+                } else {
+                  cloudCleanupError = `Supabase temporary quota pruning rejected or failed for db_${id}.`;
+                }
+              }
+            } catch (err) {
+              cloudCleanupError = `Exception during temporary cloud cleanup: ${err.message}`;
+            }
+          } else {
+            cloudCleanupError = "Supabase client unavailable for temporary buffer cleanup";
+          }
+          if (!cloudCleanupSuccess) {
+            console.warn(`[Outbox] Cleanup pending for op ${id}: ${cloudCleanupError}`);
+            this.markStatus(id, "cleanup_pending", `Authoritative NAS persistence confirmed; temporary cloud copy cleanup or quota prune failed: ${cloudCleanupError}`);
+            return;
+          }
+          this.markCompleted(id);
+          return;
         }
         if (nasSuccess && (!isSbTarget || sbSuccess)) {
           this.markCompleted(id);
@@ -25771,6 +25834,20 @@ var init_DurableOutboxService = __esm({
           return !!row;
         } catch {
           return false;
+        }
+      }
+      getResolvedId(opId, target) {
+        if (!this.db) return null;
+        try {
+          const row = this.db.prepare(`
+                SELECT resolved_id FROM outbox_id_map
+                WHERE op_id = ? AND target = ?
+                ORDER BY created_at DESC
+                LIMIT 1
+            `).get(opId, target);
+          return row?.resolved_id ? String(row.resolved_id) : null;
+        } catch {
+          return null;
         }
       }
       async executeOnClient(client, table, op, payload, primaryKeyCol = "id", filter4, upsertConflict) {
@@ -25947,7 +26024,7 @@ var init_DurableOutboxService = __esm({
           const row = this.db.prepare(`SELECT entity_type FROM outbox_operations WHERE id = ?`).get(id);
           this.db.prepare(`
                 UPDATE outbox_operations
-                SET status = 'completed', updated_at = ?
+                SET status = 'completed', last_error = NULL, updated_at = ?
                 WHERE id = ?
             `).run(Date.now(), id);
           this.invokeCallbacks(id, true, { success: true, id });
@@ -26027,10 +26104,10 @@ var init_DurableOutboxService = __esm({
           const counts = this.db.prepare(`
                 SELECT 
                     COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_cnt,
-                    COUNT(CASE WHEN status = 'buffered_supabase' THEN 1 END) as buffered_cnt,
+                    COUNT(CASE WHEN status IN ('buffered_supabase', 'cleanup_pending') THEN 1 END) as buffered_cnt,
                     COUNT(CASE WHEN status = 'blocked_dependency' THEN 1 END) as blocked_cnt,
                     COUNT(CASE WHEN status = 'dead_letter' THEN 1 END) as dead_letter_cnt,
-                    MIN(CASE WHEN status IN ('pending', 'buffered_supabase', 'blocked_dependency') THEN created_at END) as oldest_pending
+                    MIN(CASE WHEN status IN ('pending', 'buffered_supabase', 'cleanup_pending', 'blocked_dependency') THEN created_at END) as oldest_pending
                 FROM outbox_operations
             `).get();
           const recentErrors = this.db.prepare(`
@@ -26356,14 +26433,24 @@ var init_DurableUploadService = __esm({
                     WHERE id = ?
                 `).run(authoritativeUrl, lastError, Date.now(), uploadId);
           } else {
+            if (row.status === "buffered_supabase" && row.remote_url_supabase) {
+              const pruned = await this.pruneCloudCopy(row.subfolder, row.remote_url_supabase, row.size_bytes, uploadId);
+              if (!pruned) {
+                lastError = "Authoritative NAS persistence confirmed, but Supabase cloud copy cleanup or quota prune failed. Retaining for cleanup retry.";
+                this.db.prepare(`
+                            UPDATE durable_uploads
+                            SET remote_url_nas = ?, last_error = ?, updated_at = ?
+                            WHERE id = ?
+                        `).run(authoritativeUrl, lastError, Date.now(), uploadId);
+                this.broadcastUploadStatus();
+                return { success: false, url: authoritativeUrl, activeUrl: authoritativeUrl, status: row.status, error: lastError };
+              }
+            }
             this.db.prepare(`
                     UPDATE durable_uploads
                     SET status = 'synced_nas', remote_url_nas = ?, last_error = NULL, updated_at = ?
                     WHERE id = ?
                 `).run(authoritativeUrl, Date.now(), uploadId);
-            if (row.status === "buffered_supabase" && row.remote_url_supabase) {
-              await this.pruneCloudCopy(row.subfolder, row.remote_url_supabase, row.size_bytes, uploadId);
-            }
             console.log(`[DurableUpload] Upload ${uploadId} successfully synchronized to authoritative NAS Storage: ${authoritativeUrl}`);
             this.broadcastUploadStatus();
             return { success: true, url: authoritativeUrl, activeUrl: authoritativeUrl, status: "synced_nas" };
@@ -26469,21 +26556,30 @@ var init_DurableUploadService = __esm({
         }
       }
       async pruneCloudCopy(subfolder, cloudUrl, sizeBytes, uploadId) {
-        if (!this.supabaseClient) return;
+        if (!this.supabaseClient) return false;
         try {
           const urlObj = new URL(cloudUrl);
           const pathParts = urlObj.pathname.split("/make-order-files/");
           const objectKey = pathParts[1] || `${subfolder}/${import_path8.default.basename(urlObj.pathname)}`;
           const { error: error51 } = await this.supabaseClient.storage.from("make-order-files").remove([objectKey]);
-          if (!error51) {
-            if (uploadId) {
-              await SupabaseQuotaManager.getInstance().pruneConfirmedStorage(uploadId, sizeBytes);
-            } else {
-              SupabaseQuotaManager.getInstance().deductConfirmedPrunedStorage(sizeBytes);
-            }
-            console.log(`[DurableUpload] Safely pruned temporary cloud copy after NAS persistence: ${objectKey}`);
+          if (error51) {
+            console.warn(`[DurableUpload] Failed to remove object from Supabase bucket: ${error51.message}`);
+            return false;
           }
-        } catch {
+          if (uploadId) {
+            const pruned = await SupabaseQuotaManager.getInstance().pruneConfirmedStorage(uploadId, sizeBytes);
+            if (!pruned) {
+              console.warn(`[DurableUpload] Storage quota prune RPC failed for ${uploadId}`);
+              return false;
+            }
+          } else {
+            SupabaseQuotaManager.getInstance().deductConfirmedPrunedStorage(sizeBytes);
+          }
+          console.log(`[DurableUpload] Safely pruned temporary cloud copy after NAS persistence: ${objectKey}`);
+          return true;
+        } catch (err) {
+          console.warn(`[DurableUpload] Exception during cloud copy pruning:`, err.message);
+          return false;
         }
       }
       getPendingUploadStats() {
@@ -134282,10 +134378,47 @@ async function syncProductToMySQL(p) {
     if (category) await mysqlPool.query("INSERT IGNORE INTO product_categories (product_id, category_name) VALUES (?,?)", [id, category]);
   }
 }
-async function syncStockToMySQL(localId, soldQty) {
-  if (!mysqlPool) return;
-  await mysqlPool.query("UPDATE products SET quantity = GREATEST(quantity - ?, 0) WHERE le_local_id = ?", [soldQty, localId]).catch(() => {
-  });
+async function syncStockToMySQL(localId, soldQty, syncId, invoiceNumber) {
+  if (!mysqlPool) {
+    throw new Error("[MySQLSync] MySQL connection pool is not configured or offline; cannot sync stock");
+  }
+  const dedupKey = syncId || (invoiceNumber ? `sync_${invoiceNumber}_${localId}` : `sync_p${localId}_q${soldQty}_${Date.now()}`);
+  await mysqlPool.query(`
+        CREATE TABLE IF NOT EXISTS le_stock_sync_idempotency (
+            dedup_key VARCHAR(191) PRIMARY KEY,
+            invoice_number VARCHAR(100),
+            product_id INT NOT NULL,
+            quantity INT NOT NULL,
+            synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB;
+    `);
+  const connection = await mysqlPool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [existing] = await connection.query(
+      "SELECT dedup_key FROM le_stock_sync_idempotency WHERE dedup_key = ? FOR UPDATE",
+      [dedupKey]
+    );
+    if (existing && existing.length > 0) {
+      console.log(`[MySQLSync] Operation ${dedupKey} was already applied on MySQL destination. Skipping duplicate decrement.`);
+      await connection.commit();
+      return;
+    }
+    await connection.query(
+      "INSERT INTO le_stock_sync_idempotency (dedup_key, invoice_number, product_id, quantity) VALUES (?, ?, ?, ?)",
+      [dedupKey, invoiceNumber || null, localId, soldQty]
+    );
+    await connection.query(
+      "UPDATE products SET quantity = GREATEST(quantity - ?, 0) WHERE le_local_id = ?",
+      [soldQty, localId]
+    );
+    await connection.commit();
+  } catch (err) {
+    await connection.rollback();
+    throw new Error(`[MySQLSync] Failed to decrement MySQL stock for product ${localId}: ${err.message}`);
+  } finally {
+    connection.release();
+  }
 }
 var userPresence = /* @__PURE__ */ new Map();
 var userTyping = /* @__PURE__ */ new Map();
@@ -134318,10 +134451,11 @@ function registerHandlers() {
   }
   registerMakeHandlers();
   DurableOutboxService.registerCustomHandler("mysql_stock_sync", async (payload) => {
-    const { product_id, quantity } = payload || {};
+    const { product_id, quantity, invoice_number, sync_id } = payload || {};
     if (product_id && quantity) {
-      await syncStockToMySQL(Number(product_id), Number(quantity));
-      await checkLowStockForProduct(Number(product_id));
+      await syncStockToMySQL(Number(product_id), Number(quantity), sync_id, invoice_number);
+      await checkLowStockForProduct(Number(product_id)).catch(() => {
+      });
     }
   });
   function requireSession() {
@@ -135930,7 +136064,8 @@ function registerHandlers() {
             data: {
               product_id: pId,
               quantity: qty,
-              invoice_number: invoiceNumber
+              invoice_number: invoiceNumber,
+              sync_id: mysqlSyncOpId
             },
             dependencyOpId: stockOpId,
             metadata: { invoiceNumber, product_id: pId, quantity: qty }
