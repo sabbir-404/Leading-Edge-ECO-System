@@ -147,16 +147,12 @@ export class SupabaseQuotaManager {
         // Shared server-side atomic reservation with PostgreSQL advisory locking
         if (this.client) {
             try {
-                // 1. Try PostgreSQL RPC reserve_buffer_capacity
+                // Call authoritative PostgreSQL RPC reserve_buffer_capacity
                 const { data, error } = await this.client.rpc('reserve_buffer_capacity', {
                     p_reservation_id: reservationId,
                     p_client_id: this.clientId,
                     p_resource_type: 'storage',
-                    p_bytes: bytesNeeded,
-                    p_storage_ceiling: SupabaseQuotaManager.STORAGE_CEILING_BYTES,
-                    p_db_ceiling: SupabaseQuotaManager.DATABASE_CEILING_BYTES,
-                    p_total_ceiling: SupabaseQuotaManager.HARD_CEILING_BYTES,
-                    p_critical_reserve: SupabaseQuotaManager.CRITICAL_RESERVE_BYTES
+                    p_bytes: bytesNeeded
                 });
 
                 if (!error && data) {
@@ -170,47 +166,9 @@ export class SupabaseQuotaManager {
                     }
                 }
 
-                // 2. Direct table fallback against supabase_buffer_reservations
-                const { data: activeRes, error: fetchErr } = await this.client
-                    .from('supabase_buffer_reservations')
-                    .select('bytes_reserved, resource_type')
-                    .eq('status', 'active')
-                    .gt('expires_at', new Date().toISOString());
-
-                if (!fetchErr && Array.isArray(activeRes)) {
-                    const sharedActiveStorage = activeRes
-                        .filter((r: any) => r.resource_type === 'storage')
-                        .reduce((acc: number, r: any) => acc + Number(r.bytes_reserved), 0);
-                    const sharedActiveDb = activeRes
-                        .filter((r: any) => r.resource_type === 'database')
-                        .reduce((acc: number, r: any) => acc + Number(r.bytes_reserved), 0);
-                    
-                    if ((sharedActiveStorage + bytesNeeded) > SupabaseQuotaManager.STORAGE_CEILING_BYTES ||
-                        (sharedActiveStorage + sharedActiveDb + bytesNeeded) > (SupabaseQuotaManager.HARD_CEILING_BYTES - SupabaseQuotaManager.CRITICAL_RESERVE_BYTES)) {
-                        this.blockedOperationsCount++;
-                        return false;
-                    }
-
-                    const { error: insErr } = await this.client
-                        .from('supabase_buffer_reservations')
-                        .upsert({
-                            id: reservationId,
-                            client_id: this.clientId,
-                            resource_type: 'storage',
-                            bytes_reserved: bytesNeeded,
-                            status: 'active',
-                            expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString()
-                        });
-
-                    if (!insErr) {
-                        this.activeStorageReservations.set(reservationId, bytesNeeded);
-                        return true;
-                    }
-                }
-                
-                // If capacity cannot be established safely across clients, fail closed!
+                // If RPC fails or network drops, fail closed to local SQLite outbox!
                 this.blockedOperationsCount++;
-                console.warn(`[QUOTA] Shared quota state could not be verified safely. Retaining work in local outbox.`);
+                console.warn(`[QUOTA] Shared quota RPC error: ${error?.message || 'Unknown RPC failure'}. Failing closed to local storage.`);
                 return false;
             } catch (ex: any) {
                 this.blockedOperationsCount++;
@@ -244,16 +202,30 @@ export class SupabaseQuotaManager {
             try {
                 await this.client.rpc('release_buffer_capacity', {
                     p_reservation_id: reservationId,
-                    p_status: confirmedUploadedBytes > 0 ? 'committed' : 'released'
+                    p_client_id: this.clientId,
+                    p_status: confirmedUploadedBytes > 0 ? 'committed' : 'released',
+                    p_actual_bytes: confirmedUploadedBytes
                 });
-            } catch {
-                try {
-                    await this.client
-                        .from('supabase_buffer_reservations')
-                        .update({ status: confirmedUploadedBytes > 0 ? 'committed' : 'released' })
-                        .eq('id', reservationId);
-                } catch {}
+            } catch (err: any) {
+                console.warn('[QUOTA] Failed to release storage capacity via RPC:', err.message);
             }
+        }
+    }
+
+    public async pruneConfirmedStorage(reservationId: string, bytesPruned: number): Promise<void> {
+        if (bytesPruned > 0) {
+            this.measuredStorageBytes = Math.max(0, this.measuredStorageBytes - bytesPruned);
+            this.persistState();
+        }
+        if (this.client) {
+            try {
+                await this.client.rpc('release_buffer_capacity', {
+                    p_reservation_id: reservationId,
+                    p_client_id: this.clientId,
+                    p_status: 'pruned',
+                    p_actual_bytes: 0
+                });
+            } catch {}
         }
     }
 
@@ -269,11 +241,7 @@ export class SupabaseQuotaManager {
                     p_reservation_id: reservationId,
                     p_client_id: this.clientId,
                     p_resource_type: 'database',
-                    p_bytes: estimatedBytes,
-                    p_storage_ceiling: SupabaseQuotaManager.STORAGE_CEILING_BYTES,
-                    p_db_ceiling: SupabaseQuotaManager.DATABASE_CEILING_BYTES,
-                    p_total_ceiling: SupabaseQuotaManager.HARD_CEILING_BYTES,
-                    p_critical_reserve: SupabaseQuotaManager.CRITICAL_RESERVE_BYTES
+                    p_bytes: estimatedBytes
                 });
 
                 if (!error && data) {
@@ -282,52 +250,18 @@ export class SupabaseQuotaManager {
                         return true;
                     } else {
                         this.blockedOperationsCount++;
+                        console.warn(`[QUOTA] Shared database reservation REJECTED for ${reservationId}. Reason: ${data.reason}`);
                         return false;
                     }
                 }
 
-                // Direct table fallback
-                const { data: activeRes, error: fetchErr } = await this.client
-                    .from('supabase_buffer_reservations')
-                    .select('bytes_reserved, resource_type')
-                    .eq('status', 'active')
-                    .gt('expires_at', new Date().toISOString());
-
-                if (!fetchErr && Array.isArray(activeRes)) {
-                    const sharedActiveStorage = activeRes
-                        .filter((r: any) => r.resource_type === 'storage')
-                        .reduce((acc: number, r: any) => acc + Number(r.bytes_reserved), 0);
-                    const sharedActiveDb = activeRes
-                        .filter((r: any) => r.resource_type === 'database')
-                        .reduce((acc: number, r: any) => acc + Number(r.bytes_reserved), 0);
-                    
-                    if ((sharedActiveDb + estimatedBytes) > SupabaseQuotaManager.DATABASE_CEILING_BYTES ||
-                        (sharedActiveStorage + sharedActiveDb + estimatedBytes) > (SupabaseQuotaManager.HARD_CEILING_BYTES - SupabaseQuotaManager.CRITICAL_RESERVE_BYTES)) {
-                        this.blockedOperationsCount++;
-                        return false;
-                    }
-
-                    const { error: insErr } = await this.client
-                        .from('supabase_buffer_reservations')
-                        .upsert({
-                            id: reservationId,
-                            client_id: this.clientId,
-                            resource_type: 'database',
-                            bytes_reserved: estimatedBytes,
-                            status: 'active',
-                            expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString()
-                        });
-
-                    if (!insErr) {
-                        this.activeDatabaseReservations.set(reservationId, estimatedBytes);
-                        return true;
-                    }
-                }
-
+                // If RPC fails, fail closed to local SQLite outbox!
                 this.blockedOperationsCount++;
+                console.warn(`[QUOTA] Shared DB quota RPC error: ${error?.message || 'Unknown'}. Failing closed.`);
                 return false;
-            } catch {
+            } catch (ex: any) {
                 this.blockedOperationsCount++;
+                console.warn(`[QUOTA] Shared DB quota exception:`, ex.message);
                 return false;
             }
         }
@@ -356,15 +290,12 @@ export class SupabaseQuotaManager {
             try {
                 await this.client.rpc('release_buffer_capacity', {
                     p_reservation_id: reservationId,
-                    p_status: confirmedWrittenBytes > 0 ? 'committed' : 'released'
+                    p_client_id: this.clientId,
+                    p_status: confirmedWrittenBytes > 0 ? 'committed' : 'released',
+                    p_actual_bytes: confirmedWrittenBytes
                 });
-            } catch {
-                try {
-                    await this.client
-                        .from('supabase_buffer_reservations')
-                        .update({ status: confirmedWrittenBytes > 0 ? 'committed' : 'released' })
-                        .eq('id', reservationId);
-                } catch {}
+            } catch (err: any) {
+                console.warn('[QUOTA] Failed to release database capacity via RPC:', err.message);
             }
         }
     }
@@ -405,8 +336,24 @@ export class SupabaseQuotaManager {
                prospectiveGrandTotal <= SupabaseQuotaManager.CRITICAL_THRESHOLD_BYTES;
     }
 
+    private auditTimer: ReturnType<typeof setInterval> | null = null;
+
     public async auditUsage(): Promise<QuotaBreakdown> {
         return this.auditLiveCloudUsage();
+    }
+
+    public startBackgroundAudit(intervalMs = 60000): void {
+        if (this.auditTimer) return;
+        this.auditTimer = setInterval(() => {
+            this.auditLiveCloudUsage().catch(() => {});
+        }, intervalMs);
+    }
+
+    public stopBackgroundAudit(): void {
+        if (this.auditTimer) {
+            clearInterval(this.auditTimer);
+            this.auditTimer = null;
+        }
     }
 
     // ── Metric Calculation ───────────────────────────────────────────────────────

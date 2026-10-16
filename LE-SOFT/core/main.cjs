@@ -24577,11 +24577,7 @@ var init_SupabaseQuotaManager = __esm({
               p_reservation_id: reservationId,
               p_client_id: this.clientId,
               p_resource_type: "storage",
-              p_bytes: bytesNeeded,
-              p_storage_ceiling: _SupabaseQuotaManager.STORAGE_CEILING_BYTES,
-              p_db_ceiling: _SupabaseQuotaManager.DATABASE_CEILING_BYTES,
-              p_total_ceiling: _SupabaseQuotaManager.HARD_CEILING_BYTES,
-              p_critical_reserve: _SupabaseQuotaManager.CRITICAL_RESERVE_BYTES
+              p_bytes: bytesNeeded
             });
             if (!error51 && data2) {
               if (data2.success === true) {
@@ -24593,29 +24589,8 @@ var init_SupabaseQuotaManager = __esm({
                 return false;
               }
             }
-            const { data: activeRes, error: fetchErr } = await this.client.from("supabase_buffer_reservations").select("bytes_reserved, resource_type").eq("status", "active").gt("expires_at", (/* @__PURE__ */ new Date()).toISOString());
-            if (!fetchErr && Array.isArray(activeRes)) {
-              const sharedActiveStorage = activeRes.filter((r2) => r2.resource_type === "storage").reduce((acc, r2) => acc + Number(r2.bytes_reserved), 0);
-              const sharedActiveDb = activeRes.filter((r2) => r2.resource_type === "database").reduce((acc, r2) => acc + Number(r2.bytes_reserved), 0);
-              if (sharedActiveStorage + bytesNeeded > _SupabaseQuotaManager.STORAGE_CEILING_BYTES || sharedActiveStorage + sharedActiveDb + bytesNeeded > _SupabaseQuotaManager.HARD_CEILING_BYTES - _SupabaseQuotaManager.CRITICAL_RESERVE_BYTES) {
-                this.blockedOperationsCount++;
-                return false;
-              }
-              const { error: insErr } = await this.client.from("supabase_buffer_reservations").upsert({
-                id: reservationId,
-                client_id: this.clientId,
-                resource_type: "storage",
-                bytes_reserved: bytesNeeded,
-                status: "active",
-                expires_at: new Date(Date.now() + 5 * 60 * 1e3).toISOString()
-              });
-              if (!insErr) {
-                this.activeStorageReservations.set(reservationId, bytesNeeded);
-                return true;
-              }
-            }
             this.blockedOperationsCount++;
-            console.warn(`[QUOTA] Shared quota state could not be verified safely. Retaining work in local outbox.`);
+            console.warn(`[QUOTA] Shared quota RPC error: ${error51?.message || "Unknown RPC failure"}. Failing closed to local storage.`);
             return false;
           } catch (ex) {
             this.blockedOperationsCount++;
@@ -24643,13 +24618,29 @@ var init_SupabaseQuotaManager = __esm({
           try {
             await this.client.rpc("release_buffer_capacity", {
               p_reservation_id: reservationId,
-              p_status: confirmedUploadedBytes > 0 ? "committed" : "released"
+              p_client_id: this.clientId,
+              p_status: confirmedUploadedBytes > 0 ? "committed" : "released",
+              p_actual_bytes: confirmedUploadedBytes
+            });
+          } catch (err) {
+            console.warn("[QUOTA] Failed to release storage capacity via RPC:", err.message);
+          }
+        }
+      }
+      async pruneConfirmedStorage(reservationId, bytesPruned) {
+        if (bytesPruned > 0) {
+          this.measuredStorageBytes = Math.max(0, this.measuredStorageBytes - bytesPruned);
+          this.persistState();
+        }
+        if (this.client) {
+          try {
+            await this.client.rpc("release_buffer_capacity", {
+              p_reservation_id: reservationId,
+              p_client_id: this.clientId,
+              p_status: "pruned",
+              p_actual_bytes: 0
             });
           } catch {
-            try {
-              await this.client.from("supabase_buffer_reservations").update({ status: confirmedUploadedBytes > 0 ? "committed" : "released" }).eq("id", reservationId);
-            } catch {
-            }
           }
         }
       }
@@ -24664,11 +24655,7 @@ var init_SupabaseQuotaManager = __esm({
               p_reservation_id: reservationId,
               p_client_id: this.clientId,
               p_resource_type: "database",
-              p_bytes: estimatedBytes,
-              p_storage_ceiling: _SupabaseQuotaManager.STORAGE_CEILING_BYTES,
-              p_db_ceiling: _SupabaseQuotaManager.DATABASE_CEILING_BYTES,
-              p_total_ceiling: _SupabaseQuotaManager.HARD_CEILING_BYTES,
-              p_critical_reserve: _SupabaseQuotaManager.CRITICAL_RESERVE_BYTES
+              p_bytes: estimatedBytes
             });
             if (!error51 && data2) {
               if (data2.success === true) {
@@ -24676,34 +24663,16 @@ var init_SupabaseQuotaManager = __esm({
                 return true;
               } else {
                 this.blockedOperationsCount++;
+                console.warn(`[QUOTA] Shared database reservation REJECTED for ${reservationId}. Reason: ${data2.reason}`);
                 return false;
-              }
-            }
-            const { data: activeRes, error: fetchErr } = await this.client.from("supabase_buffer_reservations").select("bytes_reserved, resource_type").eq("status", "active").gt("expires_at", (/* @__PURE__ */ new Date()).toISOString());
-            if (!fetchErr && Array.isArray(activeRes)) {
-              const sharedActiveStorage = activeRes.filter((r2) => r2.resource_type === "storage").reduce((acc, r2) => acc + Number(r2.bytes_reserved), 0);
-              const sharedActiveDb = activeRes.filter((r2) => r2.resource_type === "database").reduce((acc, r2) => acc + Number(r2.bytes_reserved), 0);
-              if (sharedActiveDb + estimatedBytes > _SupabaseQuotaManager.DATABASE_CEILING_BYTES || sharedActiveStorage + sharedActiveDb + estimatedBytes > _SupabaseQuotaManager.HARD_CEILING_BYTES - _SupabaseQuotaManager.CRITICAL_RESERVE_BYTES) {
-                this.blockedOperationsCount++;
-                return false;
-              }
-              const { error: insErr } = await this.client.from("supabase_buffer_reservations").upsert({
-                id: reservationId,
-                client_id: this.clientId,
-                resource_type: "database",
-                bytes_reserved: estimatedBytes,
-                status: "active",
-                expires_at: new Date(Date.now() + 5 * 60 * 1e3).toISOString()
-              });
-              if (!insErr) {
-                this.activeDatabaseReservations.set(reservationId, estimatedBytes);
-                return true;
               }
             }
             this.blockedOperationsCount++;
+            console.warn(`[QUOTA] Shared DB quota RPC error: ${error51?.message || "Unknown"}. Failing closed.`);
             return false;
-          } catch {
+          } catch (ex) {
             this.blockedOperationsCount++;
+            console.warn(`[QUOTA] Shared DB quota exception:`, ex.message);
             return false;
           }
         }
@@ -24727,13 +24696,12 @@ var init_SupabaseQuotaManager = __esm({
           try {
             await this.client.rpc("release_buffer_capacity", {
               p_reservation_id: reservationId,
-              p_status: confirmedWrittenBytes > 0 ? "committed" : "released"
+              p_client_id: this.clientId,
+              p_status: confirmedWrittenBytes > 0 ? "committed" : "released",
+              p_actual_bytes: confirmedWrittenBytes
             });
-          } catch {
-            try {
-              await this.client.from("supabase_buffer_reservations").update({ status: confirmedWrittenBytes > 0 ? "committed" : "released" }).eq("id", reservationId);
-            } catch {
-            }
+          } catch (err) {
+            console.warn("[QUOTA] Failed to release database capacity via RPC:", err.message);
           }
         }
       }
@@ -24765,8 +24733,22 @@ var init_SupabaseQuotaManager = __esm({
         const prospectiveGrandTotal = this.getCurrentTotalUsageBytes() + bytesNeeded;
         return prospectiveDbTotal <= _SupabaseQuotaManager.DATABASE_CEILING_BYTES && prospectiveGrandTotal <= _SupabaseQuotaManager.CRITICAL_THRESHOLD_BYTES;
       }
+      auditTimer = null;
       async auditUsage() {
         return this.auditLiveCloudUsage();
+      }
+      startBackgroundAudit(intervalMs = 6e4) {
+        if (this.auditTimer) return;
+        this.auditTimer = setInterval(() => {
+          this.auditLiveCloudUsage().catch(() => {
+          });
+        }, intervalMs);
+      }
+      stopBackgroundAudit() {
+        if (this.auditTimer) {
+          clearInterval(this.auditTimer);
+          this.auditTimer = null;
+        }
       }
       // ── Metric Calculation ───────────────────────────────────────────────────────
       getTotalReservedStorageBytes() {
@@ -24935,21 +24917,318 @@ var init_SupabaseQuotaManager = __esm({
   }
 });
 
+// electron/field-encryption.ts
+function getLicenseKey() {
+  try {
+    const cfgPath = import_path6.default.join(getUserDataPath(), "supabase-config.json");
+    if (import_fs6.default.existsSync(cfgPath)) {
+      const raw = import_fs6.default.readFileSync(cfgPath, "utf-8");
+      const cfg = JSON.parse(raw);
+      const key = cfg.serviceRoleKey || cfg.anonKey;
+      if (key && typeof key === "string") {
+        return key.startsWith("enc:v1:") ? decryptStandardSecret(key) : key;
+      }
+    }
+  } catch {
+  }
+  return "";
+}
+function getOrCreateMachineMasterSeed() {
+  const keyPath = import_path6.default.join(getUserDataPath(), MASTER_SEED_FILE);
+  if (import_fs6.default.existsSync(keyPath)) {
+    try {
+      const fileContent = import_fs6.default.readFileSync(keyPath, "utf-8");
+      const decryptedHex = decryptStandardSecret(fileContent);
+      const seedBuf = Buffer.from(decryptedHex, "hex");
+      if (seedBuf.length === 32) {
+        return seedBuf;
+      }
+    } catch (err) {
+      console.warn("[FieldEncryption] Error reading protected master seed, generating new one:", err);
+    }
+  }
+  const newSeed = import_crypto5.default.randomBytes(32);
+  try {
+    const encryptedEnvelope = encryptStandardSecret(newSeed.toString("hex"));
+    import_fs6.default.writeFileSync(keyPath, encryptedEnvelope, { encoding: "utf-8", mode: 384 });
+    try {
+      import_fs6.default.chmodSync(keyPath, 384);
+    } catch {
+    }
+  } catch (err) {
+    console.error("[FieldEncryption] Failed to persist protected master seed:", err);
+  }
+  return newSeed;
+}
+function initEncryptionKey() {
+  const licenseKey = getLicenseKey();
+  const machineSeed = getOrCreateMachineMasterSeed();
+  const legacyIkm = licenseKey || "default-lesoft-key";
+  _legacyE1Key = import_crypto5.default.createHmac("sha256", LEGACY_SALT).update(legacyIkm).digest();
+  const ikm = Buffer.concat([
+    machineSeed,
+    Buffer.from(licenseKey || "lesoft-v3-root", "utf-8")
+  ]);
+  const masterSalt = import_crypto5.default.createHash("sha256").update(machineSeed).digest();
+  _masterKey = import_crypto5.default.hkdfSync("sha256", ikm, masterSalt, Buffer.from("lesoft-field-master-v3", "utf-8"), 32);
+  console.log("[Encryption] Master field encryption key initialized.");
+}
+function getMasterKey() {
+  if (!_masterKey) initEncryptionKey();
+  return _masterKey;
+}
+function getLegacyE1Key() {
+  if (!_legacyE1Key) initEncryptionKey();
+  return _legacyE1Key;
+}
+function clearEncryptionKey() {
+  _masterKey = null;
+  _legacyE1Key = null;
+  console.log("[Encryption] Keys cleared from memory.");
+}
+function encryptField(text3) {
+  if (!text3) return text3 || "";
+  if (typeof text3 === "string" && (text3.startsWith(V3_PREFIX) || text3.startsWith(V1_PREFIX) || text3.startsWith(V2_CBC_PREFIX))) {
+    return text3;
+  }
+  const masterKey = getMasterKey();
+  try {
+    const salt = import_crypto5.default.randomBytes(SALT_LEN);
+    const iv = import_crypto5.default.randomBytes(IV_LEN);
+    const recordKey = import_crypto5.default.hkdfSync("sha256", masterKey, salt, HKDF_INFO, 32);
+    const cipher = import_crypto5.default.createCipheriv(CIPHER_GCM2, recordKey, iv);
+    const ciphertextBuf = Buffer.concat([
+      cipher.update(text3, "utf8"),
+      cipher.final()
+    ]);
+    const tag = cipher.getAuthTag();
+    const combined = Buffer.concat([salt, iv, tag, ciphertextBuf]);
+    return `${V3_PREFIX}${combined.toString("base64")}`;
+  } catch (e2) {
+    console.error("[Encrypt] V3 GCM encryption failed:", e2);
+    throw e2;
+  }
+}
+function decryptField(encryptedText) {
+  if (!encryptedText || typeof encryptedText !== "string") {
+    return encryptedText || "";
+  }
+  if (encryptedText.startsWith(V3_PREFIX)) {
+    try {
+      const masterKey = getMasterKey();
+      const combined = Buffer.from(encryptedText.slice(V3_PREFIX.length), "base64");
+      if (combined.length < SALT_LEN + IV_LEN + TAG_LEN) {
+        console.warn("[Decrypt e3] Payload length too short.");
+        return encryptedText;
+      }
+      const salt = combined.subarray(0, SALT_LEN);
+      const iv = combined.subarray(SALT_LEN, SALT_LEN + IV_LEN);
+      const tag = combined.subarray(SALT_LEN + IV_LEN, SALT_LEN + IV_LEN + TAG_LEN);
+      const ciphertext = combined.subarray(SALT_LEN + IV_LEN + TAG_LEN);
+      const recordKey = import_crypto5.default.hkdfSync("sha256", masterKey, salt, HKDF_INFO, 32);
+      const decipher = import_crypto5.default.createDecipheriv(CIPHER_GCM2, recordKey, iv);
+      decipher.setAuthTag(tag);
+      return decipher.update(ciphertext).toString("utf8") + decipher.final("utf8");
+    } catch (err) {
+      console.warn("[Decrypt e3] GCM authentication verification failed (tampered ciphertext or invalid key).");
+      return encryptedText;
+    }
+  }
+  if (encryptedText.startsWith(V1_PREFIX)) {
+    try {
+      const legacyKey = getLegacyE1Key();
+      const combined = Buffer.from(encryptedText.slice(V1_PREFIX.length), "base64");
+      if (combined.length < IV_LEN + TAG_LEN) {
+        console.warn("[Decrypt e1] Payload length too short.");
+        return encryptedText;
+      }
+      const iv = combined.subarray(0, IV_LEN);
+      const tag = combined.subarray(IV_LEN, IV_LEN + TAG_LEN);
+      const ciphertext = combined.subarray(IV_LEN + TAG_LEN);
+      const decipher = import_crypto5.default.createDecipheriv(CIPHER_GCM2, legacyKey, iv);
+      decipher.setAuthTag(tag);
+      return decipher.update(ciphertext).toString("utf8") + decipher.final("utf8");
+    } catch {
+      console.warn("[Decrypt e1] GCM auth failed \u2014 key mismatch or tampered data.");
+      return encryptedText;
+    }
+  }
+  if (encryptedText.startsWith(V2_CBC_PREFIX)) {
+    try {
+      const legacyKey = getLegacyE1Key();
+      const parts = encryptedText.split(":");
+      if (parts.length !== 3) return encryptedText;
+      const iv = Buffer.from(parts[1], "hex");
+      const decipher = import_crypto5.default.createDecipheriv("aes-256-cbc", legacyKey, iv);
+      let decrypted = decipher.update(parts[2], "hex", "utf8");
+      decrypted += decipher.final("utf8");
+      return decrypted;
+    } catch (e2) {
+      console.error("[Decrypt e2] CBC decryption failed:", e2.message);
+      return encryptedText;
+    }
+  }
+  return encryptedText;
+}
+function encryptObject(obj) {
+  if (!obj || typeof obj !== "object") return obj;
+  const result = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v === null || v === void 0 || SKIP_KEYS.has(k)) {
+      result[k] = v;
+    } else if (typeof v === "string" && v.length > 0) {
+      result[k] = encryptField(v);
+    } else if (typeof v === "number") {
+      result[k] = v;
+    } else if (typeof v === "boolean") {
+      result[k] = v;
+    } else if (typeof v === "object") {
+      result[k] = encryptField(JSON.stringify(v));
+    } else {
+      result[k] = v;
+    }
+  }
+  return result;
+}
+function decryptObject(obj) {
+  if (!obj || typeof obj !== "object") return obj;
+  const result = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (typeof v === "string" && (v.startsWith(V3_PREFIX) || v.startsWith(V1_PREFIX) || v.startsWith(V2_CBC_PREFIX))) {
+      const plain = decryptField(v);
+      if (plain.startsWith("{") || plain.startsWith("[")) {
+        try {
+          result[k] = JSON.parse(plain);
+        } catch {
+          result[k] = plain;
+        }
+      } else if (!isNaN(Number(plain)) && plain.trim() !== "") {
+        result[k] = Number(plain);
+      } else {
+        result[k] = plain;
+      }
+    } else {
+      result[k] = v;
+    }
+  }
+  return result;
+}
+function decryptRows(rows) {
+  if (!rows || !Array.isArray(rows)) return [];
+  return rows.map(decryptObject);
+}
+async function decryptRowsAsync(rows, chunkSize = 200) {
+  if (!rows || !Array.isArray(rows)) return [];
+  const result = [];
+  for (let i2 = 0; i2 < rows.length; i2 += chunkSize) {
+    const chunk = rows.slice(i2, i2 + chunkSize);
+    result.push(...chunk.map(decryptObject));
+    await new Promise((resolve2) => setImmediate(resolve2));
+  }
+  return result;
+}
+async function encryptRowsAsync(rows, chunkSize = 200) {
+  if (!rows || !Array.isArray(rows)) return [];
+  const result = [];
+  for (let i2 = 0; i2 < rows.length; i2 += chunkSize) {
+    const chunk = rows.slice(i2, i2 + chunkSize);
+    result.push(...chunk.map(encryptObject));
+    await new Promise((resolve2) => setImmediate(resolve2));
+  }
+  return result;
+}
+var import_crypto5, import_fs6, import_path6, CIPHER_GCM2, V3_PREFIX, V1_PREFIX, V2_CBC_PREFIX, SALT_LEN, IV_LEN, TAG_LEN, HKDF_INFO, MASTER_SEED_FILE, LEGACY_SALT, _masterKey, _legacyE1Key, SKIP_KEYS;
+var init_field_encryption = __esm({
+  "electron/field-encryption.ts"() {
+    "use strict";
+    import_crypto5 = __toESM(require("crypto"), 1);
+    import_fs6 = __toESM(require("fs"), 1);
+    import_path6 = __toESM(require("path"), 1);
+    init_secure_storage();
+    CIPHER_GCM2 = "aes-256-gcm";
+    V3_PREFIX = "e3:";
+    V1_PREFIX = "e1:";
+    V2_CBC_PREFIX = "e2:";
+    SALT_LEN = 16;
+    IV_LEN = 12;
+    TAG_LEN = 16;
+    HKDF_INFO = Buffer.from("lesoft-field-encryption-v3", "utf-8");
+    MASTER_SEED_FILE = ".field-master-seed.key";
+    LEGACY_SALT = import_crypto5.default.createHash("sha256").update("lesoft-e2e-salt-v1").digest();
+    _masterKey = null;
+    _legacyE1Key = null;
+    SKIP_KEYS = /* @__PURE__ */ new Set([
+      "id",
+      "auth_id",
+      "user_id",
+      "employee_id",
+      "customer_id",
+      "bill_id",
+      "group_id",
+      "order_id",
+      "sender_id",
+      "receiver_id",
+      "product_id",
+      "created_at",
+      "updated_at",
+      "last_active",
+      "date",
+      "check_in",
+      "check_out",
+      "from_date",
+      "to_date",
+      "month",
+      "delivery_date",
+      "paid_at",
+      "invoice_date",
+      "is_active",
+      "email_confirm",
+      "is_read",
+      "is_online",
+      "is_visible",
+      "password_hash",
+      // already hashed
+      "permissions",
+      // JSONB
+      "le_local_id",
+      // mysql sync key
+      // Linkages and Search keys (PlainText for indexability and reliability)
+      "username",
+      "full_name",
+      "role",
+      "invoice_number",
+      "sku",
+      "name",
+      "phone",
+      "email",
+      "product_name",
+      "customer_name",
+      "platform",
+      "status",
+      "type",
+      "device_type",
+      "employee_code",
+      "crm_state"
+    ]);
+  }
+});
+
 // electron/services/outbox/DurableOutboxService.ts
 var DurableOutboxService_exports = {};
 __export(DurableOutboxService_exports, {
   DurableOutboxService: () => DurableOutboxService
 });
-var import_better_sqlite3, import_electron6, import_fs6, import_path6, import_crypto5, DurableOutboxService;
+var import_better_sqlite3, import_electron6, import_fs7, import_path7, import_crypto6, DurableOutboxService;
 var init_DurableOutboxService = __esm({
   "electron/services/outbox/DurableOutboxService.ts"() {
     "use strict";
     import_better_sqlite3 = __toESM(require("better-sqlite3"), 1);
     import_electron6 = require("electron");
-    import_fs6 = __toESM(require("fs"), 1);
-    import_path6 = __toESM(require("path"), 1);
-    import_crypto5 = __toESM(require("crypto"), 1);
+    import_fs7 = __toESM(require("fs"), 1);
+    import_path7 = __toESM(require("path"), 1);
+    import_crypto6 = __toESM(require("crypto"), 1);
     init_SupabaseQuotaManager();
+    init_field_encryption();
     DurableOutboxService = class _DurableOutboxService {
       static instance = null;
       db = null;
@@ -24959,8 +25238,8 @@ var init_DurableOutboxService = __esm({
       drainTimer = null;
       isDraining = false;
       constructor() {
-        const userData = import_electron6.app?.getPath ? import_electron6.app.getPath("userData") : import_path6.default.join(process.env.APPDATA || process.cwd(), "le-soft");
-        this.dbPath = import_path6.default.join(userData, "lesoft_durable_outbox.db");
+        const userData = import_electron6.app?.getPath ? import_electron6.app.getPath("userData") : import_path7.default.join(process.env.APPDATA || process.cwd(), "le-soft");
+        this.dbPath = import_path7.default.join(userData, "lesoft_durable_outbox.db");
         this.initDatabase();
       }
       static getInstance() {
@@ -24975,7 +25254,7 @@ var init_DurableOutboxService = __esm({
       }
       initDatabase() {
         try {
-          import_fs6.default.mkdirSync(import_path6.default.dirname(this.dbPath), { recursive: true });
+          import_fs7.default.mkdirSync(import_path7.default.dirname(this.dbPath), { recursive: true });
           this.db = new import_better_sqlite3.default(this.dbPath);
           this.db.pragma("journal_mode = WAL");
           this.db.pragma("synchronous = NORMAL");
@@ -24985,9 +25264,12 @@ var init_DurableOutboxService = __esm({
                     entity_type TEXT NOT NULL,
                     operation TEXT NOT NULL,
                     payload_json TEXT NOT NULL,
+                    filter_json TEXT,
                     primary_key_col TEXT DEFAULT 'id',
                     primary_key_val TEXT,
+                    upsert_conflict TEXT,
                     dependency_op_id TEXT,
+                    metadata_json TEXT,
                     target TEXT DEFAULT 'both',
                     status TEXT NOT NULL DEFAULT 'pending',
                     retry_count INTEGER DEFAULT 0,
@@ -25009,6 +25291,18 @@ var init_DurableOutboxService = __esm({
                     PRIMARY KEY(op_id, target)
                 );
             `);
+          try {
+            this.db.exec("ALTER TABLE outbox_operations ADD COLUMN filter_json TEXT");
+          } catch {
+          }
+          try {
+            this.db.exec("ALTER TABLE outbox_operations ADD COLUMN upsert_conflict TEXT");
+          } catch {
+          }
+          try {
+            this.db.exec("ALTER TABLE outbox_operations ADD COLUMN metadata_json TEXT");
+          } catch {
+          }
           console.log("[DurableOutbox] Initialized SQLite outbox at:", this.dbPath);
         } catch (err) {
           console.error("[DurableOutbox] Failed to initialize SQLite database:", err.message);
@@ -25048,24 +25342,30 @@ var init_DurableOutboxService = __esm({
         const now = Date.now();
         const insertStmt = this.db.prepare(`
             INSERT INTO outbox_operations (
-                id, entity_type, operation, payload_json, primary_key_col,
-                primary_key_val, dependency_op_id, target, status,
+                id, entity_type, operation, payload_json, filter_json,
+                primary_key_col, primary_key_val, upsert_conflict,
+                dependency_op_id, metadata_json, target, status,
                 retry_count, max_retries, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
         `);
         const transaction = this.db.transaction((ops) => {
           for (const op of ops) {
-            const id = op.id || `op_${now}_${import_crypto5.default.randomBytes(4).toString("hex")}`;
+            const id = op.id || `op_${now}_${import_crypto6.default.randomBytes(4).toString("hex")}`;
             generatedIds.push(id);
             const status = op.dependencyOpId ? "blocked_dependency" : "pending";
+            const filterJson = op.filter ? JSON.stringify(op.filter) : null;
+            const metadataJson = op.metadata || op.idempotencyKey ? JSON.stringify({ ...op.metadata, idempotencyKey: op.idempotencyKey }) : null;
             insertStmt.run(
               id,
               op.entityType,
               op.operation,
-              JSON.stringify(op.payload),
+              JSON.stringify(op.payload || {}),
+              filterJson,
               op.primaryKeyCol || "id",
               op.primaryKeyVal || null,
+              op.upsertConflict || null,
               op.dependencyOpId || null,
+              metadataJson,
               op.target || "both",
               status,
               op.maxRetries || 10,
@@ -25122,10 +25422,13 @@ var init_DurableOutboxService = __esm({
               id: r2.id,
               entityType: r2.entity_type,
               operation: r2.operation,
-              payload: JSON.parse(r2.payload_json),
-              primaryKeyCol: r2.primary_key_col,
+              payload: JSON.parse(r2.payload_json || "{}"),
+              filter: r2.filter_json ? JSON.parse(r2.filter_json) : null,
+              primaryKeyCol: r2.primary_key_col || "id",
               primaryKeyVal: r2.primary_key_val,
+              upsertConflict: r2.upsert_conflict || null,
               dependencyOpId: r2.dependency_op_id,
+              metadata: r2.metadata_json ? JSON.parse(r2.metadata_json) : null,
               target: r2.target,
               status: r2.status,
               retryCount: r2.retry_count,
@@ -25153,8 +25456,13 @@ var init_DurableOutboxService = __esm({
                 UPDATE outbox_operations
                 SET status = 'pending', updated_at = ?
                 WHERE status = 'blocked_dependency'
-                  AND dependency_op_id IN (
-                      SELECT id FROM outbox_operations WHERE status IN ('completed', 'synced_nas')
+                  AND (
+                      dependency_op_id IN (
+                          SELECT id FROM outbox_operations WHERE status IN ('completed', 'synced_nas', 'buffered_supabase')
+                      )
+                      OR dependency_op_id IN (
+                          SELECT op_id FROM outbox_id_map
+                      )
                   )
             `).run(Date.now());
         } catch {
@@ -25172,7 +25480,15 @@ var init_DurableOutboxService = __esm({
         let sbSuccess = status === "buffered_supabase";
         if (isNasTarget && !nasSuccess && this.nasClient) {
           try {
-            const result = await this.executeOnClient(this.nasClient, entityType, operation, payload, record2.primaryKeyCol);
+            const result = await this.executeOnClient(
+              this.nasClient,
+              entityType,
+              operation,
+              payload,
+              record2.primaryKeyCol,
+              record2.filter,
+              record2.upsertConflict
+            );
             if (result.success) {
               nasSuccess = true;
               if (result.resolvedId) {
@@ -25204,18 +25520,26 @@ var init_DurableOutboxService = __esm({
         if (isSbTarget && !sbSuccess && this.supabaseClient) {
           const quotaMgr = SupabaseQuotaManager.getInstance();
           const estBytes = 500;
-          const canBuffer = quotaMgr.reserveDatabaseQuota(`db_${id}`, estBytes);
+          const canBuffer = await quotaMgr.reserveDatabaseQuota(`db_${id}`, estBytes);
           if (canBuffer) {
             try {
-              const result = await this.executeOnClient(this.supabaseClient, entityType, operation, payload, record2.primaryKeyCol);
+              const result = await this.executeOnClient(
+                this.supabaseClient,
+                entityType,
+                operation,
+                payload,
+                record2.primaryKeyCol,
+                record2.filter,
+                record2.upsertConflict
+              );
               if (result.success) {
                 sbSuccess = true;
-                quotaMgr.releaseDatabaseQuota(`db_${id}`, estBytes);
+                await quotaMgr.releaseDatabaseQuota(`db_${id}`, estBytes);
                 if (result.resolvedId) {
                   this.recordResolvedId(id, "supabase", result.resolvedId);
                 }
               } else {
-                quotaMgr.releaseDatabaseQuota(`db_${id}`, 0);
+                await quotaMgr.releaseDatabaseQuota(`db_${id}`, 0);
                 const classified = this.classifyError(result.error);
                 if (classified.isPermanent) {
                   if (classified.code === "23503" || classified.message.includes("foreign key")) {
@@ -25227,7 +25551,7 @@ var init_DurableOutboxService = __esm({
                 }
               }
             } catch (err) {
-              quotaMgr.releaseDatabaseQuota(`db_${id}`, 0);
+              await quotaMgr.releaseDatabaseQuota(`db_${id}`, 0);
             }
           }
         }
@@ -25241,22 +25565,50 @@ var init_DurableOutboxService = __esm({
           this.incrementRetry(id, record2.retryCount, record2.maxRetries);
         }
       }
-      resolveDependentPayload(dependencyOpId, payload) {
+      resolveDependentPayload(dependencyOpId, payload, target) {
         if (!this.db) return payload;
         try {
-          const row = this.db.prepare(`
-                SELECT resolved_id FROM outbox_id_map
-                WHERE op_id = ?
-                ORDER BY created_at DESC
-                LIMIT 1
-            `).get(dependencyOpId);
+          let row;
+          if (target) {
+            row = this.db.prepare(`
+                    SELECT resolved_id FROM outbox_id_map
+                    WHERE op_id = ? AND target = ?
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                `).get(dependencyOpId, target);
+          }
+          if (!row?.resolved_id) {
+            row = this.db.prepare(`
+                    SELECT resolved_id FROM outbox_id_map
+                    WHERE op_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                `).get(dependencyOpId);
+          }
           if (row?.resolved_id) {
             const resolvedIdNum = Number(row.resolved_id);
-            if (payload.customer_id === void 0 || payload.customer_id === null || payload.customer_id === 0) {
-              return { ...payload, customer_id: resolvedIdNum || row.resolved_id };
-            }
-            if (payload.bill_id === void 0 || payload.bill_id === null || payload.bill_id === 0) {
-              return { ...payload, bill_id: resolvedIdNum || row.resolved_id };
+            const finalId = resolvedIdNum || row.resolved_id;
+            const bindId = (item) => {
+              if (!item || typeof item !== "object") return item;
+              const cloned = { ...item };
+              if (cloned.bill_id === void 0 || cloned.bill_id === null || cloned.bill_id === 0 || cloned.bill_id === "") {
+                cloned.bill_id = finalId;
+              }
+              if (cloned.customer_id === void 0 || cloned.customer_id === null || cloned.customer_id === 0 || cloned.customer_id === "") {
+                cloned.customer_id = finalId;
+              }
+              if (cloned.order_id === void 0 || cloned.order_id === null || cloned.order_id === 0 || cloned.order_id === "") {
+                cloned.order_id = finalId;
+              }
+              if (cloned.parent_id === void 0 || cloned.parent_id === null || cloned.parent_id === 0 || cloned.parent_id === "") {
+                cloned.parent_id = finalId;
+              }
+              return cloned;
+            };
+            if (Array.isArray(payload)) {
+              return payload.map(bindId);
+            } else {
+              return bindId(payload);
             }
           }
         } catch {
@@ -25274,12 +25626,16 @@ var init_DurableOutboxService = __esm({
         } catch {
         }
       }
-      async executeOnClient(client, table, op, payload, primaryKeyCol) {
+      async executeOnClient(client, table, op, payload, primaryKeyCol = "id", filter4, upsertConflict) {
         try {
+          const encData = Array.isArray(payload) ? await encryptRowsAsync(payload, 100) : payload && typeof payload === "object" ? encryptObject(payload) : payload;
           if (table === "bill_shipping") {
-            const d = payload;
-            const { data: b } = await client.from("bills").select("id").eq("invoice_number", d.invoice_number).maybeSingle();
-            const realBillId = b?.id || d.bill_id;
+            const d = encData;
+            let realBillId = d.bill_id;
+            if (d.invoice_number && (!realBillId || realBillId === 0)) {
+              const { data: b } = await client.from("bills").select("id").eq("invoice_number", d.invoice_number).maybeSingle();
+              if (b?.id) realBillId = b.id;
+            }
             const { data: sh, error: shErr } = await client.from("bill_shipping").upsert({
               bill_id: realBillId,
               ship_to_name: d.ship_to_name,
@@ -25293,33 +25649,71 @@ var init_DurableOutboxService = __esm({
             }, { onConflict: "bill_id" }).select("id").maybeSingle();
             if (shErr) return { success: false, error: shErr };
             const resolvedId = sh?.id ? String(sh.id) : void 0;
-            return { success: true, resolvedId };
+            return { success: true, resolvedId, affectedRows: 1 };
           }
           if (op === "insert") {
             if (table === "bills") {
-              const res2 = await client.from(table).upsert(payload, { onConflict: "invoice_number" }).select(primaryKeyCol).maybeSingle();
-              if (res2.error) return { success: false, error: res2.error };
-              const resolvedId2 = res2.data ? String(res2.data[primaryKeyCol]) : void 0;
-              return { success: true, resolvedId: resolvedId2 };
+              const res = await client.from(table).upsert(encData, { onConflict: "invoice_number" }).select(primaryKeyCol).maybeSingle();
+              if (res.error) return { success: false, error: res.error };
+              const resolvedId = res.data ? String(res.data[primaryKeyCol]) : void 0;
+              return { success: true, resolvedId, affectedRows: 1 };
             }
-            const res = await client.from(table).insert(payload).select(primaryKeyCol).maybeSingle();
-            if (res.error) return { success: false, error: res.error };
-            const resolvedId = res.data ? String(res.data[primaryKeyCol]) : void 0;
-            return { success: true, resolvedId };
+            if (Array.isArray(encData)) {
+              const res = await client.from(table).insert(encData).select(primaryKeyCol);
+              if (res.error) return { success: false, error: res.error };
+              const rows = res.data || [];
+              const resolvedId = rows.length > 0 ? String(rows[0][primaryKeyCol]) : void 0;
+              return { success: true, resolvedId, affectedRows: rows.length };
+            } else {
+              const res = await client.from(table).insert(encData).select(primaryKeyCol).maybeSingle();
+              if (res.error) return { success: false, error: res.error };
+              const resolvedId = res.data ? String(res.data[primaryKeyCol]) : void 0;
+              return { success: true, resolvedId, affectedRows: res.data ? 1 : 0 };
+            }
           } else if (op === "upsert") {
-            const res = await client.from(table).upsert(payload).select(primaryKeyCol).maybeSingle();
-            if (res.error) return { success: false, error: res.error };
-            const resolvedId = res.data ? String(res.data[primaryKeyCol]) : void 0;
-            return { success: true, resolvedId };
+            const conflictOption = upsertConflict ? { onConflict: upsertConflict } : primaryKeyCol ? { onConflict: primaryKeyCol } : void 0;
+            if (Array.isArray(encData)) {
+              const res = await client.from(table).upsert(encData, conflictOption).select(primaryKeyCol);
+              if (res.error) return { success: false, error: res.error };
+              const rows = res.data || [];
+              const resolvedId = rows.length > 0 ? String(rows[0][primaryKeyCol]) : void 0;
+              return { success: true, resolvedId, affectedRows: rows.length };
+            } else {
+              const res = await client.from(table).upsert(encData, conflictOption).select(primaryKeyCol).maybeSingle();
+              if (res.error) return { success: false, error: res.error };
+              const resolvedId = res.data ? String(res.data[primaryKeyCol]) : void 0;
+              return { success: true, resolvedId, affectedRows: res.data ? 1 : 0 };
+            }
           } else if (op === "update") {
-            const pkVal = payload[primaryKeyCol];
-            if (!pkVal) return { success: false, error: new Error(`Missing ${primaryKeyCol} in update payload`) };
-            const res = await client.from(table).update(payload).eq(primaryKeyCol, pkVal);
-            return { success: !res.error, error: res.error };
+            let query = client.from(table).update(encData);
+            if (filter4 && filter4.length > 0) {
+              for (const f3 of filter4) {
+                query = query.eq(f3.column, f3.value);
+              }
+            } else {
+              const pkVal = encData?.[primaryKeyCol];
+              if (!pkVal) return { success: false, error: new Error(`Missing ${primaryKeyCol} or filter in update payload`) };
+              query = query.eq(primaryKeyCol, pkVal);
+            }
+            const res = await query.select(primaryKeyCol);
+            if (res.error) return { success: false, error: res.error };
+            const count = Array.isArray(res.data) ? res.data.length : res.data ? 1 : 0;
+            return { success: true, affectedRows: count };
           } else if (op === "delete") {
-            const pkVal = payload[primaryKeyCol] || payload;
-            const res = await client.from(table).delete().eq(primaryKeyCol, pkVal);
-            return { success: !res.error, error: res.error };
+            let query = client.from(table).delete();
+            if (filter4 && filter4.length > 0) {
+              for (const f3 of filter4) {
+                query = query.eq(f3.column, f3.value);
+              }
+            } else {
+              const pkVal = encData?.[primaryKeyCol] || encData;
+              if (!pkVal) return { success: false, error: new Error(`Missing ${primaryKeyCol} or filter in delete payload`) };
+              query = query.eq(primaryKeyCol, pkVal);
+            }
+            const res = await query.select(primaryKeyCol);
+            if (res.error) return { success: false, error: res.error };
+            const count = Array.isArray(res.data) ? res.data.length : res.data ? 1 : 0;
+            return { success: true, affectedRows: count };
           }
           return { success: false, error: new Error(`Unsupported operation: ${op}`) };
         } catch (e2) {
@@ -25410,6 +25804,7 @@ var init_DurableOutboxService = __esm({
         if (!this.db) {
           return {
             totalPending: 0,
+            pendingLocal: 0,
             bufferedSupabase: 0,
             blockedDependencies: 0,
             deadLetterCount: 0,
@@ -25441,6 +25836,7 @@ var init_DurableOutboxService = __esm({
           }));
           return {
             totalPending: counts.pending_cnt || 0,
+            pendingLocal: counts.pending_cnt || 0,
             bufferedSupabase: counts.buffered_cnt || 0,
             blockedDependencies: counts.blocked_cnt || 0,
             deadLetterCount: counts.dead_letter_cnt || 0,
@@ -25450,6 +25846,7 @@ var init_DurableOutboxService = __esm({
         } catch {
           return {
             totalPending: 0,
+            pendingLocal: 0,
             bufferedSupabase: 0,
             blockedDependencies: 0,
             deadLetterCount: 0,
@@ -25471,10 +25868,13 @@ var init_DurableOutboxService = __esm({
             id: r2.id,
             entityType: r2.entity_type,
             operation: r2.operation,
-            payload: JSON.parse(r2.payload_json),
-            primaryKeyCol: r2.primary_key_col,
+            payload: JSON.parse(r2.payload_json || "{}"),
+            filter: r2.filter_json ? JSON.parse(r2.filter_json) : null,
+            primaryKeyCol: r2.primary_key_col || "id",
             primaryKeyVal: r2.primary_key_val,
+            upsertConflict: r2.upsert_conflict || null,
             dependencyOpId: r2.dependency_op_id,
+            metadata: r2.metadata_json ? JSON.parse(r2.metadata_json) : null,
             target: r2.target,
             status: r2.status,
             retryCount: r2.retry_count,
@@ -25544,15 +25944,15 @@ var DurableUploadService_exports = {};
 __export(DurableUploadService_exports, {
   DurableUploadService: () => DurableUploadService
 });
-var import_better_sqlite32, import_electron7, import_fs7, import_path7, import_crypto6, DurableUploadService;
+var import_better_sqlite32, import_electron7, import_fs8, import_path8, import_crypto7, DurableUploadService;
 var init_DurableUploadService = __esm({
   "electron/services/media/DurableUploadService.ts"() {
     "use strict";
     import_better_sqlite32 = __toESM(require("better-sqlite3"), 1);
     import_electron7 = require("electron");
-    import_fs7 = __toESM(require("fs"), 1);
-    import_path7 = __toESM(require("path"), 1);
-    import_crypto6 = __toESM(require("crypto"), 1);
+    import_fs8 = __toESM(require("fs"), 1);
+    import_path8 = __toESM(require("path"), 1);
+    import_crypto7 = __toESM(require("crypto"), 1);
     init_SupabaseQuotaManager();
     init_supabase();
     DurableUploadService = class _DurableUploadService {
@@ -25564,11 +25964,11 @@ var init_DurableUploadService = __esm({
       workerTimer = null;
       isWorking = false;
       constructor() {
-        const userData = import_electron7.app?.getPath ? import_electron7.app.getPath("userData") : import_path7.default.join(process.env.APPDATA || process.cwd(), "le-soft");
-        this.stagingDir = import_path7.default.join(userData, "upload_staging");
-        const dbPath = import_path7.default.join(userData, "lesoft_durable_uploads.db");
+        const userData = import_electron7.app?.getPath ? import_electron7.app.getPath("userData") : import_path8.default.join(process.env.APPDATA || process.cwd(), "le-soft");
+        this.stagingDir = import_path8.default.join(userData, "upload_staging");
+        const dbPath = import_path8.default.join(userData, "lesoft_durable_uploads.db");
         try {
-          import_fs7.default.mkdirSync(this.stagingDir, { recursive: true });
+          import_fs8.default.mkdirSync(this.stagingDir, { recursive: true });
           this.db = new import_better_sqlite32.default(dbPath);
           this.db.pragma("journal_mode = WAL");
           this.db.exec(`
@@ -25617,18 +26017,18 @@ var init_DurableUploadService = __esm({
        */
       async stageFile(source, fileName, mimeType, subfolder, meta3) {
         if (!this.db) throw new Error("Upload database not initialized");
-        const uploadId = `upl_${Date.now()}_${import_crypto6.default.randomBytes(4).toString("hex")}`;
+        const uploadId = `upl_${Date.now()}_${import_crypto7.default.randomBytes(4).toString("hex")}`;
         const sanitized = fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
         const stagedFileName = `${uploadId}_${sanitized}`;
-        const targetPath = import_path7.default.join(this.stagingDir, stagedFileName);
+        const targetPath = import_path8.default.join(this.stagingDir, stagedFileName);
         let buffer;
         if (typeof source === "string") {
-          buffer = import_fs7.default.readFileSync(source);
+          buffer = import_fs8.default.readFileSync(source);
         } else {
           buffer = source;
         }
-        import_fs7.default.writeFileSync(targetPath, buffer);
-        const hash2 = import_crypto6.default.createHash("sha256").update(buffer).digest("hex").toUpperCase();
+        import_fs8.default.writeFileSync(targetPath, buffer);
+        const hash2 = import_crypto7.default.createHash("sha256").update(buffer).digest("hex").toUpperCase();
         const sizeBytes = buffer.length;
         const now = Date.now();
         this.db.prepare(`
@@ -25709,10 +26109,10 @@ var init_DurableUploadService = __esm({
       async dispatchUpload(uploadId) {
         if (!this.db) return { success: false, status: "failed", error: "Upload database not initialized" };
         const row = this.db.prepare(`SELECT * FROM durable_uploads WHERE id = ?`).get(uploadId);
-        if (!row || !import_fs7.default.existsSync(row.local_path)) {
+        if (!row || !import_fs8.default.existsSync(row.local_path)) {
           return { success: false, status: "failed", error: "Upload record or local file not found" };
         }
-        const buffer = import_fs7.default.readFileSync(row.local_path);
+        const buffer = import_fs8.default.readFileSync(row.local_path);
         const candidates = getNasStorageCandidates();
         const cfHeaders = getCfAccessHeaders();
         const finalStorageName = `${Date.now()}_${row.file_name}`;
@@ -25741,7 +26141,7 @@ var init_DurableUploadService = __esm({
                     WHERE id = ?
                 `).run(authoritativeUrl, Date.now(), uploadId);
             if (row.status === "buffered_supabase" && row.remote_url_supabase) {
-              await this.pruneCloudCopy(row.subfolder, row.remote_url_supabase, row.size_bytes);
+              await this.pruneCloudCopy(row.subfolder, row.remote_url_supabase, row.size_bytes, uploadId);
             }
             console.log(`[DurableUpload] Upload ${uploadId} successfully synchronized to authoritative NAS Storage: ${authoritativeUrl}`);
             this.broadcastUploadStatus();
@@ -25758,7 +26158,7 @@ var init_DurableUploadService = __esm({
               if (!sbErr) {
                 const { data: pubData } = this.supabaseClient.storage.from("make-order-files").getPublicUrl(cloudPath);
                 const cloudUrl = pubData?.publicUrl || cloudPath;
-                quotaMgr.releaseStorageQuota(uploadId, row.size_bytes);
+                await quotaMgr.releaseStorageQuota(uploadId, row.size_bytes);
                 const entityUpdated = await this.updateEntityRecord(row.entity_type, row.entity_id, row.field_name, cloudUrl);
                 this.db.prepare(`
                             UPDATE durable_uploads
@@ -25769,11 +26169,11 @@ var init_DurableUploadService = __esm({
                 this.broadcastUploadStatus();
                 return { success: true, url: cloudUrl, activeUrl: cloudUrl, status: "buffered_supabase" };
               } else {
-                quotaMgr.releaseStorageQuota(uploadId, 0);
+                await quotaMgr.releaseStorageQuota(uploadId, 0);
                 lastError = `Supabase storage error: ${sbErr.message}`;
               }
             } catch (sbEx) {
-              quotaMgr.releaseStorageQuota(uploadId, 0);
+              await quotaMgr.releaseStorageQuota(uploadId, 0);
               lastError = `Supabase storage exception: ${sbEx.message}`;
             }
           } else {
@@ -25824,15 +26224,19 @@ var init_DurableUploadService = __esm({
           return false;
         }
       }
-      async pruneCloudCopy(subfolder, cloudUrl, sizeBytes) {
+      async pruneCloudCopy(subfolder, cloudUrl, sizeBytes, uploadId) {
         if (!this.supabaseClient) return;
         try {
           const urlObj = new URL(cloudUrl);
           const pathParts = urlObj.pathname.split("/make-order-files/");
-          const objectKey = pathParts[1] || `${subfolder}/${import_path7.default.basename(urlObj.pathname)}`;
+          const objectKey = pathParts[1] || `${subfolder}/${import_path8.default.basename(urlObj.pathname)}`;
           const { error: error51 } = await this.supabaseClient.storage.from("make-order-files").remove([objectKey]);
           if (!error51) {
-            SupabaseQuotaManager.getInstance().deductConfirmedPrunedStorage(sizeBytes);
+            if (uploadId) {
+              await SupabaseQuotaManager.getInstance().pruneConfirmedStorage(uploadId, sizeBytes);
+            } else {
+              SupabaseQuotaManager.getInstance().deductConfirmedPrunedStorage(sizeBytes);
+            }
             console.log(`[DurableUpload] Safely pruned temporary cloud copy after NAS persistence: ${objectKey}`);
           }
         } catch {
@@ -25873,7 +26277,7 @@ var init_DurableUploadService = __esm({
           }
           const arrayBuffer = await resp.arrayBuffer();
           const remoteBuf = Buffer.from(arrayBuffer);
-          const remoteHash = import_crypto6.default.createHash("sha256").update(remoteBuf).digest("hex").toUpperCase();
+          const remoteHash = import_crypto7.default.createHash("sha256").update(remoteBuf).digest("hex").toUpperCase();
           if (expectedSha256 && remoteHash !== expectedSha256.toUpperCase()) {
             return {
               verified: false,
@@ -26116,11 +26520,13 @@ var init_ConsolidatedHealthEngine = __esm({
       async probeNasDatabase() {
         if (!this.nasClient) return { healthy: false, latency: 0, url: null };
         const t0 = Date.now();
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3e3);
         try {
           const timeoutPromise = new Promise(
             (_, reject) => setTimeout(() => reject(new Error("NAS DB query timeout (3000ms)")), 3e3)
           );
-          const queryPromise = this.nasClient.from("make_products").select("id").limit(1);
+          const queryPromise = this.nasClient.from("make_products").select("id").abortSignal(controller.signal).limit(1);
           const res = await Promise.race([queryPromise, timeoutPromise]);
           const latency = Date.now() - t0;
           if (res && !res.error) {
@@ -26129,6 +26535,8 @@ var init_ConsolidatedHealthEngine = __esm({
           return { healthy: false, latency, url: null };
         } catch {
           return { healthy: false, latency: Date.now() - t0, url: null };
+        } finally {
+          clearTimeout(timeoutId);
         }
       }
       /**
@@ -26199,6 +26607,9 @@ var init_ConsolidatedHealthEngine = __esm({
         const isNasFullyUp = this.isNasDbHealthy && this.isNasStorageHealthy;
         if (isNasFullyUp) {
           if (this.currentState !== "NORMAL_NAS_AUTHORITATIVE") {
+            if (this.isReconciling) {
+              return;
+            }
             console.log("[ConsolidatedHealth] TrueNAS services restored healthy. Transitioning to RECOVERING_SYNCHRONIZING.");
             this.currentState = "RECOVERING_SYNCHRONIZING";
             this.triggerRecoverySynchronization();
@@ -26235,21 +26646,23 @@ var init_ConsolidatedHealthEngine = __esm({
             await DurableUploadService.getInstance().processNextBatch();
             const outboxStats = DurableOutboxService.getInstance().getOutboxStats();
             const uploadStats = DurableUploadService.getInstance().getPendingUploadStats();
-            const pendingOutbox = outboxStats.bufferedSupabase + outboxStats.pendingLocal;
+            const pendingOutbox = outboxStats.bufferedSupabase + outboxStats.pendingLocal + outboxStats.blockedDependencies;
             const pendingUploads = uploadStats.bufferedCount + uploadStats.stagedCount;
             if (pendingOutbox === 0 && pendingUploads === 0) {
               hasMore = false;
-            } else if (drainedCount === 0 && uploadStats.bufferedCount === 0) {
+            } else if (drainedCount === 0 && uploadStats.bufferedCount === 0 && uploadStats.stagedCount === 0) {
               hasMore = false;
             }
           }
           const finalOutboxStats = DurableOutboxService.getInstance().getOutboxStats();
           const finalUploadStats = DurableUploadService.getInstance().getPendingUploadStats();
-          if (finalOutboxStats.bufferedSupabase === 0 && finalOutboxStats.pendingLocal === 0 && finalUploadStats.bufferedCount === 0 && finalUploadStats.stagedCount === 0) {
+          const hasPendingOutbox = finalOutboxStats.bufferedSupabase > 0 || finalOutboxStats.pendingLocal > 0 || finalOutboxStats.blockedDependencies > 0 || finalOutboxStats.deadLetterCount > 0;
+          const hasPendingUploads = finalUploadStats.bufferedCount > 0 || finalUploadStats.stagedCount > 0;
+          if (!hasPendingOutbox && !hasPendingUploads) {
             this.currentState = "NORMAL_NAS_AUTHORITATIVE";
             console.log("[ConsolidatedHealth] All pending records and buffered uploads reconciled to TrueNAS master. State: NORMAL_NAS_AUTHORITATIVE.");
           } else {
-            console.warn(`[ConsolidatedHealth] Incomplete reconciliation (Outbox buffered: ${finalOutboxStats.bufferedSupabase}, pending: ${finalOutboxStats.pendingLocal}; Upload buffered: ${finalUploadStats.bufferedCount}, staged: ${finalUploadStats.stagedCount}). Remaining in RECOVERING_SYNCHRONIZING.`);
+            console.warn(`[ConsolidatedHealth] Incomplete reconciliation (Outbox buffered: ${finalOutboxStats.bufferedSupabase}, pending: ${finalOutboxStats.pendingLocal}, blocked: ${finalOutboxStats.blockedDependencies}, dead_letter: ${finalOutboxStats.deadLetterCount}; Upload buffered: ${finalUploadStats.bufferedCount}, staged: ${finalUploadStats.stagedCount}). Remaining in RECOVERING_SYNCHRONIZING.`);
           }
         } catch (e2) {
           console.warn("[ConsolidatedHealth] Recovery synchronization warning:", e2.message);
@@ -26302,15 +26715,15 @@ __export(supabase_exports, {
   supabaseClient: () => supabaseClient
 });
 function getConfigPath() {
-  const defaultPath = import_path8.default.join(import_electron9.app?.getPath ? import_electron9.app.getPath("userData") : import_path8.default.join(process.env.APPDATA || process.cwd(), "le-soft"), "supabase-config.json");
-  if (import_fs8.default.existsSync(defaultPath)) return defaultPath;
+  const defaultPath = import_path9.default.join(import_electron9.app?.getPath ? import_electron9.app.getPath("userData") : import_path9.default.join(process.env.APPDATA || process.cwd(), "le-soft"), "supabase-config.json");
+  if (import_fs9.default.existsSync(defaultPath)) return defaultPath;
   const candidates = [
-    import_path8.default.join(process.env.APPDATA || "", "le-soft", "supabase-config.json"),
-    import_path8.default.join(process.env.APPDATA || "", "LE-SOFT", "supabase-config.json"),
-    import_path8.default.join(process.env.APPDATA || "", "supabase-config.json")
+    import_path9.default.join(process.env.APPDATA || "", "le-soft", "supabase-config.json"),
+    import_path9.default.join(process.env.APPDATA || "", "LE-SOFT", "supabase-config.json"),
+    import_path9.default.join(process.env.APPDATA || "", "supabase-config.json")
   ];
   for (const c of candidates) {
-    if (c && import_fs8.default.existsSync(c)) {
+    if (c && import_fs9.default.existsSync(c)) {
       return c;
     }
   }
@@ -26321,7 +26734,7 @@ function deriveCredentialKey() {
   if (!secret || typeof secret !== "string" || secret.trim().length === 0) {
     return null;
   }
-  return import_crypto7.default.pbkdf2Sync(
+  return import_crypto8.default.pbkdf2Sync(
     secret.trim(),
     CREDENTIAL_SALT,
     1e5,
@@ -26336,14 +26749,14 @@ function decryptBlob(encryptedBase64, key) {
   const iv = buf.subarray(0, 12);
   const tag = buf.subarray(12, 28);
   const ciphertext = buf.subarray(28);
-  const decipher = import_crypto7.default.createDecipheriv("aes-256-gcm", key, iv);
+  const decipher = import_crypto8.default.createDecipheriv("aes-256-gcm", key, iv);
   decipher.setAuthTag(tag);
   return decipher.update(ciphertext).toString("utf8") + decipher.final("utf8");
 }
 function loadConfig() {
   const configPath = getConfigPath();
   try {
-    if (!import_fs8.default.existsSync(configPath)) {
+    if (!import_fs9.default.existsSync(configPath)) {
       try {
         const lic = isLicensed();
         if (lic.valid) {
@@ -26352,7 +26765,7 @@ function loadConfig() {
       } catch (licErr) {
         console.warn("[SUPABASE] License check during config load:", licErr);
       }
-      if (!import_fs8.default.existsSync(configPath)) {
+      if (!import_fs9.default.existsSync(configPath)) {
         try {
           const key = deriveCredentialKey();
           if (key) {
@@ -26360,8 +26773,8 @@ function loadConfig() {
             const anonKey = decryptBlob(ENCRYPTED_ANON_KEY, key);
             if (url2.startsWith("https://") && anonKey.startsWith("eyJ")) {
               const autoCfg = { ...EMPTY_DEFAULTS, url: url2, anonKey };
-              import_fs8.default.mkdirSync(import_path8.default.dirname(configPath), { recursive: true });
-              import_fs8.default.writeFileSync(configPath, JSON.stringify(autoCfg, null, 2), { encoding: "utf-8", mode: 384 });
+              import_fs9.default.mkdirSync(import_path9.default.dirname(configPath), { recursive: true });
+              import_fs9.default.writeFileSync(configPath, JSON.stringify(autoCfg, null, 2), { encoding: "utf-8", mode: 384 });
               console.log("[SUPABASE] Auto-configured credentials from embedded encrypted store.");
               return autoCfg;
             }
@@ -26371,8 +26784,8 @@ function loadConfig() {
         }
       }
     }
-    if (import_fs8.default.existsSync(configPath)) {
-      const raw = import_fs8.default.readFileSync(configPath, "utf-8");
+    if (import_fs9.default.existsSync(configPath)) {
+      const raw = import_fs9.default.readFileSync(configPath, "utf-8");
       const parsed = JSON.parse(raw);
       const cfg = { ...EMPTY_DEFAULTS, ...parsed };
       let needsMigration = false;
@@ -26460,9 +26873,9 @@ function loadConfig() {
       }
       if (needsMigration) {
         try {
-          import_fs8.default.writeFileSync(configPath, JSON.stringify(parsed, null, 2), { encoding: "utf-8", mode: 384 });
+          import_fs9.default.writeFileSync(configPath, JSON.stringify(parsed, null, 2), { encoding: "utf-8", mode: 384 });
           try {
-            import_fs8.default.chmodSync(configPath, 384);
+            import_fs9.default.chmodSync(configPath, 384);
           } catch {
           }
           console.log("[SUPABASE] Migrated plaintext privileged credentials to encrypted safeStorage.");
@@ -26486,8 +26899,8 @@ function loadConfig() {
 function hasSupabaseConfig() {
   try {
     const configPath = getConfigPath();
-    if (import_fs8.default.existsSync(configPath)) {
-      const cfg = JSON.parse(import_fs8.default.readFileSync(configPath, "utf-8"));
+    if (import_fs9.default.existsSync(configPath)) {
+      const cfg = JSON.parse(import_fs9.default.readFileSync(configPath, "utf-8"));
       return !!(cfg.url && cfg.anonKey);
     }
     try {
@@ -26522,10 +26935,10 @@ function saveSupabaseConfig(config2) {
     }
   }
   const configPath = getConfigPath();
-  import_fs8.default.mkdirSync(import_path8.default.dirname(configPath), { recursive: true });
-  import_fs8.default.writeFileSync(configPath, JSON.stringify(diskPayload, null, 2), { encoding: "utf-8", mode: 384 });
+  import_fs9.default.mkdirSync(import_path9.default.dirname(configPath), { recursive: true });
+  import_fs9.default.writeFileSync(configPath, JSON.stringify(diskPayload, null, 2), { encoding: "utf-8", mode: 384 });
   try {
-    import_fs8.default.chmodSync(configPath, 384);
+    import_fs9.default.chmodSync(configPath, 384);
   } catch {
   }
   console.log("[SUPABASE] Config saved securely to", configPath);
@@ -26540,9 +26953,9 @@ function bootstrapPublicClientConfig() {
       console.error("[CONFIG] Public Supabase client configuration is invalid or missing.");
       return false;
     }
-    if (import_fs8.default.existsSync(configPath)) {
+    if (import_fs9.default.existsSync(configPath)) {
       try {
-        const existing = JSON.parse(import_fs8.default.readFileSync(configPath, "utf-8"));
+        const existing = JSON.parse(import_fs9.default.readFileSync(configPath, "utf-8"));
         if (existing.url && existing.anonKey) {
           console.log("[CONFIG] Existing valid Supabase configuration preserved.");
           reinitSupabaseClients();
@@ -26556,10 +26969,10 @@ function bootstrapPublicClientConfig() {
       url: url2,
       anonKey
     };
-    import_fs8.default.mkdirSync(import_path8.default.dirname(configPath), { recursive: true });
-    import_fs8.default.writeFileSync(configPath, JSON.stringify(newConfig, null, 2), { encoding: "utf-8", mode: 384 });
+    import_fs9.default.mkdirSync(import_path9.default.dirname(configPath), { recursive: true });
+    import_fs9.default.writeFileSync(configPath, JSON.stringify(newConfig, null, 2), { encoding: "utf-8", mode: 384 });
     try {
-      import_fs8.default.chmodSync(configPath, 384);
+      import_fs9.default.chmodSync(configPath, 384);
     } catch {
     }
     console.log("[CONFIG] Public Supabase client configuration bootstrapped to", configPath);
@@ -26913,15 +27326,15 @@ function getNasStorageCandidates() {
   ].filter(Boolean);
   return Array.from(new Set(candidates));
 }
-var import_electron9, import_path8, import_fs8, import_crypto7, CREDENTIAL_SALT, EMPTY_DEFAULTS, failoverEngine, dbReadyPromise, supabaseAdmin, nasClient, supabaseClient, authClient, isNasOnline, connectionState, activeNasUrl, supabase, supabase_default;
+var import_electron9, import_path9, import_fs9, import_crypto8, CREDENTIAL_SALT, EMPTY_DEFAULTS, failoverEngine, dbReadyPromise, supabaseAdmin, nasClient, supabaseClient, authClient, isNasOnline, connectionState, activeNasUrl, supabase, supabase_default;
 var init_supabase = __esm({
   "electron/supabase.ts"() {
     "use strict";
     init_dist4();
     import_electron9 = require("electron");
-    import_path8 = __toESM(require("path"), 1);
-    import_fs8 = __toESM(require("fs"), 1);
-    import_crypto7 = __toESM(require("crypto"), 1);
+    import_path9 = __toESM(require("path"), 1);
+    import_fs9 = __toESM(require("fs"), 1);
+    import_crypto8 = __toESM(require("crypto"), 1);
     init_DatabaseFailoverEngine();
     init_credentials();
     init_secure_storage();
@@ -113336,12 +113749,12 @@ var initDB = async () => {
 
 // electron/offline-db.ts
 var import_better_sqlite33 = __toESM(require("better-sqlite3"), 1);
-var import_path9 = __toESM(require("path"), 1);
+var import_path10 = __toESM(require("path"), 1);
 var import_electron10 = require("electron");
 var db = null;
 async function initOfflineDB() {
   if (db) return;
-  const dbPath = import_path9.default.join(import_electron10.app.getPath("userData"), "lesoft_offline.db");
+  const dbPath = import_path10.default.join(import_electron10.app.getPath("userData"), "lesoft_offline.db");
   db = new import_better_sqlite33.default(dbPath);
   db.pragma("journal_mode = WAL");
   db.exec(`
@@ -113395,18 +113808,18 @@ async function loadTableCache(tableName) {
 var import_electron11 = require("electron");
 var import_electron_updater = require("electron-updater");
 var import_os3 = __toESM(require("os"), 1);
-var import_path10 = __toESM(require("path"), 1);
-var import_fs9 = __toESM(require("fs"), 1);
-var import_crypto8 = require("crypto");
+var import_path11 = __toESM(require("path"), 1);
+var import_fs10 = __toESM(require("fs"), 1);
+var import_crypto9 = require("crypto");
 init_supabase();
 function getMachineId2() {
-  const idFile = import_path10.default.join(import_electron11.app.getPath("userData"), ".device-id");
-  if (import_fs9.default.existsSync(idFile)) {
-    return import_fs9.default.readFileSync(idFile, "utf-8").trim();
+  const idFile = import_path11.default.join(import_electron11.app.getPath("userData"), ".device-id");
+  if (import_fs10.default.existsSync(idFile)) {
+    return import_fs10.default.readFileSync(idFile, "utf-8").trim();
   }
   const raw = `${import_os3.default.hostname()}-${import_os3.default.platform()}-${import_os3.default.userInfo().username}`;
-  const id = (0, import_crypto8.createHash)("sha256").update(raw).digest("hex").substring(0, 32);
-  import_fs9.default.writeFileSync(idFile, id, "utf-8");
+  const id = (0, import_crypto9.createHash)("sha256").update(raw).digest("hex").substring(0, 32);
+  import_fs10.default.writeFileSync(idFile, id, "utf-8");
   return id;
 }
 var DEVICE_ID = getMachineId2();
@@ -113425,7 +113838,7 @@ function getLocalIP() {
 }
 async function registerDevice(username) {
   const { version: version4 } = JSON.parse(
-    import_fs9.default.readFileSync(import_path10.default.join(import_electron11.app.getAppPath(), "package.json"), "utf-8")
+    import_fs10.default.readFileSync(import_path11.default.join(import_electron11.app.getAppPath(), "package.json"), "utf-8")
   );
   const payload = {
     device_id: DEVICE_ID,
@@ -113490,287 +113903,12 @@ init_SupabaseQuotaManager();
 init_ConsolidatedHealthEngine();
 var import_promise = __toESM(require("mysql2/promise"), 1);
 init_license_manager();
-
-// electron/field-encryption.ts
-var import_crypto9 = __toESM(require("crypto"), 1);
-var import_fs10 = __toESM(require("fs"), 1);
-var import_path11 = __toESM(require("path"), 1);
-init_secure_storage();
-var CIPHER_GCM2 = "aes-256-gcm";
-var V3_PREFIX = "e3:";
-var V1_PREFIX = "e1:";
-var V2_CBC_PREFIX = "e2:";
-var SALT_LEN = 16;
-var IV_LEN = 12;
-var TAG_LEN = 16;
-var HKDF_INFO = Buffer.from("lesoft-field-encryption-v3", "utf-8");
-var MASTER_SEED_FILE = ".field-master-seed.key";
-var LEGACY_SALT = import_crypto9.default.createHash("sha256").update("lesoft-e2e-salt-v1").digest();
-var _masterKey = null;
-var _legacyE1Key = null;
-function getLicenseKey() {
-  try {
-    const cfgPath = import_path11.default.join(getUserDataPath(), "supabase-config.json");
-    if (import_fs10.default.existsSync(cfgPath)) {
-      const raw = import_fs10.default.readFileSync(cfgPath, "utf-8");
-      const cfg = JSON.parse(raw);
-      const key = cfg.serviceRoleKey || cfg.anonKey;
-      if (key && typeof key === "string") {
-        return key.startsWith("enc:v1:") ? decryptStandardSecret(key) : key;
-      }
-    }
-  } catch {
-  }
-  return "";
-}
-function getOrCreateMachineMasterSeed() {
-  const keyPath = import_path11.default.join(getUserDataPath(), MASTER_SEED_FILE);
-  if (import_fs10.default.existsSync(keyPath)) {
-    try {
-      const fileContent = import_fs10.default.readFileSync(keyPath, "utf-8");
-      const decryptedHex = decryptStandardSecret(fileContent);
-      const seedBuf = Buffer.from(decryptedHex, "hex");
-      if (seedBuf.length === 32) {
-        return seedBuf;
-      }
-    } catch (err) {
-      console.warn("[FieldEncryption] Error reading protected master seed, generating new one:", err);
-    }
-  }
-  const newSeed = import_crypto9.default.randomBytes(32);
-  try {
-    const encryptedEnvelope = encryptStandardSecret(newSeed.toString("hex"));
-    import_fs10.default.writeFileSync(keyPath, encryptedEnvelope, { encoding: "utf-8", mode: 384 });
-    try {
-      import_fs10.default.chmodSync(keyPath, 384);
-    } catch {
-    }
-  } catch (err) {
-    console.error("[FieldEncryption] Failed to persist protected master seed:", err);
-  }
-  return newSeed;
-}
-function initEncryptionKey() {
-  const licenseKey = getLicenseKey();
-  const machineSeed = getOrCreateMachineMasterSeed();
-  const legacyIkm = licenseKey || "default-lesoft-key";
-  _legacyE1Key = import_crypto9.default.createHmac("sha256", LEGACY_SALT).update(legacyIkm).digest();
-  const ikm = Buffer.concat([
-    machineSeed,
-    Buffer.from(licenseKey || "lesoft-v3-root", "utf-8")
-  ]);
-  const masterSalt = import_crypto9.default.createHash("sha256").update(machineSeed).digest();
-  _masterKey = import_crypto9.default.hkdfSync("sha256", ikm, masterSalt, Buffer.from("lesoft-field-master-v3", "utf-8"), 32);
-  console.log("[Encryption] Master field encryption key initialized.");
-}
-function getMasterKey() {
-  if (!_masterKey) initEncryptionKey();
-  return _masterKey;
-}
-function getLegacyE1Key() {
-  if (!_legacyE1Key) initEncryptionKey();
-  return _legacyE1Key;
-}
-function clearEncryptionKey() {
-  _masterKey = null;
-  _legacyE1Key = null;
-  console.log("[Encryption] Keys cleared from memory.");
-}
-function encryptField(text3) {
-  if (!text3) return text3 || "";
-  const masterKey = getMasterKey();
-  try {
-    const salt = import_crypto9.default.randomBytes(SALT_LEN);
-    const iv = import_crypto9.default.randomBytes(IV_LEN);
-    const recordKey = import_crypto9.default.hkdfSync("sha256", masterKey, salt, HKDF_INFO, 32);
-    const cipher = import_crypto9.default.createCipheriv(CIPHER_GCM2, recordKey, iv);
-    const ciphertextBuf = Buffer.concat([
-      cipher.update(text3, "utf8"),
-      cipher.final()
-    ]);
-    const tag = cipher.getAuthTag();
-    const combined = Buffer.concat([salt, iv, tag, ciphertextBuf]);
-    return `${V3_PREFIX}${combined.toString("base64")}`;
-  } catch (e2) {
-    console.error("[Encrypt] V3 GCM encryption failed:", e2);
-    throw e2;
-  }
-}
-function decryptField(encryptedText) {
-  if (!encryptedText || typeof encryptedText !== "string") {
-    return encryptedText || "";
-  }
-  if (encryptedText.startsWith(V3_PREFIX)) {
-    try {
-      const masterKey = getMasterKey();
-      const combined = Buffer.from(encryptedText.slice(V3_PREFIX.length), "base64");
-      if (combined.length < SALT_LEN + IV_LEN + TAG_LEN) {
-        console.warn("[Decrypt e3] Payload length too short.");
-        return encryptedText;
-      }
-      const salt = combined.subarray(0, SALT_LEN);
-      const iv = combined.subarray(SALT_LEN, SALT_LEN + IV_LEN);
-      const tag = combined.subarray(SALT_LEN + IV_LEN, SALT_LEN + IV_LEN + TAG_LEN);
-      const ciphertext = combined.subarray(SALT_LEN + IV_LEN + TAG_LEN);
-      const recordKey = import_crypto9.default.hkdfSync("sha256", masterKey, salt, HKDF_INFO, 32);
-      const decipher = import_crypto9.default.createDecipheriv(CIPHER_GCM2, recordKey, iv);
-      decipher.setAuthTag(tag);
-      return decipher.update(ciphertext).toString("utf8") + decipher.final("utf8");
-    } catch (err) {
-      console.warn("[Decrypt e3] GCM authentication verification failed (tampered ciphertext or invalid key).");
-      return encryptedText;
-    }
-  }
-  if (encryptedText.startsWith(V1_PREFIX)) {
-    try {
-      const legacyKey = getLegacyE1Key();
-      const combined = Buffer.from(encryptedText.slice(V1_PREFIX.length), "base64");
-      if (combined.length < IV_LEN + TAG_LEN) {
-        console.warn("[Decrypt e1] Payload length too short.");
-        return encryptedText;
-      }
-      const iv = combined.subarray(0, IV_LEN);
-      const tag = combined.subarray(IV_LEN, IV_LEN + TAG_LEN);
-      const ciphertext = combined.subarray(IV_LEN + TAG_LEN);
-      const decipher = import_crypto9.default.createDecipheriv(CIPHER_GCM2, legacyKey, iv);
-      decipher.setAuthTag(tag);
-      return decipher.update(ciphertext).toString("utf8") + decipher.final("utf8");
-    } catch {
-      console.warn("[Decrypt e1] GCM auth failed \u2014 key mismatch or tampered data.");
-      return encryptedText;
-    }
-  }
-  if (encryptedText.startsWith(V2_CBC_PREFIX)) {
-    try {
-      const legacyKey = getLegacyE1Key();
-      const parts = encryptedText.split(":");
-      if (parts.length !== 3) return encryptedText;
-      const iv = Buffer.from(parts[1], "hex");
-      const decipher = import_crypto9.default.createDecipheriv("aes-256-cbc", legacyKey, iv);
-      let decrypted = decipher.update(parts[2], "hex", "utf8");
-      decrypted += decipher.final("utf8");
-      return decrypted;
-    } catch (e2) {
-      console.error("[Decrypt e2] CBC decryption failed:", e2.message);
-      return encryptedText;
-    }
-  }
-  return encryptedText;
-}
-var SKIP_KEYS = /* @__PURE__ */ new Set([
-  "id",
-  "auth_id",
-  "user_id",
-  "employee_id",
-  "customer_id",
-  "bill_id",
-  "group_id",
-  "order_id",
-  "sender_id",
-  "receiver_id",
-  "product_id",
-  "created_at",
-  "updated_at",
-  "last_active",
-  "date",
-  "check_in",
-  "check_out",
-  "from_date",
-  "to_date",
-  "month",
-  "delivery_date",
-  "paid_at",
-  "invoice_date",
-  "is_active",
-  "email_confirm",
-  "is_read",
-  "is_online",
-  "is_visible",
-  "password_hash",
-  // already hashed
-  "permissions",
-  // JSONB
-  "le_local_id",
-  // mysql sync key
-  // Linkages and Search keys (PlainText for indexability and reliability)
-  "username",
-  "full_name",
-  "role",
-  "invoice_number",
-  "sku",
-  "name",
-  "phone",
-  "email",
-  "product_name",
-  "customer_name",
-  "platform",
-  "status",
-  "type",
-  "device_type",
-  "employee_code",
-  "crm_state"
-]);
-function encryptObject(obj) {
-  if (!obj || typeof obj !== "object") return obj;
-  const result = {};
-  for (const [k, v] of Object.entries(obj)) {
-    if (v === null || v === void 0 || SKIP_KEYS.has(k)) {
-      result[k] = v;
-    } else if (typeof v === "string" && v.length > 0) {
-      result[k] = encryptField(v);
-    } else if (typeof v === "number") {
-      result[k] = v;
-    } else if (typeof v === "boolean") {
-      result[k] = v;
-    } else if (typeof v === "object") {
-      result[k] = encryptField(JSON.stringify(v));
-    } else {
-      result[k] = v;
-    }
-  }
-  return result;
-}
-function decryptObject(obj) {
-  if (!obj || typeof obj !== "object") return obj;
-  const result = {};
-  for (const [k, v] of Object.entries(obj)) {
-    if (typeof v === "string" && (v.startsWith(V3_PREFIX) || v.startsWith(V1_PREFIX) || v.startsWith(V2_CBC_PREFIX))) {
-      const plain = decryptField(v);
-      if (plain.startsWith("{") || plain.startsWith("[")) {
-        try {
-          result[k] = JSON.parse(plain);
-        } catch {
-          result[k] = plain;
-        }
-      } else if (!isNaN(Number(plain)) && plain.trim() !== "") {
-        result[k] = Number(plain);
-      } else {
-        result[k] = plain;
-      }
-    } else {
-      result[k] = v;
-    }
-  }
-  return result;
-}
-function decryptRows(rows) {
-  if (!rows || !Array.isArray(rows)) return [];
-  return rows.map(decryptObject);
-}
-async function decryptRowsAsync(rows, chunkSize = 200) {
-  if (!rows || !Array.isArray(rows)) return [];
-  const result = [];
-  for (let i2 = 0; i2 < rows.length; i2 += chunkSize) {
-    const chunk = rows.slice(i2, i2 + chunkSize);
-    result.push(...chunk.map(decryptObject));
-    await new Promise((resolve2) => setImmediate(resolve2));
-  }
-  return result;
-}
+init_field_encryption();
 
 // electron/write-queue.ts
 var import_electron12 = require("electron");
 init_supabase();
+init_field_encryption();
 init_DurableOutboxService();
 init_SupabaseQuotaManager();
 var queue = [];
@@ -113801,8 +113939,12 @@ function enqueue(entry) {
       id: newEntry.id,
       entityType: newEntry.table,
       operation: newEntry.operation === "custom" ? "insert" : newEntry.operation,
-      payload: newEntry.data || newEntry.filter || {},
-      primaryKeyCol: newEntry.upsertConflict
+      payload: newEntry.data || {},
+      filter: newEntry.filter,
+      upsertConflict: newEntry.upsertConflict,
+      primaryKeyCol: newEntry.upsertConflict || "id",
+      dependencyOpId: newEntry.dependencyOpId,
+      metadata: newEntry.metadata
     });
   } catch (err) {
     console.error("[WriteQueue] Failed durable outbox enqueue! Surfacing failure:", err.message);
@@ -113848,6 +113990,7 @@ function getQueueStats() {
 // electron/cache-manager.ts
 var import_electron13 = require("electron");
 init_supabase();
+init_field_encryption();
 var store = /* @__PURE__ */ new Map();
 var DEFAULT_TTL = 10 * 60 * 1e3;
 function broadcastProgress(step, progress, total) {
@@ -114631,6 +114774,7 @@ var MakeVersionService = class {
 
 // electron/services/make/MakeSearchService.ts
 init_supabase();
+init_field_encryption();
 var MakeSearchService = class {
   /**
    * Normalizes a search string by trimming, lowercasing, and normalizing spaces.
@@ -116435,6 +116579,9 @@ var MakeCadService = class {
     };
   }
 };
+
+// electron/ipc/handlers/make.ts
+init_field_encryption();
 
 // node_modules/zod/v4/classic/external.js
 var external_exports = {};
@@ -135556,6 +135703,27 @@ function registerHandlers() {
       } catch {
       }
     }
+    if (shipping && shipping.ship_to_name && shipping.ship_to_address) {
+      try {
+        DurableOutboxService.getInstance().enqueueSingle({
+          entityType: "bill_shipping",
+          operation: "insert",
+          payload: {
+            invoice_number: invoiceNumber,
+            ship_to_name: shipping.ship_to_name,
+            ship_to_address: shipping.ship_to_address,
+            ship_to_phone: shipping.ship_to_phone || "",
+            ship_from_name: shipping.ship_from_name || "",
+            ship_from_address: shipping.ship_from_address || "",
+            shipping_charge: shipping.shipping_charge || 0,
+            updated_by: actor,
+            status: "pending_payment"
+          },
+          dependencyOpId: billOpId
+        });
+      } catch {
+      }
+    }
     await writeAuditLog({
       module: "Billing",
       action: "CREATE",
@@ -139396,6 +139564,7 @@ function registerHandlers() {
 }
 
 // electron/main.ts
+init_field_encryption();
 init_supabase();
 init_MediaProtocolService();
 MediaProtocolService.registerSchemeAsPrivileged();

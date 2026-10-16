@@ -39,6 +39,8 @@ export interface QueueEntry {
     data?: Record<string, any> | Record<string, any>[];
     filter?: { column: string; value: any }[];  // for update/delete
     upsertConflict?: string;                     // for upsert: conflict column
+    dependencyOpId?: string;                     // for dependent child writes
+    metadata?: Record<string, any>;              // idempotency and execution metadata
     retries: number;
     enqueuedAt: number;
     /** Optional callback upon completion (in-process) */
@@ -87,8 +89,12 @@ export function enqueue(entry: Omit<QueueEntry, 'id' | 'retries' | 'enqueuedAt'>
             id: newEntry.id,
             entityType: newEntry.table,
             operation: newEntry.operation === 'custom' ? 'insert' : newEntry.operation,
-            payload: (newEntry.data || newEntry.filter || {}) as any,
-            primaryKeyCol: newEntry.upsertConflict
+            payload: (newEntry.data || {}) as any,
+            filter: newEntry.filter,
+            upsertConflict: newEntry.upsertConflict,
+            primaryKeyCol: newEntry.upsertConflict || 'id',
+            dependencyOpId: newEntry.dependencyOpId,
+            metadata: newEntry.metadata
         });
     } catch (err: any) {
         console.error('[WriteQueue] Failed durable outbox enqueue! Surfacing failure:', err.message);

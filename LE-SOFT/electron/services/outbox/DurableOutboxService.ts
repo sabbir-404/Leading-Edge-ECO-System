@@ -21,6 +21,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { SupabaseQuotaManager } from '../quota/SupabaseQuotaManager';
+import { encryptObject, encryptRowsAsync } from '../../field-encryption';
 
 export type OutboxStatus = 
     | 'pending'
@@ -35,9 +36,13 @@ export interface OutboxOperationInput {
     entityType: string;
     operation: 'insert' | 'update' | 'upsert' | 'delete';
     payload: Record<string, any> | Record<string, any>[];
+    filter?: { column: string; value: any }[];
     primaryKeyCol?: string;
     primaryKeyVal?: string;
+    upsertConflict?: string;
     dependencyOpId?: string;
+    idempotencyKey?: string;
+    metadata?: Record<string, any>;
     target?: 'nas' | 'supabase' | 'both';
     maxRetries?: number;
 }
@@ -47,9 +52,12 @@ export interface OutboxRecord {
     entityType: string;
     operation: 'insert' | 'update' | 'upsert' | 'delete';
     payload: any;
+    filter: { column: string; value: any }[] | null;
     primaryKeyCol: string;
     primaryKeyVal: string | null;
+    upsertConflict: string | null;
     dependencyOpId: string | null;
+    metadata: Record<string, any> | null;
     target: 'nas' | 'supabase' | 'both';
     status: OutboxStatus;
     retryCount: number;
@@ -61,6 +69,7 @@ export interface OutboxRecord {
 
 export interface OutboxStats {
     totalPending: number;
+    pendingLocal: number;
     bufferedSupabase: number;
     blockedDependencies: number;
     deadLetterCount: number;
@@ -110,9 +119,12 @@ export class DurableOutboxService {
                     entity_type TEXT NOT NULL,
                     operation TEXT NOT NULL,
                     payload_json TEXT NOT NULL,
+                    filter_json TEXT,
                     primary_key_col TEXT DEFAULT 'id',
                     primary_key_val TEXT,
+                    upsert_conflict TEXT,
                     dependency_op_id TEXT,
+                    metadata_json TEXT,
                     target TEXT DEFAULT 'both',
                     status TEXT NOT NULL DEFAULT 'pending',
                     retry_count INTEGER DEFAULT 0,
@@ -134,6 +146,12 @@ export class DurableOutboxService {
                     PRIMARY KEY(op_id, target)
                 );
             `);
+
+            // Seamless SQLite schema upgrade for existing databases
+            try { this.db.exec("ALTER TABLE outbox_operations ADD COLUMN filter_json TEXT"); } catch {}
+            try { this.db.exec("ALTER TABLE outbox_operations ADD COLUMN upsert_conflict TEXT"); } catch {}
+            try { this.db.exec("ALTER TABLE outbox_operations ADD COLUMN metadata_json TEXT"); } catch {}
+
             console.log('[DurableOutbox] Initialized SQLite outbox at:', this.dbPath);
         } catch (err: any) {
             console.error('[DurableOutbox] Failed to initialize SQLite database:', err.message);
@@ -180,10 +198,11 @@ export class DurableOutboxService {
 
         const insertStmt = this.db.prepare(`
             INSERT INTO outbox_operations (
-                id, entity_type, operation, payload_json, primary_key_col,
-                primary_key_val, dependency_op_id, target, status,
+                id, entity_type, operation, payload_json, filter_json,
+                primary_key_col, primary_key_val, upsert_conflict,
+                dependency_op_id, metadata_json, target, status,
                 retry_count, max_retries, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
         `);
 
         const transaction = this.db.transaction((ops: OutboxOperationInput[]) => {
@@ -192,15 +211,22 @@ export class DurableOutboxService {
                 generatedIds.push(id);
 
                 const status: OutboxStatus = op.dependencyOpId ? 'blocked_dependency' : 'pending';
+                const filterJson = op.filter ? JSON.stringify(op.filter) : null;
+                const metadataJson = (op.metadata || op.idempotencyKey)
+                    ? JSON.stringify({ ...op.metadata, idempotencyKey: op.idempotencyKey })
+                    : null;
 
                 insertStmt.run(
                     id,
                     op.entityType,
                     op.operation,
-                    JSON.stringify(op.payload),
+                    JSON.stringify(op.payload || {}),
+                    filterJson,
                     op.primaryKeyCol || 'id',
                     op.primaryKeyVal || null,
+                    op.upsertConflict || null,
                     op.dependencyOpId || null,
+                    metadataJson,
                     op.target || 'both',
                     status,
                     op.maxRetries || 10,
@@ -268,10 +294,13 @@ export class DurableOutboxService {
                     id: r.id,
                     entityType: r.entity_type,
                     operation: r.operation,
-                    payload: JSON.parse(r.payload_json),
-                    primaryKeyCol: r.primary_key_col,
+                    payload: JSON.parse(r.payload_json || '{}'),
+                    filter: r.filter_json ? JSON.parse(r.filter_json) : null,
+                    primaryKeyCol: r.primary_key_col || 'id',
                     primaryKeyVal: r.primary_key_val,
+                    upsertConflict: r.upsert_conflict || null,
                     dependencyOpId: r.dependency_op_id,
+                    metadata: r.metadata_json ? JSON.parse(r.metadata_json) : null,
                     target: r.target,
                     status: r.status,
                     retryCount: r.retry_count,
@@ -298,13 +327,18 @@ export class DurableOutboxService {
     private unblockResolvedDependencies(): void {
         if (!this.db) return;
         try {
-            // Find blocked operations whose dependencies have completed or synced to NAS
+            // Find blocked operations whose dependencies have completed, synced to NAS, buffered to Supabase, or have an ID mapped
             this.db.prepare(`
                 UPDATE outbox_operations
                 SET status = 'pending', updated_at = ?
                 WHERE status = 'blocked_dependency'
-                  AND dependency_op_id IN (
-                      SELECT id FROM outbox_operations WHERE status IN ('completed', 'synced_nas')
+                  AND (
+                      dependency_op_id IN (
+                          SELECT id FROM outbox_operations WHERE status IN ('completed', 'synced_nas', 'buffered_supabase')
+                      )
+                      OR dependency_op_id IN (
+                          SELECT op_id FROM outbox_id_map
+                      )
                   )
             `).run(Date.now());
         } catch {}
@@ -328,7 +362,15 @@ export class DurableOutboxService {
         // 1. Primary Attempt: TrueNAS PostgREST
         if (isNasTarget && !nasSuccess && this.nasClient) {
             try {
-                const result = await this.executeOnClient(this.nasClient, entityType, operation, payload, record.primaryKeyCol);
+                const result = await this.executeOnClient(
+                    this.nasClient,
+                    entityType,
+                    operation,
+                    payload,
+                    record.primaryKeyCol,
+                    record.filter,
+                    record.upsertConflict
+                );
                 if (result.success) {
                     nasSuccess = true;
                     if (result.resolvedId) {
@@ -366,19 +408,27 @@ export class DurableOutboxService {
             // Check quota before cloud buffer write
             const quotaMgr = SupabaseQuotaManager.getInstance();
             const estBytes = 500; // Average row bytes
-            const canBuffer = quotaMgr.reserveDatabaseQuota(`db_${id}`, estBytes);
+            const canBuffer = await quotaMgr.reserveDatabaseQuota(`db_${id}`, estBytes);
 
             if (canBuffer) {
                 try {
-                    const result = await this.executeOnClient(this.supabaseClient, entityType, operation, payload, record.primaryKeyCol);
+                    const result = await this.executeOnClient(
+                        this.supabaseClient,
+                        entityType,
+                        operation,
+                        payload,
+                        record.primaryKeyCol,
+                        record.filter,
+                        record.upsertConflict
+                    );
                     if (result.success) {
                         sbSuccess = true;
-                        quotaMgr.releaseDatabaseQuota(`db_${id}`, estBytes);
+                        await quotaMgr.releaseDatabaseQuota(`db_${id}`, estBytes);
                         if (result.resolvedId) {
                             this.recordResolvedId(id, 'supabase', result.resolvedId);
                         }
                     } else {
-                        quotaMgr.releaseDatabaseQuota(`db_${id}`, 0);
+                        await quotaMgr.releaseDatabaseQuota(`db_${id}`, 0);
                         const classified = this.classifyError(result.error);
                         if (classified.isPermanent) {
                             // If it's a foreign key error on Supabase because parent customer hasn't mirrored yet,
@@ -392,7 +442,7 @@ export class DurableOutboxService {
                         }
                     }
                 } catch (err: any) {
-                    quotaMgr.releaseDatabaseQuota(`db_${id}`, 0);
+                    await quotaMgr.releaseDatabaseQuota(`db_${id}`, 0);
                 }
             }
         }
@@ -410,24 +460,53 @@ export class DurableOutboxService {
         }
     }
 
-    private resolveDependentPayload(dependencyOpId: string, payload: any): any {
+    public resolveDependentPayload(dependencyOpId: string, payload: any, target?: string): any {
         if (!this.db) return payload;
         try {
-            const row = this.db.prepare(`
-                SELECT resolved_id FROM outbox_id_map
-                WHERE op_id = ?
-                ORDER BY created_at DESC
-                LIMIT 1
-            `).get(dependencyOpId) as any;
+            let row: any;
+            if (target) {
+                row = this.db.prepare(`
+                    SELECT resolved_id FROM outbox_id_map
+                    WHERE op_id = ? AND target = ?
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                `).get(dependencyOpId, target) as any;
+            }
+            if (!row?.resolved_id) {
+                row = this.db.prepare(`
+                    SELECT resolved_id FROM outbox_id_map
+                    WHERE op_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                `).get(dependencyOpId) as any;
+            }
 
             if (row?.resolved_id) {
-                // If payload has a customer_id or bill_id placeholder matching dependency, bind it
                 const resolvedIdNum = Number(row.resolved_id);
-                if (payload.customer_id === undefined || payload.customer_id === null || payload.customer_id === 0) {
-                    return { ...payload, customer_id: resolvedIdNum || row.resolved_id };
-                }
-                if (payload.bill_id === undefined || payload.bill_id === null || payload.bill_id === 0) {
-                    return { ...payload, bill_id: resolvedIdNum || row.resolved_id };
+                const finalId = resolvedIdNum || row.resolved_id;
+
+                const bindId = (item: any) => {
+                    if (!item || typeof item !== 'object') return item;
+                    const cloned = { ...item };
+                    if (cloned.bill_id === undefined || cloned.bill_id === null || cloned.bill_id === 0 || cloned.bill_id === '') {
+                        cloned.bill_id = finalId;
+                    }
+                    if (cloned.customer_id === undefined || cloned.customer_id === null || cloned.customer_id === 0 || cloned.customer_id === '') {
+                        cloned.customer_id = finalId;
+                    }
+                    if (cloned.order_id === undefined || cloned.order_id === null || cloned.order_id === 0 || cloned.order_id === '') {
+                        cloned.order_id = finalId;
+                    }
+                    if (cloned.parent_id === undefined || cloned.parent_id === null || cloned.parent_id === 0 || cloned.parent_id === '') {
+                        cloned.parent_id = finalId;
+                    }
+                    return cloned;
+                };
+
+                if (Array.isArray(payload)) {
+                    return payload.map(bindId);
+                } else {
+                    return bindId(payload);
                 }
             }
         } catch {}
@@ -445,18 +524,28 @@ export class DurableOutboxService {
         } catch {}
     }
 
-    private async executeOnClient(
+    public async executeOnClient(
         client: SupabaseClient,
         table: string,
         op: 'insert' | 'update' | 'upsert' | 'delete',
         payload: any,
-        primaryKeyCol: string
-    ): Promise<{ success: boolean; resolvedId?: string; error?: any }> {
+        primaryKeyCol: string = 'id',
+        filter?: { column: string; value: any }[] | null,
+        upsertConflict?: string | null
+    ): Promise<{ success: boolean; resolvedId?: string; error?: any; affectedRows?: number }> {
         try {
+            // Restore field-level encryption for object or array of objects
+            const encData = Array.isArray(payload)
+                ? await encryptRowsAsync(payload, 100)
+                : (payload && typeof payload === 'object') ? encryptObject(payload) : payload;
+
             if (table === 'bill_shipping') {
-                const d = payload as Record<string, any>;
-                const { data: b } = await client.from('bills').select('id').eq('invoice_number', d.invoice_number).maybeSingle();
-                const realBillId = b?.id || d.bill_id;
+                const d = encData as Record<string, any>;
+                let realBillId = d.bill_id;
+                if (d.invoice_number && (!realBillId || realBillId === 0)) {
+                    const { data: b } = await client.from('bills').select('id').eq('invoice_number', d.invoice_number).maybeSingle();
+                    if (b?.id) realBillId = b.id;
+                }
 
                 const { data: sh, error: shErr } = await client.from('bill_shipping').upsert({ 
                     bill_id: realBillId, 
@@ -472,34 +561,73 @@ export class DurableOutboxService {
                 
                 if (shErr) return { success: false, error: shErr };
                 const resolvedId = sh?.id ? String(sh.id) : undefined;
-                return { success: true, resolvedId };
+                return { success: true, resolvedId, affectedRows: 1 };
             }
 
             if (op === 'insert') {
                 if (table === 'bills') {
-                    const res = await client.from(table).upsert(payload, { onConflict: 'invoice_number' }).select(primaryKeyCol).maybeSingle();
+                    const res = await client.from(table).upsert(encData, { onConflict: 'invoice_number' }).select(primaryKeyCol).maybeSingle();
                     if (res.error) return { success: false, error: res.error };
-                    const resolvedId = res.data ? String(res.data[primaryKeyCol]) : undefined;
-                    return { success: true, resolvedId };
+                    const resolvedId = res.data ? String((res.data as any)[primaryKeyCol]) : undefined;
+                    return { success: true, resolvedId, affectedRows: 1 };
                 }
-                const res = await client.from(table).insert(payload).select(primaryKeyCol).maybeSingle();
-                if (res.error) return { success: false, error: res.error };
-                const resolvedId = res.data ? String(res.data[primaryKeyCol]) : undefined;
-                return { success: true, resolvedId };
+                if (Array.isArray(encData)) {
+                    // Multi-row insert: DO NOT use maybeSingle()!
+                    const res = await client.from(table).insert(encData).select(primaryKeyCol);
+                    if (res.error) return { success: false, error: res.error };
+                    const rows = (res.data || []) as any[];
+                    const resolvedId = rows.length > 0 ? String(rows[0][primaryKeyCol]) : undefined;
+                    return { success: true, resolvedId, affectedRows: rows.length };
+                } else {
+                    const res = await client.from(table).insert(encData).select(primaryKeyCol).maybeSingle();
+                    if (res.error) return { success: false, error: res.error };
+                    const resolvedId = res.data ? String((res.data as any)[primaryKeyCol]) : undefined;
+                    return { success: true, resolvedId, affectedRows: res.data ? 1 : 0 };
+                }
             } else if (op === 'upsert') {
-                const res = await client.from(table).upsert(payload).select(primaryKeyCol).maybeSingle();
-                if (res.error) return { success: false, error: res.error };
-                const resolvedId = res.data ? String(res.data[primaryKeyCol]) : undefined;
-                return { success: true, resolvedId };
+                const conflictOption = upsertConflict ? { onConflict: upsertConflict } : (primaryKeyCol ? { onConflict: primaryKeyCol } : undefined);
+                if (Array.isArray(encData)) {
+                    const res = await client.from(table).upsert(encData, conflictOption).select(primaryKeyCol);
+                    if (res.error) return { success: false, error: res.error };
+                    const rows = (res.data || []) as any[];
+                    const resolvedId = rows.length > 0 ? String(rows[0][primaryKeyCol]) : undefined;
+                    return { success: true, resolvedId, affectedRows: rows.length };
+                } else {
+                    const res = await client.from(table).upsert(encData, conflictOption).select(primaryKeyCol).maybeSingle();
+                    if (res.error) return { success: false, error: res.error };
+                    const resolvedId = res.data ? String((res.data as any)[primaryKeyCol]) : undefined;
+                    return { success: true, resolvedId, affectedRows: res.data ? 1 : 0 };
+                }
             } else if (op === 'update') {
-                const pkVal = payload[primaryKeyCol];
-                if (!pkVal) return { success: false, error: new Error(`Missing ${primaryKeyCol} in update payload`) };
-                const res = await client.from(table).update(payload).eq(primaryKeyCol, pkVal);
-                return { success: !res.error, error: res.error };
+                let query: any = client.from(table).update(encData);
+                if (filter && filter.length > 0) {
+                    for (const f of filter) {
+                        query = query.eq(f.column, f.value);
+                    }
+                } else {
+                    const pkVal = (encData as any)?.[primaryKeyCol];
+                    if (!pkVal) return { success: false, error: new Error(`Missing ${primaryKeyCol} or filter in update payload`) };
+                    query = query.eq(primaryKeyCol, pkVal);
+                }
+                const res = await query.select(primaryKeyCol);
+                if (res.error) return { success: false, error: res.error };
+                const count = Array.isArray(res.data) ? res.data.length : (res.data ? 1 : 0);
+                return { success: true, affectedRows: count };
             } else if (op === 'delete') {
-                const pkVal = payload[primaryKeyCol] || payload;
-                const res = await client.from(table).delete().eq(primaryKeyCol, pkVal);
-                return { success: !res.error, error: res.error };
+                let query: any = client.from(table).delete();
+                if (filter && filter.length > 0) {
+                    for (const f of filter) {
+                        query = query.eq(f.column, f.value);
+                    }
+                } else {
+                    const pkVal = (encData as any)?.[primaryKeyCol] || encData;
+                    if (!pkVal) return { success: false, error: new Error(`Missing ${primaryKeyCol} or filter in delete payload`) };
+                    query = query.eq(primaryKeyCol, pkVal);
+                }
+                const res = await query.select(primaryKeyCol);
+                if (res.error) return { success: false, error: res.error };
+                const count = Array.isArray(res.data) ? res.data.length : (res.data ? 1 : 0);
+                return { success: true, affectedRows: count };
             }
             return { success: false, error: new Error(`Unsupported operation: ${op}`) };
         } catch (e: any) {
@@ -607,6 +735,7 @@ export class DurableOutboxService {
         if (!this.db) {
             return {
                 totalPending: 0,
+                pendingLocal: 0,
                 bufferedSupabase: 0,
                 blockedDependencies: 0,
                 deadLetterCount: 0,
@@ -641,6 +770,7 @@ export class DurableOutboxService {
 
             return {
                 totalPending: counts.pending_cnt || 0,
+                pendingLocal: counts.pending_cnt || 0,
                 bufferedSupabase: counts.buffered_cnt || 0,
                 blockedDependencies: counts.blocked_cnt || 0,
                 deadLetterCount: counts.dead_letter_cnt || 0,
@@ -650,6 +780,7 @@ export class DurableOutboxService {
         } catch {
             return {
                 totalPending: 0,
+                pendingLocal: 0,
                 bufferedSupabase: 0,
                 blockedDependencies: 0,
                 deadLetterCount: 0,
@@ -673,10 +804,13 @@ export class DurableOutboxService {
                 id: r.id,
                 entityType: r.entity_type,
                 operation: r.operation,
-                payload: JSON.parse(r.payload_json),
-                primaryKeyCol: r.primary_key_col,
+                payload: JSON.parse(r.payload_json || '{}'),
+                filter: r.filter_json ? JSON.parse(r.filter_json) : null,
+                primaryKeyCol: r.primary_key_col || 'id',
                 primaryKeyVal: r.primary_key_val,
+                upsertConflict: r.upsert_conflict || null,
                 dependencyOpId: r.dependency_op_id,
+                metadata: r.metadata_json ? JSON.parse(r.metadata_json) : null,
                 target: r.target,
                 status: r.status,
                 retryCount: r.retry_count,

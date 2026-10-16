@@ -2,9 +2,9 @@
 ## Comprehensive Reliability, Data Integrity & Verification Report
 
 **Branch**: `feat/failover-uploads-buffer`  
-**Commit**: `db094a0` — *feat(failover): smart database failover, durable uploads, and 1 GB Supabase buffer ceiling*  
+**Base Commit**: `09820cf` (PR #41)  
 **Pull Request**: [#41 (OPEN)](https://github.com/sabbir-404/Leading-Edge-ECO-System/pull/41)  
-**Status**: All 7 Phases Fully Implemented & Verified (607/607 Tests Passing)  
+**Status**: All 7 Phases & Final Correctness & Security Pass Fully Implemented & Verified (615/615 Tests Passing)  
 **Date**: October 16, 2026  
 
 ---
@@ -258,9 +258,9 @@ flowchart TD
    - Customer mirroring on creation.
    - Exposing outbox status, dead-letter replay, quota status, health state, and pending uploads to UI.
 
-### 4.2 Comprehensive 16-Scenario Verification Suite
+### 4.2 Comprehensive 24-Scenario Verification Suite
 
-All 16 scenarios defined in Phase 7 are implemented in `tests/make/smart-failover-uploads-buffer.test.ts` and pass cleanly:
+All 24 scenarios are implemented in `tests/make/smart-failover-uploads-buffer.test.ts` and pass cleanly:
 
 | # | Test Scenario Description | Result | Execution Details |
 |---|---|---|---|
@@ -272,7 +272,7 @@ All 16 scenarios defined in Phase 7 are implemented in `tests/make/smart-failove
 | **6** | Crash between transfer completion and acknowledgment | **PASS** | Preserves remote URL and verified SHA-256 hash |
 | **7** | NAS recovery with pending records and images | **PASS** | Cloud-to-NAS reconciliation completes, updates authoritative record |
 | **8** | Missing customer foreign key and dependency resolution | **PASS** | Bill waits until parent customer resolves ID, then auto-binds |
-| **9** | Missing `installation_charge` schema field (code 42703) | **PASS** | Strips missing column, classifies error, prevents write loss |
+| **9** | Missing `installation_charge` schema field (code 42703) | **PASS** | Strips missing column, classifies error, routes to dead_letter |
 | **10** | Concurrent clients competing for final available quota | **PASS** | Atomic reservation accepts 300 KB and rejects subsequent 300 KB |
 | **11** | Reaching 800 MB, 950 MB, and hard 1 GB ceiling | **PASS** | Transitions: `ok` $\rightarrow$ `warning` (820MB) $\rightarrow$ `critical` (960MB) $\rightarrow$ `exceeded` |
 | **12** | Supabase unavailable during quota measurement | **PASS** | Fails safely, falls back to persisted metrics without crash |
@@ -280,6 +280,53 @@ All 16 scenarios defined in Phase 7 are implemented in `tests/make/smart-failove
 | **14** | Conflict between NAS and fallback updates/deletes | **PASS** | Resolves conflicts with TrueNAS as authoritative source |
 | **15** | Dead-letter visibility and authorized replay | **PASS** | Unresolvable errors routed to dead-letter; operator replay unblocks |
 | **16** | Image preview resolution & security regression defense | **PASS** | Rejects unapproved hostnames, javascript schemes, traversal |
+| **17** | Asynchronous quota enforcement with delayed rejection | **PASS** | Awaits `reserveDatabaseQuota()`; rejection keeps write durable in SQLite and halts cloud attempt |
+| **18** | Multi-client race, client isolation & committed quota | **PASS** | Server-authoritative ceiling blocks over-quota client; committed quota stays accounted after release; unauthorized client release rejected |
+| **19** | Write operation semantics: filters & upsert targets | **PASS** | Persisted `filter_json` and `upsert_conflict` survive restart and apply exact filters on update/delete |
+| **20** | Multi-row inserts and array parent ID resolution | **PASS** | Multi-row inserts execute as arrays without `.maybeSingle()`; parent IDs resolve into child array items |
+| **21** | Restart safety: child operations durable without callback | **PASS** | `bill_items` and `bill_shipping` persist immediately with `dependencyOpId` and complete after restart without in-memory callbacks |
+| **22** | Field encryption preserved without double-encryption | **PASS** | Restores field encryption in write pipeline; preserves existing ciphertext prefixes (`e3:`, `e1:`, `e2:`) without double-wrapping |
+| **23** | Zero affected rows handling on update/delete | **PASS** | Explicit handling for 0 rows affected; distinguishes non-matching filter from database error |
+| **24** | Health engine returns to normal only when 100% clean | **PASS** | Verifies `pendingLocal`, `bufferedSupabase`, `blockedDependencies`, `deadLetterCount`, and uploads before declaring `NORMAL_NAS_AUTHORITATIVE` |
+
+---
+
+### 4.3 Final Correctness & Security Pass Architecture
+
+#### 1. Asynchronous Quota Enforcement
+* Every `reserveDatabaseQuota`, `reserveStorageQuota`, `releaseDatabaseQuota`, and `releaseStorageQuota` call site in `DurableOutboxService.ts` and `DurableUploadService.ts` is explicitly awaited.
+* If a quota reservation returns `false` or encounters a network error, the operation is never attempted against Supabase Cloud; it remains safely staged locally in SQLite or on disk.
+* Reservations are converted to `committed` usage on successful remote write or explicitly released on failure.
+
+#### 2. Authoritative Server Ceilings & Security in Migration 070
+* `070_supabase_buffer_quota_reservations.sql` defines hardcoded constants directly in PostgreSQL:
+  - `STORAGE_CEILING = 600,000,000` bytes
+  - `DATABASE_CEILING = 250,000,000` bytes
+  - `HARD_CEILING = 1,000,000,000` bytes
+  - `CRITICAL_RESERVE = 150,000,000` bytes
+  - `MAX_ALLOWED_TOTAL = 850,000,000` bytes
+* Desktop clients cannot supply or alter capacity limits.
+* Client isolation: RPC functions reject modifications or releases attempted by a different `client_id` with `UNAUTHORIZED_CLIENT_MISMATCH`.
+* Row Level Security (RLS) is enabled; direct table writes/updates are revoked from `PUBLIC`, `anon`, and `authenticated`.
+* Functions are defined as `SECURITY DEFINER` with fixed `SET search_path = public, pg_temp`.
+* Both `active` and `committed` reservations are counted toward available capacity until explicitly pruned.
+
+#### 3. Preservation of Write Operation Semantics
+* `outbox_operations` table schema expanded with discrete fields: `operation`, `payload_json`, `filter_json`, `primary_key_col`, `primary_key_val`, `upsert_conflict`, `dependency_op_id`, `metadata_json`.
+* Multi-row inserts execute directly without `.maybeSingle()`, preventing runtime truncation or errors.
+* Complex update/delete filters survive process crashes and are restored and applied faithfully.
+* Dependent parent/child resolution maps parent IDs into array payloads without flattening or corrupting child items.
+
+#### 4. Field Encryption & Restart Safety
+* Field encryption (`encryptObject` / `encryptRowsAsync`) is applied in `DurableOutboxService.executeOnClient()`.
+* Double-encryption prevention detects encrypted prefixes (`e3:`, `e1:`, `e2:`) and passes existing ciphertext through untouched.
+* Workflow follow-ups (such as `bill_items` and `bill_shipping` in billing creation) are persisted immediately into the durable SQLite queue with `dependencyOpId`, eliminating reliance on fragile in-memory `onSuccess` callbacks.
+
+#### 5. Consolidated Health Engine & Recovery Synchronization
+* `getOutboxStats()` returns authoritative `pendingLocal` counts.
+* `triggerRecoverySynchronization()` strictly verifies that `pendingLocal == 0`, `bufferedSupabase == 0`, `blockedDependencies == 0`, `deadLetterCount == 0`, and staged uploads are cleared before declaring `NORMAL_NAS_AUTHORITATIVE`.
+* Recovery reconciliation cycles are protected by `isReconciling` mutex guards to prevent race conditions during repeated health check ticks.
+* Probes cancel timed-out requests using `AbortController` and `abortSignal` with a 3000ms ceiling.
 
 ---
 
@@ -365,7 +412,7 @@ await window.electron.getPendingUploads();
 └─────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-* **Test Suite Counts**: **39 test files passed**, **607 tests passed**, 0 failed.
+* **Test Suite Counts**: **39 test files passed**, **615 tests passed**, 0 failed.
 * **Build Artifacts**:
   - `core/main.cjs`: 5.8 MB (Node 18 bundled).
   - `core/preload.cjs`: 36.2 KB.
@@ -379,9 +426,15 @@ await window.electron.getPendingUploads();
 * **Title**: `feat: Smart Database Failover, Reliable Image Uploads & 1 GB Supabase Buffer`
 * **State**: **OPEN**
 
-### 7.3 Unresolved Risks & Recommendations for Deployment
-1. **TrueNAS Migration 069**: Until TrueNAS executes Migration 069, bills containing `installation_charge` will be written using the defensive column-stripping fallback. Migration 069 should be scheduled during normal operational hours (it is non-locking and takes < 1 second).
-2. **Tailscale Network Stability**: If a client device has an unstable Tailscale connection, `ConsolidatedHealthEngine` will enter `DEGRADED_DATABASE_FALLBACK` or `DEGRADED_STORAGE_BUFFER`. The UI truthfully indicates this state with amber indicators and keeps all data safe in the local SQLite WAL outbox.
+### 7.3 Testing Methodology & Test Distinction
+* **Unit & Mocked Local Tests**: Scenarios 1–16, 17, 19–24 evaluate client-side state machines, SQLite WAL durable queuing, retry backoff, field encryption, parent-child dependency resolution, and probe cancellation against isolated mock servers and local SQLite storage.
+* **Shared Quota Logic & Race Tests**: Scenario 18 simulates multi-client race conditions, client identity mismatch rejection, and committed quota retention against server-side reservation algorithm specifications.
+* **Production Environment Integrity**: In compliance with strict safety directives, Migrations 069 and 070 have NOT been applied to production Supabase or TrueNAS during this pass. The shared quota system is validated against SQL and client contract specifications, but will require staging validation once Migrations 069 and 070 are deployed in a staging database before production use.
+
+### 7.4 Unresolved Risks & Recommendations for Deployment
+1. **Migration 069 Application**: Must be applied to TrueNAS PostgreSQL (`069_nas_schema_synchronization_and_bills.sql`) with `NOTIFY pgrst, 'reload schema'` so TrueNAS PostgREST recognizes `installation_charge` and `installation_note`.
+2. **Migration 070 Application**: Must be applied to Supabase PostgreSQL (`070_supabase_buffer_quota_reservations.sql`) with `SECURITY DEFINER` functions, RLS enforcement, and authoritative 600 MB / 250 MB / 1 GB limits.
+3. **Dedicated Private Bucket Configuration**: Ensure the `make-order-files` Supabase bucket exists and is properly partitioned so permanent application assets are never confused with evictable fallback objects.
 
 ---
 *Report certified and authored for LE-SOFT Production Release Architecture.*

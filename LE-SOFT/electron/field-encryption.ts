@@ -169,6 +169,9 @@ export function clearEncryptionKey(): void {
  */
 export function encryptField(text: string): string {
     if (!text) return text || '';
+    if (typeof text === 'string' && (text.startsWith(V3_PREFIX) || text.startsWith(V1_PREFIX) || text.startsWith(V2_CBC_PREFIX))) {
+        return text; // Already encrypted; prevent double-encryption
+    }
     const masterKey = getMasterKey();
 
     try {

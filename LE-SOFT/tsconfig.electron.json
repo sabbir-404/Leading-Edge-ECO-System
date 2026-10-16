@@ -1,7 +1,8 @@
 {
     "compilerOptions": {
         "module": "commonjs",
-        "target": "es6",
+        "target": "es2022",
+        "lib": ["es2022", "dom"],
         "outDir": "dist-electron",
         "esModuleInterop": true,
         "skipLibCheck": true,

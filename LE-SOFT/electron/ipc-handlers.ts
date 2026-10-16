@@ -2513,6 +2513,28 @@ export function registerHandlers() {
             } catch {}
         }
 
+        // Persist child shipping in Durable SQLite Outbox with dependency tracking so it survives restarts
+        if (shipping && shipping.ship_to_name && shipping.ship_to_address) {
+            try {
+                DurableOutboxService.getInstance().enqueueSingle({
+                    entityType: 'bill_shipping',
+                    operation: 'insert',
+                    payload: {
+                        invoice_number: invoiceNumber,
+                        ship_to_name: shipping.ship_to_name,
+                        ship_to_address: shipping.ship_to_address,
+                        ship_to_phone: shipping.ship_to_phone || '',
+                        ship_from_name: shipping.ship_from_name || '',
+                        ship_from_address: shipping.ship_from_address || '',
+                        shipping_charge: shipping.shipping_charge || 0,
+                        updated_by: actor,
+                        status: 'pending_payment'
+                    },
+                    dependencyOpId: billOpId
+                });
+            } catch {}
+        }
+
         await writeAuditLog({
             module: 'Billing',
             action: 'CREATE',

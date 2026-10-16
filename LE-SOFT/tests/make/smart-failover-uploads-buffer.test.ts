@@ -32,6 +32,7 @@ import { SupabaseQuotaManager } from '../../electron/services/quota/SupabaseQuot
 import { DurableOutboxService } from '../../electron/services/outbox/DurableOutboxService';
 import { DurableUploadService } from '../../electron/services/media/DurableUploadService';
 import { ConsolidatedHealthEngine } from '../../electron/services/health/ConsolidatedHealthEngine';
+import { encryptField, encryptObject, encryptRowsAsync, decryptField } from '../../electron/field-encryption';
 
 describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer', () => {
     let tmpDir: string;
@@ -568,4 +569,388 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
         expect(rollbackSql).toContain('installation_charge');
         expect(rollbackSql).toContain('RECOVERY STRATEGY (Non-Destructive Fix-Forward)');
     });
+
+    // ── 17. Quota rejection with delayed Promise prevents cloud fallback write ──
+    it('Scenario 17: Delayed Promise resolving to false for reserveDatabaseQuota prevents cloud fallback write and preserves work locally', async () => {
+        const outbox = DurableOutboxService.getInstance();
+        const quotaMgr = SupabaseQuotaManager.getInstance();
+
+        // Simulate delayed quota rejection (e.g. concurrent race or server quota limit)
+        const reserveSpy = vi.spyOn(quotaMgr, 'reserveDatabaseQuota').mockImplementation(() => {
+            return new Promise((resolve) => {
+                setTimeout(() => resolve(false), 25);
+            });
+        });
+
+        let cloudWriteAttempted = false;
+        const mockSbClient: any = {
+            from: vi.fn().mockImplementation(() => {
+                cloudWriteAttempted = true;
+                return {
+                    insert: vi.fn().mockReturnValue({ select: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: { id: 999 }, error: null }) }) }),
+                };
+            })
+        };
+
+        // Register clients: NAS is null (offline), Supabase is mock
+        outbox.registerClients({ nas: null, supabase: mockSbClient });
+
+        const opId = `op_quota_rej_${Date.now()}`;
+        outbox.enqueueBatch([{
+            id: opId,
+            entityType: 'bills',
+            operation: 'insert',
+            payload: { invoice_number: 'INV-QUOTA-TEST', grand_total: 1500 },
+            target: 'supabase'
+        }]);
+
+        // Drain the batch
+        await outbox.drainNextBatch(1);
+
+        expect(reserveSpy).toHaveBeenCalled();
+        // Cloud write must NOT occur because reservation was rejected!
+        expect(cloudWriteAttempted).toBe(false);
+
+        // Record must remain durable in local outbox with incremented retry
+        const stats = outbox.getOutboxStats();
+        expect(stats.totalPending).toBeGreaterThan(0);
+
+        reserveSpy.mockRestore();
+    });
+
+    // ── 18. Committed fallback data remains included in shared quota accounting ──
+    it('Scenario 18: Committed fallback data remains included in shared quota accounting after reservation release', async () => {
+        const quotaMgr = new SupabaseQuotaManager('test-client-18');
+        const initialTotal = quotaMgr.getCurrentTotalUsageBytes();
+
+        // Reserve 200 KB
+        const reserved = await quotaMgr.reserveStorageQuota('res_test_commit', 200_000);
+        expect(reserved).toBe(true);
+        expect(quotaMgr.getTotalReservedStorageBytes()).toBe(200_000);
+
+        // Release with confirmedUploadedBytes: 200_000 (committed)
+        await quotaMgr.releaseStorageQuota('res_test_commit', 200_000);
+
+        // Reservation is cleared from active, but usage remains counted as committed
+        expect(quotaMgr.getTotalReservedStorageBytes()).toBe(0);
+        expect(quotaMgr.getCurrentTotalUsageBytes()).toBe(initialTotal + 200_000);
+
+        // Pruning removes committed bytes from accounting
+        await quotaMgr.pruneConfirmedStorage('res_test_commit', 100_000);
+        expect(quotaMgr.getCurrentTotalUsageBytes()).toBe(initialTotal + 100_000);
+
+        // Cleanup
+        await quotaMgr.pruneConfirmedStorage('res_test_commit', 100_000);
+    });
+
+    // ── 19. Security and access control in Migration 070 ─────────────────────────
+    it('Scenario 19: Migration 070 enforces authoritative server constants, client isolation, and security definer protections', () => {
+        const migrationSqlPath = path.join(process.cwd(), 'supabase/migrations/070_supabase_buffer_quota_reservations.sql');
+        expect(fs.existsSync(migrationSqlPath)).toBe(true);
+        const sql = fs.readFileSync(migrationSqlPath, 'utf-8');
+
+        // Authoritative limits defined on server
+        expect(sql).toContain('STORAGE_CEILING CONSTANT BIGINT := 600000000');
+        expect(sql).toContain('DATABASE_CEILING CONSTANT BIGINT := 250000000');
+        expect(sql).toContain('HARD_CEILING CONSTANT BIGINT := 1000000000');
+        expect(sql).toContain('CRITICAL_RESERVE CONSTANT BIGINT := 150000000');
+
+        // Client isolation: Client B cannot modify Client A's reservation
+        expect(sql).toContain('UNAUTHORIZED_CLIENT_MISMATCH');
+        expect(sql).toContain('v_existing_client <> p_client_id');
+
+        // Direct table access revoked, RLS enabled
+        expect(sql).toContain('ALTER TABLE public.supabase_buffer_reservations ENABLE ROW LEVEL SECURITY');
+        expect(sql).toContain('REVOKE ALL ON TABLE public.supabase_buffer_reservations FROM PUBLIC, anon, authenticated');
+
+        // Explicit search_path protection on security definer functions
+        expect(sql).toContain('SECURITY DEFINER');
+        expect(sql).toContain('SET search_path = public, pg_temp');
+
+        // Accounts for active and committed status
+        expect(sql).toContain("WHERE status IN ('active', 'committed') AND resource_type = 'storage'");
+        expect(sql).toContain("WHERE status IN ('active', 'committed') AND resource_type = 'database'");
+    });
+
+    // ── 20. Update/delete filters and conflict targets survive serialization ──────
+    it('Scenario 20: Update/delete filters and upsert conflict targets survive durable serialization and execution', async () => {
+        const outbox = DurableOutboxService.getInstance();
+
+        let executedFilter: any[] = [];
+        let executedConflict: any = null;
+
+        const mockClient: any = {
+            from: vi.fn().mockImplementation((table: string) => {
+                const chain: any = {
+                    update: vi.fn().mockReturnThis(),
+                    upsert: vi.fn().mockImplementation((_data: any, options: any) => {
+                        executedConflict = options?.onConflict;
+                        return {
+                            select: vi.fn().mockReturnValue({
+                                maybeSingle: vi.fn().mockResolvedValue({ data: { id: 101 }, error: null })
+                            })
+                        };
+                    }),
+                    delete: vi.fn().mockReturnThis(),
+                    eq: vi.fn().mockImplementation((col: string, val: any) => {
+                        executedFilter.push({ col, val });
+                        return chain;
+                    }),
+                    select: vi.fn().mockReturnValue({
+                        then: (fn: any) => Promise.resolve(fn({ data: [{ id: 101 }], error: null }))
+                    })
+                };
+                return chain;
+            })
+        };
+
+        // 1. Test Update with multi-column filter
+        const updateResult = await outbox.executeOnClient(
+            mockClient,
+            'products',
+            'update',
+            { price: 450 },
+            'id',
+            [{ column: 'sku', value: 'DESK-01' }, { column: 'is_active', value: true }]
+        );
+
+        expect(updateResult.success).toBe(true);
+        expect(executedFilter).toEqual([
+            { col: 'sku', val: 'DESK-01' },
+            { col: 'is_active', val: true }
+        ]);
+
+        // 2. Test Upsert with explicit conflict target
+        const upsertResult = await outbox.executeOnClient(
+            mockClient,
+            'products',
+            'upsert',
+            { sku: 'DESK-01', price: 450 },
+            'id',
+            null,
+            'sku'
+        );
+
+        expect(upsertResult.success).toBe(true);
+        expect(executedConflict).toBe('sku');
+    });
+
+    // ── 21. Multi-row payloads and parent/child dependencies ──────────────────────
+    it('Scenario 21: Multi-row child payloads preserve array type, substitute parent IDs, and execute without maybeSingle', async () => {
+        const outbox = DurableOutboxService.getInstance();
+
+        // 1. Test resolveDependentPayload with an array of child rows
+        (outbox as any).recordResolvedId('op_parent_bill', 'nas', '777');
+
+        const childRows = [
+            { product_name: 'Table', quantity: 1, price: 1000 },
+            { product_name: 'Chair', quantity: 4, price: 250 }
+        ];
+
+        const resolved = outbox.resolveDependentPayload('op_parent_bill', childRows);
+
+        expect(Array.isArray(resolved)).toBe(true);
+        expect(resolved.length).toBe(2);
+        expect(resolved[0].bill_id).toBe(777);
+        expect(resolved[1].bill_id).toBe(777);
+
+        // 2. Test multi-row insert execution on client
+        let insertArgs: any = null;
+        let selectChainCalled = false;
+
+        const mockClient: any = {
+            from: vi.fn().mockImplementation(() => ({
+                insert: vi.fn().mockImplementation((data: any) => {
+                    insertArgs = data;
+                    return {
+                        select: vi.fn().mockImplementation(() => {
+                            selectChainCalled = true;
+                            // Multi-row insert returns array of inserted records without calling maybeSingle!
+                            return Promise.resolve({
+                                data: [{ id: 1 }, { id: 2 }],
+                                error: null
+                            });
+                        })
+                    };
+                })
+            }))
+        };
+
+        const result = await outbox.executeOnClient(mockClient, 'bill_items', 'insert', resolved, 'id');
+
+        expect(result.success).toBe(true);
+        expect(result.affectedRows).toBe(2);
+        expect(Array.isArray(insertArgs)).toBe(true);
+        expect(selectChainCalled).toBe(true);
+    });
+
+    // ── 22. Field encryption preservation without double-encryption ─────────────
+    it('Scenario 22: Preserves field encryption transformations without double-encrypting existing ciphertext', async () => {
+        const sensitiveObject = {
+            notes: 'Confidential client agreement notes',
+            custom_spec: 'Special rosewood varnish finish',
+            invoice_number: 'INV-2026-001', // Structural key: must remain plain text
+            role: 'cashier',                 // Structural key: must remain plain text
+            amount: 5000                     // Number: not encrypted
+        };
+
+        // First encryption pass
+        const enc1 = encryptObject(sensitiveObject);
+
+        expect(enc1.notes.startsWith('e3:')).toBe(true);
+        expect(enc1.custom_spec.startsWith('e3:')).toBe(true);
+        expect(enc1.invoice_number).toBe('INV-2026-001');
+        expect(enc1.role).toBe('cashier');
+        expect(enc1.amount).toBe(5000);
+
+        // Second encryption pass: verify double-encryption guard
+        const enc2 = encryptObject(enc1);
+        expect(enc2.notes).toBe(enc1.notes);
+        expect(enc2.custom_spec).toBe(enc1.custom_spec);
+        expect(enc2.notes.startsWith('e3:e3:')).toBe(false);
+
+        // Decryption verification
+        expect(decryptField(enc1.notes)).toBe('Confidential client agreement notes');
+        expect(decryptField(enc1.custom_spec)).toBe('Special rosewood varnish finish');
+    });
+
+    // ── 23. Callback-driven work survives restart via durable outbox ────────────
+    it('Scenario 23: Child operations enqueued with dependencyOpId survive application restart and execute', async () => {
+        const outbox = DurableOutboxService.getInstance();
+        const parentId = `bill_parent_${Date.now()}`;
+        const childId = `items_child_${Date.now()}`;
+
+        // Step 1: Parent and child enqueued into durable SQLite outbox
+        outbox.enqueueBatch([
+            {
+                id: parentId,
+                entityType: 'bills',
+                operation: 'insert',
+                payload: { invoice_number: 'INV-DURABLE-RESTART', grand_total: 2500 }
+            },
+            {
+                id: childId,
+                entityType: 'bill_items',
+                operation: 'insert',
+                payload: [{ product_name: 'Executive Desk', quantity: 1, price: 2500 }],
+                dependencyOpId: parentId
+            }
+        ]);
+
+        // Child record starts in 'blocked_dependency'
+        const initialStats = outbox.getOutboxStats();
+        expect(initialStats.blockedDependencies).toBeGreaterThan(0);
+
+        // Step 2: Simulate app restart after parent commits:
+        // Record parent resolution
+        (outbox as any).recordResolvedId(parentId, 'nas', '8888');
+
+        // Mark parent as completed
+        (outbox as any).markCompleted(parentId);
+
+        // Step 3: Drain outbox in new application session
+        // Unblocks child record and resolves bill_id to 8888
+        const mockClient: any = {
+            from: vi.fn().mockImplementation(() => ({
+                insert: vi.fn().mockReturnValue({
+                    select: vi.fn().mockResolvedValue({ data: [{ id: 10 }], error: null })
+                })
+            }))
+        };
+        outbox.registerClients({ nas: mockClient, supabase: null });
+
+        const processed = await outbox.drainNextBatch(5);
+        expect(processed).toBeGreaterThan(0);
+
+        // Child dependency was executed and resolved
+        const finalStats = outbox.getOutboxStats();
+        expect(finalStats.blockedDependencies).toBe(0);
+    });
+
+    // ── 24. Health engine recovery requires all outbox and upload queues to be clear ──
+    it('Scenario 24: Recovery engine returns to NORMAL_NAS_AUTHORITATIVE only when outbox and upload queues are 100% clean', async () => {
+        const engine = ConsolidatedHealthEngine.getInstance();
+        const outbox = DurableOutboxService.getInstance();
+        const uploadService = DurableUploadService.getInstance();
+
+        // Simulate NAS healthy
+        vi.spyOn(engine as any, 'probeNasDatabase').mockResolvedValue({ healthy: true, latency: 10, url: 'nas_db' });
+        vi.spyOn(engine as any, 'probeNasStorage').mockResolvedValue({ healthy: true, latency: 15, url: 'nas_storage' });
+        vi.spyOn(engine as any, 'probeSupabaseDatabase').mockResolvedValue(true);
+        vi.spyOn(engine as any, 'probeSupabaseStorage').mockResolvedValue(true);
+
+        vi.spyOn(outbox, 'drainNextBatch').mockResolvedValue(0);
+        vi.spyOn(uploadService, 'processNextBatch').mockResolvedValue();
+
+        (engine as any).currentState = 'RECOVERING_SYNCHRONIZING';
+
+        // Case A: Dead-letter item outstanding -> must NOT transition to normal
+        vi.spyOn(outbox, 'getOutboxStats').mockReturnValue({
+            totalPending: 0,
+            pendingLocal: 0,
+            bufferedSupabase: 0,
+            blockedDependencies: 0,
+            deadLetterCount: 1, // Outstanding operator dead letter
+            oldestPendingTime: null,
+            recentErrors: []
+        });
+        vi.spyOn(uploadService, 'getPendingUploadStats').mockReturnValue({
+            stagedCount: 0,
+            bufferedCount: 0,
+            totalPendingBytes: 0
+        });
+
+        await engine.triggerRecoverySynchronization();
+        expect(engine.getCurrentState()).toBe('RECOVERING_SYNCHRONIZING');
+
+        // Case B: Blocked dependency outstanding -> must NOT transition to normal
+        vi.spyOn(outbox, 'getOutboxStats').mockReturnValue({
+            totalPending: 0,
+            pendingLocal: 0,
+            bufferedSupabase: 0,
+            blockedDependencies: 1,
+            deadLetterCount: 0,
+            oldestPendingTime: null,
+            recentErrors: []
+        });
+
+        await engine.triggerRecoverySynchronization();
+        expect(engine.getCurrentState()).toBe('RECOVERING_SYNCHRONIZING');
+
+        // Case C: Staged uploads outstanding -> must NOT transition to normal
+        vi.spyOn(outbox, 'getOutboxStats').mockReturnValue({
+            totalPending: 0,
+            pendingLocal: 0,
+            bufferedSupabase: 0,
+            blockedDependencies: 0,
+            deadLetterCount: 0,
+            oldestPendingTime: null,
+            recentErrors: []
+        });
+        vi.spyOn(uploadService, 'getPendingUploadStats').mockReturnValue({
+            stagedCount: 2,
+            bufferedCount: 0,
+            totalPendingBytes: 50000
+        });
+
+        await engine.triggerRecoverySynchronization();
+        expect(engine.getCurrentState()).toBe('RECOVERING_SYNCHRONIZING');
+
+        // Case D: All queues 100% clean -> transitions to NORMAL_NAS_AUTHORITATIVE
+        vi.spyOn(uploadService, 'getPendingUploadStats').mockReturnValue({
+            stagedCount: 0,
+            bufferedCount: 0,
+            totalPendingBytes: 0
+        });
+
+        await engine.triggerRecoverySynchronization();
+        expect(engine.getCurrentState()).toBe('NORMAL_NAS_AUTHORITATIVE');
+
+        // Case E: Repeated triggers do not overlap
+        (engine as any).isReconciling = true;
+        const secondRun = engine.triggerRecoverySynchronization();
+        await secondRun;
+        // returns early without error
+    });
 });
+

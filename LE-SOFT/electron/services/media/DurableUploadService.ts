@@ -285,7 +285,7 @@ export class DurableUploadService {
 
                 // If it was previously buffered in Supabase Cloud, safely prune the temporary cloud copy
                 if (row.status === 'buffered_supabase' && row.remote_url_supabase) {
-                    await this.pruneCloudCopy(row.subfolder, row.remote_url_supabase, row.size_bytes);
+                    await this.pruneCloudCopy(row.subfolder, row.remote_url_supabase, row.size_bytes, uploadId);
                 }
 
                 console.log(`[DurableUpload] Upload ${uploadId} successfully synchronized to authoritative NAS Storage: ${authoritativeUrl}`);
@@ -312,7 +312,7 @@ export class DurableUploadService {
                             .getPublicUrl(cloudPath);
                         const cloudUrl = pubData?.publicUrl || cloudPath;
 
-                        quotaMgr.releaseStorageQuota(uploadId, row.size_bytes);
+                        await quotaMgr.releaseStorageQuota(uploadId, row.size_bytes);
 
                         // Update entity record with temporary cloud URL
                         const entityUpdated = await this.updateEntityRecord(row.entity_type, row.entity_id, row.field_name, cloudUrl);
@@ -327,11 +327,11 @@ export class DurableUploadService {
                         this.broadcastUploadStatus();
                         return { success: true, url: cloudUrl, activeUrl: cloudUrl, status: 'buffered_supabase' };
                     } else {
-                        quotaMgr.releaseStorageQuota(uploadId, 0);
+                        await quotaMgr.releaseStorageQuota(uploadId, 0);
                         lastError = `Supabase storage error: ${sbErr.message}`;
                     }
                 } catch (sbEx: any) {
-                    quotaMgr.releaseStorageQuota(uploadId, 0);
+                    await quotaMgr.releaseStorageQuota(uploadId, 0);
                     lastError = `Supabase storage exception: ${sbEx.message}`;
                 }
             } else {
@@ -366,7 +366,7 @@ export class DurableUploadService {
                     console.warn(`[DurableUpload] Could not fetch entity record for ${entityType} ID ${entityId}:`, selectErr.message);
                     return false;
                 }
-                const list: string[] = Array.isArray(existing?.[fieldName]) ? existing[fieldName] : [];
+                const list: string[] = Array.isArray((existing as any)?.[fieldName]) ? (existing as any)[fieldName] : [];
                 if (!list.includes(newUrl)) {
                     const { error: updErr } = await client.from(entityType).update({ [fieldName]: [...list, newUrl] }).eq('id', entityId);
                     if (updErr) {
@@ -388,7 +388,7 @@ export class DurableUploadService {
         }
     }
 
-    private async pruneCloudCopy(subfolder: string, cloudUrl: string, sizeBytes: number): Promise<void> {
+    private async pruneCloudCopy(subfolder: string, cloudUrl: string, sizeBytes: number, uploadId?: string): Promise<void> {
         if (!this.supabaseClient) return;
         try {
             // Extract storage object key from public URL
@@ -401,7 +401,11 @@ export class DurableUploadService {
                 .remove([objectKey]);
 
             if (!error) {
-                SupabaseQuotaManager.getInstance().deductConfirmedPrunedStorage(sizeBytes);
+                if (uploadId) {
+                    await SupabaseQuotaManager.getInstance().pruneConfirmedStorage(uploadId, sizeBytes);
+                } else {
+                    SupabaseQuotaManager.getInstance().deductConfirmedPrunedStorage(sizeBytes);
+                }
                 console.log(`[DurableUpload] Safely pruned temporary cloud copy after NAS persistence: ${objectKey}`);
             }
         } catch {}
@@ -497,7 +501,7 @@ export class DurableUploadService {
                 });
 
                 if (response.ok) {
-                    const data = await response.json();
+                    const data = (await response.json()) as any;
                     if (data && data.success && (data.file_url || data.url)) {
                         const url = (data.file_url || data.url) as string;
 

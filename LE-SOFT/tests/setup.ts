@@ -74,22 +74,47 @@ vi.mock('better-sqlite3', () => {
           if (existing) {
             throw new Error('UNIQUE constraint failed: outbox_operations.id');
           }
-          rows.push({
-            id: args[0],
-            entity_type: args[1],
-            operation: args[2],
-            payload_json: args[3],
-            primary_key_col: args[4],
-            primary_key_val: args[5],
-            dependency_op_id: args[6],
-            target: args[7],
-            status: args[8],
-            retry_count: 0,
-            max_retries: args[9] || 10,
-            last_error: null,
-            created_at: args[10] || Date.now(),
-            updated_at: args[11] || Date.now(),
-          });
+          if (args.length >= 14) {
+            rows.push({
+              id: args[0],
+              entity_type: args[1],
+              operation: args[2],
+              payload_json: args[3],
+              filter_json: args[4],
+              primary_key_col: args[5],
+              primary_key_val: args[6],
+              upsert_conflict: args[7],
+              dependency_op_id: args[8],
+              metadata_json: args[9],
+              target: args[10],
+              status: args[11],
+              retry_count: 0,
+              max_retries: args[12] || 10,
+              last_error: null,
+              created_at: args[13] || Date.now(),
+              updated_at: args[14] || Date.now(),
+            });
+          } else {
+            rows.push({
+              id: args[0],
+              entity_type: args[1],
+              operation: args[2],
+              payload_json: args[3],
+              filter_json: null,
+              primary_key_col: args[4],
+              primary_key_val: args[5],
+              upsert_conflict: null,
+              dependency_op_id: args[6],
+              metadata_json: null,
+              target: args[7],
+              status: args[8],
+              retry_count: 0,
+              max_retries: args[9] || 10,
+              last_error: null,
+              created_at: args[10] || Date.now(),
+              updated_at: args[11] || Date.now(),
+            });
+          }
         } else if (table === 'durable_uploads') {
           rows.push({
             id: args[0],

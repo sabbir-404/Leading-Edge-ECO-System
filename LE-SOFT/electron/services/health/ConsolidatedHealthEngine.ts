@@ -179,16 +179,17 @@ export class ConsolidatedHealthEngine {
     public async probeNasDatabase(): Promise<{ healthy: boolean; latency: number; url: string | null }> {
         if (!this.nasClient) return { healthy: false, latency: 0, url: null };
         const t0 = Date.now();
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
 
         try {
-            // Real lightweight query against authoritative MAKE table with 3000ms timeout
+            // Real lightweight query against authoritative MAKE table with 3000ms timeout and cancellation
             const timeoutPromise = new Promise<any>((_, reject) =>
                 setTimeout(() => reject(new Error('NAS DB query timeout (3000ms)')), 3000)
             );
 
-            const queryPromise = this.nasClient
-                .from('make_products')
-                .select('id')
+            const queryPromise = (this.nasClient.from('make_products').select('id') as any)
+                .abortSignal(controller.signal)
                 .limit(1);
 
             const res = await Promise.race([queryPromise, timeoutPromise]);
@@ -200,6 +201,8 @@ export class ConsolidatedHealthEngine {
             return { healthy: false, latency, url: null };
         } catch {
             return { healthy: false, latency: Date.now() - t0, url: null };
+        } finally {
+            clearTimeout(timeoutId);
         }
     }
 
@@ -281,6 +284,10 @@ export class ConsolidatedHealthEngine {
 
         if (isNasFullyUp) {
             if (this.currentState !== 'NORMAL_NAS_AUTHORITATIVE') {
+                if (this.isReconciling) {
+                    // Prevent overlapping recovery cycles
+                    return;
+                }
                 console.log('[ConsolidatedHealth] TrueNAS services restored healthy. Transitioning to RECOVERING_SYNCHRONIZING.');
                 this.currentState = 'RECOVERING_SYNCHRONIZING';
                 // Trigger reconciliation
@@ -329,12 +336,12 @@ export class ConsolidatedHealthEngine {
                 const outboxStats = DurableOutboxService.getInstance().getOutboxStats();
                 const uploadStats = DurableUploadService.getInstance().getPendingUploadStats();
 
-                const pendingOutbox = outboxStats.bufferedSupabase + outboxStats.pendingLocal;
+                const pendingOutbox = outboxStats.bufferedSupabase + outboxStats.pendingLocal + outboxStats.blockedDependencies;
                 const pendingUploads = uploadStats.bufferedCount + uploadStats.stagedCount;
 
                 if (pendingOutbox === 0 && pendingUploads === 0) {
                     hasMore = false;
-                } else if (drainedCount === 0 && uploadStats.bufferedCount === 0) {
+                } else if (drainedCount === 0 && uploadStats.bufferedCount === 0 && uploadStats.stagedCount === 0) {
                     // Stalled or unable to drain in this iteration
                     hasMore = false;
                 }
@@ -344,14 +351,20 @@ export class ConsolidatedHealthEngine {
             const finalOutboxStats = DurableOutboxService.getInstance().getOutboxStats();
             const finalUploadStats = DurableUploadService.getInstance().getPendingUploadStats();
 
-            if (finalOutboxStats.bufferedSupabase === 0 &&
-                finalOutboxStats.pendingLocal === 0 &&
-                finalUploadStats.bufferedCount === 0 &&
-                finalUploadStats.stagedCount === 0) {
+            // Do not declare normal operation while required items remain buffered, pending, blocked, or dead-letter/unverified
+            const hasPendingOutbox = (finalOutboxStats.bufferedSupabase > 0) ||
+                                     (finalOutboxStats.pendingLocal > 0) ||
+                                     (finalOutboxStats.blockedDependencies > 0) ||
+                                     (finalOutboxStats.deadLetterCount > 0);
+
+            const hasPendingUploads = (finalUploadStats.bufferedCount > 0) ||
+                                      (finalUploadStats.stagedCount > 0);
+
+            if (!hasPendingOutbox && !hasPendingUploads) {
                 this.currentState = 'NORMAL_NAS_AUTHORITATIVE';
                 console.log('[ConsolidatedHealth] All pending records and buffered uploads reconciled to TrueNAS master. State: NORMAL_NAS_AUTHORITATIVE.');
             } else {
-                console.warn(`[ConsolidatedHealth] Incomplete reconciliation (Outbox buffered: ${finalOutboxStats.bufferedSupabase}, pending: ${finalOutboxStats.pendingLocal}; Upload buffered: ${finalUploadStats.bufferedCount}, staged: ${finalUploadStats.stagedCount}). Remaining in RECOVERING_SYNCHRONIZING.`);
+                console.warn(`[ConsolidatedHealth] Incomplete reconciliation (Outbox buffered: ${finalOutboxStats.bufferedSupabase}, pending: ${finalOutboxStats.pendingLocal}, blocked: ${finalOutboxStats.blockedDependencies}, dead_letter: ${finalOutboxStats.deadLetterCount}; Upload buffered: ${finalUploadStats.bufferedCount}, staged: ${finalUploadStats.stagedCount}). Remaining in RECOVERING_SYNCHRONIZING.`);
             }
         } catch (e: any) {
             console.warn('[ConsolidatedHealth] Recovery synchronization warning:', e.message);
