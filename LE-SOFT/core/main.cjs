@@ -134420,15 +134420,6 @@ async function syncStockToMySQL(localId, soldQty, syncId, invoiceNumber) {
   const connection = await mysqlPool.getConnection();
   try {
     await connection.beginTransaction();
-    const [existing] = await connection.query(
-      "SELECT dedup_key FROM le_stock_sync_idempotency WHERE dedup_key = ? FOR UPDATE",
-      [dedupKey]
-    );
-    if (existing && existing.length > 0) {
-      console.log(`[MySQLSync] Operation ${dedupKey} was already applied on MySQL destination. Skipping duplicate decrement.`);
-      await connection.commit();
-      return;
-    }
     try {
       await connection.query(
         "INSERT INTO le_stock_sync_idempotency (dedup_key, invoice_number, product_id, quantity) VALUES (?, ?, ?, ?)",
@@ -134436,7 +134427,7 @@ async function syncStockToMySQL(localId, soldQty, syncId, invoiceNumber) {
       );
     } catch (insertErr) {
       if (insertErr.code === "ER_DUP_ENTRY" || insertErr.errno === 1062 || insertErr.message?.includes("Duplicate entry")) {
-        console.log(`[MySQLSync] Operation ${dedupKey} concurrently applied on MySQL destination. Skipping duplicate decrement.`);
+        console.log(`[MySQLSync] Operation ${dedupKey} was already applied on MySQL destination. Skipping duplicate decrement.`);
         await connection.rollback();
         return;
       }

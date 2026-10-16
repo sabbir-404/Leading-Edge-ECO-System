@@ -461,19 +461,9 @@ export async function syncStockToMySQL(localId: number, soldQty: number, syncId?
     try {
         await connection.beginTransaction();
 
-        // 1. Check if this exact sync operation was already applied on the MySQL destination
-        const [existing]: any = await connection.query(
-            'SELECT dedup_key FROM le_stock_sync_idempotency WHERE dedup_key = ? FOR UPDATE',
-            [dedupKey]
-        );
-
-        if (existing && existing.length > 0) {
-            console.log(`[MySQLSync] Operation ${dedupKey} was already applied on MySQL destination. Skipping duplicate decrement.`);
-            await connection.commit();
-            return;
-        }
-
-        // 2. Record the idempotency marker on the MySQL destination inside the same transaction
+        // 1. Record the idempotency marker on the MySQL destination inside the transaction.
+        // Direct INSERT relies on the PRIMARY KEY constraint and avoids InnoDB gap-lock deadlocks
+        // caused by preliminary SELECT ... FOR UPDATE on non-existent keys in MySQL 8.
         try {
             await connection.query(
                 'INSERT INTO le_stock_sync_idempotency (dedup_key, invoice_number, product_id, quantity) VALUES (?, ?, ?, ?)',
@@ -481,7 +471,7 @@ export async function syncStockToMySQL(localId: number, soldQty: number, syncId?
             );
         } catch (insertErr: any) {
             if (insertErr.code === 'ER_DUP_ENTRY' || insertErr.errno === 1062 || insertErr.message?.includes('Duplicate entry')) {
-                console.log(`[MySQLSync] Operation ${dedupKey} concurrently applied on MySQL destination. Skipping duplicate decrement.`);
+                console.log(`[MySQLSync] Operation ${dedupKey} was already applied on MySQL destination. Skipping duplicate decrement.`);
                 await connection.rollback();
                 return;
             }

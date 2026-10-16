@@ -72,51 +72,36 @@ describe('Migration 070 Real PostgreSQL Staging Integration Suite', () => {
         await pgClient.connect();
 
         // Ensure 'authenticated', 'anon', and 'service_role' roles exist for testing
-        await pgClient.query(`
-            DO $$ 
-            BEGIN 
-                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'authenticated') THEN 
-                    CREATE ROLE authenticated; 
-                END IF; 
-                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'anon') THEN 
-                    CREATE ROLE anon; 
-                END IF; 
-                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'service_role') THEN 
-                    CREATE ROLE service_role; 
-                END IF; 
-            END $$;
+        const rolesCheck = await pgClient.query("SELECT rolname FROM pg_roles WHERE rolname IN ('authenticated', 'anon', 'service_role')");
+        const existingRoles = new Set(rolesCheck.rows.map(r => r.rolname));
+        for (const role of ['authenticated', 'anon', 'service_role']) {
+            if (!existingRoles.has(role)) {
+                await pgClient.query(`CREATE ROLE ${role}`);
+            }
+        }
 
-            CREATE SCHEMA IF NOT EXISTS auth;
-            CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb LANGUAGE plpgsql STABLE AS $$
-            DECLARE
-                v_setting text;
-            BEGIN
-                v_setting := current_setting('request.jwt.claims', true);
-                IF v_setting IS NULL OR v_setting = '' THEN
+        const schemaCheck = await pgClient.query("SELECT 1 FROM information_schema.schemata WHERE schema_name = 'auth'");
+        if (schemaCheck.rows.length === 0) {
+            await pgClient.query('CREATE SCHEMA auth');
+            await pgClient.query(`
+                CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb LANGUAGE plpgsql STABLE AS $$
+                BEGIN
+                    RETURN COALESCE(current_setting('request.jwt.claims', true)::jsonb, '{}'::jsonb);
+                EXCEPTION WHEN OTHERS THEN
                     RETURN '{}'::jsonb;
-                END IF;
-                RETURN v_setting::jsonb;
-            EXCEPTION WHEN OTHERS THEN
-                RETURN '{}'::jsonb;
-            END;
-            $$;
-
-            CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE plpgsql STABLE AS $$
-            DECLARE
-                v_jwt jsonb;
-                v_sub text;
-            BEGIN
-                v_jwt := auth.jwt();
-                v_sub := v_jwt ->> 'sub';
-                IF v_sub IS NULL OR v_sub = '' THEN
+                END;
+                $$;
+            `);
+            await pgClient.query(`
+                CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE plpgsql STABLE AS $$
+                BEGIN
+                    RETURN (auth.jwt() ->> 'sub')::uuid;
+                EXCEPTION WHEN OTHERS THEN
                     RETURN NULL;
-                END IF;
-                RETURN v_sub::uuid;
-            EXCEPTION WHEN OTHERS THEN
-                RETURN NULL;
-            END;
-            $$;
-        `);
+                END;
+                $$;
+            `);
+        }
 
         // Apply actual Migration 070 SQL
         const migrationPath = path.join(process.cwd(), 'supabase', 'migrations', '070_supabase_buffer_quota_reservations.sql');
