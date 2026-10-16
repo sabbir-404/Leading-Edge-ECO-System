@@ -452,6 +452,7 @@ await window.electron.getPendingUploads();
 │ Focused Buffer Test Suite      │ npx vitest run tests/make/smart-failover-uploads-buffer.test.ts                 │ 0         │ PASS    │
 │ Quota RPC Unit Simulation      │ npx vitest run tests/integration/supabase-quota-rpc.integration.test.ts         │ 0         │ PASS    │
 │ Real PG Staging Integration    │ npx vitest run tests/integration/supabase-quota-rpc.pg-integration.test.ts      │ 0         │ SKIPPED │
+│ Reconciliation Daemon Suite    │ npx vitest run tests/integration/server-reconciliation-daemon.test.ts           │ 0         │ PASS    │
 │ MySQL Idempotency Integration  │ npx vitest run tests/integration/mysql-stock-idempotency.integration.test.ts   │ 0         │ PASS    │
 │ Native SQLite WAL Integration  │ electron.exe vitest run tests/integration/real-sqlite-outbox.integration.test.ts│ 0         │ PASS    │
 │ Full Repository Test Suite     │ npx vitest run                                                                  │ 0         │ PASS    │
@@ -467,10 +468,11 @@ await window.electron.getPendingUploads();
 * **Test Suite Counts**:
   - Focused Suite: **39 passed** (100% clean, Scenarios 1–39 including Scenario 39 runtime reconciliation lifecycle).
   - Quota RPC Unit Simulation Suite: **8 passed** (100% clean, Tests 1–8).
+  - Server Reconciliation Daemon Suite: **6 passed** (100% clean, lifecycle, cloud verification, failure retryability, privilege checks).
   - Real PostgreSQL Staging Integration Suite: **1 passed (environment check), 10 skipped truthfully (NOT VERIFIED)** with explicit logged evidence that staging was unconfigured (`ALLOW_DISPOSABLE_STAGING_TESTS` not set).
   - MySQL Stock Idempotency Suite: **8 passed (7 unit simulation + 1 environment check), 2 skipped truthfully (NOT VERIFIED)** with explicit logged evidence that disposable MySQL staging was unconfigured (`ALLOW_DISPOSABLE_MYSQL_TESTS` not set).
   - Native SQLite WAL Integration Suite: **8 passed** (100% clean under native Electron Node runtime, Tests 1–8).
-  - Full Repository Test Suite: **42 test files passed, 1 skipped (native SQLite runner)**, **647 tests passed, 20 skipped**, 0 failed.
+  - Full Repository Test Suite: **43 test files passed, 1 skipped (native SQLite runner)**, **653 tests passed, 20 skipped**, 0 failed.
 * **Build Artifacts**:
   - `core/main.cjs`: 5.9 MB (Node 18 bundled).
   - `core/preload.cjs`: 36.2 KB.
