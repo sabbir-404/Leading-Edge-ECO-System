@@ -1061,7 +1061,8 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
             'desk_drawing.png',
             'image/png',
             'products',
-            { entityType: 'make_orders', entityId: 'ord_123', fieldName: 'technical_drawing_url' }
+            { entityType: 'make_orders', entityId: 'ord_123', fieldName: 'technical_drawing_url' },
+            { autoDispatch: true }
         );
 
         expect(stageRecord.id).toBeDefined();

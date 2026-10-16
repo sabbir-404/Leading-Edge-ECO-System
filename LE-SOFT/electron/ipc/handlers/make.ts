@@ -606,6 +606,77 @@ export async function downloadPdfFromNas(
     return { success: false, error: `Failed to download file from NAS: ${lastError}` };
 }
 
+/**
+ * Resolves a durable attachment reference (TrueNAS URL, Supabase private object key, or local pending file)
+ * into a safe, authorized access URL for viewing/downloading.
+ *
+ * Rules:
+ *  - Do NOT guess unconfirmed URLs.
+ *  - Do NOT return file:// as a successful remote attachment.
+ *  - Private bucket objects in 'make-order-files' are resolved on-demand via short-lived signed URLs (never persisted).
+ *  - TrueNAS confirmed URLs (storage.lenas.me or 100.88.85.6) are passed through.
+ *  - Legacy unauthenticated public URLs to private buckets are recognized and resolved via signed URLs.
+ */
+export async function resolveAttachmentUrl(p: string): Promise<{ path: string; name: string; url: string; isPending?: boolean }> {
+    if (!p || typeof p !== 'string') return { path: '', name: 'attachment', url: '' };
+
+    const name = p.split('/').pop()?.replace(/^\d+_/, '') || 'document';
+
+    // 1. Staged local / pending upload
+    if (p.startsWith('file://') || /^[a-zA-Z]:[\\/]/.test(p)) {
+        return { path: p, name, url: '', isPending: true };
+    }
+
+    // 2. Confirmed TrueNAS Remote URL
+    if (p.startsWith('https://storage.lenas.me') || p.startsWith('http://100.88.85.6') || p.startsWith('http://192.168.1.14')) {
+        return { path: p, name, url: p };
+    }
+
+    // 3. Supabase Storage Object Key in private bucket 'make-order-files'
+    // Handles durable keys: 'make-order-files/101/drawing.pdf' or '101/drawing.pdf'
+    // or legacy unauthenticated public URLs pointing to make-order-files
+    let storagePath = p;
+    if (p.includes('/storage/v1/object/public/make-order-files/')) {
+        storagePath = decodeURIComponent(p.split('/storage/v1/object/public/make-order-files/')[1] || '');
+    } else if (p.startsWith('supabase://make-order-files/')) {
+        storagePath = p.replace(/^supabase:\/\/make-order-files\//, '');
+    }
+
+    storagePath = storagePath.replace(/^\/+/, '');
+
+    if (storagePath) {
+        try {
+            const { data, error } = await supabase.storage.from('make-order-files').createSignedUrl(storagePath, 3600);
+            if (!error && data?.signedUrl) {
+                return { path: p, name, url: data.signedUrl };
+            }
+            if (storagePath.startsWith('make-order-files/')) {
+                const altPath = storagePath.replace(/^make-order-files\//, '');
+                const { data: altData, error: altErr } = await supabase.storage.from('make-order-files').createSignedUrl(altPath, 3600);
+                if (!altErr && altData?.signedUrl) {
+                    return { path: p, name, url: altData.signedUrl };
+                }
+            } else {
+                const altPath = `make-order-files/${storagePath}`;
+                const { data: altData, error: altErr } = await supabase.storage.from('make-order-files').createSignedUrl(altPath, 3600);
+                if (!altErr && altData?.signedUrl) {
+                    return { path: p, name, url: altData.signedUrl };
+                }
+            }
+        } catch (sErr: any) {
+            console.warn('[resolveAttachmentUrl] Signed URL creation failed:', sErr.message);
+        }
+    }
+
+    // 4. Other HTTP/HTTPS URLs (external or non-make-order-files)
+    if (p.startsWith('http://') || p.startsWith('https://')) {
+        return { path: p, name, url: p };
+    }
+
+    // 5. If missing or unresolvable, NEVER return a guessed URL
+    return { path: p, name, url: '' };
+}
+
 export function registerMakeHandlers(): void {
     /**
      * Resolves the active authenticated session strictly from the Electron Main Process.
@@ -880,29 +951,37 @@ export function registerMakeHandlers(): void {
                 subfolder
             );
 
-            if (!uploadResult.success || !uploadResult.publicUrl) {
+            if (!uploadResult.success) {
                 return { success: false, error: uploadResult.error || 'Failed to upload to storage' };
             }
 
-            // Update item or order records with drawing path
+            const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+            if (!persistentRef) {
+                return { success: false, error: 'Failed to establish persistent storage reference' };
+            }
+
+            // Update item or order records with durable reference
             if (itemId) {
                 const { data: item } = await supabase.from('make_order_items').select('pdf_urls, technical_drawing_url').eq('id', itemId).maybeSingle();
                 const existing: string[] = Array.isArray(item?.pdf_urls) ? item.pdf_urls : [];
-                const combined = [...existing, uploadResult.publicUrl];
+                const combined = [...existing, persistentRef];
                 await supabase.from('make_order_items').update({
                     pdf_urls: combined,
-                    technical_drawing_url: uploadResult.publicUrl
+                    technical_drawing_url: persistentRef
                 }).eq('id', itemId);
             } else {
                 const { data: order } = await supabase.from('make_orders').select('pdf_urls').eq('id', orderId).maybeSingle();
                 const existing: string[] = Array.isArray(order?.pdf_urls) ? order.pdf_urls : [];
-                const combined = [...existing, uploadResult.publicUrl];
+                const combined = [...existing, persistentRef];
                 await supabase.from('make_orders').update({ pdf_urls: combined }).eq('id', orderId);
             }
 
             return {
                 success: true,
-                publicUrl: uploadResult.publicUrl,
+                publicUrl: uploadResult.publicUrl || persistentRef,
+                durableKey: persistentRef,
+                isPendingUpload: uploadResult.isPendingUpload,
+                status: uploadResult.status,
                 fileName: validation.sanitizedFileName
             };
         } catch (err: any) {
@@ -928,13 +1007,21 @@ export function registerMakeHandlers(): void {
                 `make-order-files/${orderId}/stages`
             );
 
-            if (!uploadResult.success || !uploadResult.publicUrl) {
+            if (!uploadResult.success) {
                 return { success: false, error: uploadResult.error || 'Failed to upload photo' };
+            }
+
+            const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+            if (!persistentRef) {
+                return { success: false, error: 'Failed to obtain persistent photo reference' };
             }
 
             return {
                 success: true,
-                publicUrl: uploadResult.publicUrl,
+                publicUrl: uploadResult.publicUrl || persistentRef,
+                durableKey: persistentRef,
+                isPendingUpload: uploadResult.isPendingUpload,
+                status: uploadResult.status,
                 fileName: validation.sanitizedFileName
             };
         } catch (err: any) {
@@ -963,19 +1050,32 @@ export function registerMakeHandlers(): void {
             subfolder
         );
 
-        if (!uploadResult.success || !uploadResult.publicUrl) {
+        if (!uploadResult.success) {
             return { error: uploadResult.error || 'Failed to upload drawing' };
+        }
+
+        const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+        if (!persistentRef) {
+            return { error: 'Failed to establish persistent drawing reference' };
         }
 
         const { data: item } = await supabase.from('make_order_items').select('pdf_urls').eq('id', itemId).maybeSingle();
         const existing: string[] = Array.isArray(item?.pdf_urls) ? item.pdf_urls : [];
-        const combined = [...existing, uploadResult.publicUrl];
+        const combined = [...existing, persistentRef];
         await supabase.from('make_order_items').update({
             pdf_urls: combined,
-            technical_drawing_url: uploadResult.publicUrl
+            technical_drawing_url: persistentRef
         }).eq('id', itemId);
 
-        return { success: true, paths: [uploadResult.publicUrl], allPaths: combined };
+        return {
+            success: true,
+            paths: [persistentRef],
+            allPaths: combined,
+            publicUrl: uploadResult.publicUrl || persistentRef,
+            durableKey: persistentRef,
+            isPendingUpload: uploadResult.isPendingUpload,
+            status: uploadResult.status
+        };
     });
 
     ipcMain.handle('make-upload-pdf', async (_e, { orderId, filePath }: any) => {
@@ -997,16 +1097,28 @@ export function registerMakeHandlers(): void {
             subfolder
         );
 
-        if (!uploadResult.success || !uploadResult.publicUrl) {
+        if (!uploadResult.success) {
             return { error: uploadResult.error || 'Failed to upload drawing' };
+        }
+
+        const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+        if (!persistentRef) {
+            return { error: 'Failed to obtain persistent reference for uploaded drawing' };
         }
 
         const { data: order } = await supabase.from('make_orders').select('pdf_urls').eq('id', orderId).maybeSingle();
         const existing: string[] = Array.isArray(order?.pdf_urls) ? order.pdf_urls : [];
-        const combined = [...existing, uploadResult.publicUrl];
+        const combined = [...existing, persistentRef];
         await supabase.from('make_orders').update({ pdf_urls: combined }).eq('id', orderId);
 
-        return { success: true, paths: [uploadResult.publicUrl] };
+        return {
+            success: true,
+            paths: [persistentRef],
+            publicUrl: uploadResult.publicUrl || persistentRef,
+            durableKey: persistentRef,
+            isPendingUpload: uploadResult.isPendingUpload,
+            status: uploadResult.status
+        };
     });
 
     // ── 10. PDF Storage URLs and Deletion ─────────────────────────────────────
@@ -1015,18 +1127,9 @@ export function registerMakeHandlers(): void {
         const paths: string[] = order?.pdf_urls || [];
 
         const signedUrls = await Promise.all(paths.map(async (p) => {
-            if (p.startsWith('http://') || p.startsWith('https://')) {
-                return { path: p, name: p.split('/').pop()?.replace(/^\d+_/, '') || 'drawing', url: p };
-            }
-            if (p.startsWith('make-order-files/')) {
-                const url = `https://storage.lenas.me/files/${p}`;
-                return { path: p, name: p.split('/').pop()?.replace(/^\d+_/, '') || 'drawing', url };
-            } else {
-                const { data } = await supabase.storage.from('make-order-files').createSignedUrl(p, 3600);
-                return { path: p, name: p.split('/').pop()?.replace(/^\d+_/, '') || 'drawing', url: data?.signedUrl || '' };
-            }
+            return await resolveAttachmentUrl(p);
         }));
-        return signedUrls.filter(u => u.url);
+        return signedUrls.filter(u => u.url || u.isPending);
     });
 
     ipcMain.handle('make-delete-pdf', async (_e, { orderId, storagePath }: { orderId: number; storagePath: string }) => {
@@ -1634,21 +1737,12 @@ export function registerMakeHandlers(): void {
             }
 
             const drawings = await Promise.all(rawPaths.map(async (p: string) => {
-                if (p.startsWith('http://') || p.startsWith('https://')) {
-                    return { path: p, name: p.split('/').pop()?.replace(/^\d+_/, '') || 'drawing', url: p };
-                }
-                if (p.startsWith('make-order-files/')) {
-                    const url = `https://storage.lenas.me/files/${p}`;
-                    return { path: p, name: p.split('/').pop()?.replace(/^\d+_/, '') || 'drawing', url };
-                } else {
-                    const { data: sData } = await supabase.storage.from('make-order-files').createSignedUrl(p, 3600);
-                    return { path: p, name: p.split('/').pop()?.replace(/^\d+_/, '') || 'drawing', url: sData?.signedUrl || '' };
-                }
+                return await resolveAttachmentUrl(p);
             }));
 
             return {
                 ...item,
-                drawings: drawings.filter(d => d.url)
+                drawings: drawings.filter(d => d.url || d.isPending)
             };
         }));
 
@@ -2076,20 +2170,28 @@ export function registerMakeHandlers(): void {
                 subfolder
             );
 
-            if (!uploadResult.success || !uploadResult.publicUrl) {
+            if (!uploadResult.success) {
                 return { success: false, error: uploadResult.error || 'Failed to upload invoice image' };
+            }
+
+            const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+            if (!persistentRef) {
+                return { success: false, error: 'Failed to establish persistent invoice reference' };
             }
 
             if (orderId) {
                 const { data: order } = await supabase.from('make_orders').select('invoice_attachment_urls').eq('id', orderId).maybeSingle();
                 const existing: string[] = Array.isArray(order?.invoice_attachment_urls) ? order.invoice_attachment_urls : [];
-                const combined = [...existing, uploadResult.publicUrl];
+                const combined = [...existing, persistentRef];
                 await supabase.from('make_orders').update({ invoice_attachment_urls: combined }).eq('id', orderId);
             }
 
             return {
                 success: true,
-                publicUrl: uploadResult.publicUrl,
+                publicUrl: uploadResult.publicUrl || persistentRef,
+                durableKey: persistentRef,
+                isPendingUpload: uploadResult.isPendingUpload,
+                status: uploadResult.status,
                 fileName: validation.sanitizedFileName
             };
         } catch (err: any) {
@@ -2130,28 +2232,36 @@ export function registerMakeHandlers(): void {
                 subfolder
             );
 
-            if (!uploadResult.success || !uploadResult.publicUrl) {
+            if (!uploadResult.success) {
                 return { success: false, error: uploadResult.error || 'Failed to upload attachment' };
+            }
+
+            const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+            if (!persistentRef) {
+                return { success: false, error: 'Failed to establish persistent attachment reference' };
             }
 
             if (itemId) {
                 const { data: item } = await supabase.from('make_order_items').select('pdf_urls, technical_drawing_url').eq('id', itemId).maybeSingle();
                 const existing: string[] = Array.isArray(item?.pdf_urls) ? item.pdf_urls : [];
-                const combined = [...existing, uploadResult.publicUrl];
+                const combined = [...existing, persistentRef];
                 await supabase.from('make_order_items').update({
                     pdf_urls: combined,
-                    technical_drawing_url: uploadResult.publicUrl
+                    technical_drawing_url: persistentRef
                 }).eq('id', itemId);
             } else if (orderId) {
                 const { data: order } = await supabase.from('make_orders').select('invoice_attachment_urls').eq('id', orderId).maybeSingle();
                 const existing: string[] = Array.isArray(order?.invoice_attachment_urls) ? order.invoice_attachment_urls : [];
-                const combined = [...existing, uploadResult.publicUrl];
+                const combined = [...existing, persistentRef];
                 await supabase.from('make_orders').update({ invoice_attachment_urls: combined }).eq('id', orderId);
             }
 
             return {
                 success: true,
-                publicUrl: uploadResult.publicUrl,
+                publicUrl: uploadResult.publicUrl || persistentRef,
+                durableKey: persistentRef,
+                isPendingUpload: uploadResult.isPendingUpload,
+                status: uploadResult.status,
                 fileName: validation.sanitizedFileName
             };
         } catch (err: any) {

@@ -121,6 +121,7 @@ function getPersistentAttachmentReference(url?: string | null): string | undefin
   if (!value || /^(data:|blob:)/i.test(value)) return undefined;
   if (/^(https?:\/\/|app-media:\/\/|file:\/\/)/i.test(value)) return value;
   if (/^[a-z]:[\\/]/i.test(value) || /^\/(?!\/)/.test(value)) return value;
+  if (/^make-order-files\//i.test(value) || /^supabase:\/\/make-order-files\//i.test(value)) return value;
   return undefined;
 }
 

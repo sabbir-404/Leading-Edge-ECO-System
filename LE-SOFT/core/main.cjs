@@ -26268,6 +26268,7 @@ var init_DurableUploadService = __esm({
       supabaseClient = null;
       workerTimer = null;
       isWorking = false;
+      inFlightDispatches = /* @__PURE__ */ new Map();
       constructor() {
         const userData = import_electron7.app?.getPath ? import_electron7.app.getPath("userData") : import_path8.default.join(process.env.APPDATA || process.cwd(), "le-soft");
         this.stagingDir = import_path8.default.join(userData, "upload_staging");
@@ -26319,8 +26320,9 @@ var init_DurableUploadService = __esm({
       /**
        * Stages a file buffer or source path safely to local disk.
        * Computes SHA-256 and records into SQLite with status 'staged_local'.
+       * By default triggers background dispatch unless autoDispatch is explicitly false.
        */
-      async stageFile(source, fileName, mimeType, subfolder, meta3) {
+      async stageFile(source, fileName, mimeType, subfolder, meta3, options) {
         if (!this.db) throw new Error("Upload database not initialized");
         const uploadId = `upl_${Date.now()}_${import_crypto7.default.randomBytes(4).toString("hex")}`;
         const sanitized = fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
@@ -26357,8 +26359,11 @@ var init_DurableUploadService = __esm({
           now
         );
         console.log(`[DurableUpload] Staged file "${sanitized}" (${(sizeBytes / 1024).toFixed(1)} KB, SHA256: ${hash2.slice(0, 10)}...) -> ID: ${uploadId}`);
-        this.dispatchUpload(uploadId).catch(() => {
-        });
+        const shouldDispatch = options?.autoDispatch ?? false;
+        if (shouldDispatch) {
+          this.dispatchUpload(uploadId).catch(() => {
+          });
+        }
         return {
           id: uploadId,
           localPath: targetPath,
@@ -26411,7 +26416,24 @@ var init_DurableUploadService = __esm({
           this.isWorking = false;
         }
       }
+      /**
+       * Dispatches an upload with single-flight protection to ensure
+       * concurrent calls for the same upload ID await the exact same promise.
+       */
       async dispatchUpload(uploadId) {
+        const existingFlight = this.inFlightDispatches.get(uploadId);
+        if (existingFlight) {
+          return await existingFlight;
+        }
+        const dispatchPromise = this.executeDispatchUpload(uploadId);
+        this.inFlightDispatches.set(uploadId, dispatchPromise);
+        try {
+          return await dispatchPromise;
+        } finally {
+          this.inFlightDispatches.delete(uploadId);
+        }
+      }
+      async executeDispatchUpload(uploadId) {
         if (!this.db) return { success: false, status: "failed", error: "Upload database not initialized" };
         const row = this.db.prepare(`SELECT * FROM durable_uploads WHERE id = ?`).get(uploadId);
         if (!row || !import_fs8.default.existsSync(row.local_path)) {
@@ -26460,7 +26482,7 @@ var init_DurableUploadService = __esm({
                             WHERE id = ?
                         `).run(authoritativeUrl, lastError, Date.now(), uploadId);
                 this.broadcastUploadStatus();
-                return { success: false, url: authoritativeUrl, activeUrl: authoritativeUrl, status: row.status, error: lastError };
+                return { success: false, url: authoritativeUrl, activeUrl: authoritativeUrl, durableKey: authoritativeUrl, status: row.status, error: lastError };
               }
             }
             this.db.prepare(`
@@ -26470,7 +26492,7 @@ var init_DurableUploadService = __esm({
                 `).run(authoritativeUrl, Date.now(), uploadId);
             console.log(`[DurableUpload] Upload ${uploadId} successfully synchronized to authoritative NAS Storage: ${authoritativeUrl}`);
             this.broadcastUploadStatus();
-            return { success: true, url: authoritativeUrl, activeUrl: authoritativeUrl, status: "synced_nas" };
+            return { success: true, url: authoritativeUrl, activeUrl: authoritativeUrl, durableKey: authoritativeUrl, status: "synced_nas" };
           }
         }
         if (!nasSuccess && row.status === "staged_local" && this.supabaseClient && !lastError?.startsWith("Checksum mismatch")) {
@@ -26478,13 +26500,19 @@ var init_DurableUploadService = __esm({
           let cloudUrl = row.remote_url_supabase || null;
           if (cloudUrl) {
             const entityUpdated = await this.updateEntityRecord(row.entity_type, row.entity_id, row.field_name, cloudUrl);
+            let activeSignedUrl = void 0;
+            try {
+              const { data: signedData } = await this.supabaseClient.storage.from("make-order-files").createSignedUrl(cloudUrl, 3600);
+              activeSignedUrl = signedData?.signedUrl || void 0;
+            } catch {
+            }
             if (entityUpdated) {
               this.db.prepare(`
                         UPDATE durable_uploads
                         SET status = 'buffered_supabase', last_error = NULL, updated_at = ?
                         WHERE id = ?
                     `).run(Date.now(), uploadId);
-              return { success: true, url: cloudUrl, activeUrl: cloudUrl, status: "buffered_supabase" };
+              return { success: true, url: cloudUrl, activeUrl: activeSignedUrl || cloudUrl, durableKey: cloudUrl, status: "buffered_supabase" };
             }
           } else {
             const canBuffer = await quotaMgr.reserveStorageQuota(uploadId, row.size_bytes);
@@ -26494,8 +26522,13 @@ var init_DurableUploadService = __esm({
                 const cloudBucket = "make-order-files";
                 const { error: sbErr } = await this.supabaseClient.storage.from(cloudBucket).upload(cloudPath, buffer, { contentType: row.mime_type, upsert: true });
                 if (!sbErr) {
-                  const { data: pubData } = this.supabaseClient.storage.from(cloudBucket).getPublicUrl(cloudPath);
-                  cloudUrl = pubData?.publicUrl || cloudPath;
+                  let activeSignedUrl = void 0;
+                  try {
+                    const { data: signedData } = await this.supabaseClient.storage.from(cloudBucket).createSignedUrl(cloudPath, 3600);
+                    activeSignedUrl = signedData?.signedUrl || void 0;
+                  } catch {
+                  }
+                  cloudUrl = cloudPath;
                   const committed = await quotaMgr.releaseStorageQuota(uploadId, row.size_bytes, "committed");
                   if (!committed) {
                     console.warn(`[DurableUpload] Storage quota commit rejected or ambiguous for upload ${uploadId}. Retaining local staging.`);
@@ -26513,7 +26546,13 @@ var init_DurableUploadService = __esm({
                                 `).run(cloudUrl, entityUpdated ? null : "Entity update warning on cloud buffer", Date.now(), uploadId);
                     console.log(`[DurableUpload] Upload ${uploadId} buffered in Supabase Cloud fallback (${(row.size_bytes / 1024).toFixed(1)} KB). Waiting for TrueNAS recovery.`);
                     this.broadcastUploadStatus();
-                    return { success: true, url: cloudUrl, activeUrl: cloudUrl, status: "buffered_supabase" };
+                    return {
+                      success: true,
+                      url: cloudUrl,
+                      activeUrl: activeSignedUrl || cloudUrl,
+                      durableKey: cloudUrl,
+                      status: "buffered_supabase"
+                    };
                   }
                 } else {
                   await quotaMgr.releaseStorageQuota(uploadId, 0, "released");
@@ -26535,7 +26574,12 @@ var init_DurableUploadService = __esm({
             WHERE id = ?
         `).run(nextRetry, lastError, Date.now(), uploadId);
         this.broadcastUploadStatus();
-        return { success: false, status: row.status, error: lastError || void 0 };
+        return {
+          success: false,
+          status: row.status,
+          durableKey: `${row.subfolder}/${finalStorageName}`,
+          error: lastError || void 0
+        };
       }
       async updateEntityRecord(entityType, entityId, fieldName, newUrl) {
         if (!entityType || !entityId || !fieldName) return true;
@@ -116928,26 +116972,53 @@ var MakeCadService = class {
         buffer,
         fileName,
         mimeType,
-        subfolder
+        subfolder,
+        void 0,
+        { autoDispatch: false }
       );
       const result = await durableUpload.dispatchUpload(staged.id);
-      if (result.success || result.status === "buffered_supabase" || result.status === "synced_nas") {
+      const durableKey = `${subfolder}/${staged.id}_${staged.fileName}`;
+      if (result.status === "synced_nas") {
         const confirmedUrl = result.activeUrl || result.url;
         return {
           success: true,
-          storagePath: `${subfolder}/${staged.id}_${staged.fileName}`,
-          publicUrl: confirmedUrl || `https://storage.lenas.me/files/${subfolder}/${staged.id}_${staged.fileName}`
+          status: "synced_nas",
+          storagePath: durableKey,
+          publicUrl: confirmedUrl,
+          durableKey: confirmedUrl || durableKey,
+          isPendingUpload: false,
+          uploadId: staged.id
         };
       }
-      if (result.status === "staged_local" && !result.error) {
+      if (result.status === "buffered_supabase") {
         return {
           success: true,
+          status: "buffered_supabase",
+          storagePath: durableKey,
+          publicUrl: result.activeUrl,
+          durableKey: result.durableKey || durableKey,
+          isPendingUpload: false,
+          uploadId: staged.id
+        };
+      }
+      if (result.status === "staged_local") {
+        return {
+          success: !result.error,
+          status: "staged_local",
           storagePath: staged.localPath,
-          publicUrl: `file://${staged.localPath}`
+          publicUrl: void 0,
+          durableKey,
+          isPendingUpload: true,
+          uploadId: staged.id,
+          error: result.error
         };
       }
       return {
         success: false,
+        status: "failed",
+        storagePath: "",
+        isPendingUpload: false,
+        uploadId: staged.id,
         error: result.error || "Failed to dispatch durable upload"
       };
     } catch (durableErr) {
@@ -116976,11 +117047,14 @@ var MakeCadService = class {
         if (response.ok || response.status === void 0) {
           const data2 = await response.json();
           if (data2 && data2.success && (data2.file_url || data2.url)) {
-            const rawUrl = data2.file_url || data2.url;
+            const rawUrl = encodeURI(data2.file_url || data2.url);
             return {
               success: true,
+              status: "synced_nas",
               storagePath,
-              publicUrl: encodeURI(rawUrl)
+              publicUrl: rawUrl,
+              durableKey: rawUrl,
+              isPendingUpload: false
             };
           }
         }
@@ -116992,6 +117066,9 @@ var MakeCadService = class {
     if (!quotaMgr.canAcceptStorageUpload(buffer.length)) {
       return {
         success: false,
+        status: "failed",
+        storagePath: "",
+        isPendingUpload: false,
         error: "Supabase Storage quota limit reached (600 MB / 1 GB ceiling)."
       };
     }
@@ -116999,20 +117076,43 @@ var MakeCadService = class {
     if (!canBuffer) {
       return {
         success: false,
+        status: "failed",
+        storagePath: "",
+        isPendingUpload: false,
         error: "Supabase Storage quota reservation rejected."
       };
     }
     const { error: sbErr } = await supabase.storage.from("make-order-files").upload(storagePath, buffer, { contentType: mimeType, upsert: false });
     if (sbErr) {
       await quotaMgr.releaseStorageQuota(storageFileName, 0, "released");
-      return { success: false, error: sbErr.message };
+      return {
+        success: false,
+        status: "failed",
+        storagePath: "",
+        isPendingUpload: false,
+        error: sbErr.message
+      };
     }
     await quotaMgr.releaseStorageQuota(storageFileName, buffer.length, "committed");
-    const { data: publicData } = supabase.storage.from("make-order-files").getPublicUrl(storagePath);
+    let signedUrl = void 0;
+    try {
+      const storageBucket = supabase.storage.from("make-order-files");
+      if (typeof storageBucket.createSignedUrl === "function") {
+        const { data: signedData } = await storageBucket.createSignedUrl(storagePath, 3600);
+        signedUrl = signedData?.signedUrl;
+      } else if (typeof storageBucket.getPublicUrl === "function") {
+        const { data: pubData } = storageBucket.getPublicUrl(storagePath);
+        signedUrl = pubData?.publicUrl;
+      }
+    } catch {
+    }
     return {
       success: true,
+      status: "buffered_supabase",
       storagePath,
-      publicUrl: publicData?.publicUrl || storagePath
+      durableKey: storagePath,
+      publicUrl: signedUrl,
+      isPendingUpload: false
     };
   }
 };
@@ -132158,6 +132258,50 @@ async function downloadPdfFromNas(url2, fileName, tempDir, timeoutMs = 6e3) {
   cleanupTemp();
   return { success: false, error: `Failed to download file from NAS: ${lastError}` };
 }
+async function resolveAttachmentUrl(p) {
+  if (!p || typeof p !== "string") return { path: "", name: "attachment", url: "" };
+  const name = p.split("/").pop()?.replace(/^\d+_/, "") || "document";
+  if (p.startsWith("file://") || /^[a-zA-Z]:[\\/]/.test(p)) {
+    return { path: p, name, url: "", isPending: true };
+  }
+  if (p.startsWith("https://storage.lenas.me") || p.startsWith("http://100.88.85.6") || p.startsWith("http://192.168.1.14")) {
+    return { path: p, name, url: p };
+  }
+  let storagePath = p;
+  if (p.includes("/storage/v1/object/public/make-order-files/")) {
+    storagePath = decodeURIComponent(p.split("/storage/v1/object/public/make-order-files/")[1] || "");
+  } else if (p.startsWith("supabase://make-order-files/")) {
+    storagePath = p.replace(/^supabase:\/\/make-order-files\//, "");
+  }
+  storagePath = storagePath.replace(/^\/+/, "");
+  if (storagePath) {
+    try {
+      const { data: data2, error: error51 } = await supabase.storage.from("make-order-files").createSignedUrl(storagePath, 3600);
+      if (!error51 && data2?.signedUrl) {
+        return { path: p, name, url: data2.signedUrl };
+      }
+      if (storagePath.startsWith("make-order-files/")) {
+        const altPath = storagePath.replace(/^make-order-files\//, "");
+        const { data: altData, error: altErr } = await supabase.storage.from("make-order-files").createSignedUrl(altPath, 3600);
+        if (!altErr && altData?.signedUrl) {
+          return { path: p, name, url: altData.signedUrl };
+        }
+      } else {
+        const altPath = `make-order-files/${storagePath}`;
+        const { data: altData, error: altErr } = await supabase.storage.from("make-order-files").createSignedUrl(altPath, 3600);
+        if (!altErr && altData?.signedUrl) {
+          return { path: p, name, url: altData.signedUrl };
+        }
+      }
+    } catch (sErr) {
+      console.warn("[resolveAttachmentUrl] Signed URL creation failed:", sErr.message);
+    }
+  }
+  if (p.startsWith("http://") || p.startsWith("https://")) {
+    return { path: p, name, url: p };
+  }
+  return { path: p, name, url: "" };
+}
 function registerMakeHandlers() {
   function requireSession() {
     const session2 = SessionManager.getSession();
@@ -132354,26 +132498,33 @@ function registerMakeHandlers() {
         validation.mimeType,
         subfolder
       );
-      if (!uploadResult.success || !uploadResult.publicUrl) {
+      if (!uploadResult.success) {
         return { success: false, error: uploadResult.error || "Failed to upload to storage" };
+      }
+      const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+      if (!persistentRef) {
+        return { success: false, error: "Failed to establish persistent storage reference" };
       }
       if (itemId) {
         const { data: item } = await supabase.from("make_order_items").select("pdf_urls, technical_drawing_url").eq("id", itemId).maybeSingle();
         const existing = Array.isArray(item?.pdf_urls) ? item.pdf_urls : [];
-        const combined = [...existing, uploadResult.publicUrl];
+        const combined = [...existing, persistentRef];
         await supabase.from("make_order_items").update({
           pdf_urls: combined,
-          technical_drawing_url: uploadResult.publicUrl
+          technical_drawing_url: persistentRef
         }).eq("id", itemId);
       } else {
         const { data: order } = await supabase.from("make_orders").select("pdf_urls").eq("id", orderId).maybeSingle();
         const existing = Array.isArray(order?.pdf_urls) ? order.pdf_urls : [];
-        const combined = [...existing, uploadResult.publicUrl];
+        const combined = [...existing, persistentRef];
         await supabase.from("make_orders").update({ pdf_urls: combined }).eq("id", orderId);
       }
       return {
         success: true,
-        publicUrl: uploadResult.publicUrl,
+        publicUrl: uploadResult.publicUrl || persistentRef,
+        durableKey: persistentRef,
+        isPendingUpload: uploadResult.isPendingUpload,
+        status: uploadResult.status,
         fileName: validation.sanitizedFileName
       };
     } catch (err) {
@@ -132395,12 +132546,19 @@ function registerMakeHandlers() {
         validation.mimeType,
         `make-order-files/${orderId}/stages`
       );
-      if (!uploadResult.success || !uploadResult.publicUrl) {
+      if (!uploadResult.success) {
         return { success: false, error: uploadResult.error || "Failed to upload photo" };
+      }
+      const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+      if (!persistentRef) {
+        return { success: false, error: "Failed to obtain persistent photo reference" };
       }
       return {
         success: true,
-        publicUrl: uploadResult.publicUrl,
+        publicUrl: uploadResult.publicUrl || persistentRef,
+        durableKey: persistentRef,
+        isPendingUpload: uploadResult.isPendingUpload,
+        status: uploadResult.status,
         fileName: validation.sanitizedFileName
       };
     } catch (err) {
@@ -132424,17 +132582,29 @@ function registerMakeHandlers() {
       validation.mimeType,
       subfolder
     );
-    if (!uploadResult.success || !uploadResult.publicUrl) {
+    if (!uploadResult.success) {
       return { error: uploadResult.error || "Failed to upload drawing" };
+    }
+    const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+    if (!persistentRef) {
+      return { error: "Failed to establish persistent drawing reference" };
     }
     const { data: item } = await supabase.from("make_order_items").select("pdf_urls").eq("id", itemId).maybeSingle();
     const existing = Array.isArray(item?.pdf_urls) ? item.pdf_urls : [];
-    const combined = [...existing, uploadResult.publicUrl];
+    const combined = [...existing, persistentRef];
     await supabase.from("make_order_items").update({
       pdf_urls: combined,
-      technical_drawing_url: uploadResult.publicUrl
+      technical_drawing_url: persistentRef
     }).eq("id", itemId);
-    return { success: true, paths: [uploadResult.publicUrl], allPaths: combined };
+    return {
+      success: true,
+      paths: [persistentRef],
+      allPaths: combined,
+      publicUrl: uploadResult.publicUrl || persistentRef,
+      durableKey: persistentRef,
+      isPendingUpload: uploadResult.isPendingUpload,
+      status: uploadResult.status
+    };
   });
   import_electron18.ipcMain.handle("make-upload-pdf", async (_e, { orderId, filePath }) => {
     if (filePath) {
@@ -132452,31 +132622,33 @@ function registerMakeHandlers() {
       validation.mimeType,
       subfolder
     );
-    if (!uploadResult.success || !uploadResult.publicUrl) {
+    if (!uploadResult.success) {
       return { error: uploadResult.error || "Failed to upload drawing" };
+    }
+    const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+    if (!persistentRef) {
+      return { error: "Failed to obtain persistent reference for uploaded drawing" };
     }
     const { data: order } = await supabase.from("make_orders").select("pdf_urls").eq("id", orderId).maybeSingle();
     const existing = Array.isArray(order?.pdf_urls) ? order.pdf_urls : [];
-    const combined = [...existing, uploadResult.publicUrl];
+    const combined = [...existing, persistentRef];
     await supabase.from("make_orders").update({ pdf_urls: combined }).eq("id", orderId);
-    return { success: true, paths: [uploadResult.publicUrl] };
+    return {
+      success: true,
+      paths: [persistentRef],
+      publicUrl: uploadResult.publicUrl || persistentRef,
+      durableKey: persistentRef,
+      isPendingUpload: uploadResult.isPendingUpload,
+      status: uploadResult.status
+    };
   });
   import_electron18.ipcMain.handle("make-get-pdf-urls", async (_e, orderId) => {
     const { data: order } = await supabase.from("make_orders").select("pdf_urls").eq("id", orderId).maybeSingle();
     const paths = order?.pdf_urls || [];
     const signedUrls = await Promise.all(paths.map(async (p) => {
-      if (p.startsWith("http://") || p.startsWith("https://")) {
-        return { path: p, name: p.split("/").pop()?.replace(/^\d+_/, "") || "drawing", url: p };
-      }
-      if (p.startsWith("make-order-files/")) {
-        const url2 = `https://storage.lenas.me/files/${p}`;
-        return { path: p, name: p.split("/").pop()?.replace(/^\d+_/, "") || "drawing", url: url2 };
-      } else {
-        const { data: data2 } = await supabase.storage.from("make-order-files").createSignedUrl(p, 3600);
-        return { path: p, name: p.split("/").pop()?.replace(/^\d+_/, "") || "drawing", url: data2?.signedUrl || "" };
-      }
+      return await resolveAttachmentUrl(p);
     }));
-    return signedUrls.filter((u) => u.url);
+    return signedUrls.filter((u) => u.url || u.isPending);
   });
   import_electron18.ipcMain.handle("make-delete-pdf", async (_e, { orderId, storagePath }) => {
     requireSession();
@@ -132987,20 +133159,11 @@ function registerMakeHandlers() {
         rawPaths.unshift(item.technical_drawing_url);
       }
       const drawings = await Promise.all(rawPaths.map(async (p) => {
-        if (p.startsWith("http://") || p.startsWith("https://")) {
-          return { path: p, name: p.split("/").pop()?.replace(/^\d+_/, "") || "drawing", url: p };
-        }
-        if (p.startsWith("make-order-files/")) {
-          const url2 = `https://storage.lenas.me/files/${p}`;
-          return { path: p, name: p.split("/").pop()?.replace(/^\d+_/, "") || "drawing", url: url2 };
-        } else {
-          const { data: sData } = await supabase.storage.from("make-order-files").createSignedUrl(p, 3600);
-          return { path: p, name: p.split("/").pop()?.replace(/^\d+_/, "") || "drawing", url: sData?.signedUrl || "" };
-        }
+        return await resolveAttachmentUrl(p);
       }));
       return {
         ...item,
-        drawings: drawings.filter((d) => d.url)
+        drawings: drawings.filter((d) => d.url || d.isPending)
       };
     }));
     const session2 = SessionManager.getSession();
@@ -133367,18 +133530,25 @@ function registerMakeHandlers() {
         validation.mimeType,
         subfolder
       );
-      if (!uploadResult.success || !uploadResult.publicUrl) {
+      if (!uploadResult.success) {
         return { success: false, error: uploadResult.error || "Failed to upload invoice image" };
+      }
+      const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+      if (!persistentRef) {
+        return { success: false, error: "Failed to establish persistent invoice reference" };
       }
       if (orderId) {
         const { data: order } = await supabase.from("make_orders").select("invoice_attachment_urls").eq("id", orderId).maybeSingle();
         const existing = Array.isArray(order?.invoice_attachment_urls) ? order.invoice_attachment_urls : [];
-        const combined = [...existing, uploadResult.publicUrl];
+        const combined = [...existing, persistentRef];
         await supabase.from("make_orders").update({ invoice_attachment_urls: combined }).eq("id", orderId);
       }
       return {
         success: true,
-        publicUrl: uploadResult.publicUrl,
+        publicUrl: uploadResult.publicUrl || persistentRef,
+        durableKey: persistentRef,
+        isPendingUpload: uploadResult.isPendingUpload,
+        status: uploadResult.status,
         fileName: validation.sanitizedFileName
       };
     } catch (err) {
@@ -133412,26 +133582,33 @@ function registerMakeHandlers() {
         validation.mimeType,
         subfolder
       );
-      if (!uploadResult.success || !uploadResult.publicUrl) {
+      if (!uploadResult.success) {
         return { success: false, error: uploadResult.error || "Failed to upload attachment" };
+      }
+      const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+      if (!persistentRef) {
+        return { success: false, error: "Failed to establish persistent attachment reference" };
       }
       if (itemId) {
         const { data: item } = await supabase.from("make_order_items").select("pdf_urls, technical_drawing_url").eq("id", itemId).maybeSingle();
         const existing = Array.isArray(item?.pdf_urls) ? item.pdf_urls : [];
-        const combined = [...existing, uploadResult.publicUrl];
+        const combined = [...existing, persistentRef];
         await supabase.from("make_order_items").update({
           pdf_urls: combined,
-          technical_drawing_url: uploadResult.publicUrl
+          technical_drawing_url: persistentRef
         }).eq("id", itemId);
       } else if (orderId) {
         const { data: order } = await supabase.from("make_orders").select("invoice_attachment_urls").eq("id", orderId).maybeSingle();
         const existing = Array.isArray(order?.invoice_attachment_urls) ? order.invoice_attachment_urls : [];
-        const combined = [...existing, uploadResult.publicUrl];
+        const combined = [...existing, persistentRef];
         await supabase.from("make_orders").update({ invoice_attachment_urls: combined }).eq("id", orderId);
       }
       return {
         success: true,
-        publicUrl: uploadResult.publicUrl,
+        publicUrl: uploadResult.publicUrl || persistentRef,
+        durableKey: persistentRef,
+        isPendingUpload: uploadResult.isPendingUpload,
+        status: uploadResult.status,
         fileName: validation.sanitizedFileName
       };
     } catch (err) {
@@ -134164,7 +134341,9 @@ async function uploadOptimizedImage(buffer, filenamePrefix) {
       optimized,
       finalFilename,
       "image/webp",
-      "product-images"
+      "product-images",
+      void 0,
+      { autoDispatch: false }
     );
     const result = await DurableUploadService.getInstance().dispatchUpload(staged.id);
     if (result.success || result.status === "buffered_supabase") {

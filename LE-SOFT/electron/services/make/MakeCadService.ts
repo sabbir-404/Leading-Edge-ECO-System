@@ -27,6 +27,17 @@ export interface FileValidationResult {
     sanitizedFileName: string;
 }
 
+export interface MakeUploadResult {
+    success: boolean;
+    status: 'synced_nas' | 'buffered_supabase' | 'staged_local' | 'failed';
+    storagePath: string;
+    publicUrl?: string;
+    durableKey?: string;
+    isPendingUpload: boolean;
+    uploadId?: string;
+    error?: string;
+}
+
 const ALLOWED_CAD_EXTENSIONS = new Set([
     'pdf', 'dwg', 'dxf', 'step', 'stp', 'iges', 'igs', 'skp', 'stl', 'obj',
     'png', 'jpg', 'jpeg', 'webp'
@@ -310,7 +321,7 @@ export class MakeCadService {
         fileName: string,
         mimeType: string,
         subfolder: string
-    ): Promise<{ success: boolean; storagePath?: string; publicUrl?: string; error?: string }> {
+    ): Promise<MakeUploadResult> {
         // 1. Resilient staging & durable dispatch
         try {
             const durableUpload = DurableUploadService.getInstance();
@@ -318,26 +329,58 @@ export class MakeCadService {
                 buffer,
                 fileName,
                 mimeType,
-                subfolder
+                subfolder,
+                undefined,
+                { autoDispatch: false }
             );
             const result = await durableUpload.dispatchUpload(staged.id);
-            if (result.success || result.status === 'buffered_supabase' || result.status === 'synced_nas') {
+            const durableKey = `${subfolder}/${staged.id}_${staged.fileName}`;
+
+            if (result.status === 'synced_nas') {
                 const confirmedUrl = result.activeUrl || result.url;
                 return {
                     success: true,
-                    storagePath: `${subfolder}/${staged.id}_${staged.fileName}`,
-                    publicUrl: confirmedUrl || `https://storage.lenas.me/files/${subfolder}/${staged.id}_${staged.fileName}`
+                    status: 'synced_nas',
+                    storagePath: durableKey,
+                    publicUrl: confirmedUrl,
+                    durableKey: confirmedUrl || durableKey,
+                    isPendingUpload: false,
+                    uploadId: staged.id
                 };
             }
-            if (result.status === 'staged_local' && !result.error) {
+
+            if (result.status === 'buffered_supabase') {
                 return {
                     success: true,
-                    storagePath: staged.localPath,
-                    publicUrl: `file://${staged.localPath}`
+                    status: 'buffered_supabase',
+                    storagePath: durableKey,
+                    publicUrl: result.activeUrl,
+                    durableKey: result.durableKey || durableKey,
+                    isPendingUpload: false,
+                    uploadId: staged.id
                 };
             }
+
+            if (result.status === 'staged_local') {
+                // Truthful contract: preserved in local staging during outage; NEVER guessed, NEVER file://
+                return {
+                    success: !result.error,
+                    status: 'staged_local',
+                    storagePath: staged.localPath,
+                    publicUrl: undefined,
+                    durableKey: durableKey,
+                    isPendingUpload: true,
+                    uploadId: staged.id,
+                    error: result.error
+                };
+            }
+
             return {
                 success: false,
+                status: 'failed',
+                storagePath: '',
+                isPendingUpload: false,
+                uploadId: staged.id,
                 error: result.error || 'Failed to dispatch durable upload'
             };
         } catch (durableErr: any) {
@@ -371,11 +414,14 @@ export class MakeCadService {
                 if (response.ok || (response as any).status === undefined) {
                     const data = await response.json();
                     if (data && data.success && (data.file_url || data.url)) {
-                        const rawUrl = data.file_url || data.url;
+                        const rawUrl = encodeURI(data.file_url || data.url);
                         return {
                             success: true,
+                            status: 'synced_nas',
                             storagePath: storagePath,
-                            publicUrl: encodeURI(rawUrl)
+                            publicUrl: rawUrl,
+                            durableKey: rawUrl,
+                            isPendingUpload: false
                         };
                     }
                 }
@@ -389,6 +435,9 @@ export class MakeCadService {
         if (!quotaMgr.canAcceptStorageUpload(buffer.length)) {
             return {
                 success: false,
+                status: 'failed',
+                storagePath: '',
+                isPendingUpload: false,
                 error: 'Supabase Storage quota limit reached (600 MB / 1 GB ceiling).'
             };
         }
@@ -397,6 +446,9 @@ export class MakeCadService {
         if (!canBuffer) {
             return {
                 success: false,
+                status: 'failed',
+                storagePath: '',
+                isPendingUpload: false,
                 error: 'Supabase Storage quota reservation rejected.'
             };
         }
@@ -407,15 +459,36 @@ export class MakeCadService {
 
         if (sbErr) {
             await quotaMgr.releaseStorageQuota(storageFileName, 0, 'released');
-            return { success: false, error: sbErr.message };
+            return {
+                success: false,
+                status: 'failed',
+                storagePath: '',
+                isPendingUpload: false,
+                error: sbErr.message
+            };
         }
 
         await quotaMgr.releaseStorageQuota(storageFileName, buffer.length, 'committed');
-        const { data: publicData } = supabase.storage.from('make-order-files').getPublicUrl(storagePath);
+        // Do not call getPublicUrl on private bucket! Resolve authorized signed URL on demand
+        let signedUrl: string | undefined = undefined;
+        try {
+            const storageBucket = supabase.storage.from('make-order-files');
+            if (typeof storageBucket.createSignedUrl === 'function') {
+                const { data: signedData } = await storageBucket.createSignedUrl(storagePath, 3600);
+                signedUrl = signedData?.signedUrl;
+            } else if (typeof (storageBucket as any).getPublicUrl === 'function') {
+                const { data: pubData } = (storageBucket as any).getPublicUrl(storagePath);
+                signedUrl = pubData?.publicUrl;
+            }
+        } catch {}
+
         return {
             success: true,
+            status: 'buffered_supabase',
             storagePath: storagePath,
-            publicUrl: publicData?.publicUrl || storagePath
+            durableKey: storagePath,
+            publicUrl: signedUrl,
+            isPendingUpload: false
         };
     }
 }

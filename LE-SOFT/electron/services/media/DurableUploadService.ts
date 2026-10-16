@@ -68,6 +68,8 @@ export class DurableUploadService {
     private workerTimer: ReturnType<typeof setInterval> | null = null;
     private isWorking = false;
 
+    private inFlightDispatches = new Map<string, Promise<{ success: boolean; url?: string; activeUrl?: string; durableKey?: string; status: UploadStatus; error?: string }>>();
+
     private constructor() {
         const userData = app?.getPath ? app.getPath('userData') : path.join(process.env.APPDATA || process.cwd(), 'le-soft');
         this.stagingDir = path.join(userData, 'upload_staging');
@@ -125,13 +127,15 @@ export class DurableUploadService {
     /**
      * Stages a file buffer or source path safely to local disk.
      * Computes SHA-256 and records into SQLite with status 'staged_local'.
+     * By default triggers background dispatch unless autoDispatch is explicitly false.
      */
     public async stageFile(
         source: Buffer | string,
         fileName: string,
         mimeType: string,
         subfolder: string,
-        meta?: UploadEntityMeta
+        meta?: UploadEntityMeta,
+        options?: { autoDispatch?: boolean }
     ): Promise<StagedUploadRecord> {
         if (!this.db) throw new Error('Upload database not initialized');
 
@@ -176,8 +180,11 @@ export class DurableUploadService {
 
         console.log(`[DurableUpload] Staged file "${sanitized}" (${(sizeBytes / 1024).toFixed(1)} KB, SHA256: ${hash.slice(0, 10)}...) -> ID: ${uploadId}`);
 
-        // Trigger immediate background dispatch
-        this.dispatchUpload(uploadId).catch(() => {});
+        // Staging contract: stageFile isolates local file staging; callers dispatch explicitly or pass { autoDispatch: true }
+        const shouldDispatch = options?.autoDispatch ?? false;
+        if (shouldDispatch) {
+            this.dispatchUpload(uploadId).catch(() => {});
+        }
 
         return {
             id: uploadId,
@@ -238,7 +245,26 @@ export class DurableUploadService {
         }
     }
 
-    public async dispatchUpload(uploadId: string): Promise<{ success: boolean; url?: string; activeUrl?: string; status: UploadStatus; error?: string }> {
+    /**
+     * Dispatches an upload with single-flight protection to ensure
+     * concurrent calls for the same upload ID await the exact same promise.
+     */
+    public async dispatchUpload(uploadId: string): Promise<{ success: boolean; url?: string; activeUrl?: string; durableKey?: string; status: UploadStatus; error?: string }> {
+        const existingFlight = this.inFlightDispatches.get(uploadId);
+        if (existingFlight) {
+            return await existingFlight;
+        }
+
+        const dispatchPromise = this.executeDispatchUpload(uploadId);
+        this.inFlightDispatches.set(uploadId, dispatchPromise);
+        try {
+            return await dispatchPromise;
+        } finally {
+            this.inFlightDispatches.delete(uploadId);
+        }
+    }
+
+    private async executeDispatchUpload(uploadId: string): Promise<{ success: boolean; url?: string; activeUrl?: string; durableKey?: string; status: UploadStatus; error?: string }> {
         if (!this.db) return { success: false, status: 'failed', error: 'Upload database not initialized' };
 
         const row = this.db.prepare(`SELECT * FROM durable_uploads WHERE id = ?`).get(uploadId) as any;
@@ -300,7 +326,7 @@ export class DurableUploadService {
                             WHERE id = ?
                         `).run(authoritativeUrl, lastError, Date.now(), uploadId);
                         this.broadcastUploadStatus();
-                        return { success: false, url: authoritativeUrl, activeUrl: authoritativeUrl, status: row.status, error: lastError };
+                        return { success: false, url: authoritativeUrl, activeUrl: authoritativeUrl, durableKey: authoritativeUrl, status: row.status, error: lastError };
                     }
                 }
 
@@ -312,7 +338,7 @@ export class DurableUploadService {
 
                 console.log(`[DurableUpload] Upload ${uploadId} successfully synchronized to authoritative NAS Storage: ${authoritativeUrl}`);
                 this.broadcastUploadStatus();
-                return { success: true, url: authoritativeUrl, activeUrl: authoritativeUrl, status: 'synced_nas' };
+                return { success: true, url: authoritativeUrl, activeUrl: authoritativeUrl, durableKey: authoritativeUrl, status: 'synced_nas' };
             }
         }
 
@@ -322,15 +348,23 @@ export class DurableUploadService {
             let cloudUrl: string | null = row.remote_url_supabase || null;
 
             if (cloudUrl) {
-                // Cloud copy already exists from prior attempt; retry entity update
+                // Cloud copy already exists from prior attempt; retry entity update with durable key
                 const entityUpdated = await this.updateEntityRecord(row.entity_type, row.entity_id, row.field_name, cloudUrl);
+                let activeSignedUrl: string | undefined = undefined;
+                try {
+                    const { data: signedData } = await this.supabaseClient.storage
+                        .from('make-order-files')
+                        .createSignedUrl(cloudUrl, 3600);
+                    activeSignedUrl = signedData?.signedUrl || undefined;
+                } catch {}
+
                 if (entityUpdated) {
                     this.db.prepare(`
                         UPDATE durable_uploads
                         SET status = 'buffered_supabase', last_error = NULL, updated_at = ?
                         WHERE id = ?
                     `).run(Date.now(), uploadId);
-                    return { success: true, url: cloudUrl, activeUrl: cloudUrl, status: 'buffered_supabase' };
+                    return { success: true, url: cloudUrl, activeUrl: activeSignedUrl || cloudUrl, durableKey: cloudUrl, status: 'buffered_supabase' };
                 }
             } else {
                 const canBuffer = await quotaMgr.reserveStorageQuota(uploadId, row.size_bytes);
@@ -344,10 +378,18 @@ export class DurableUploadService {
                             .upload(cloudPath, buffer, { contentType: row.mime_type, upsert: true });
 
                         if (!sbErr) {
-                            const { data: pubData } = this.supabaseClient.storage
-                                .from(cloudBucket)
-                                .getPublicUrl(cloudPath);
-                            cloudUrl = pubData?.publicUrl || cloudPath;
+                            // Do not rely on getPublicUrl() on private bucket!
+                            // Resolve authorized short-lived signed URL for active display
+                            let activeSignedUrl: string | undefined = undefined;
+                            try {
+                                const { data: signedData } = await this.supabaseClient.storage
+                                    .from(cloudBucket)
+                                    .createSignedUrl(cloudPath, 3600);
+                                activeSignedUrl = signedData?.signedUrl || undefined;
+                            } catch {}
+
+                            // Durable reference to store in DB / durable_uploads is the durable object key
+                            cloudUrl = cloudPath;
 
                             const committed = await quotaMgr.releaseStorageQuota(uploadId, row.size_bytes, 'committed');
                             if (!committed) {
@@ -357,7 +399,7 @@ export class DurableUploadService {
                                     await this.supabaseClient.storage.from(cloudBucket).remove([cloudPath]);
                                 } catch {}
                             } else {
-                                // Update entity record with temporary cloud URL
+                                // Update entity record with durable object key (never an expiring signed URL)
                                 const entityUpdated = await this.updateEntityRecord(row.entity_type, row.entity_id, row.field_name, cloudUrl);
 
                                 this.db.prepare(`
@@ -368,7 +410,13 @@ export class DurableUploadService {
 
                                 console.log(`[DurableUpload] Upload ${uploadId} buffered in Supabase Cloud fallback (${(row.size_bytes / 1024).toFixed(1)} KB). Waiting for TrueNAS recovery.`);
                                 this.broadcastUploadStatus();
-                                return { success: true, url: cloudUrl, activeUrl: cloudUrl, status: 'buffered_supabase' };
+                                return {
+                                    success: true,
+                                    url: cloudUrl,
+                                    activeUrl: activeSignedUrl || cloudUrl,
+                                    durableKey: cloudUrl,
+                                    status: 'buffered_supabase'
+                                };
                             }
                         } else {
                             await quotaMgr.releaseStorageQuota(uploadId, 0, 'released');
@@ -393,7 +441,12 @@ export class DurableUploadService {
         `).run(nextRetry, lastError, Date.now(), uploadId);
 
         this.broadcastUploadStatus();
-        return { success: false, status: row.status, error: lastError || undefined };
+        return {
+            success: false,
+            status: row.status,
+            durableKey: `${row.subfolder}/${finalStorageName}`,
+            error: lastError || undefined
+        };
     }
 
     private async updateEntityRecord(entityType: string | null, entityId: string | null, fieldName: string | null, newUrl: string): Promise<boolean> {

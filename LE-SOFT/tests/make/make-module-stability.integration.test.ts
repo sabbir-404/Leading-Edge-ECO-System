@@ -44,13 +44,34 @@ const h = vi.hoisted(() => {
         handlers: Record<string, Function>;
         quotaReserved: number;
         storageUploads: Array<{ bucket: string; path: string; buffer: Buffer }>;
+        storageBuckets: Record<string, any>;
     } = {
         calls: [],
         responder: () => ({ data: { id: 101, order_number: 'MAKE-2026-999999' }, error: null }),
         cloudCalls: [],
         handlers: {},
         quotaReserved: 0,
-        storageUploads: []
+        storageUploads: [],
+        storageBuckets: {}
+    };
+
+    const getStorageBucket = (bucket: string) => {
+        if (!state.storageBuckets[bucket]) {
+            state.storageBuckets[bucket] = {
+                upload: vi.fn(async (filePath: string, buffer: Buffer) => {
+                    state.storageUploads.push({ bucket, path: filePath, buffer });
+                    return { data: { path: filePath }, error: null };
+                }),
+                createSignedUrl: vi.fn(async (filePath: string, expiresIn: number) => ({
+                    data: { signedUrl: `https://mock.supabase.co/storage/v1/object/sign/${bucket}/${filePath}?token=mock_signed&expires=${expiresIn}` },
+                    error: null
+                })),
+                getPublicUrl: vi.fn((filePath: string) => ({
+                    data: { publicUrl: `https://mock.supabase.co/storage/v1/object/public/${bucket}/${filePath}` }
+                }))
+            };
+        }
+        return state.storageBuckets[bucket];
     };
 
     const makeBuilder = (table: string) => {
@@ -94,7 +115,7 @@ const h = vi.hoisted(() => {
         return b;
     };
 
-    return { state, makeBuilder };
+    return { state, makeBuilder, getStorageBucket };
 });
 
 vi.mock('electron', () => ({
@@ -113,15 +134,7 @@ vi.mock('../../electron/supabase', () => ({
     supabase: {
         from: vi.fn((table: string) => h.makeBuilder(table)),
         storage: {
-            from: vi.fn((bucket: string) => ({
-                upload: vi.fn(async (filePath: string, buffer: Buffer) => {
-                    h.state.storageUploads.push({ bucket, path: filePath, buffer });
-                    return { data: { path: filePath }, error: null };
-                }),
-                getPublicUrl: vi.fn((filePath: string) => ({
-                    data: { publicUrl: `https://mock.supabase.co/storage/v1/object/public/${bucket}/${filePath}` }
-                }))
-            }))
+            from: vi.fn((bucket: string) => h.getStorageBucket(bucket))
         }
     },
     supabaseAdmin: {
@@ -151,7 +164,7 @@ import { SupabaseQuotaManager } from '../../electron/services/quota/SupabaseQuot
 import { DurableUploadService } from '../../electron/services/media/DurableUploadService';
 import { supabase } from '../../electron/supabase';
 import { SessionManager, UserSession } from '../../electron/session-manager';
-import { registerMakeHandlers } from '../../electron/ipc/handlers/make';
+import { registerMakeHandlers, resolveAttachmentUrl } from '../../electron/ipc/handlers/make';
 import {
     saveNamedPlaceOrderDraft,
     loadSavedPlaceOrderDrafts,
@@ -184,6 +197,7 @@ describe('MAKE Module Stability & Verification Suite (LE-SOFT v1.8.12)', () => {
         h.state.cloudCalls = [];
         h.state.storageUploads = [];
         h.state.handlers = {};
+        h.state.storageBuckets = {};
 
         mockStorage = createMemoryStorage();
         vi.stubGlobal('localStorage', mockStorage);
@@ -205,6 +219,7 @@ describe('MAKE Module Stability & Verification Suite (LE-SOFT v1.8.12)', () => {
 
     afterEach(() => {
         vi.unstubAllGlobals();
+        vi.clearAllMocks();
     });
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -512,6 +527,114 @@ describe('MAKE Module Stability & Verification Suite (LE-SOFT v1.8.12)', () => {
 
             expect(uploadRes.success).toBe(false);
             expect(uploadRes.error).toContain('Supabase Storage quota limit reached');
+        });
+
+        it('single-flight protection: concurrent dispatchUpload calls on the same upload ID execute once and share result', async () => {
+            const uploadService = DurableUploadService.getInstance();
+            const buffer = Buffer.from('%PDF-1.7 single flight test');
+            const staged = await uploadService.stageFile(buffer, 'single_flight.pdf', 'application/pdf', 'make-order-files/101', undefined, { autoDispatch: false });
+
+            // Mock uploadToNasStorage to introduce brief delay
+            let nasUploadCalls = 0;
+            vi.spyOn(uploadService as any, 'uploadToNasStorage').mockImplementation(async () => {
+                nasUploadCalls++;
+                await new Promise(r => setTimeout(r, 40));
+                return { success: true, url: 'https://storage.lenas.me/files/make-order-files/101/single_flight.pdf', sha256: staged.sha256 };
+            });
+
+            // Dispatch concurrently twice on the same upload ID
+            const [res1, res2] = await Promise.all([
+                uploadService.dispatchUpload(staged.id),
+                uploadService.dispatchUpload(staged.id)
+            ]);
+
+            expect(res1.success).toBe(true);
+            expect(res2.success).toBe(true);
+            expect(res1.url).toBe(res2.url);
+            // Proves uploadToNasStorage was only invoked once
+            expect(nasUploadCalls).toBe(1);
+        });
+
+        it('retry safety: retry does not re-upload to NAS or re-commit quota when remote URL already exists', async () => {
+            const uploadService = DurableUploadService.getInstance();
+            const buffer = Buffer.from('%PDF-1.7 retry test');
+            const staged = await uploadService.stageFile(buffer, 'retry_safety.pdf', 'application/pdf', 'make-order-files/101', undefined, { autoDispatch: false });
+
+            // Simulate that NAS upload previously succeeded and recorded remote_url_nas in DB
+            const confirmedUrl = 'https://storage.lenas.me/files/make-order-files/101/retry_safety.pdf';
+            (uploadService as any).db.prepare(`
+                UPDATE durable_uploads SET remote_url_nas = ? WHERE id = ?
+            `).run(confirmedUrl, staged.id);
+
+            const uploadSpy = vi.spyOn(uploadService as any, 'uploadToNasStorage');
+            uploadSpy.mockClear();
+
+            const res = await uploadService.dispatchUpload(staged.id);
+            expect(res.success).toBe(true);
+            expect(res.url).toBe(confirmedUrl);
+            // Proves uploadToNasStorage was bypassed since authoritative remote URL already exists
+            expect(uploadSpy).not.toHaveBeenCalled();
+        });
+
+        it('truthful private bucket URLs: resolveAttachmentUrl creates authorized signed URLs and never exposes unauthenticated public URLs', async () => {
+            // Case A: Durable object key in private bucket 'make-order-files'
+            const privateKey = 'make-order-files/101/part_blueprint.dwg';
+            const resolvedA = await resolveAttachmentUrl(privateKey);
+            expect(resolvedA.url).toContain('/sign/make-order-files/');
+            expect(resolvedA.url).toContain('token=mock_signed');
+
+            // Case B: Legacy unauthenticated public URL pointing to make-order-files
+            const legacyPubUrl = 'https://mock.supabase.co/storage/v1/object/public/make-order-files/101/part_blueprint.dwg';
+            const resolvedB = await resolveAttachmentUrl(legacyPubUrl);
+            expect(resolvedB.url).toContain('/sign/make-order-files/');
+            expect(resolvedB.url).not.toContain('/public/');
+
+            // Case C: TrueNAS confirmed URL is preserved
+            const nasUrl = 'https://storage.lenas.me/files/make-order-files/101/cad.dwg';
+            const resolvedC = await resolveAttachmentUrl(nasUrl);
+            expect(resolvedC.url).toBe(nasUrl);
+        });
+
+        it('staged-local representation: local staged files are never represented as remote attachments or file:// URLs', async () => {
+            // When NAS fails and Supabase quota limit is reached
+            const quotaMgr = SupabaseQuotaManager.getInstance();
+            vi.spyOn(quotaMgr, 'canAcceptStorageUpload').mockReturnValue(false);
+            vi.spyOn(quotaMgr, 'reserveStorageQuota').mockResolvedValue(false);
+
+            const buffer = Buffer.from('%PDF-1.7 local staging test');
+            const res = await MakeCadService.uploadValidatedBuffer(
+                buffer,
+                'outage_doc.pdf',
+                'application/pdf',
+                'make-order-files/101'
+            );
+
+            // Staging preserves local copy while remote quota is exhausted
+            expect(res.success).toBe(false);
+            expect(res.status).toBe('staged_local');
+            expect(res.isPendingUpload).toBe(true);
+            // CRITICAL: publicUrl must be undefined, NEVER a file:// URL pretending to be remotely accessible
+            expect(res.publicUrl).toBeUndefined();
+            expect(res.durableKey).toBeDefined();
+
+            // Calling resolveAttachmentUrl on a local path or file:// URL marks it pending without claiming a remote URL
+            const resolved = await resolveAttachmentUrl('file:///C:/AppData/staging/outage_doc.pdf');
+            expect(resolved.isPending).toBe(true);
+            expect(resolved.url).toBe('');
+        });
+
+        it('no invented URLs: unresolvable or missing files never return a guessed https://storage.lenas.me URL', async () => {
+            // Empty string or unresolvable reference
+            const resEmpty = await resolveAttachmentUrl('');
+            expect(resEmpty.url).toBe('');
+
+            // Failed Supabase signed URL generation
+            const mockStorage = (supabase.storage.from as any)('make-order-files');
+            vi.spyOn(mockStorage, 'createSignedUrl').mockResolvedValue({ data: null, error: new Error('Object not found') } as any);
+
+            const resNotFound = await resolveAttachmentUrl('unknown-file.pdf');
+            expect(resNotFound.url).toBe('');
+            expect(resNotFound.url).not.toContain('storage.lenas.me');
         });
     });
 

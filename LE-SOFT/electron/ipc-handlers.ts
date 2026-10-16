@@ -94,7 +94,9 @@ async function uploadOptimizedImage(buffer: Buffer, filenamePrefix: string): Pro
             optimized,
             finalFilename,
             'image/webp',
-            'product-images'
+            'product-images',
+            undefined,
+            { autoDispatch: false }
         );
 
         const result = await DurableUploadService.getInstance().dispatchUpload(staged.id);

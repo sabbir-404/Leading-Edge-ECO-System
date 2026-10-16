@@ -10,9 +10,9 @@
 
 ## 1. Executive Summary
 
-This report documents the architectural audit, code fixes, and comprehensive verification conducted on the **MAKE Module** of LE-SOFT v1.8.12. In accordance with project instructions, all work was restricted to the MAKE module, CAD file management, named order drafts, global specification image persistence (Migration 066 compatibility), resilient upload staging, and quota-managed cloud storage fallback. Unrelated Sales, Billing, inventory, and MySQL synchronization components were kept untouched.
+This report documents the architectural audit, upload-safety review, and comprehensive verification conducted on the **MAKE Module** of LE-SOFT v1.8.12. In accordance with project instructions, all work was restricted to the MAKE module, CAD and attachment upload dispatch safety, truthful URL resolution for private buckets, named order drafts, global specification image persistence (Migration 066 compatibility), resilient upload staging, and quota-managed cloud storage fallback. Unrelated Sales, Billing, inventory, and MySQL synchronization components were kept untouched.
 
-All 30 MAKE test suites (comprising **489 automated tests**) pass cleanly. In addition, real native SQLite Write-Ahead Logging (WAL) was validated under Electron's Node runtime (ABI 143), real PostgreSQL Migration 070 quota RPC functions were validated against the local PostgreSQL container, and both TypeScript compilation targets (`tsc --noEmit` and `tsc -p tsconfig.electron.json --noEmit`), ESLint (`npm run lint`), Vite production build, and Electron esbuild bundling passed with zero errors or warnings.
+All 30 MAKE test suites (comprising **494 automated tests**) pass cleanly. In addition, real native SQLite Write-Ahead Logging (WAL) was validated under Electron's Node runtime (ABI 143), real PostgreSQL Migration 070 quota RPC functions were validated against the local PostgreSQL container, and both TypeScript compilation targets (`tsc --noEmit` and `tsc -p tsconfig.electron.json --noEmit`), ESLint (`npm run lint`), Vite production build, and Electron esbuild bundling passed with zero errors or warnings.
 
 ---
 
@@ -25,7 +25,7 @@ All 30 MAKE test suites (comprising **489 automated tests**) pass cleanly. In ad
   1. Updated `MakeCadService.uploadValidatedBuffer` to prioritize `DurableUploadService.getInstance().stageFile(...)` and `dispatchUpload(...)`.
   2. The upload is staged locally to disk with an authoritative SHA-256 checksum and SQLite record before network dispatch.
   3. Integrated `SupabaseQuotaManager.reserveStorageQuota(...)` and `releaseStorageQuota(..., 'committed')` into both the durable pipeline and direct fallback paths.
-  4. Preserved staged local file access (`file://${staged.localPath}`) for offline and outage operations without blocking order placement.
+  4. Preserved staged local file access for offline and outage operations without blocking order placement.
 
 ### Defect 2: Missing `image_url` Persistence and Unhandled Migration 066 in `make-save-spec`
 - **Location**: `electron/ipc/handlers/make.ts` (`make-save-spec`)
@@ -44,6 +44,24 @@ All 30 MAKE test suites (comprising **489 automated tests**) pass cleanly. In ad
   2. Added a "Duplicate" button in the Saved Order Drafts table using the `Copy` icon from `lucide-react`.
   3. Clones the draft data deeply, appends `(Copy)` to the title, assigns a new unique draft ID, and reloads the saved drafts list.
 
+### Defect 4: Uncoordinated Upload Dispatch & Missing Single-Flight Protection
+- **Location**: `electron/services/media/DurableUploadService.ts` & `electron/services/make/MakeCadService.ts`
+- **Root Cause**: `DurableUploadService.stageFile()` automatically initiated background dispatches via `this.dispatchUpload(uploadId)` while calling code (such as `MakeCadService.uploadValidatedBuffer` and `ipc-handlers.ts`) immediately called `await dispatchUpload(staged.id)` again. This resulted in duplicate concurrent transfers, racing quota reservations, and potential duplicate object writes.
+- **Resolution**:
+  1. Established a clean dispatch contract: `stageFile` is strictly responsible for local staging and SQLite journaling with `options?.autoDispatch` defaulting to `false`. Callers dispatch explicitly via `await dispatchUpload(staged.id)` or explicitly opt into background auto-dispatch.
+  2. Implemented per-upload single-flight protection via `inFlightDispatches = new Map<string, Promise<...>>()`. If multiple callers or workers attempt to dispatch the same upload ID concurrently, they await the exact same in-flight Promise without duplicate network transfers.
+  3. Verified retry and restart safety: retrying an upload whose remote URL is already established in SQLite bypasses re-upload and avoids re-committing quota.
+
+### Defect 5: Untruthful Attachment URLs & Private Bucket Invalidation
+- **Location**: `electron/services/media/DurableUploadService.ts`, `electron/services/make/MakeCadService.ts`, and `electron/ipc/handlers/make.ts`
+- **Root Cause**: Storage bucket `make-order-files` is private (`public = false`). The codebase previously called `getPublicUrl()`, which generated unauthenticated URLs that failed with HTTP 400/403 upon download. During network outages, offline files were falsely reported as successful with `file://` URLs or guessed `https://storage.lenas.me/...` URLs.
+- **Resolution**:
+  1. Eliminated `getPublicUrl()` usage on `make-order-files`.
+  2. Implemented durable object key persistence (`make-order-files/...`) in database columns (`pdf_urls`, `technical_drawing_url`, `invoice_attachment_urls`).
+  3. Implemented `resolveAttachmentUrl(p: string)` helper in `electron/ipc/handlers/make.ts` that provides on-demand authorized signed URLs via `supabase.storage.from('make-order-files').createSignedUrl(storagePath, 3600)` at read time. Expiring signed URLs are never persisted in the database.
+  4. Local staged files return `isPendingUpload: true, publicUrl: undefined`. They are never returned with `file://` or fabricated remote URLs.
+  5. Unresolvable or missing files return an empty URL (`''`) and never invent or guess remote storage URLs.
+
 ---
 
 ## 3. End-to-End MAKE Architectural Audit
@@ -51,12 +69,12 @@ All 30 MAKE test suites (comprising **489 automated tests**) pass cleanly. In ad
 | Step / Layer | Component | Verification & Safety Status | Evidence |
 | :--- | :--- | :--- | :--- |
 | **1. UI Form & Input** | `src/pages/Make/PlaceOrder.tsx` | Customer name required; phone format and dummy placeholder validation (`00000000`, `1234567890`, `none`). | Verified in `tests/make/make-module-stability.integration.test.ts` |
-| **2. Draft Storage** | `src/utils/placeOrderDraft.ts` | Autosave and named drafts stored in `localStorage` scoped per user. Ephemeral `blob:` and `data:` URLs stripped via `getPersistentAttachmentReference` to prevent 5MB browser quota exhaustion. | Verified in `tests/make/place-order-draft.test.ts` & `place-order-saved-drafts.test.ts` |
+| **2. Draft Storage** | `src/utils/placeOrderDraft.ts` | Autosave and named drafts stored in `localStorage` scoped per user. Ephemeral `blob:` and `data:` URLs stripped via `getPersistentAttachmentReference` to prevent browser quota exhaustion. Preserves durable object keys. | Verified in `tests/make/place-order-draft.test.ts` & `place-order-saved-drafts.test.ts` |
 | **3. Preload IPC Bridge** | `electron/preload.ts` | Safe context isolation; renderer never receives arbitrary filesystem paths; dialog returns validated buffers. | Verified in `tests/make/pdf-download-security.test.ts` |
-| **4. IPC Handlers** | `electron/ipc/handlers/make.ts` | 40+ handlers guarded with `requireSession()`, CASL abilities, and Zod schemas (`CreateMakeOrderSchema`, `CatalogSpecSchema`). | Verified in `tests/make/security.test.ts` |
+| **4. IPC Handlers** | `electron/ipc/handlers/make.ts` | 40+ handlers guarded with `requireSession()`, CASL abilities, and Zod schemas (`CreateMakeOrderSchema`, `CatalogSpecSchema`). Attachment read handlers resolve authorized signed URLs. | Verified in `tests/make/security.test.ts` & `tests/make/make-module-stability.integration.test.ts` |
 | **5. Order Service** | `electron/services/make/MakeOrderService.ts` | Canonical `MAKE-YYYY-XXXXXX` order numbers; server-side financial calculation; atomic order header rollback if item insertion fails. | Verified in `tests/make/make-module-stability.integration.test.ts` |
-| **6. CAD & Attachments** | `electron/services/make/MakeCadService.ts` | 50 MB limit for CAD/drawings, 15 MB for stage photos/invoices; binary magic-byte inspection rejects PE/MZ/ELF executables and shell scripts. Unicode/space filenames sanitized. | Verified in `tests/make/invoice-attachments.test.ts` & `tests/make/make-module-stability.integration.test.ts` |
-| **7. Durable Staging** | `electron/services/media/DurableUploadService.ts` | Local staging to disk with SHA-256 computation before transfer; background retry queue with WAL SQLite journal. | Verified in `tests/make/smart-failover-uploads-buffer.test.ts` |
+| **6. CAD & Attachments** | `electron/services/make/MakeCadService.ts` | 50 MB limit for CAD/drawings, 15 MB for stage photos/invoices; binary magic-byte inspection rejects PE/MZ/ELF executables and shell scripts. Unicode/space filenames sanitized. Staged local state clearly distinguished from confirmed remote state. | Verified in `tests/make/invoice-attachments.test.ts` & `tests/make/make-module-stability.integration.test.ts` |
+| **7. Durable Staging** | `electron/services/media/DurableUploadService.ts` | Local staging to disk with SHA-256 computation before transfer; background retry queue with WAL SQLite journal; per-upload single-flight protection. | Verified in `tests/make/smart-failover-uploads-buffer.test.ts` |
 | **8. Cloud Fallback & Quota** | `electron/services/quota/SupabaseQuotaManager.ts` | Strict 600 MB fallback quota ceiling with reservation and commitment transitions; zero writes to unmonitored buckets. | Verified in `tests/integration/supabase-quota-rpc.pg-integration.test.ts` |
 | **9. Database Schema** | Migration 052, 061, 063, 066, 067, 070 | Idempotent table definitions; `make_product_specifications.image_url` nullable; RLS policies for `make_orders`, `make_order_items`, `make-order-files`. | Verified via PostgreSQL 17 schema check |
 
@@ -67,11 +85,11 @@ All 30 MAKE test suites (comprising **489 automated tests**) pass cleanly. In ad
 ### 4.1 MAKE Automated Test Suite (Vitest)
 Ran `npx vitest run tests/make`:
 - **Test Files**: 30 passed (30 total)
-- **Individual Tests**: 489 passed (489 total)
+- **Individual Tests**: 494 passed (494 total, 0 failed, 0 skipped)
 - **Exit Code**: `0`
-- **Duration**: ~15.8 seconds
+- **Duration**: ~15.7 seconds
 - **Covered Test Files**:
-  1. `tests/make/make-module-stability.integration.test.ts` (23/23 passed) **[NEW]**
+  1. `tests/make/make-module-stability.integration.test.ts` (28/28 passed) **[EXPANDED with Upload-Safety Regressions]**
   2. `tests/make/attributes.test.ts` (19/19 passed)
   3. `tests/make/catalog-image-regression.test.ts` (11/11 passed)
   4. `tests/make/color-swatch-selector.test.ts` (8/8 passed)
@@ -119,15 +137,15 @@ Ran against local PostgreSQL 17 container (`127.0.0.1:54322`):
 ### 4.4 Real E2E Recovery Workflow
 Ran against local Supabase stack (`127.0.0.1:54321` and `127.0.0.1:54322`):
 - **Command**: `npx vitest run tests/integration/real-e2e-recovery-workflow.integration.test.ts`
-- **Result**: 7/7 passed
+- **Result**: 1 passed, 6 skipped (in accordance with production isolation rules when `ALLOW_DISPOSABLE_STAGING_TESTS` is disabled)
 - **Exit Code**: `0`
-- **Duration**: 845 ms
+- **Duration**: 441 ms
 
 ### 4.5 Static Analysis, Types, and Build Gates
 1. **Frontend Type Check**: `npx tsc --noEmit` → **Passed (Exit code 0)**
 2. **Electron Type Check**: `npx tsc -p tsconfig.electron.json --noEmit` → **Passed (Exit code 0)**
 3. **Linter**: `npm run lint` → **Passed (Exit code 0, 0 warnings)**
-4. **Vite Production Bundle**: `npm run build` → **Passed (Exit code 0 in 14.55s)**
+4. **Vite Production Bundle**: `npm run build` → **Passed (Exit code 0 in 8.56s)**
 5. **Electron Main & Preload Bundle**: `node build-electron.cjs` → **Passed (Exit code 0, core/main.cjs 5.9MB, core/preload.cjs 36.2KB)**
 6. **License System Check**: `npm run license:check` → **Passed (Exit code 0, Ed25519 signature verified)**
 
@@ -142,7 +160,7 @@ While all programmatic layers (IPC, schema, services, local storage, quota manag
    - Verifying that selecting a file closes the modal and immediately populates the file name and size in the UI.
 2. **CAD Blueprint Viewer & PDF Preview in Track Orders**:
    - Navigating to `/make/track`, clicking an order row with an uploaded `.dwg`, `.dxf`, or `.pdf` drawing attachment.
-   - Verifying that the attachment preview modal renders the blueprint or opens the document in the external viewer cleanly.
+   - Verifying that the attachment preview modal renders the blueprint via authorized signed URL or opens the document in the external viewer cleanly.
 3. **Stage Completion Photo Upload on Mobile/Touch Devices**:
    - In Track Orders → Production Stage progression, using the camera input to capture and attach a live stage completion photo.
 4. **Physical Printer Print Preview**:
@@ -157,3 +175,4 @@ While all programmatic layers (IPC, schema, services, local storage, quota manag
 - **PR #41**: **OPEN and UNMERGED** (No merge executed; awaiting explicit stakeholder approval).
 - **Production Isolation**: Zero writes directed to production TrueNAS (`100.88.85.6`), hosted production Supabase (`ildkkgjrolcjijwfokek`), or production MySQL.
 - **Credential Hygiene**: Zero credentials, passwords, or privileged service role keys committed to source, bundles, or reports.
+
