@@ -33,7 +33,7 @@ export const CreateMakeOrderSchema = z.object({
     requested_delivery_date: z.string().nullable().optional(),
     salesman_id: z.number().int().positive().nullable().optional(),
     customer_id: z.union([z.string(), z.number()]).nullable().optional(),
-    customer_name: z.string({ required_error: 'Customer name is required' }).min(1, 'Customer name is required').max(255),
+    customer_name: z.string().min(1, 'Customer name is required').max(255),
     customer_phone: z.string().max(50).nullable().optional().refine(val => {
         if (!val || val.trim() === '') return true;
         const cleaned = val.trim();
@@ -126,7 +126,7 @@ export const AlterMakeOrderItemSchema = z.object({
 
 export const AlterMakeOrderSchema = z.object({
     orderId: z.union([z.string().min(1), z.number()]),
-    changes: z.record(z.any()).optional().default({}),
+    changes: z.record(z.string(), z.any()).optional().default({}),
     itemChanges: z.array(AlterMakeOrderItemSchema).optional(),
     items: z.array(AlterMakeOrderItemSchema).optional(),
     reason: z.string().optional(),

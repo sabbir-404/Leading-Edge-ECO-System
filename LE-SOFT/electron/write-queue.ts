@@ -78,8 +78,8 @@ function broadcastStatus() {
 }
 
 // ── Enqueue ───────────────────────────────────────────────────────────────────
-export function enqueue(entry: Omit<QueueEntry, 'id' | 'retries' | 'enqueuedAt'>): string {
-    const id = nextId();
+export function enqueue(entry: Omit<QueueEntry, 'id' | 'retries' | 'enqueuedAt'> & { id?: string }): string {
+    const id = entry.id || nextId();
     const newEntry: QueueEntry = { ...entry, id, retries: 0, enqueuedAt: Date.now() };
 
     // Synchronously commit to SQLite WAL outbox FIRST.

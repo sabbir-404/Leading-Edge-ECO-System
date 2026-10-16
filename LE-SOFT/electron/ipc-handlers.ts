@@ -2322,217 +2322,163 @@ export function registerHandlers() {
             platform: 'desktop',
         };
 
-        // Enqueue the bill insert — returns immediately to user
-        const billOpId = enqueue({
+        // ── Single Authoritative Durable Operation Graph for Create-Bill ─────
+        // 1. Authoritative Bill Operation
+        const billOpId = `bill_${invoiceNumber}`;
+        enqueue({
+            id: billOpId,
             table: 'bills',
             operation: 'insert',
             data: billRow,
-            onSuccess: async () => {
-                // After bill is saved, enqueue items write
-                if (items && items.length > 0) {
-                    // Fetch the bill ID by matching the local plain-text invoice_number
-                    const { data: savedBill } = await supabase
-                        .from('bills').select('id').eq('invoice_number', invoiceNumber).maybeSingle();
-
-                    const savedBillId = savedBill?.id;
-                    if (savedBillId) {
-                        const billItems = items.map((item: any) => ({
-                            bill_id: savedBillId,
-                            product_id: item.product_id,
-                            product_name: item.product_name,
-                            sku: item.sku || '',
-                            quantity: item.quantity,
-                            cost_price: Number(item.cost_price || item.item_cost_price || 0),
-                            mrp: item.mrp,
-                            discount_pct: item.discount_pct || 0,
-                            discount_amt: item.discount_amt || 0,
-                            price: item.price,
-                            notes: item.notes || null,
-                            customization: item.customization || {},
-                        }));
-                        enqueue({
-                            table: 'bill_items',
-                            operation: 'insert',
-                            data: billItems,
-                            onSuccess: async () => {
-                                try {
-                                    const { data: insertedItems, error: itemsErr } = await supabase
-                                        .from('bill_items')
-                                        .select('id, product_id, product_name, customization, quantity, cost_price, mrp, price')
-                                        .eq('bill_id', savedBillId);
-                                    
-                                    if (!itemsErr && insertedItems) {
-                                        for (const bItem of insertedItems) {
-                                            const cust = bItem.customization;
-                                            if (cust && typeof cust === 'object' && Object.keys(cust).length > 0) {
-                                                const descDetails = Object.entries(cust)
-                                                    .map(([k, v]) => `${k}: ${v}`)
-                                                    .join(', ');
-                                                
-                                                const matchingOriginal = items.find((i: any) => i.product_id === bItem.product_id || i.product_name === bItem.product_name);
-                                                const costP = Number(bItem.cost_price || matchingOriginal?.cost_price || matchingOriginal?.item_cost_price || 0);
-                                                const saleP = Number(matchingOriginal?.sale_price || bItem.price || bItem.mrp || 0);
-                                                
-                                                enqueue({
-                                                    table: 'make_orders',
-                                                    operation: 'insert',
-                                                    data: {
-                                                        furniture_name: bItem.product_name || 'Custom Furniture',
-                                                        description: `Customized order linked to Invoice ${invoiceNumber}. Attributes: ${descDetails}`,
-                                                        quantity: Number(bItem.quantity) || 1,
-                                                        designer_name: actor,
-                                                        status: saleP > 0 ? 'Pricing Done' : 'Awaiting Pricing',
-                                                        priority: 'Normal',
-                                                        bill_id: savedBillId,
-                                                        bill_item_id: bItem.id,
-                                                        cost_price: costP,
-                                                        sale_price: saleP > 0 ? saleP : null,
-                                                        custom_price: saleP,
-                                                        custom_details: cust
-                                                    }
-                                                });
-                                            }
-                                        }
-                                    }
-                                } catch (e) {
-                                    console.error('[create-bill make-orders sync] Failed:', e);
-                                }
-                            }
-                        });
-                        // Decrement product stock per item
-                        for (const item of items) {
-                            if (item.product_id && item.quantity) {
-                                (async () => {
-                                    try {
-                                        const pId = Number(item.product_id);
-                                        const qty = Number(item.quantity || 0);
-                                        const { data: prod } = await supabase.from('products').select('quantity').eq('id', pId).maybeSingle();
-                                        if (prod) {
-                                            const currentQty = Number(prod.quantity || 0);
-                                            const newQty = Math.max(0, currentQty - qty);
-                                            await supabase.from('products').update({ quantity: newQty }).eq('id', pId);
-                                        }
-                                        await checkLowStockForProduct(pId);
-                                        syncStockToMySQL(pId, qty);
-                                    } catch (err) {
-                                        console.error('[create-bill stock decrement failed]:', err);
-                                    }
-                                })();
-                            }
-                        }
-                    } else {
-                        console.error('[create-bill] Failed to find saved bill ID for items mapping:', invoiceNumber);
-                    }
-                }
-                
-                // If shipping info was passed along
-                if (shipping && shipping.ship_to_name && shipping.ship_to_address) {
-                    const { data: b } = await supabase.from('bills').select('id').eq('invoice_number', invoiceNumber).maybeSingle();
-                    const bId = b?.id;
-                    if (bId) {
-                        // Create the shipping payload matching exactly the DB schema
-                        const shippingPayload = {
-                            bill_id: bId, 
-                            ship_to_name: shipping.ship_to_name, 
-                            ship_to_address: shipping.ship_to_address, 
-                            ship_to_phone: shipping.ship_to_phone || '', 
-                            ship_from_name: shipping.ship_from_name || '', 
-                            ship_from_address: shipping.ship_from_address || '', 
-                            shipping_charge: shipping.shipping_charge || 0, 
-                            updated_by: actor, 
-                            status: 'pending_payment'
-                        };
-                        
-                        enqueue({
-                            table: 'bill_shipping',
-                            operation: 'insert',
-                            data: shippingPayload,
-                            onSuccess: async () => {
-                                // After successful replication of shipping record, we can add the initial status log.
-                                // It requires the shipment_id, which we now fetch directly.
-                                try {
-                                    const { data: sh } = await supabase.from('bill_shipping').select('id').eq('bill_id', bId).maybeSingle();
-                                    if (sh?.id) {
-                                        enqueue({
-                                            table: 'shipping_status_log',
-                                            operation: 'insert',
-                                            data: {
-                                                shipment_id: sh.id, 
-                                                bill_id: bId, 
-                                                status: 'pending_payment', 
-                                                note: 'Shipping order created', 
-                                                updated_by: actor, 
-                                                updated_by_role: session.role || 'cashier' 
-                                            }
-                                        });
-                                    }
-                                } catch (e) {
-                                    console.error('[create-bill shipping log] Failed:', e);
-                                }
-                                
-                                // Broadcast update so Shipping Dashboard sees the new record
-                                try {
-                                    BrowserWindow.getAllWindows().forEach(win => {
-                                        if (!win.isDestroyed()) win.webContents.send('data-updated', 'bill_shipping');
-                                    });
-                                } catch { }
-                            }
-                        });
-                    }
-                }
-                // Broadcast so BillHistory and CustomerLedger auto-refresh
+            upsertConflict: 'invoice_number',
+            metadata: { invoiceNumber, actor },
+            onSuccess: () => {
+                // UI refresh signals only — no side effects created in transient memory!
                 try {
                     BrowserWindow.getAllWindows().forEach(win => {
-                        if (!win.isDestroyed()) win.webContents.send('data-updated', 'bills');
+                        if (!win.isDestroyed()) {
+                            win.webContents.send('data-updated', 'bills');
+                            win.webContents.send('data-updated', 'bill_items');
+                            win.webContents.send('data-updated', 'bill_shipping');
+                        }
                     });
                 } catch { }
-            },
+            }
         });
 
-        // Persist child items in Durable SQLite Outbox with dependency tracking so they survive restarts
+        // 2. Authoritative Child Bill Items
         if (items && items.length > 0) {
-            try {
-                DurableOutboxService.getInstance().enqueueSingle({
-                    entityType: 'bill_items',
-                    operation: 'insert',
-                    payload: items.map((item: any) => ({
-                        product_id: item.product_id,
-                        product_name: item.product_name,
-                        sku: item.sku || '',
-                        quantity: item.quantity,
-                        cost_price: Number(item.cost_price || item.item_cost_price || 0),
-                        mrp: item.mrp,
-                        discount_pct: item.discount_pct || 0,
-                        discount_amt: item.discount_amt || 0,
-                        price: item.price,
-                        notes: item.notes || null,
-                        customization: item.customization || {},
-                    })),
-                    dependencyOpId: billOpId
-                });
-            } catch {}
+            const itemsOpId = `bill_items_${invoiceNumber}`;
+            const billItems = items.map((item: any) => ({
+                bill_id: null, // Resolved per destination from billOpId by resolveDependentPayload
+                product_id: item.product_id,
+                product_name: item.product_name,
+                sku: item.sku || '',
+                quantity: item.quantity,
+                cost_price: Number(item.cost_price || item.item_cost_price || 0),
+                mrp: item.mrp,
+                discount_pct: item.discount_pct || 0,
+                discount_amt: item.discount_amt || 0,
+                price: item.price,
+                notes: item.notes || null,
+                customization: item.customization || {},
+            }));
+
+            enqueue({
+                id: itemsOpId,
+                table: 'bill_items',
+                operation: 'insert',
+                data: billItems,
+                dependencyOpId: billOpId,
+                metadata: { invoiceNumber }
+            });
+
+            // 3. Authoritative Customized Orders (make_orders)
+            items.forEach((item: any, idx: number) => {
+                const cust = item.customization;
+                if (cust && typeof cust === 'object' && Object.keys(cust).length > 0) {
+                    const descDetails = Object.entries(cust)
+                        .map(([k, v]) => `${k}: ${v}`)
+                        .join(', ');
+                    const costP = Number(item.cost_price || item.item_cost_price || 0);
+                    const saleP = Number(item.sale_price || item.price || item.mrp || 0);
+
+                    const orderOpId = `make_order_${invoiceNumber}_${idx}`;
+                    enqueue({
+                        id: orderOpId,
+                        table: 'make_orders',
+                        operation: 'insert',
+                        data: {
+                            furniture_name: item.product_name || 'Custom Furniture',
+                            description: `Customized order linked to Invoice ${invoiceNumber}. Attributes: ${descDetails}`,
+                            quantity: Number(item.quantity) || 1,
+                            designer_name: actor,
+                            status: saleP > 0 ? 'Pricing Done' : 'Awaiting Pricing',
+                            priority: 'Normal',
+                            bill_id: null, // Resolved from billOpId
+                            cost_price: costP,
+                            sale_price: saleP > 0 ? saleP : null,
+                            custom_price: saleP,
+                            custom_details: cust
+                        },
+                        dependencyOpId: billOpId,
+                        metadata: { invoiceNumber, itemIndex: idx }
+                    });
+                }
+            });
+
+            // 4. Authoritative Inventory Decrement & Stock Sync
+            items.forEach((item: any, idx: number) => {
+                if (item.product_id && item.quantity) {
+                    const pId = Number(item.product_id);
+                    const qty = Number(item.quantity || 0);
+                    const stockOpId = `stock_dec_${invoiceNumber}_${pId}_${idx}`;
+
+                    enqueue({
+                        id: stockOpId,
+                        table: 'inventory_decrement',
+                        operation: 'custom',
+                        data: {
+                            product_id: pId,
+                            quantity: qty,
+                            invoice_number: invoiceNumber
+                        },
+                        dependencyOpId: billOpId,
+                        metadata: { invoiceNumber, product_id: pId, quantity: qty },
+                        onSuccess: async () => {
+                            try {
+                                await checkLowStockForProduct(pId).catch(() => {});
+                                await syncStockToMySQL(pId, qty).catch(() => {});
+                            } catch {}
+                        }
+                    });
+                }
+            });
         }
 
-        // Persist child shipping in Durable SQLite Outbox with dependency tracking so it survives restarts
+        // 5. Authoritative Shipping (bill_shipping)
         if (shipping && shipping.ship_to_name && shipping.ship_to_address) {
-            try {
-                DurableOutboxService.getInstance().enqueueSingle({
-                    entityType: 'bill_shipping',
-                    operation: 'insert',
-                    payload: {
-                        invoice_number: invoiceNumber,
-                        ship_to_name: shipping.ship_to_name,
-                        ship_to_address: shipping.ship_to_address,
-                        ship_to_phone: shipping.ship_to_phone || '',
-                        ship_from_name: shipping.ship_from_name || '',
-                        ship_from_address: shipping.ship_from_address || '',
-                        shipping_charge: shipping.shipping_charge || 0,
-                        updated_by: actor,
-                        status: 'pending_payment'
-                    },
-                    dependencyOpId: billOpId
-                });
-            } catch {}
+            const shippingOpId = `shipping_${invoiceNumber}`;
+            const shippingPayload = {
+                bill_id: null, // Resolved from billOpId
+                invoice_number: invoiceNumber,
+                ship_to_name: shipping.ship_to_name,
+                ship_to_address: shipping.ship_to_address,
+                ship_to_phone: shipping.ship_to_phone || '',
+                ship_from_name: shipping.ship_from_name || '',
+                ship_from_address: shipping.ship_from_address || '',
+                shipping_charge: shipping.shipping_charge || 0,
+                updated_by: actor,
+                status: 'pending_payment'
+            };
+
+            enqueue({
+                id: shippingOpId,
+                table: 'bill_shipping',
+                operation: 'insert',
+                data: shippingPayload,
+                upsertConflict: 'bill_id',
+                dependencyOpId: billOpId,
+                metadata: { invoiceNumber }
+            });
+
+            // 6. Authoritative Initial Shipping Status Log
+            const shippingLogOpId = `shipping_log_${invoiceNumber}`;
+            enqueue({
+                id: shippingLogOpId,
+                table: 'shipping_status_log',
+                operation: 'insert',
+                data: {
+                    shipment_id: null, // Resolved from shippingOpId
+                    bill_id: null,
+                    status: 'pending_payment',
+                    note: 'Shipping order created',
+                    updated_by: actor,
+                    updated_by_role: session.role || 'cashier'
+                },
+                dependencyOpId: shippingOpId,
+                metadata: { invoiceNumber }
+            });
         }
 
         await writeAuditLog({
@@ -3375,7 +3321,7 @@ export function registerHandlers() {
         const isActiveValue = (isActive === undefined || isActive === null) ? 1 : (Number(isActive) ? 1 : 0);
         
         // Fetch current user from ACTIVE DB (TrueNAS)
-        const { data: currentUser } = await supabase.from('users').select('role, auth_id, group_id').eq('id', id).maybeSingle();
+        const { data: currentUser } = await supabase.from('users').select('role, auth_id, group_id, username').eq('id', id).maybeSingle();
         
         if (role && role === 'superadmin' && currentUser?.role !== 'superadmin' && reqRole !== 'superadmin') {
             throw new Error('Only Super Administrators can assign the Super Admin role.');

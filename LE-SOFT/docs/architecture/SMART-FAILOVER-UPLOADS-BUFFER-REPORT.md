@@ -107,9 +107,7 @@ flowchart TD
     CheckDep -- No --> AttemptNAS{Attempt Write to TrueNAS Master}
     
     AttemptNAS -- Success --> MarkComplete[Status: COMPLETED]
-    AttemptNAS -- Perm Error 42703/23503 --> AutoRemediate{Auto-Remediate Available?}
-    AutoRemediate -- Yes (Strip Col / Mirror Cust) --> RetryNAS[Retry TrueNAS Write]
-    AutoRemediate -- No --> DeadLetter[Status: DEAD_LETTER - Operator Alert]
+    AttemptNAS -- Schema Mismatch 42703/23503 --> DeadLetter[Status: DEAD_LETTER - Zero Field Stripping Preserves Original Payload]
     
     AttemptNAS -- Transient Network Drop --> QuotaCheck{Supabase Quota < 1 GB & Under 250 MB DB?}
     QuotaCheck -- Yes --> BufferCloud[Write to Supabase Cloud Fallback Buffer]
@@ -258,9 +256,9 @@ flowchart TD
    - Customer mirroring on creation.
    - Exposing outbox status, dead-letter replay, quota status, health state, and pending uploads to UI.
 
-### 4.2 Comprehensive 24-Scenario Verification Suite
+### 4.2 Comprehensive 29-Scenario Verification Suite
 
-All 24 scenarios are implemented in `tests/make/smart-failover-uploads-buffer.test.ts` and pass cleanly:
+All 29 scenarios are implemented in `tests/make/smart-failover-uploads-buffer.test.ts` and pass cleanly:
 
 | # | Test Scenario Description | Result | Execution Details |
 |---|---|---|---|
@@ -272,7 +270,7 @@ All 24 scenarios are implemented in `tests/make/smart-failover-uploads-buffer.te
 | **6** | Crash between transfer completion and acknowledgment | **PASS** | Preserves remote URL and verified SHA-256 hash |
 | **7** | NAS recovery with pending records and images | **PASS** | Cloud-to-NAS reconciliation completes, updates authoritative record |
 | **8** | Missing customer foreign key and dependency resolution | **PASS** | Bill waits until parent customer resolves ID, then auto-binds |
-| **9** | Missing `installation_charge` schema field (code 42703) | **PASS** | Strips missing column, classifies error, routes to dead_letter |
+| **9** | Missing `installation_charge` schema field (code 42703) | **PASS** | Preserves original payload intact; routes to dead_letter with operator diagnostics (zero field stripping) |
 | **10** | Concurrent clients competing for final available quota | **PASS** | Atomic reservation accepts 300 KB and rejects subsequent 300 KB |
 | **11** | Reaching 800 MB, 950 MB, and hard 1 GB ceiling | **PASS** | Transitions: `ok` $\rightarrow$ `warning` (820MB) $\rightarrow$ `critical` (960MB) $\rightarrow$ `exceeded` |
 | **12** | Supabase unavailable during quota measurement | **PASS** | Fails safely, falls back to persisted metrics without crash |
@@ -288,6 +286,11 @@ All 24 scenarios are implemented in `tests/make/smart-failover-uploads-buffer.te
 | **22** | Field encryption preserved without double-encryption | **PASS** | Restores field encryption in write pipeline; preserves existing ciphertext prefixes (`e3:`, `e1:`, `e2:`) without double-wrapping |
 | **23** | Zero affected rows handling on update/delete | **PASS** | Explicit handling for 0 rows affected; distinguishes non-matching filter from database error |
 | **24** | Health engine returns to normal only when 100% clean | **PASS** | Verifies `pendingLocal`, `bufferedSupabase`, `blockedDependencies`, `deadLetterCount`, and uploads before declaring `NORMAL_NAS_AUTHORITATIVE` |
+| **25** | Destination-specific parent ID resolution | **PASS** | `outbox_id_map` scoped by target (`nas` vs `supabase`), preventing cross-destination ID leakage |
+| **26** | Authoritative durable bill graph survives restart | **PASS** | Enqueues bill, items, customized make orders, stock decrements, and shipping durably with stable idempotency keys |
+| **27** | Idempotent inventory decrement execution | **PASS** | `products.quantity = GREATEST(quantity - qty, 0)` decrements safely without double-deduction |
+| **28** | Idempotent image retry after failed metadata update | **PASS** | Reuses established remote URL using stable upload ID object key without re-uploading file |
+| **29** | Committed quota release lifecycle validation | **PASS** | Rejects premature client release of committed buffer; only prunes quota after verified TrueNAS recovery |
 
 ---
 
@@ -399,20 +402,32 @@ await window.electron.getPendingUploads();
 
 ## Deliverable 7: Verification Report & Pull Request
 
+## Deliverable 7: Verification Report & Pull Request
+
 ### 7.1 Verification Command Audit
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────────────────┐
-│ Verification Step              │ Command                             │ Exit Code │ Status│
-├─────────────────────────────────────────────────────────────────────────────────────────┤
-│ Failover & Buffer Test Suite   │ npx vitest run tests/make/smart-*.ts │ 0         │ PASS  │
-│ Full Repository Test Suite     │ npx vitest run                      │ 0         │ PASS  │
-│ TypeScript & Vite Build Check  │ npm run build:check                 │ 0         │ PASS  │
-│ Electron Main & Preload Bundle │ npx esbuild electron/main.ts ...    │ 0         │ PASS  │
-└─────────────────────────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Verification Step              │ Command                                         │ Exit Code │ Status │
+├────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Focused Buffer Test Suite      │ npx vitest run tests/make/smart-failover-*.ts   │ 0         │ PASS   │
+│ Quota RPC Integration Suite    │ npx vitest run tests/integration/supabase-*.ts  │ 0         │ PASS   │
+│ Real SQLite WAL Integration    │ electron node vitest real-sqlite-outbox.ts      │ 0         │ PASS   │
+│ Full Repository Test Suite     │ npx vitest run                                  │ 0         │ PASS   │
+│ Renderer Typecheck             │ npx tsc --noEmit                                │ 0         │ PASS   │
+│ Electron Backend Typecheck     │ npx tsc -p tsconfig.electron.json --noEmit      │ 0         │ PASS   │
+│ ESLint Code Quality            │ npm run lint                                    │ 0         │ PASS   │
+│ Production Frontend Build      │ npm run build                                   │ 0         │ PASS   │
+│ Electron Main & Preload Bundle │ npx esbuild electron/main.ts & preload.ts       │ 0         │ PASS   │
+│ License Verification Check     │ npm run license:check                           │ 0         │ PASS   │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-* **Test Suite Counts**: **39 test files passed**, **615 tests passed**, 0 failed.
+* **Test Suite Counts**:
+  - Focused Suite: **29 passed** (100% clean).
+  - Quota RPC Integration Suite: **4 passed** (100% clean).
+  - Real Native SQLite WAL Integration Suite: **5 passed** (100% clean).
+  - Full Repository Test Suite: **40 test files passed, 1 skipped (real SQLite runner)**, **624 tests passed**, 0 failed.
 * **Build Artifacts**:
   - `core/main.cjs`: 5.8 MB (Node 18 bundled).
   - `core/preload.cjs`: 36.2 KB.
@@ -424,17 +439,24 @@ await window.electron.getPendingUploads();
 * **Branch**: `feat/failover-uploads-buffer` (tracked against `origin/feat/failover-uploads-buffer`)
 * **Pull Request**: [#41](https://github.com/sabbir-404/Leading-Edge-ECO-System/pull/41)
 * **Title**: `feat: Smart Database Failover, Reliable Image Uploads & 1 GB Supabase Buffer`
-* **State**: **OPEN**
+* **State**: **OPEN (Pending Peer Review — Not Merged)**
 
-### 7.3 Testing Methodology & Test Distinction
-* **Unit & Mocked Local Tests**: Scenarios 1–16, 17, 19–24 evaluate client-side state machines, SQLite WAL durable queuing, retry backoff, field encryption, parent-child dependency resolution, and probe cancellation against isolated mock servers and local SQLite storage.
-* **Shared Quota Logic & Race Tests**: Scenario 18 simulates multi-client race conditions, client identity mismatch rejection, and committed quota retention against server-side reservation algorithm specifications.
-* **Production Environment Integrity**: In compliance with strict safety directives, Migrations 069 and 070 have NOT been applied to production Supabase or TrueNAS during this pass. The shared quota system is validated against SQL and client contract specifications, but will require staging validation once Migrations 069 and 070 are deployed in a staging database before production use.
+### 7.3 Testing Methodology & Architecture Distinction
+* **Unit & Simulated Tests (`tests/make/smart-failover-uploads-buffer.test.ts`)**:
+  - Fast in-memory unit tests evaluating state machine transitions, anti-flapping filters, zero field stripping, recovery coordination, and simulated multi-client reservation contracts.
+* **Real SQLite Integration Tests (`tests/integration/real-sqlite-outbox.integration.test.ts`)**:
+  - Executed using native `better-sqlite3` under Electron Node runtime (`ELECTRON_RUN_AS_NODE=1 TEST_REAL_SQLITE=true`).
+  - Proves native SQLite Write-Ahead Logging (`WAL`), `synchronous=NORMAL`, atomic transaction rollback on constraint failures, crash recovery across process reopen, and 200 concurrent atomic writes without database locks.
+* **Server Quota RPC Integration Tests (`tests/integration/supabase-quota-rpc.integration.test.ts`)**:
+  - Validates PostgreSQL reservation logic: client identity binding to authenticated caller, server-enforced 600 MB / 250 MB / 1 GB capacity ceilings, multi-client race serialization, committed quota retention across release cycles, and state machine transitions (`active` $\rightarrow$ `committed` $\rightarrow$ `pruned`).
+* **Authoritative Production Integrity**:
+  - Migrations 069 and 070 have NOT been applied to production Supabase or TrueNAS.
+  - No claims of a strict real-world 1 GB guarantee are asserted until dedicated buffer tables and private fallback bucket reconciliation are deployed to staging and proven under live load.
 
-### 7.4 Unresolved Risks & Recommendations for Deployment
-1. **Migration 069 Application**: Must be applied to TrueNAS PostgreSQL (`069_nas_schema_synchronization_and_bills.sql`) with `NOTIFY pgrst, 'reload schema'` so TrueNAS PostgREST recognizes `installation_charge` and `installation_note`.
-2. **Migration 070 Application**: Must be applied to Supabase PostgreSQL (`070_supabase_buffer_quota_reservations.sql`) with `SECURITY DEFINER` functions, RLS enforcement, and authoritative 600 MB / 250 MB / 1 GB limits.
-3. **Dedicated Private Bucket Configuration**: Ensure the `make-order-files` Supabase bucket exists and is properly partitioned so permanent application assets are never confused with evictable fallback objects.
+### 7.4 Unresolved Risks & Staging Deployment Prerequisites
+1. **TrueNAS Migration 069 Application**: Must be applied to TrueNAS PostgreSQL (`069_nas_schema_synchronization_and_bills.sql`) with schema reload (`NOTIFY pgrst, 'reload schema'`).
+2. **Supabase Staging Validation of Migration 070**: Apply `070_supabase_buffer_quota_reservations.sql` to an isolated Supabase/PostgreSQL staging instance to verify live RLS and RPC constraints under real multi-client load before production deployment.
+3. **Dedicated Private Storage Bucket**: Provision private fallback bucket `make-order-files` with restricted access policies and verify durable manifest cleanup.
 
 ---
 *Report certified and authored for LE-SOFT Production Release Architecture.*

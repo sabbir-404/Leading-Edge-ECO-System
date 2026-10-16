@@ -94,6 +94,7 @@ DECLARE
     MAX_ALLOWED_TOTAL CONSTANT BIGINT := 850000000;     -- 850 MB = 1 GB - 150 MB
     MAX_SINGLE_ITEM CONSTANT BIGINT := 50000000;        -- 50 MB max single item
 
+    v_caller TEXT;
     v_total_storage BIGINT;
     v_total_db BIGINT;
     v_grand_total BIGINT;
@@ -101,12 +102,19 @@ DECLARE
     v_existing_status TEXT;
     v_existing_bytes BIGINT;
 BEGIN
-    -- 1. Input Validation & Defense
+    -- 1. Input Validation & Trusted Identity Resolution
     IF p_reservation_id IS NULL OR TRIM(p_reservation_id) = '' THEN
         RETURN jsonb_build_object('success', false, 'reason', 'INVALID_RESERVATION_ID');
     END IF;
 
-    IF p_client_id IS NULL OR TRIM(p_client_id) = '' THEN
+    -- Authoritative client identity: Prefer server-verified JWT subject or auth.uid()
+    v_caller := COALESCE(
+        auth.uid()::text,
+        NULLIF(current_setting('request.jwt.claim.sub', true), ''),
+        NULLIF(TRIM(p_client_id), '')
+    );
+
+    IF v_caller IS NULL OR TRIM(v_caller) = '' THEN
         RETURN jsonb_build_object('success', false, 'reason', 'INVALID_CLIENT_ID');
     END IF;
 
@@ -127,7 +135,7 @@ BEGIN
     FROM public.supabase_buffer_reservations
     WHERE id = p_reservation_id;
 
-    IF FOUND AND v_existing_client <> p_client_id THEN
+    IF FOUND AND v_existing_client <> v_caller AND v_existing_client <> p_client_id THEN
         RETURN jsonb_build_object(
             'success', false,
             'reason', 'UNAUTHORIZED_CLIENT_MISMATCH'
@@ -198,7 +206,7 @@ BEGIN
     INSERT INTO public.supabase_buffer_reservations (
         id, client_id, resource_type, bytes_reserved, status, expires_at
     ) VALUES (
-        p_reservation_id, p_client_id, p_resource_type, p_bytes, 'active', NOW() + INTERVAL '5 minutes'
+        p_reservation_id, v_caller, p_resource_type, p_bytes, 'active', NOW() + INTERVAL '5 minutes'
     )
     ON CONFLICT (id) DO UPDATE SET
         bytes_reserved = EXCLUDED.bytes_reserved,
@@ -229,22 +237,35 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
+    v_caller TEXT;
     v_existing_client TEXT;
+    v_existing_status TEXT;
+    v_existing_bytes BIGINT;
     v_target_status TEXT;
 BEGIN
-    -- 1. Input Validation
+    -- 1. Input Validation & Identity Verification
     IF p_reservation_id IS NULL OR TRIM(p_reservation_id) = '' OR
        p_client_id IS NULL OR TRIM(p_client_id) = '' THEN
         RETURN jsonb_build_object('success', false, 'reason', 'INVALID_IDENTIFIER');
     END IF;
+
+    v_caller := COALESCE(
+        auth.uid()::text,
+        NULLIF(current_setting('request.jwt.claim.sub', true), ''),
+        NULLIF(TRIM(p_client_id), '')
+    );
 
     v_target_status := CASE 
         WHEN p_status IN ('committed', 'released', 'pruned') THEN p_status 
         ELSE 'released' 
     END;
 
+    -- Acquire transaction-level lock
+    PERFORM pg_advisory_xact_lock(84729103);
+
     -- 2. Verify Client Ownership
-    SELECT client_id INTO v_existing_client
+    SELECT client_id, status, bytes_reserved 
+    INTO v_existing_client, v_existing_status, v_existing_bytes
     FROM public.supabase_buffer_reservations
     WHERE id = p_reservation_id;
 
@@ -252,14 +273,29 @@ BEGIN
         RETURN jsonb_build_object('success', false, 'reason', 'NOT_FOUND');
     END IF;
 
-    IF v_existing_client <> p_client_id THEN
+    IF v_existing_client <> v_caller AND v_existing_client <> p_client_id THEN
         RETURN jsonb_build_object(
             'success', false,
             'reason', 'UNAUTHORIZED_CLIENT_MISMATCH'
         );
     END IF;
 
-    -- 3. Update reservation status and actual committed bytes
+    -- 3. Strict State Transition Validation
+    -- Active may transition to committed or released
+    IF v_existing_status = 'active' THEN
+        IF v_target_status NOT IN ('committed', 'released') THEN
+            RETURN jsonb_build_object('success', false, 'reason', 'INVALID_STATUS_TRANSITION', 'detail', 'active reservations may only transition to committed or released');
+        END IF;
+    -- Committed data may only transition to pruned (once temporary data is safely removed)
+    ELSIF v_existing_status = 'committed' THEN
+        IF v_target_status <> 'pruned' THEN
+            RETURN jsonb_build_object('success', false, 'reason', 'COMMITTED_QUOTA_CAN_ONLY_BE_PRUNED', 'detail', 'committed temporary data cannot be released until verified and pruned');
+        END IF;
+    ELSIF v_existing_status IN ('released', 'pruned', 'expired') THEN
+        RETURN jsonb_build_object('success', false, 'reason', 'RESERVATION_ALREADY_CLOSED');
+    END IF;
+
+    -- 4. Update reservation status and actual committed bytes
     UPDATE public.supabase_buffer_reservations
     SET status = v_target_status,
         bytes_reserved = CASE 

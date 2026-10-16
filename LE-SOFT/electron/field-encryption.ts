@@ -119,7 +119,7 @@ export function initEncryptionKey(): void {
     ]);
 
     const masterSalt = crypto.createHash('sha256').update(machineSeed).digest();
-    _masterKey = crypto.hkdfSync('sha256', ikm, masterSalt, Buffer.from('lesoft-field-master-v3', 'utf-8'), 32);
+    _masterKey = Buffer.from(crypto.hkdfSync('sha256', ikm, masterSalt, Buffer.from('lesoft-field-master-v3', 'utf-8'), 32));
 
     console.log('[Encryption] Master field encryption key initialized.');
 }
@@ -180,7 +180,7 @@ export function encryptField(text: string): string {
         const iv   = crypto.randomBytes(IV_LEN);
 
         // Derive unique record key using HKDF-SHA256
-        const recordKey = crypto.hkdfSync('sha256', masterKey, salt, HKDF_INFO, 32);
+        const recordKey = Buffer.from(crypto.hkdfSync('sha256', masterKey, salt, HKDF_INFO, 32));
 
         const cipher = crypto.createCipheriv(CIPHER_GCM, recordKey, iv);
         const ciphertextBuf = Buffer.concat([
@@ -229,7 +229,7 @@ export function decryptField(encryptedText: string | null): string {
             const ciphertext = combined.subarray(SALT_LEN + IV_LEN + TAG_LEN);
 
             // Derive record key via HKDF-SHA256
-            const recordKey = crypto.hkdfSync('sha256', masterKey, salt, HKDF_INFO, 32);
+            const recordKey = Buffer.from(crypto.hkdfSync('sha256', masterKey, salt, HKDF_INFO, 32));
 
             const decipher = crypto.createDecipheriv(CIPHER_GCM, recordKey, iv);
             decipher.setAuthTag(tag);

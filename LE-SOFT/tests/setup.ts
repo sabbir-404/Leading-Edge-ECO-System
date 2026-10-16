@@ -48,7 +48,10 @@ vi.mock('electron', () => ({
 }));
 
 // In-memory mock for better-sqlite3 to run flawlessly in Vitest without ABI rebuild conflicts
-vi.mock('better-sqlite3', () => {
+vi.mock('better-sqlite3', async (importOriginal) => {
+  if (process.env.TEST_REAL_SQLITE === 'true') {
+    return importOriginal();
+  }
   const globalTables = new Map<string, any[]>();
 
   class MockStatement {
@@ -178,13 +181,22 @@ vi.mock('better-sqlite3', () => {
             if (lower.includes("status = 'synced_nas'")) {
               r.status = 'synced_nas';
               r.remote_url_nas = args[0];
+              r.last_error = null;
             } else if (lower.includes("status = 'buffered_supabase'")) {
               r.status = 'buffered_supabase';
-              r.remote_url_supabase = args[0];
-            } else if (args[0] && typeof args[0] === 'string') {
-              r.status = args[0];
+              if (lower.includes('remote_url_supabase = ?')) {
+                r.remote_url_supabase = args[0];
+                r.last_error = args[1] || null;
+              } else {
+                r.last_error = null;
+              }
+            } else if (lower.includes('remote_url_nas = ?')) {
+              r.remote_url_nas = args[0];
+              r.last_error = args[1];
+            } else if (lower.includes('retry_count = ?')) {
+              r.retry_count = args[0];
+              r.last_error = args[1];
             }
-            if (args[1]) r.last_error = args[1];
           }
         }
       } else if (lower.startsWith('delete')) {
@@ -207,6 +219,12 @@ vi.mock('better-sqlite3', () => {
           dead_letter_cnt: rows.filter(r => r.status === 'dead_letter').length,
           oldest_pending: rows[0]?.created_at || null,
         };
+      }
+      if (table === 'outbox_id_map') {
+        if (args.length >= 2) {
+          return rows.find(r => r.op_id === args[0] && r.target === args[1]);
+        }
+        return rows.find(r => r.op_id === args[0]);
       }
       if (args.length > 0) {
         return rows.find(r => r.id === args[0] || r.op_id === args[0]);

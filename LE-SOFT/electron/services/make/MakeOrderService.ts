@@ -739,7 +739,7 @@ export class MakeOrderService {
             reason = paramsOrOrderId.reason;
             actorSession = paramsOrOrderId.actorSession || SessionManager.getSession() || (paramsOrOrderId.userRole ? { role: paramsOrOrderId.userRole, username: paramsOrOrderId.alteredBy || 'User' } : null);
         } else {
-            orderId = paramsOrOrderId;
+            orderId = paramsOrOrderId as number;
             changes = changesArg || {};
             itemChanges = itemsArg || [];
             reason = reasonArg;

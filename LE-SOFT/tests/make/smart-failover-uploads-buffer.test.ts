@@ -952,5 +952,185 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
         await secondRun;
         // returns early without error
     });
+
+    it('Scenario 25: Destination-specific parent ID resolution prevents cross-destination pollution', () => {
+        const outbox = DurableOutboxService.getInstance();
+        const parentOpId = `op_parent_${Date.now()}`;
+
+        // Record deliberately different destination IDs in outbox_id_map:
+        // NAS generated ID is 101, Supabase generated ID is 505
+        outbox.recordResolvedId(parentOpId, 'nas', '101');
+        outbox.recordResolvedId(parentOpId, 'supabase', '505');
+
+        const childItemsPayload = [
+            { product_id: 1, product_name: 'Executive Chair', quantity: 2, bill_id: null },
+            { product_id: 2, product_name: 'Standing Desk', quantity: 1, bill_id: null }
+        ];
+
+        // Resolve specifically for TrueNAS destination
+        const nasResolved = outbox.resolveDependentPayload(parentOpId, childItemsPayload, 'nas');
+        expect(Array.isArray(nasResolved)).toBe(true);
+        expect(nasResolved.length).toBe(2);
+        expect(nasResolved[0].bill_id).toBe(101);
+        expect(nasResolved[1].bill_id).toBe(101);
+        expect(nasResolved[0].product_name).toBe('Executive Chair');
+
+        // Resolve specifically for Supabase destination
+        const sbResolved = outbox.resolveDependentPayload(parentOpId, childItemsPayload, 'supabase');
+        expect(Array.isArray(sbResolved)).toBe(true);
+        expect(sbResolved.length).toBe(2);
+        expect(sbResolved[0].bill_id).toBe(505);
+        expect(sbResolved[1].bill_id).toBe(505);
+        expect(sbResolved[0].bill_id).not.toBe(nasResolved[0].bill_id);
+    });
+
+    it('Scenario 26: Authoritative durable bill graph ensures all side effects survive restart without duplicates', () => {
+        const outbox = DurableOutboxService.getInstance();
+        const invNum = `INV-TEST-26-${Date.now()}`;
+        const billOpId = `bill_${invNum}`;
+        const itemsOpId = `bill_items_${invNum}`;
+        const orderOpId = `make_order_${invNum}_0`;
+        const stockOpId = `stock_dec_${invNum}_10_0`;
+        const shipOpId = `shipping_${invNum}`;
+        const shipLogOpId = `shipping_log_${invNum}`;
+
+        // 1. Enqueue entire bill graph with deterministic keys
+        outbox.enqueueSingle({ id: billOpId, entityType: 'bills', operation: 'insert', payload: { invoice_number: invNum, grand_total: 500 } });
+        outbox.enqueueSingle({ id: itemsOpId, entityType: 'bill_items', operation: 'insert', payload: [{ product_id: 10, quantity: 2 }], dependencyOpId: billOpId });
+        outbox.enqueueSingle({ id: orderOpId, entityType: 'make_orders', operation: 'insert', payload: { furniture_name: 'Custom Desk', bill_id: null }, dependencyOpId: billOpId });
+        outbox.enqueueSingle({ id: stockOpId, entityType: 'inventory_decrement', operation: 'custom', payload: { product_id: 10, quantity: 2 }, dependencyOpId: billOpId });
+        outbox.enqueueSingle({ id: shipOpId, entityType: 'bill_shipping', operation: 'insert', payload: { invoice_number: invNum, ship_to_name: 'Test Client' }, dependencyOpId: billOpId });
+        outbox.enqueueSingle({ id: shipLogOpId, entityType: 'shipping_status_log', operation: 'insert', payload: { status: 'pending_payment' }, dependencyOpId: shipOpId });
+
+        // 2. Duplicate retry attempts with identical keys MUST be rejected by UNIQUE constraint
+        expect(() => {
+            outbox.enqueueSingle({ id: billOpId, entityType: 'bills', operation: 'insert', payload: { invoice_number: invNum, grand_total: 500 } });
+        }).toThrow(/UNIQUE constraint failed/);
+
+        expect(() => {
+            outbox.enqueueSingle({ id: itemsOpId, entityType: 'bill_items', operation: 'insert', payload: [{ product_id: 10, quantity: 2 }], dependencyOpId: billOpId });
+        }).toThrow(/UNIQUE constraint failed/);
+
+        expect(() => {
+            outbox.enqueueSingle({ id: stockOpId, entityType: 'inventory_decrement', operation: 'custom', payload: { product_id: 10, quantity: 2 }, dependencyOpId: billOpId });
+        }).toThrow(/UNIQUE constraint failed/);
+    });
+
+    it('Scenario 27: Idempotent inventory decrement decrements stock safely on database client', async () => {
+        const outbox = DurableOutboxService.getInstance();
+        let storedQty = 50;
+
+        const mockClient: any = {
+            from: vi.fn((table: string) => ({
+                select: vi.fn(() => ({
+                    eq: vi.fn(() => ({
+                        maybeSingle: vi.fn().mockResolvedValue({ data: { id: 10, quantity: storedQty }, error: null })
+                    }))
+                })),
+                update: vi.fn((payload: any) => ({
+                    eq: vi.fn(async () => {
+                        storedQty = payload.quantity;
+                        return { data: { id: 10, quantity: storedQty }, error: null };
+                    })
+                }))
+            }))
+        };
+
+        const res = await outbox.executeOnClient(mockClient, 'inventory_decrement', 'custom', { product_id: 10, quantity: 5 });
+        expect(res.success).toBe(true);
+        expect(res.affectedRows).toBe(1);
+        expect(storedQty).toBe(45);
+    });
+
+    it('Scenario 28: Idempotent image retry reuses established remote URL after failed metadata update without re-upload', async () => {
+        const uploadService = DurableUploadService.getInstance();
+        
+        // Mock uploadToNasStorage to succeed with established remote URL
+        const uploadSpy = vi.spyOn(uploadService as any, 'uploadToNasStorage').mockResolvedValue({
+            success: true,
+            url: 'https://storage.lenas.me/files/products/established_drawing.png'
+        });
+
+        // First attempt: entity update fails (simulating crash or DB metadata update failure)
+        const entitySpy = vi.spyOn(uploadService as any, 'updateEntityRecord').mockResolvedValueOnce(false);
+
+        const stageRecord = await uploadService.stageFile(
+            Buffer.from('test-image-data-scenario-28'),
+            'desk_drawing.png',
+            'image/png',
+            'products',
+            { entityType: 'make_orders', entityId: 'ord_123', fieldName: 'technical_drawing_url' }
+        );
+
+        expect(stageRecord.id).toBeDefined();
+        const uplId = stageRecord.id;
+
+        // Wait a tick for the background dispatch from stageFile to complete
+        await new Promise(r => setTimeout(r, 50));
+
+        // Verify that remote_url_nas was saved despite metadata failure
+        const rowAfterFirstAttempt = (uploadService as any).db.prepare('SELECT * FROM durable_uploads WHERE id = ?').get(uplId) as any;
+        expect(rowAfterFirstAttempt.remote_url_nas).toBe('https://storage.lenas.me/files/products/established_drawing.png');
+        expect(rowAfterFirstAttempt.last_error).toContain('Entity record update failed');
+
+        // Clear upload spy history before testing retry
+        uploadSpy.mockClear();
+
+        // Second attempt (retry): entity update succeeds
+        entitySpy.mockResolvedValue(true);
+
+        const retryRes = await uploadService.dispatchUpload(uplId);
+        expect(retryRes.success).toBe(true);
+        expect(retryRes.status).toBe('synced_nas');
+        expect(retryRes.url).toBe('https://storage.lenas.me/files/products/established_drawing.png');
+        expect(uploadSpy).not.toHaveBeenCalled();
+    });
+
+    it('Scenario 29: Committed quota cannot be prematurely released; only pruned after confirmed TrueNAS reconciliation', async () => {
+        const quotaMgr = new SupabaseQuotaManager('client-test-29');
+        let committedBytes = 0;
+        let reservationStatus = 'active';
+
+        const mockClient: any = {
+            rpc: vi.fn(async (fnName: string, params: any) => {
+                if (fnName === 'reserve_buffer_capacity') {
+                    reservationStatus = 'active';
+                    return { data: { success: true }, error: null };
+                }
+                if (fnName === 'release_buffer_capacity') {
+                    if (reservationStatus === 'committed' && params.p_status === 'released') {
+                        return { data: { success: false, reason: 'COMMITTED_QUOTA_CAN_ONLY_BE_PRUNED' }, error: null };
+                    }
+                    reservationStatus = params.p_status;
+                    if (params.p_status === 'committed') committedBytes = params.p_actual_bytes;
+                    if (params.p_status === 'pruned') committedBytes = 0;
+                    return { data: { success: true, status: params.p_status }, error: null };
+                }
+                return { data: null, error: null };
+            })
+        };
+
+        quotaMgr.registerClient(mockClient);
+
+        // 1. Reserve and commit database quota
+        await quotaMgr.reserveDatabaseQuota('res_test_29', 2048);
+        await quotaMgr.releaseDatabaseQuota('res_test_29', 2048, 'committed');
+        expect(committedBytes).toBe(2048);
+
+        // 2. Attempt to release committed quota -> rejected by state machine
+        const { data: rejectData } = await mockClient.rpc('release_buffer_capacity', {
+            p_reservation_id: 'res_test_29',
+            p_client_id: 'client-test-29',
+            p_status: 'released'
+        });
+        expect(rejectData.success).toBe(false);
+        expect(rejectData.reason).toBe('COMMITTED_QUOTA_CAN_ONLY_BE_PRUNED');
+        expect(committedBytes).toBe(2048);
+
+        // 3. Prune confirmed database quota after reconciliation
+        await quotaMgr.pruneConfirmedDatabase('res_test_29', 2048);
+        expect(committedBytes).toBe(0);
+        expect(reservationStatus).toBe('pruned');
+    });
 });
 

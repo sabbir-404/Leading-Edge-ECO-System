@@ -192,7 +192,7 @@ export class SupabaseQuotaManager {
         return true;
     }
 
-    public async releaseStorageQuota(reservationId: string, confirmedUploadedBytes = 0): Promise<void> {
+    public async releaseStorageQuota(reservationId: string, confirmedUploadedBytes = 0, statusOverride?: 'committed' | 'released' | 'pruned'): Promise<void> {
         this.activeStorageReservations.delete(reservationId);
         if (confirmedUploadedBytes > 0) {
             this.measuredStorageBytes += confirmedUploadedBytes;
@@ -200,10 +200,11 @@ export class SupabaseQuotaManager {
         }
         if (this.client) {
             try {
+                const finalStatus = statusOverride || (confirmedUploadedBytes > 0 ? 'committed' : 'released');
                 await this.client.rpc('release_buffer_capacity', {
                     p_reservation_id: reservationId,
                     p_client_id: this.clientId,
-                    p_status: confirmedUploadedBytes > 0 ? 'committed' : 'released',
+                    p_status: finalStatus,
                     p_actual_bytes: confirmedUploadedBytes
                 });
             } catch (err: any) {
@@ -280,7 +281,7 @@ export class SupabaseQuotaManager {
         return true;
     }
 
-    public async releaseDatabaseQuota(reservationId: string, confirmedWrittenBytes = 0): Promise<void> {
+    public async releaseDatabaseQuota(reservationId: string, confirmedWrittenBytes = 0, statusOverride?: 'committed' | 'released' | 'pruned'): Promise<void> {
         this.activeDatabaseReservations.delete(reservationId);
         if (confirmedWrittenBytes > 0) {
             this.measuredDatabaseBytes += confirmedWrittenBytes;
@@ -288,15 +289,33 @@ export class SupabaseQuotaManager {
         }
         if (this.client) {
             try {
+                const finalStatus = statusOverride || (confirmedWrittenBytes > 0 ? 'committed' : 'released');
                 await this.client.rpc('release_buffer_capacity', {
                     p_reservation_id: reservationId,
                     p_client_id: this.clientId,
-                    p_status: confirmedWrittenBytes > 0 ? 'committed' : 'released',
+                    p_status: finalStatus,
                     p_actual_bytes: confirmedWrittenBytes
                 });
             } catch (err: any) {
                 console.warn('[QUOTA] Failed to release database capacity via RPC:', err.message);
             }
+        }
+    }
+
+    public async pruneConfirmedDatabase(reservationId: string, bytesPruned: number): Promise<void> {
+        if (bytesPruned > 0) {
+            this.measuredDatabaseBytes = Math.max(0, this.measuredDatabaseBytes - bytesPruned);
+            this.persistState();
+        }
+        if (this.client) {
+            try {
+                await this.client.rpc('release_buffer_capacity', {
+                    p_reservation_id: reservationId,
+                    p_client_id: this.clientId,
+                    p_status: 'pruned',
+                    p_actual_bytes: 0
+                });
+            } catch {}
         }
     }
 

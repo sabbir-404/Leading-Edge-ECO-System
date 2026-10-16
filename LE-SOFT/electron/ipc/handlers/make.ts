@@ -723,12 +723,13 @@ export function registerMakeHandlers(): void {
                     throw new Error('Forbidden: Only managers or administrators can authorize loss-making order approval.');
                 }
                 parsed.override.authorizedBy = session.fullName || session.username;
+                (parsed.override as any).timestamp = (parsed.override as any).timestamp || new Date().toISOString();
             }
 
             const result = await MakeOrderService.approveOrder({
-                orderId: parsed.orderId,
+                orderId: Number(parsed.orderId),
                 actorSession: session,
-                override: parsed.override,
+                override: parsed.override as any,
                 notes: parsed.notes
             });
 
@@ -748,7 +749,7 @@ export function registerMakeHandlers(): void {
             const session = requireSession();
             const parsed = DesignerSaveSpecsAndPricingSchema.parse(rawPayload);
             const result = await MakeOrderService.saveDesignerSpecsAndPricing({
-                orderId: parsed.orderId,
+                orderId: Number(parsed.orderId),
                 costPrice: parsed.costPrice ? Number(parsed.costPrice) : undefined,
                 salePrice: parsed.salePrice !== undefined && parsed.salePrice !== null ? Number(parsed.salePrice) : null,
                 items: parsed.items,
@@ -1142,7 +1143,7 @@ export function registerMakeHandlers(): void {
             throw error;
         }
 
-        const products = decryptRows(data || []);
+        const products = decryptRows((data as any) || []);
 
         // Aggregate purchased counts from make_order_items for returned products only (bounded to first 100 to avoid huge joins)
         try {
@@ -1264,9 +1265,9 @@ export function registerMakeHandlers(): void {
         const writeResult = await failoverEngine.executeWrite(
             async (client) => {
                 if (isUpdate) {
-                    return await client.from('make_products').update(writePayload).eq('id', product.id).select().single();
+                    return await (client.from('make_products') as any).update(writePayload).eq('id', product.id).select().single();
                 } else {
-                    return await client.from('make_products').insert(writePayload).select().single();
+                    return await (client.from('make_products') as any).insert(writePayload).select().single();
                 }
             },
             {
@@ -1279,7 +1280,7 @@ export function registerMakeHandlers(): void {
         );
 
         if (writeResult.error) throw writeResult.error;
-        const savedData = writeResult.data;
+        const savedData = writeResult.data as any;
 
         // Process attribute junction links in parallel if provided
         const specIds = (product as any).specIds;
@@ -1380,7 +1381,7 @@ export function registerMakeHandlers(): void {
             if (error) throw error;
             MakeSearchService.invalidateCache();
             if (supabaseAdmin && data) {
-                supabaseAdmin.from('make_product_specifications').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud spec sync:', e.message));
+                (supabaseAdmin as any).from('make_product_specifications').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud spec sync:', e.message));
             }
             return data;
         } else {
@@ -1394,7 +1395,7 @@ export function registerMakeHandlers(): void {
             if (error) throw error;
             MakeSearchService.invalidateCache();
             if (supabaseAdmin && data) {
-                supabaseAdmin.from('make_product_specifications').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud spec sync:', e.message));
+                (supabaseAdmin as any).from('make_product_specifications').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud spec sync:', e.message));
             }
             return data;
         }
@@ -1445,7 +1446,7 @@ export function registerMakeHandlers(): void {
             if (error) throw error;
             MakeSearchService.invalidateCache();
             if (supabaseAdmin && data) {
-                supabaseAdmin.from('make_product_sizes').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud size sync:', e.message));
+                (supabaseAdmin as any).from('make_product_sizes').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud size sync:', e.message));
             }
             return data;
         } else {
@@ -1453,7 +1454,7 @@ export function registerMakeHandlers(): void {
             if (error) throw error;
             MakeSearchService.invalidateCache();
             if (supabaseAdmin && data) {
-                supabaseAdmin.from('make_product_sizes').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud size sync:', e.message));
+                (supabaseAdmin as any).from('make_product_sizes').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud size sync:', e.message));
             }
             return data;
         }
@@ -1501,7 +1502,7 @@ export function registerMakeHandlers(): void {
             if (error) throw error;
             MakeSearchService.invalidateCache();
             if (supabaseAdmin && data) {
-                supabaseAdmin.from('make_product_colors').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud color sync:', e.message));
+                (supabaseAdmin as any).from('make_product_colors').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud color sync:', e.message));
             }
             return data;
         } else {
@@ -1509,7 +1510,7 @@ export function registerMakeHandlers(): void {
             if (error) throw error;
             MakeSearchService.invalidateCache();
             if (supabaseAdmin && data) {
-                supabaseAdmin.from('make_product_colors').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud color sync:', e.message));
+                (supabaseAdmin as any).from('make_product_colors').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud color sync:', e.message));
             }
             return data;
         }
@@ -1827,7 +1828,7 @@ export function registerMakeHandlers(): void {
                     await db.from('make_products').update({ category: categoryName }).eq('category_id', parsed.id);
                     MakeSearchService.invalidateCache();
                     if (supabaseAdmin && data) {
-                        supabaseAdmin.from('make_product_categories').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud category sync:', e.message));
+                        (supabaseAdmin as any).from('make_product_categories').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud category sync:', e.message));
                     }
                     return { success: true, attribute: data };
                 } else {
@@ -1835,7 +1836,7 @@ export function registerMakeHandlers(): void {
                     if (error) throw error;
                     MakeSearchService.invalidateCache();
                     if (supabaseAdmin && data) {
-                        supabaseAdmin.from('make_product_categories').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud category sync:', e.message));
+                        (supabaseAdmin as any).from('make_product_categories').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud category sync:', e.message));
                     }
                     return { success: true, attribute: data };
                 }
@@ -1876,7 +1877,7 @@ export function registerMakeHandlers(): void {
                 const data = result.data;
                 MakeSearchService.invalidateCache();
                 if (supabaseAdmin && data) {
-                    supabaseAdmin.from('make_product_specifications').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud spec sync:', e.message));
+                    (supabaseAdmin as any).from('make_product_specifications').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud spec sync:', e.message));
                 }
                 return { success: true, attribute: data };
             } else if (parsed.type === 'size') {
@@ -1897,7 +1898,7 @@ export function registerMakeHandlers(): void {
                     if (error) throw error;
                     MakeSearchService.invalidateCache();
                     if (supabaseAdmin && data) {
-                        supabaseAdmin.from('make_product_sizes').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud size sync:', e.message));
+                        (supabaseAdmin as any).from('make_product_sizes').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud size sync:', e.message));
                     }
                     return { success: true, attribute: data };
                 } else {
@@ -1905,7 +1906,7 @@ export function registerMakeHandlers(): void {
                     if (error) throw error;
                     MakeSearchService.invalidateCache();
                     if (supabaseAdmin && data) {
-                        supabaseAdmin.from('make_product_sizes').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud size sync:', e.message));
+                        (supabaseAdmin as any).from('make_product_sizes').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud size sync:', e.message));
                     }
                     return { success: true, attribute: data };
                 }
@@ -1926,7 +1927,7 @@ export function registerMakeHandlers(): void {
                     if (error) throw error;
                     MakeSearchService.invalidateCache();
                     if (supabaseAdmin && data) {
-                        supabaseAdmin.from('make_product_colors').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud color sync:', e.message));
+                        (supabaseAdmin as any).from('make_product_colors').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud color sync:', e.message));
                     }
                     return { success: true, attribute: data };
                 } else {
@@ -1934,7 +1935,7 @@ export function registerMakeHandlers(): void {
                     if (error) throw error;
                     MakeSearchService.invalidateCache();
                     if (supabaseAdmin && data) {
-                        supabaseAdmin.from('make_product_colors').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud color sync:', e.message));
+                        (supabaseAdmin as any).from('make_product_colors').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud color sync:', e.message));
                     }
                     return { success: true, attribute: data };
                 }
@@ -2236,7 +2237,7 @@ export function registerMakeHandlers(): void {
                 return { success: false, error: 'Customer not found' };
             }
 
-            const decrypted = decryptObject(customer, ['address']);
+            const decrypted = decryptObject(customer);
 
             // Optionally look up most recent make_orders delivery record for this customer
             let recentDelivery: any = null;

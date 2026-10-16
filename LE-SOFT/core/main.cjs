@@ -24608,7 +24608,7 @@ var init_SupabaseQuotaManager = __esm({
         this.activeStorageReservations.set(reservationId, bytesNeeded);
         return true;
       }
-      async releaseStorageQuota(reservationId, confirmedUploadedBytes = 0) {
+      async releaseStorageQuota(reservationId, confirmedUploadedBytes = 0, statusOverride) {
         this.activeStorageReservations.delete(reservationId);
         if (confirmedUploadedBytes > 0) {
           this.measuredStorageBytes += confirmedUploadedBytes;
@@ -24616,10 +24616,11 @@ var init_SupabaseQuotaManager = __esm({
         }
         if (this.client) {
           try {
+            const finalStatus = statusOverride || (confirmedUploadedBytes > 0 ? "committed" : "released");
             await this.client.rpc("release_buffer_capacity", {
               p_reservation_id: reservationId,
               p_client_id: this.clientId,
-              p_status: confirmedUploadedBytes > 0 ? "committed" : "released",
+              p_status: finalStatus,
               p_actual_bytes: confirmedUploadedBytes
             });
           } catch (err) {
@@ -24686,7 +24687,7 @@ var init_SupabaseQuotaManager = __esm({
         this.activeDatabaseReservations.set(reservationId, estimatedBytes);
         return true;
       }
-      async releaseDatabaseQuota(reservationId, confirmedWrittenBytes = 0) {
+      async releaseDatabaseQuota(reservationId, confirmedWrittenBytes = 0, statusOverride) {
         this.activeDatabaseReservations.delete(reservationId);
         if (confirmedWrittenBytes > 0) {
           this.measuredDatabaseBytes += confirmedWrittenBytes;
@@ -24694,14 +24695,32 @@ var init_SupabaseQuotaManager = __esm({
         }
         if (this.client) {
           try {
+            const finalStatus = statusOverride || (confirmedWrittenBytes > 0 ? "committed" : "released");
             await this.client.rpc("release_buffer_capacity", {
               p_reservation_id: reservationId,
               p_client_id: this.clientId,
-              p_status: confirmedWrittenBytes > 0 ? "committed" : "released",
+              p_status: finalStatus,
               p_actual_bytes: confirmedWrittenBytes
             });
           } catch (err) {
             console.warn("[QUOTA] Failed to release database capacity via RPC:", err.message);
+          }
+        }
+      }
+      async pruneConfirmedDatabase(reservationId, bytesPruned) {
+        if (bytesPruned > 0) {
+          this.measuredDatabaseBytes = Math.max(0, this.measuredDatabaseBytes - bytesPruned);
+          this.persistState();
+        }
+        if (this.client) {
+          try {
+            await this.client.rpc("release_buffer_capacity", {
+              p_reservation_id: reservationId,
+              p_client_id: this.clientId,
+              p_status: "pruned",
+              p_actual_bytes: 0
+            });
+          } catch {
           }
         }
       }
@@ -24970,7 +24989,7 @@ function initEncryptionKey() {
     Buffer.from(licenseKey || "lesoft-v3-root", "utf-8")
   ]);
   const masterSalt = import_crypto5.default.createHash("sha256").update(machineSeed).digest();
-  _masterKey = import_crypto5.default.hkdfSync("sha256", ikm, masterSalt, Buffer.from("lesoft-field-master-v3", "utf-8"), 32);
+  _masterKey = Buffer.from(import_crypto5.default.hkdfSync("sha256", ikm, masterSalt, Buffer.from("lesoft-field-master-v3", "utf-8"), 32));
   console.log("[Encryption] Master field encryption key initialized.");
 }
 function getMasterKey() {
@@ -24995,7 +25014,7 @@ function encryptField(text3) {
   try {
     const salt = import_crypto5.default.randomBytes(SALT_LEN);
     const iv = import_crypto5.default.randomBytes(IV_LEN);
-    const recordKey = import_crypto5.default.hkdfSync("sha256", masterKey, salt, HKDF_INFO, 32);
+    const recordKey = Buffer.from(import_crypto5.default.hkdfSync("sha256", masterKey, salt, HKDF_INFO, 32));
     const cipher = import_crypto5.default.createCipheriv(CIPHER_GCM2, recordKey, iv);
     const ciphertextBuf = Buffer.concat([
       cipher.update(text3, "utf8"),
@@ -25025,7 +25044,7 @@ function decryptField(encryptedText) {
       const iv = combined.subarray(SALT_LEN, SALT_LEN + IV_LEN);
       const tag = combined.subarray(SALT_LEN + IV_LEN, SALT_LEN + IV_LEN + TAG_LEN);
       const ciphertext = combined.subarray(SALT_LEN + IV_LEN + TAG_LEN);
-      const recordKey = import_crypto5.default.hkdfSync("sha256", masterKey, salt, HKDF_INFO, 32);
+      const recordKey = Buffer.from(import_crypto5.default.hkdfSync("sha256", masterKey, salt, HKDF_INFO, 32));
       const decipher = import_crypto5.default.createDecipheriv(CIPHER_GCM2, recordKey, iv);
       decipher.setAuthTag(tag);
       return decipher.update(ciphertext).toString("utf8") + decipher.final("utf8");
@@ -25468,23 +25487,36 @@ var init_DurableOutboxService = __esm({
         } catch {
         }
       }
+      static estimateDatabaseBytes(payload, _operation) {
+        if (!payload) return 512;
+        try {
+          const jsonStr = typeof payload === "string" ? payload : JSON.stringify(payload);
+          const rawBytes = Buffer.byteLength(jsonStr, "utf8");
+          const multiplier = 1.4;
+          const rowOverhead = 256;
+          if (Array.isArray(payload)) {
+            const count = payload.length || 1;
+            return Math.max(512 * count, Math.ceil(rawBytes * multiplier + rowOverhead * count));
+          }
+          return Math.max(512, Math.ceil(rawBytes * multiplier + rowOverhead));
+        } catch {
+          return 512;
+        }
+      }
       async processRecord(record2) {
         const { id, entityType, operation, target, status } = record2;
-        let payload = record2.payload;
-        if (record2.dependencyOpId) {
-          payload = this.resolveDependentPayload(record2.dependencyOpId, payload);
-        }
         const isNasTarget = target === "nas" || target === "both";
         const isSbTarget = target === "supabase" || target === "both";
         let nasSuccess = status === "synced_nas";
         let sbSuccess = status === "buffered_supabase";
         if (isNasTarget && !nasSuccess && this.nasClient) {
+          const nasPayload = record2.dependencyOpId ? this.resolveDependentPayload(record2.dependencyOpId, record2.payload, "nas") : record2.payload;
           try {
             const result = await this.executeOnClient(
               this.nasClient,
               entityType,
               operation,
-              payload,
+              nasPayload,
               record2.primaryKeyCol,
               record2.filter,
               record2.upsertConflict
@@ -25518,8 +25550,9 @@ var init_DurableOutboxService = __esm({
           }
         }
         if (isSbTarget && !sbSuccess && this.supabaseClient) {
+          const sbPayload = record2.dependencyOpId ? this.resolveDependentPayload(record2.dependencyOpId, record2.payload, "supabase") : record2.payload;
           const quotaMgr = SupabaseQuotaManager.getInstance();
-          const estBytes = 500;
+          const estBytes = _DurableOutboxService.estimateDatabaseBytes(sbPayload, operation);
           const canBuffer = await quotaMgr.reserveDatabaseQuota(`db_${id}`, estBytes);
           if (canBuffer) {
             try {
@@ -25527,19 +25560,19 @@ var init_DurableOutboxService = __esm({
                 this.supabaseClient,
                 entityType,
                 operation,
-                payload,
+                sbPayload,
                 record2.primaryKeyCol,
                 record2.filter,
                 record2.upsertConflict
               );
               if (result.success) {
                 sbSuccess = true;
-                await quotaMgr.releaseDatabaseQuota(`db_${id}`, estBytes);
+                await quotaMgr.releaseDatabaseQuota(`db_${id}`, estBytes, "committed");
                 if (result.resolvedId) {
                   this.recordResolvedId(id, "supabase", result.resolvedId);
                 }
               } else {
-                await quotaMgr.releaseDatabaseQuota(`db_${id}`, 0);
+                await quotaMgr.releaseDatabaseQuota(`db_${id}`, 0, "released");
                 const classified = this.classifyError(result.error);
                 if (classified.isPermanent) {
                   if (classified.code === "23503" || classified.message.includes("foreign key")) {
@@ -25551,7 +25584,7 @@ var init_DurableOutboxService = __esm({
                 }
               }
             } catch (err) {
-              await quotaMgr.releaseDatabaseQuota(`db_${id}`, 0);
+              await quotaMgr.releaseDatabaseQuota(`db_${id}`, 0, "released");
             }
           }
         }
@@ -25568,26 +25601,46 @@ var init_DurableOutboxService = __esm({
       resolveDependentPayload(dependencyOpId, payload, target) {
         if (!this.db) return payload;
         try {
-          let row;
+          let resolvedId = null;
           if (target) {
-            row = this.db.prepare(`
+            const row = this.db.prepare(`
                     SELECT resolved_id FROM outbox_id_map
                     WHERE op_id = ? AND target = ?
                     ORDER BY created_at DESC
                     LIMIT 1
                 `).get(dependencyOpId, target);
-          }
-          if (!row?.resolved_id) {
-            row = this.db.prepare(`
+            if (row?.resolved_id) {
+              resolvedId = row.resolved_id;
+            }
+          } else {
+            const row = this.db.prepare(`
                     SELECT resolved_id FROM outbox_id_map
                     WHERE op_id = ?
                     ORDER BY created_at DESC
                     LIMIT 1
                 `).get(dependencyOpId);
+            if (row?.resolved_id) {
+              resolvedId = row.resolved_id;
+            }
           }
-          if (row?.resolved_id) {
-            const resolvedIdNum = Number(row.resolved_id);
-            const finalId = resolvedIdNum || row.resolved_id;
+          if (!resolvedId) {
+            const parentOp = this.db.prepare(`
+                    SELECT payload_json FROM outbox_operations
+                    WHERE id = ?
+                `).get(dependencyOpId);
+            if (parentOp?.payload_json) {
+              try {
+                const parsed = JSON.parse(parentOp.payload_json);
+                if (parsed && typeof parsed === "object") {
+                  if (parsed.id) resolvedId = String(parsed.id);
+                }
+              } catch {
+              }
+            }
+          }
+          if (resolvedId) {
+            const resolvedIdNum = Number(resolvedId);
+            const finalId = !isNaN(resolvedIdNum) && resolvedIdNum > 0 ? resolvedIdNum : resolvedId;
             const bindId = (item) => {
               if (!item || typeof item !== "object") return item;
               const cloned = { ...item };
@@ -25602,6 +25655,9 @@ var init_DurableOutboxService = __esm({
               }
               if (cloned.parent_id === void 0 || cloned.parent_id === null || cloned.parent_id === 0 || cloned.parent_id === "") {
                 cloned.parent_id = finalId;
+              }
+              if (cloned.shipment_id === void 0 || cloned.shipment_id === null || cloned.shipment_id === 0 || cloned.shipment_id === "") {
+                cloned.shipment_id = finalId;
               }
               return cloned;
             };
@@ -25629,6 +25685,21 @@ var init_DurableOutboxService = __esm({
       async executeOnClient(client, table, op, payload, primaryKeyCol = "id", filter4, upsertConflict) {
         try {
           const encData = Array.isArray(payload) ? await encryptRowsAsync(payload, 100) : payload && typeof payload === "object" ? encryptObject(payload) : payload;
+          if (table === "inventory_decrement") {
+            const d = encData;
+            const pId = Number(d.product_id);
+            const qty = Number(d.quantity || 0);
+            if (!pId || !qty) return { success: true, affectedRows: 0 };
+            const { data: prod, error: pErr } = await client.from("products").select("quantity").eq("id", pId).maybeSingle();
+            if (pErr) return { success: false, error: pErr };
+            if (prod) {
+              const currentQty = Number(prod.quantity || 0);
+              const newQty = Math.max(0, currentQty - qty);
+              const { error: updErr } = await client.from("products").update({ quantity: newQty }).eq("id", pId);
+              if (updErr) return { success: false, error: updErr };
+            }
+            return { success: true, affectedRows: 1 };
+          }
           if (table === "bill_shipping") {
             const d = encData;
             let realBillId = d.bill_id;
@@ -26115,25 +26186,35 @@ var init_DurableUploadService = __esm({
         const buffer = import_fs8.default.readFileSync(row.local_path);
         const candidates = getNasStorageCandidates();
         const cfHeaders = getCfAccessHeaders();
-        const finalStorageName = `${Date.now()}_${row.file_name}`;
+        const cleanFileName = (row.file_name || "file").replace(/[^a-zA-Z0-9._-]/g, "_");
+        const finalStorageName = `${uploadId}_${cleanFileName}`;
         let nasSuccess = false;
-        let authoritativeUrl = null;
+        let authoritativeUrl = row.remote_url_nas || null;
         let lastError = null;
-        const nasRes = await this.uploadToNasStorage(buffer, finalStorageName, row.mime_type, row.subfolder, row.sha256);
-        if (nasRes.success && nasRes.url) {
-          if (nasRes.sha256 && nasRes.sha256.toUpperCase() !== row.sha256.toUpperCase()) {
-            lastError = `Checksum mismatch: expected ${row.sha256}, got ${nasRes.sha256}`;
-          } else {
-            nasSuccess = true;
-            authoritativeUrl = nasRes.url;
-          }
+        if (authoritativeUrl) {
+          nasSuccess = true;
         } else {
-          lastError = nasRes.error || "NAS storage failed";
+          const nasRes = await this.uploadToNasStorage(buffer, finalStorageName, row.mime_type, row.subfolder, row.sha256);
+          if (nasRes.success && nasRes.url) {
+            if (nasRes.sha256 && nasRes.sha256.toUpperCase() !== row.sha256.toUpperCase()) {
+              lastError = `Checksum mismatch: expected ${row.sha256}, got ${nasRes.sha256}`;
+            } else {
+              nasSuccess = true;
+              authoritativeUrl = nasRes.url;
+            }
+          } else {
+            lastError = nasRes.error || "NAS storage failed";
+          }
         }
         if (nasSuccess && authoritativeUrl) {
           const entityUpdated = await this.updateEntityRecord(row.entity_type, row.entity_id, row.field_name, authoritativeUrl);
           if (!entityUpdated) {
-            lastError = `Entity record update failed for ${row.entity_type} ${row.entity_id}. Retaining staged/buffered copy.`;
+            lastError = `Entity record update failed for ${row.entity_type} ${row.entity_id}. Staged copy preserved for retry.`;
+            this.db.prepare(`
+                    UPDATE durable_uploads
+                    SET remote_url_nas = ?, last_error = ?, updated_at = ?
+                    WHERE id = ?
+                `).run(authoritativeUrl, lastError, Date.now(), uploadId);
           } else {
             this.db.prepare(`
                     UPDATE durable_uploads
@@ -26150,34 +26231,48 @@ var init_DurableUploadService = __esm({
         }
         if (!nasSuccess && row.status === "staged_local" && this.supabaseClient && !lastError?.startsWith("Checksum mismatch")) {
           const quotaMgr = SupabaseQuotaManager.getInstance();
-          const canBuffer = await quotaMgr.reserveStorageQuota(uploadId, row.size_bytes);
-          if (canBuffer) {
-            try {
-              const cloudPath = `${row.subfolder}/${finalStorageName}`;
-              const { error: sbErr } = await this.supabaseClient.storage.from("make-order-files").upload(cloudPath, buffer, { contentType: row.mime_type, upsert: false });
-              if (!sbErr) {
-                const { data: pubData } = this.supabaseClient.storage.from("make-order-files").getPublicUrl(cloudPath);
-                const cloudUrl = pubData?.publicUrl || cloudPath;
-                await quotaMgr.releaseStorageQuota(uploadId, row.size_bytes);
-                const entityUpdated = await this.updateEntityRecord(row.entity_type, row.entity_id, row.field_name, cloudUrl);
-                this.db.prepare(`
-                            UPDATE durable_uploads
-                            SET status = 'buffered_supabase', remote_url_supabase = ?, last_error = ?, updated_at = ?
-                            WHERE id = ?
-                        `).run(cloudUrl, entityUpdated ? null : "Entity update warning on cloud buffer", Date.now(), uploadId);
-                console.log(`[DurableUpload] Upload ${uploadId} buffered in Supabase Cloud fallback (${(row.size_bytes / 1024).toFixed(1)} KB). Waiting for TrueNAS recovery.`);
-                this.broadcastUploadStatus();
-                return { success: true, url: cloudUrl, activeUrl: cloudUrl, status: "buffered_supabase" };
-              } else {
-                await quotaMgr.releaseStorageQuota(uploadId, 0);
-                lastError = `Supabase storage error: ${sbErr.message}`;
-              }
-            } catch (sbEx) {
-              await quotaMgr.releaseStorageQuota(uploadId, 0);
-              lastError = `Supabase storage exception: ${sbEx.message}`;
+          let cloudUrl = row.remote_url_supabase || null;
+          if (cloudUrl) {
+            const entityUpdated = await this.updateEntityRecord(row.entity_type, row.entity_id, row.field_name, cloudUrl);
+            if (entityUpdated) {
+              this.db.prepare(`
+                        UPDATE durable_uploads
+                        SET status = 'buffered_supabase', last_error = NULL, updated_at = ?
+                        WHERE id = ?
+                    `).run(Date.now(), uploadId);
+              return { success: true, url: cloudUrl, activeUrl: cloudUrl, status: "buffered_supabase" };
             }
           } else {
-            lastError = "Supabase Storage quota limit reached (600 MB / 1 GB ceiling). File held in local staging.";
+            const canBuffer = await quotaMgr.reserveStorageQuota(uploadId, row.size_bytes);
+            if (canBuffer) {
+              try {
+                const cloudPath = `${row.subfolder}/${finalStorageName}`;
+                const cloudBucket = "make-order-files";
+                const { error: sbErr } = await this.supabaseClient.storage.from(cloudBucket).upload(cloudPath, buffer, { contentType: row.mime_type, upsert: true });
+                if (!sbErr) {
+                  const { data: pubData } = this.supabaseClient.storage.from(cloudBucket).getPublicUrl(cloudPath);
+                  cloudUrl = pubData?.publicUrl || cloudPath;
+                  await quotaMgr.releaseStorageQuota(uploadId, row.size_bytes, "committed");
+                  const entityUpdated = await this.updateEntityRecord(row.entity_type, row.entity_id, row.field_name, cloudUrl);
+                  this.db.prepare(`
+                                UPDATE durable_uploads
+                                SET status = 'buffered_supabase', remote_url_supabase = ?, last_error = ?, updated_at = ?
+                                WHERE id = ?
+                            `).run(cloudUrl, entityUpdated ? null : "Entity update warning on cloud buffer", Date.now(), uploadId);
+                  console.log(`[DurableUpload] Upload ${uploadId} buffered in Supabase Cloud fallback (${(row.size_bytes / 1024).toFixed(1)} KB). Waiting for TrueNAS recovery.`);
+                  this.broadcastUploadStatus();
+                  return { success: true, url: cloudUrl, activeUrl: cloudUrl, status: "buffered_supabase" };
+                } else {
+                  await quotaMgr.releaseStorageQuota(uploadId, 0, "released");
+                  lastError = `Supabase storage error: ${sbErr.message}`;
+                }
+              } catch (sbEx) {
+                await quotaMgr.releaseStorageQuota(uploadId, 0, "released");
+                lastError = `Supabase storage exception: ${sbEx.message}`;
+              }
+            } else {
+              lastError = "Supabase Storage quota limit reached (600 MB / 1 GB ceiling). File held in local staging.";
+            }
           }
         }
         const nextRetry = (row.retry_count || 0) + 1;
@@ -113932,7 +114027,7 @@ function broadcastStatus() {
   }
 }
 function enqueue(entry) {
-  const id = nextId();
+  const id = entry.id || nextId();
   const newEntry = { ...entry, id, retries: 0, enqueuedAt: Date.now() };
   try {
     DurableOutboxService.getInstance().enqueueSingle({
@@ -114481,6 +114576,7 @@ var SessionManager = class {
   static setSession(user) {
     activeUserSession = {
       userId: user.id,
+      id: user.id,
       username: user.username,
       fullName: user.full_name || user.username,
       role: user.role || "operator",
@@ -131124,7 +131220,7 @@ var CreateMakeOrderSchema = external_exports.object({
   requested_delivery_date: external_exports.string().nullable().optional(),
   salesman_id: external_exports.number().int().positive().nullable().optional(),
   customer_id: external_exports.union([external_exports.string(), external_exports.number()]).nullable().optional(),
-  customer_name: external_exports.string({ required_error: "Customer name is required" }).min(1, "Customer name is required").max(255),
+  customer_name: external_exports.string().min(1, "Customer name is required").max(255),
   customer_phone: external_exports.string().max(50).nullable().optional().refine((val2) => {
     if (!val2 || val2.trim() === "") return true;
     const cleaned = val2.trim();
@@ -131210,7 +131306,7 @@ var AlterMakeOrderItemSchema = external_exports.object({
 });
 var AlterMakeOrderSchema = external_exports.object({
   orderId: external_exports.union([external_exports.string().min(1), external_exports.number()]),
-  changes: external_exports.record(external_exports.any()).optional().default({}),
+  changes: external_exports.record(external_exports.string(), external_exports.any()).optional().default({}),
   itemChanges: external_exports.array(AlterMakeOrderItemSchema).optional(),
   items: external_exports.array(AlterMakeOrderItemSchema).optional(),
   reason: external_exports.string().optional(),
@@ -131787,9 +131883,10 @@ function registerMakeHandlers() {
           throw new Error("Forbidden: Only managers or administrators can authorize loss-making order approval.");
         }
         parsed.override.authorizedBy = session2.fullName || session2.username;
+        parsed.override.timestamp = parsed.override.timestamp || (/* @__PURE__ */ new Date()).toISOString();
       }
       const result = await MakeOrderService.approveOrder({
-        orderId: parsed.orderId,
+        orderId: Number(parsed.orderId),
         actorSession: session2,
         override: parsed.override,
         notes: parsed.notes
@@ -131808,7 +131905,7 @@ function registerMakeHandlers() {
       const session2 = requireSession();
       const parsed = DesignerSaveSpecsAndPricingSchema.parse(rawPayload);
       const result = await MakeOrderService.saveDesignerSpecsAndPricing({
-        orderId: parsed.orderId,
+        orderId: Number(parsed.orderId),
         costPrice: parsed.costPrice ? Number(parsed.costPrice) : void 0,
         salePrice: parsed.salePrice !== void 0 && parsed.salePrice !== null ? Number(parsed.salePrice) : null,
         items: parsed.items,
@@ -133062,7 +133159,7 @@ function registerMakeHandlers() {
       if (!customer) {
         return { success: false, error: "Customer not found" };
       }
-      const decrypted = decryptObject(customer, ["address"]);
+      const decrypted = decryptObject(customer);
       let recentDelivery = null;
       try {
         const { data: latestOrder } = await supabase.from("make_orders").select("delivery_address, location_landmark, receiver_name, receiver_phone").eq("customer_id", cId).order("created_at", { ascending: false }).limit(1).maybeSingle();
@@ -133609,6 +133706,9 @@ var WatchdogService = class _WatchdogService {
    */
   handleRendererPong() {
     this.pendingPong = false;
+  }
+  recordRendererHeartbeat() {
+    this.handleRendererPong();
   }
   /**
    * Records an IPC or operation duration metric. Logs to file only if exceeding threshold.
@@ -135535,194 +135635,152 @@ function registerHandlers() {
       grand_total,
       platform: "desktop"
     };
-    const billOpId = enqueue({
+    const billOpId = `bill_${invoiceNumber}`;
+    enqueue({
+      id: billOpId,
       table: "bills",
       operation: "insert",
       data: billRow,
-      onSuccess: async () => {
-        if (items && items.length > 0) {
-          const { data: savedBill } = await supabase_default.from("bills").select("id").eq("invoice_number", invoiceNumber).maybeSingle();
-          const savedBillId = savedBill?.id;
-          if (savedBillId) {
-            const billItems = items.map((item) => ({
-              bill_id: savedBillId,
-              product_id: item.product_id,
-              product_name: item.product_name,
-              sku: item.sku || "",
-              quantity: item.quantity,
-              cost_price: Number(item.cost_price || item.item_cost_price || 0),
-              mrp: item.mrp,
-              discount_pct: item.discount_pct || 0,
-              discount_amt: item.discount_amt || 0,
-              price: item.price,
-              notes: item.notes || null,
-              customization: item.customization || {}
-            }));
-            enqueue({
-              table: "bill_items",
-              operation: "insert",
-              data: billItems,
-              onSuccess: async () => {
-                try {
-                  const { data: insertedItems, error: itemsErr } = await supabase_default.from("bill_items").select("id, product_id, product_name, customization, quantity, cost_price, mrp, price").eq("bill_id", savedBillId);
-                  if (!itemsErr && insertedItems) {
-                    for (const bItem of insertedItems) {
-                      const cust = bItem.customization;
-                      if (cust && typeof cust === "object" && Object.keys(cust).length > 0) {
-                        const descDetails = Object.entries(cust).map(([k, v]) => `${k}: ${v}`).join(", ");
-                        const matchingOriginal = items.find((i2) => i2.product_id === bItem.product_id || i2.product_name === bItem.product_name);
-                        const costP = Number(bItem.cost_price || matchingOriginal?.cost_price || matchingOriginal?.item_cost_price || 0);
-                        const saleP = Number(matchingOriginal?.sale_price || bItem.price || bItem.mrp || 0);
-                        enqueue({
-                          table: "make_orders",
-                          operation: "insert",
-                          data: {
-                            furniture_name: bItem.product_name || "Custom Furniture",
-                            description: `Customized order linked to Invoice ${invoiceNumber}. Attributes: ${descDetails}`,
-                            quantity: Number(bItem.quantity) || 1,
-                            designer_name: actor,
-                            status: saleP > 0 ? "Pricing Done" : "Awaiting Pricing",
-                            priority: "Normal",
-                            bill_id: savedBillId,
-                            bill_item_id: bItem.id,
-                            cost_price: costP,
-                            sale_price: saleP > 0 ? saleP : null,
-                            custom_price: saleP,
-                            custom_details: cust
-                          }
-                        });
-                      }
-                    }
-                  }
-                } catch (e2) {
-                  console.error("[create-bill make-orders sync] Failed:", e2);
-                }
-              }
-            });
-            for (const item of items) {
-              if (item.product_id && item.quantity) {
-                (async () => {
-                  try {
-                    const pId = Number(item.product_id);
-                    const qty = Number(item.quantity || 0);
-                    const { data: prod } = await supabase_default.from("products").select("quantity").eq("id", pId).maybeSingle();
-                    if (prod) {
-                      const currentQty = Number(prod.quantity || 0);
-                      const newQty = Math.max(0, currentQty - qty);
-                      await supabase_default.from("products").update({ quantity: newQty }).eq("id", pId);
-                    }
-                    await checkLowStockForProduct(pId);
-                    syncStockToMySQL(pId, qty);
-                  } catch (err) {
-                    console.error("[create-bill stock decrement failed]:", err);
-                  }
-                })();
-              }
-            }
-          } else {
-            console.error("[create-bill] Failed to find saved bill ID for items mapping:", invoiceNumber);
-          }
-        }
-        if (shipping && shipping.ship_to_name && shipping.ship_to_address) {
-          const { data: b } = await supabase_default.from("bills").select("id").eq("invoice_number", invoiceNumber).maybeSingle();
-          const bId = b?.id;
-          if (bId) {
-            const shippingPayload = {
-              bill_id: bId,
-              ship_to_name: shipping.ship_to_name,
-              ship_to_address: shipping.ship_to_address,
-              ship_to_phone: shipping.ship_to_phone || "",
-              ship_from_name: shipping.ship_from_name || "",
-              ship_from_address: shipping.ship_from_address || "",
-              shipping_charge: shipping.shipping_charge || 0,
-              updated_by: actor,
-              status: "pending_payment"
-            };
-            enqueue({
-              table: "bill_shipping",
-              operation: "insert",
-              data: shippingPayload,
-              onSuccess: async () => {
-                try {
-                  const { data: sh } = await supabase_default.from("bill_shipping").select("id").eq("bill_id", bId).maybeSingle();
-                  if (sh?.id) {
-                    enqueue({
-                      table: "shipping_status_log",
-                      operation: "insert",
-                      data: {
-                        shipment_id: sh.id,
-                        bill_id: bId,
-                        status: "pending_payment",
-                        note: "Shipping order created",
-                        updated_by: actor,
-                        updated_by_role: session2.role || "cashier"
-                      }
-                    });
-                  }
-                } catch (e2) {
-                  console.error("[create-bill shipping log] Failed:", e2);
-                }
-                try {
-                  import_electron24.BrowserWindow.getAllWindows().forEach((win) => {
-                    if (!win.isDestroyed()) win.webContents.send("data-updated", "bill_shipping");
-                  });
-                } catch {
-                }
-              }
-            });
-          }
-        }
+      upsertConflict: "invoice_number",
+      metadata: { invoiceNumber, actor },
+      onSuccess: () => {
         try {
           import_electron24.BrowserWindow.getAllWindows().forEach((win) => {
-            if (!win.isDestroyed()) win.webContents.send("data-updated", "bills");
+            if (!win.isDestroyed()) {
+              win.webContents.send("data-updated", "bills");
+              win.webContents.send("data-updated", "bill_items");
+              win.webContents.send("data-updated", "bill_shipping");
+            }
           });
         } catch {
         }
       }
     });
     if (items && items.length > 0) {
-      try {
-        DurableOutboxService.getInstance().enqueueSingle({
-          entityType: "bill_items",
-          operation: "insert",
-          payload: items.map((item) => ({
-            product_id: item.product_id,
-            product_name: item.product_name,
-            sku: item.sku || "",
-            quantity: item.quantity,
-            cost_price: Number(item.cost_price || item.item_cost_price || 0),
-            mrp: item.mrp,
-            discount_pct: item.discount_pct || 0,
-            discount_amt: item.discount_amt || 0,
-            price: item.price,
-            notes: item.notes || null,
-            customization: item.customization || {}
-          })),
-          dependencyOpId: billOpId
-        });
-      } catch {
-      }
+      const itemsOpId = `bill_items_${invoiceNumber}`;
+      const billItems = items.map((item) => ({
+        bill_id: null,
+        // Resolved per destination from billOpId by resolveDependentPayload
+        product_id: item.product_id,
+        product_name: item.product_name,
+        sku: item.sku || "",
+        quantity: item.quantity,
+        cost_price: Number(item.cost_price || item.item_cost_price || 0),
+        mrp: item.mrp,
+        discount_pct: item.discount_pct || 0,
+        discount_amt: item.discount_amt || 0,
+        price: item.price,
+        notes: item.notes || null,
+        customization: item.customization || {}
+      }));
+      enqueue({
+        id: itemsOpId,
+        table: "bill_items",
+        operation: "insert",
+        data: billItems,
+        dependencyOpId: billOpId,
+        metadata: { invoiceNumber }
+      });
+      items.forEach((item, idx) => {
+        const cust = item.customization;
+        if (cust && typeof cust === "object" && Object.keys(cust).length > 0) {
+          const descDetails = Object.entries(cust).map(([k, v]) => `${k}: ${v}`).join(", ");
+          const costP = Number(item.cost_price || item.item_cost_price || 0);
+          const saleP = Number(item.sale_price || item.price || item.mrp || 0);
+          const orderOpId = `make_order_${invoiceNumber}_${idx}`;
+          enqueue({
+            id: orderOpId,
+            table: "make_orders",
+            operation: "insert",
+            data: {
+              furniture_name: item.product_name || "Custom Furniture",
+              description: `Customized order linked to Invoice ${invoiceNumber}. Attributes: ${descDetails}`,
+              quantity: Number(item.quantity) || 1,
+              designer_name: actor,
+              status: saleP > 0 ? "Pricing Done" : "Awaiting Pricing",
+              priority: "Normal",
+              bill_id: null,
+              // Resolved from billOpId
+              cost_price: costP,
+              sale_price: saleP > 0 ? saleP : null,
+              custom_price: saleP,
+              custom_details: cust
+            },
+            dependencyOpId: billOpId,
+            metadata: { invoiceNumber, itemIndex: idx }
+          });
+        }
+      });
+      items.forEach((item, idx) => {
+        if (item.product_id && item.quantity) {
+          const pId = Number(item.product_id);
+          const qty = Number(item.quantity || 0);
+          const stockOpId = `stock_dec_${invoiceNumber}_${pId}_${idx}`;
+          enqueue({
+            id: stockOpId,
+            table: "inventory_decrement",
+            operation: "custom",
+            data: {
+              product_id: pId,
+              quantity: qty,
+              invoice_number: invoiceNumber
+            },
+            dependencyOpId: billOpId,
+            metadata: { invoiceNumber, product_id: pId, quantity: qty },
+            onSuccess: async () => {
+              try {
+                await checkLowStockForProduct(pId).catch(() => {
+                });
+                await syncStockToMySQL(pId, qty).catch(() => {
+                });
+              } catch {
+              }
+            }
+          });
+        }
+      });
     }
     if (shipping && shipping.ship_to_name && shipping.ship_to_address) {
-      try {
-        DurableOutboxService.getInstance().enqueueSingle({
-          entityType: "bill_shipping",
-          operation: "insert",
-          payload: {
-            invoice_number: invoiceNumber,
-            ship_to_name: shipping.ship_to_name,
-            ship_to_address: shipping.ship_to_address,
-            ship_to_phone: shipping.ship_to_phone || "",
-            ship_from_name: shipping.ship_from_name || "",
-            ship_from_address: shipping.ship_from_address || "",
-            shipping_charge: shipping.shipping_charge || 0,
-            updated_by: actor,
-            status: "pending_payment"
-          },
-          dependencyOpId: billOpId
-        });
-      } catch {
-      }
+      const shippingOpId = `shipping_${invoiceNumber}`;
+      const shippingPayload = {
+        bill_id: null,
+        // Resolved from billOpId
+        invoice_number: invoiceNumber,
+        ship_to_name: shipping.ship_to_name,
+        ship_to_address: shipping.ship_to_address,
+        ship_to_phone: shipping.ship_to_phone || "",
+        ship_from_name: shipping.ship_from_name || "",
+        ship_from_address: shipping.ship_from_address || "",
+        shipping_charge: shipping.shipping_charge || 0,
+        updated_by: actor,
+        status: "pending_payment"
+      };
+      enqueue({
+        id: shippingOpId,
+        table: "bill_shipping",
+        operation: "insert",
+        data: shippingPayload,
+        upsertConflict: "bill_id",
+        dependencyOpId: billOpId,
+        metadata: { invoiceNumber }
+      });
+      const shippingLogOpId = `shipping_log_${invoiceNumber}`;
+      enqueue({
+        id: shippingLogOpId,
+        table: "shipping_status_log",
+        operation: "insert",
+        data: {
+          shipment_id: null,
+          // Resolved from shippingOpId
+          bill_id: null,
+          status: "pending_payment",
+          note: "Shipping order created",
+          updated_by: actor,
+          updated_by_role: session2.role || "cashier"
+        },
+        dependencyOpId: shippingOpId,
+        metadata: { invoiceNumber }
+      });
     }
     await writeAuditLog({
       module: "Billing",
@@ -136407,7 +136465,7 @@ function registerHandlers() {
       throw new Error("Unauthorized: You do not have permission to update this user.");
     }
     const isActiveValue = isActive === void 0 || isActive === null ? 1 : Number(isActive) ? 1 : 0;
-    const { data: currentUser } = await supabase_default.from("users").select("role, auth_id, group_id").eq("id", id).maybeSingle();
+    const { data: currentUser } = await supabase_default.from("users").select("role, auth_id, group_id, username").eq("id", id).maybeSingle();
     if (role && role === "superadmin" && currentUser?.role !== "superadmin" && reqRole !== "superadmin") {
       throw new Error("Only Super Administrators can assign the Super Admin role.");
     }

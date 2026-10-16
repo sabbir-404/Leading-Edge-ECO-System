@@ -344,14 +344,27 @@ export class DurableOutboxService {
         } catch {}
     }
 
+    public static estimateDatabaseBytes(payload: any, _operation?: string): number {
+        if (!payload) return 512;
+        try {
+            const jsonStr = typeof payload === 'string' ? payload : JSON.stringify(payload);
+            const rawBytes = Buffer.byteLength(jsonStr, 'utf8');
+            // Conservative bound: PostgreSQL row tuple overhead (~24 bytes per row),
+            // index footprint (~40%), table alignment, and WAL representation
+            const multiplier = 1.4;
+            const rowOverhead = 256;
+            if (Array.isArray(payload)) {
+                const count = payload.length || 1;
+                return Math.max(512 * count, Math.ceil(rawBytes * multiplier + (rowOverhead * count)));
+            }
+            return Math.max(512, Math.ceil(rawBytes * multiplier + rowOverhead));
+        } catch {
+            return 512;
+        }
+    }
+
     private async processRecord(record: OutboxRecord): Promise<void> {
         const { id, entityType, operation, target, status } = record;
-        let payload = record.payload;
-
-        // Substitute resolved parent IDs from dependency if applicable
-        if (record.dependencyOpId) {
-            payload = this.resolveDependentPayload(record.dependencyOpId, payload);
-        }
 
         const isNasTarget = target === 'nas' || target === 'both';
         const isSbTarget = target === 'supabase' || target === 'both';
@@ -361,12 +374,17 @@ export class DurableOutboxService {
 
         // 1. Primary Attempt: TrueNAS PostgREST
         if (isNasTarget && !nasSuccess && this.nasClient) {
+            // Resolve parent IDs specifically for TrueNAS destination
+            const nasPayload = record.dependencyOpId
+                ? this.resolveDependentPayload(record.dependencyOpId, record.payload, 'nas')
+                : record.payload;
+
             try {
                 const result = await this.executeOnClient(
                     this.nasClient,
                     entityType,
                     operation,
-                    payload,
+                    nasPayload,
                     record.primaryKeyCol,
                     record.filter,
                     record.upsertConflict
@@ -405,9 +423,14 @@ export class DurableOutboxService {
         // If NAS succeeded, mirror to Supabase Cloud if targeted.
         // If NAS failed due to transient network error, buffer to Supabase Cloud within quota.
         if (isSbTarget && !sbSuccess && this.supabaseClient) {
-            // Check quota before cloud buffer write
+            // Resolve parent IDs specifically for Supabase Cloud destination
+            const sbPayload = record.dependencyOpId
+                ? this.resolveDependentPayload(record.dependencyOpId, record.payload, 'supabase')
+                : record.payload;
+
+            // Check quota before cloud buffer write using dynamic conservative bound
             const quotaMgr = SupabaseQuotaManager.getInstance();
-            const estBytes = 500; // Average row bytes
+            const estBytes = DurableOutboxService.estimateDatabaseBytes(sbPayload, operation);
             const canBuffer = await quotaMgr.reserveDatabaseQuota(`db_${id}`, estBytes);
 
             if (canBuffer) {
@@ -416,19 +439,19 @@ export class DurableOutboxService {
                         this.supabaseClient,
                         entityType,
                         operation,
-                        payload,
+                        sbPayload,
                         record.primaryKeyCol,
                         record.filter,
                         record.upsertConflict
                     );
                     if (result.success) {
                         sbSuccess = true;
-                        await quotaMgr.releaseDatabaseQuota(`db_${id}`, estBytes);
+                        await quotaMgr.releaseDatabaseQuota(`db_${id}`, estBytes, 'committed');
                         if (result.resolvedId) {
                             this.recordResolvedId(id, 'supabase', result.resolvedId);
                         }
                     } else {
-                        await quotaMgr.releaseDatabaseQuota(`db_${id}`, 0);
+                        await quotaMgr.releaseDatabaseQuota(`db_${id}`, 0, 'released');
                         const classified = this.classifyError(result.error);
                         if (classified.isPermanent) {
                             // If it's a foreign key error on Supabase because parent customer hasn't mirrored yet,
@@ -442,7 +465,7 @@ export class DurableOutboxService {
                         }
                     }
                 } catch (err: any) {
-                    await quotaMgr.releaseDatabaseQuota(`db_${id}`, 0);
+                    await quotaMgr.releaseDatabaseQuota(`db_${id}`, 0, 'released');
                 }
             }
         }
@@ -463,27 +486,50 @@ export class DurableOutboxService {
     public resolveDependentPayload(dependencyOpId: string, payload: any, target?: string): any {
         if (!this.db) return payload;
         try {
-            let row: any;
+            let resolvedId: string | null = null;
             if (target) {
-                row = this.db.prepare(`
+                const row = this.db.prepare(`
                     SELECT resolved_id FROM outbox_id_map
                     WHERE op_id = ? AND target = ?
                     ORDER BY created_at DESC
                     LIMIT 1
                 `).get(dependencyOpId, target) as any;
-            }
-            if (!row?.resolved_id) {
-                row = this.db.prepare(`
+                if (row?.resolved_id) {
+                    resolvedId = row.resolved_id;
+                }
+            } else {
+                const row = this.db.prepare(`
                     SELECT resolved_id FROM outbox_id_map
                     WHERE op_id = ?
                     ORDER BY created_at DESC
                     LIMIT 1
                 `).get(dependencyOpId) as any;
+                if (row?.resolved_id) {
+                    resolvedId = row.resolved_id;
+                }
             }
 
-            if (row?.resolved_id) {
-                const resolvedIdNum = Number(row.resolved_id);
-                const finalId = resolvedIdNum || row.resolved_id;
+            // If target-specific ID was not found, check if the parent operation has a stable shared ID
+            if (!resolvedId) {
+                const parentOp = this.db.prepare(`
+                    SELECT payload_json FROM outbox_operations
+                    WHERE id = ?
+                `).get(dependencyOpId) as any;
+
+                if (parentOp?.payload_json) {
+                    try {
+                        const parsed = JSON.parse(parentOp.payload_json);
+                        if (parsed && typeof parsed === 'object') {
+                            if (parsed.id) resolvedId = String(parsed.id);
+                        }
+                    } catch {}
+                }
+            }
+
+            // Only bind if an authoritative resolved ID was established for this target/shared context
+            if (resolvedId) {
+                const resolvedIdNum = Number(resolvedId);
+                const finalId = (!isNaN(resolvedIdNum) && resolvedIdNum > 0) ? resolvedIdNum : resolvedId;
 
                 const bindId = (item: any) => {
                     if (!item || typeof item !== 'object') return item;
@@ -500,6 +546,9 @@ export class DurableOutboxService {
                     if (cloned.parent_id === undefined || cloned.parent_id === null || cloned.parent_id === 0 || cloned.parent_id === '') {
                         cloned.parent_id = finalId;
                     }
+                    if (cloned.shipment_id === undefined || cloned.shipment_id === null || cloned.shipment_id === 0 || cloned.shipment_id === '') {
+                        cloned.shipment_id = finalId;
+                    }
                     return cloned;
                 };
 
@@ -513,7 +562,7 @@ export class DurableOutboxService {
         return payload;
     }
 
-    private recordResolvedId(opId: string, target: string, resolvedId: string): void {
+    public recordResolvedId(opId: string, target: string, resolvedId: string): void {
         if (!this.db) return;
         try {
             this.db.prepare(`
@@ -538,6 +587,24 @@ export class DurableOutboxService {
             const encData = Array.isArray(payload)
                 ? await encryptRowsAsync(payload, 100)
                 : (payload && typeof payload === 'object') ? encryptObject(payload) : payload;
+
+            if (table === 'inventory_decrement') {
+                const d = encData as Record<string, any>;
+                const pId = Number(d.product_id);
+                const qty = Number(d.quantity || 0);
+                if (!pId || !qty) return { success: true, affectedRows: 0 };
+
+                const { data: prod, error: pErr } = await client.from('products').select('quantity').eq('id', pId).maybeSingle();
+                if (pErr) return { success: false, error: pErr };
+
+                if (prod) {
+                    const currentQty = Number(prod.quantity || 0);
+                    const newQty = Math.max(0, currentQty - qty);
+                    const { error: updErr } = await client.from('products').update({ quantity: newQty }).eq('id', pId);
+                    if (updErr) return { success: false, error: updErr };
+                }
+                return { success: true, affectedRows: 1 };
+            }
 
             if (table === 'bill_shipping') {
                 const d = encData as Record<string, any>;
