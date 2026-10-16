@@ -170,6 +170,17 @@ describe('Migration 070 Real PostgreSQL Staging Integration Suite', () => {
         );
         expect(resValid.rows[0].result.success).toBe(true);
         expect(Number(resValid.rows[0].result.allocated_bytes)).toBe(10000000);
+
+        // Verify row was actually persisted to table (Regression check for PL/pgSQL FOUND bug)
+        const rowInDb = await client.query(
+            "SELECT * FROM public.supabase_buffer_reservations WHERE id = $1",
+            [testResId]
+        );
+        expect(rowInDb.rows.length).toBe(1);
+        expect(rowInDb.rows[0].client_id).toBe('client_pg_1');
+        expect(rowInDb.rows[0].resource_type).toBe('storage');
+        expect(Number(rowInDb.rows[0].bytes_reserved)).toBe(10000000);
+        expect(rowInDb.rows[0].status).toBe('active');
     });
 
     it.runIf(isStagingAvailable)('2. Enforces client ownership against different authenticated callers', async () => {
