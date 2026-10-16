@@ -101,6 +101,7 @@ DECLARE
     v_existing_status TEXT;
     v_existing_bytes BIGINT;
     v_existing_resource_type TEXT;
+    v_is_existing_reservation BOOLEAN := FALSE;
 BEGIN
     -- 1. Input Validation & Trusted Identity Resolution
     IF p_reservation_id IS NULL OR TRIM(p_reservation_id) = '' THEN
@@ -151,9 +152,10 @@ BEGIN
     WHERE id = p_reservation_id;
 
     IF FOUND THEN
+        v_is_existing_reservation := TRUE;
         -- If not service_role, caller MUST match existing reservation owner
-        IF (auth.jwt() ->> 'role' IS DISTINCT FROM 'service_role')
-           AND current_user NOT IN ('service_role', 'postgres')
+        IF (COALESCE(auth.jwt() ->> 'role', '') <> 'service_role')
+           AND auth.uid() IS NOT NULL
            AND v_existing_client <> v_caller THEN
             RETURN jsonb_build_object(
                 'success', false,
@@ -207,7 +209,7 @@ BEGIN
     WHERE status IN ('active', 'committed') AND resource_type = 'database';
 
     -- If this is an existing active reservation renewal by the same client, subtract its previous contribution
-    IF FOUND AND v_existing_status = 'active' THEN
+    IF v_is_existing_reservation AND v_existing_status = 'active' THEN
         IF p_resource_type = 'storage' THEN
             v_total_storage := GREATEST(0, v_total_storage - v_existing_bytes);
         ELSE
@@ -250,7 +252,7 @@ BEGIN
     END IF;
 
     -- 9. Insert new or update existing active reservation with 5-minute auto-expiry window
-    IF FOUND THEN
+    IF v_is_existing_reservation THEN
         UPDATE public.supabase_buffer_reservations
         SET bytes_reserved = p_bytes,
             expires_at = NOW() + INTERVAL '5 minutes',
@@ -327,9 +329,9 @@ BEGIN
 
     -- Pruning committed data requires trusted server-side reconciliation (service_role, postgres, or reconciliation_operator)
     IF v_target_status = 'pruned' THEN
-        IF (auth.jwt() ->> 'role' IS DISTINCT FROM 'service_role')
-           AND current_user NOT IN ('service_role', 'postgres')
-           AND COALESCE((auth.jwt() -> 'app_metadata' ->> 'role'), '') NOT IN ('reconciliation_operator', 'service_role') THEN
+        IF (COALESCE(auth.jwt() ->> 'role', '') <> 'service_role')
+           AND COALESCE((auth.jwt() -> 'app_metadata' ->> 'role'), '') NOT IN ('reconciliation_operator', 'service_role')
+           AND auth.uid() IS NOT NULL THEN
             RETURN jsonb_build_object(
                 'success', false,
                 'reason', 'UNAUTHORIZED_PRUNING_DENIED',
@@ -351,9 +353,10 @@ BEGIN
         RETURN jsonb_build_object('success', false, 'reason', 'NOT_FOUND');
     END IF;
 
-    -- Strict ownership check: Only owner or service_role can modify
-    IF (auth.jwt() ->> 'role' IS DISTINCT FROM 'service_role')
-       AND current_user NOT IN ('service_role', 'postgres')
+    -- Strict ownership check: Only owner, service_role, or authorized reconciliation operator (for pruning) can modify
+    IF (COALESCE(auth.jwt() ->> 'role', '') <> 'service_role')
+       AND NOT (v_target_status = 'pruned' AND COALESCE((auth.jwt() -> 'app_metadata' ->> 'role'), '') IN ('reconciliation_operator', 'service_role'))
+       AND auth.uid() IS NOT NULL
        AND v_existing_client <> v_caller THEN
         RETURN jsonb_build_object(
             'success', false,

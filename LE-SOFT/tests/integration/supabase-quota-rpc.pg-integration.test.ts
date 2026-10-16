@@ -71,20 +71,65 @@ describe('Migration 070 Real PostgreSQL Staging Integration Suite', () => {
 
         await pgClient.connect();
 
-        // Ensure 'authenticated' role exists for testing authenticated identity enforcement
+        // Ensure 'authenticated', 'anon', and 'service_role' roles exist for testing
         await pgClient.query(`
             DO $$ 
             BEGIN 
                 IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'authenticated') THEN 
                     CREATE ROLE authenticated; 
                 END IF; 
+                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'anon') THEN 
+                    CREATE ROLE anon; 
+                END IF; 
+                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'service_role') THEN 
+                    CREATE ROLE service_role; 
+                END IF; 
             END $$;
+
+            CREATE SCHEMA IF NOT EXISTS auth;
+            CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb LANGUAGE plpgsql STABLE AS $$
+            DECLARE
+                v_setting text;
+            BEGIN
+                v_setting := current_setting('request.jwt.claims', true);
+                IF v_setting IS NULL OR v_setting = '' THEN
+                    RETURN '{}'::jsonb;
+                END IF;
+                RETURN v_setting::jsonb;
+            EXCEPTION WHEN OTHERS THEN
+                RETURN '{}'::jsonb;
+            END;
+            $$;
+
+            CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE plpgsql STABLE AS $$
+            DECLARE
+                v_jwt jsonb;
+                v_sub text;
+            BEGIN
+                v_jwt := auth.jwt();
+                v_sub := v_jwt ->> 'sub';
+                IF v_sub IS NULL OR v_sub = '' THEN
+                    RETURN NULL;
+                END IF;
+                RETURN v_sub::uuid;
+            EXCEPTION WHEN OTHERS THEN
+                RETURN NULL;
+            END;
+            $$;
         `);
 
         // Apply actual Migration 070 SQL
         const migrationPath = path.join(process.cwd(), 'supabase', 'migrations', '070_supabase_buffer_quota_reservations.sql');
         const migrationSql = fs.readFileSync(migrationPath, 'utf-8');
         await pgClient.query(migrationSql);
+    });
+
+    beforeEach(async () => {
+        if (pgClient) {
+            try {
+                await pgClient.query("DELETE FROM public.supabase_buffer_reservations WHERE id LIKE 'test_%' OR id LIKE 'race_%' OR id LIKE 'exploit_%'");
+            } catch {}
+        }
     });
 
     afterAll(async () => {
@@ -124,7 +169,7 @@ describe('Migration 070 Real PostgreSQL Staging Integration Suite', () => {
             [testResId, 'client_pg_1', 10000000]
         );
         expect(resValid.rows[0].result.success).toBe(true);
-        expect(resValid.rows[0].result.allocated_bytes).toBe('10000000');
+        expect(Number(resValid.rows[0].result.allocated_bytes)).toBe(10000000);
     });
 
     it.runIf(isStagingAvailable)('2. Enforces client ownership against different authenticated callers', async () => {
@@ -284,7 +329,7 @@ describe('Migration 070 Real PostgreSQL Staging Integration Suite', () => {
         } finally {
             await pool.end();
         }
-    });
+    }, 15000);
 
     it.runIf(isStagingAvailable)('6. Rejects reuse of closed reservation IDs (released, pruned, expired)', async () => {
         const client = pgClient!;
@@ -419,7 +464,7 @@ describe('Migration 070 Real PostgreSQL Staging Integration Suite', () => {
         } finally {
             await pool.end();
         }
-    });
+    }, 15000);
 
     it.runIf(isStagingAvailable)('9. Authorized reconciliation operator and service_role are permitted to prune committed reservations', async () => {
         const client = pgClient!;

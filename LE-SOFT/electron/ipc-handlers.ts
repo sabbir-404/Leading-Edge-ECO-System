@@ -489,10 +489,14 @@ export async function syncStockToMySQL(localId: number, soldQty: number, syncId?
         }
 
         // 3. Decrement stock safely on destination
-        await connection.query(
+        const [updateResult]: any = await connection.query(
             'UPDATE products SET quantity = GREATEST(quantity - ?, 0) WHERE le_local_id = ?',
             [soldQty, localId]
         );
+
+        if (updateResult && updateResult.affectedRows === 0) {
+            throw new Error(`Product with le_local_id ${localId} not found on MySQL destination`);
+        }
 
         await connection.commit();
     } catch (err: any) {

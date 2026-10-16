@@ -134442,10 +134442,13 @@ async function syncStockToMySQL(localId, soldQty, syncId, invoiceNumber) {
       }
       throw insertErr;
     }
-    await connection.query(
+    const [updateResult] = await connection.query(
       "UPDATE products SET quantity = GREATEST(quantity - ?, 0) WHERE le_local_id = ?",
       [soldQty, localId]
     );
+    if (updateResult && updateResult.affectedRows === 0) {
+      throw new Error(`Product with le_local_id ${localId} not found on MySQL destination`);
+    }
     await connection.commit();
   } catch (err) {
     await connection.rollback();
