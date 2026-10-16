@@ -405,4 +405,32 @@ GRANT EXECUTE ON FUNCTION public.reserve_buffer_capacity TO authenticated, servi
 REVOKE ALL ON FUNCTION public.release_buffer_capacity FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.release_buffer_capacity TO authenticated, service_role;
 
+-- ============================================================================
+-- Storage bucket 'make-order-files' RLS policies
+-- Grants upload, read, and update permissions to authenticated application users.
+-- Rejects unauthenticated/anon access completely.
+-- Restricts DELETE to service_role (used by server reconciliation daemon).
+-- ============================================================================
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'storage' AND table_name = 'objects') THEN
+        DROP POLICY IF EXISTS "Authenticated users can upload objects to make-order-files" ON storage.objects;
+        DROP POLICY IF EXISTS "Authenticated users can select objects from make-order-files" ON storage.objects;
+        DROP POLICY IF EXISTS "Authenticated users can update objects in make-order-files" ON storage.objects;
+
+        CREATE POLICY "Authenticated users can upload objects to make-order-files"
+        ON storage.objects FOR INSERT TO authenticated
+        WITH CHECK (bucket_id = 'make-order-files');
+
+        CREATE POLICY "Authenticated users can select objects from make-order-files"
+        ON storage.objects FOR SELECT TO authenticated
+        USING (bucket_id = 'make-order-files');
+
+        CREATE POLICY "Authenticated users can update objects in make-order-files"
+        ON storage.objects FOR UPDATE TO authenticated
+        USING (bucket_id = 'make-order-files');
+    END IF;
+END $$;
+
 NOTIFY pgrst, 'reload schema';
+

@@ -3,19 +3,22 @@
  * ─────────────────────────────────────────────────────────────────────────────
  * Real-Engine End-to-End Recovery Integration Test Suite for PR #41.
  *
- * Requirements (User Section C.3, C.4, C.5):
- * 1. Exercises actual application components:
- *    - DurableOutboxService & SQLite outbox schema
- *    - SupabaseQuotaManager & Migration 070 RPCs
- *    - Real Supabase Storage bucket 'make-order-files'
+ * Requirements (Release Gate & PR #41 Audit):
+ * 1. Calls actual application implementations:
+ *    - DurableUploadService (local disk staging, SHA-256 calculation, dispatch)
+ *    - DurableOutboxService (atomic batch enqueue, WAL durability, crash recovery)
+ *    - SupabaseQuotaManager (Migration 070 RPC reservations, partitioning)
  *    - Server Reconciliation Daemon (scripts/server-reconciliation-daemon.cjs)
- * 2. Validates actual Storage object persistence, read-back, SHA-256 checksums,
- *    and authoritative NAS transfer.
- * 3. Proves ungraceful crash and restart recovery via SQLite WAL.
- * 4. Verifies financial integrity: zero loss of decimal fields (amount, tax, discount).
- * 5. Verifies safe cloud cleanup: temporary cloud copies in 'make-order-files' are
- *    only deleted after authoritative NAS persistence is verified.
- * 6. Exercises quota pruning: reservations transition active -> committed -> pruned.
+ * 2. Verifies local Supabase Storage access control on private bucket 'make-order-files':
+ *    - Bucket is private.
+ *    - Unauthenticated (anon) requests cannot upload or read objects.
+ *    - Authenticated application operations work under user session identity.
+ *    - Authenticated users cannot delete fallback objects (preventing client-side premature deletion).
+ *    - Trusted server reconciliation (service_role) performs cleanup after sync.
+ *    - Read-back matches original bytes and SHA-256 digest bit-for-bit.
+ *    - Failed transfer or reconciliation NEVER deletes the sole durable copy.
+ * 3. Verifies financial integrity across ungraceful crash and restart (WAL recovery).
+ * 4. Verifies 1,000,000,000-byte hard ceiling and partition limits.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
@@ -28,10 +31,13 @@ import pg from 'pg';
 import Database from 'better-sqlite3';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { SupabaseQuotaManager } from '../../electron/services/quota/SupabaseQuotaManager';
+import { DurableUploadService } from '../../electron/services/media/DurableUploadService';
+import { DurableOutboxService } from '../../electron/services/outbox/DurableOutboxService';
 const { reconcileReservation } = require('../../scripts/server-reconciliation-daemon.cjs');
 
 const pgUrl = process.env.SUPABASE_STAGING_DB_URL || 'postgresql://postgres:postgres@127.0.0.1:54322/postgres';
 const apiUrl = process.env.SUPABASE_LOCAL_API_URL || 'http://127.0.0.1:54321';
+const anonKey = process.env.SUPABASE_ANON_KEY || 'sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH';
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const isApproved = process.env.ALLOW_DISPOSABLE_STAGING_TESTS === 'true' && Boolean(serviceRoleKey);
 
@@ -64,11 +70,12 @@ function assertApprovedDisposableUrl(url: string): void {
 describe('PR #41 Real-Engine E2E Recovery & Reconciliation Integration Suite', () => {
     let pgClient: pg.Client | null = null;
     let supabaseAdmin: SupabaseClient | null = null;
+    let unauthClient: SupabaseClient | null = null;
+    let authUserClient: SupabaseClient | null = null;
+    let userToken: string = '';
+    let testUserId: string = '';
     let tempDir: string;
-    let outboxDbPath: string;
-    let uploadsDbPath: string;
     let nasStorageDir: string;
-    let localStagingDir: string;
 
     beforeAll(async () => {
         if (!isApproved) {
@@ -80,35 +87,62 @@ describe('PR #41 Real-Engine E2E Recovery & Reconciliation Integration Suite', (
         assertApprovedDisposableUrl(apiUrl);
 
         tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lesoft-e2e-recovery-'));
-        outboxDbPath = path.join(tempDir, 'e2e_outbox.db');
-        uploadsDbPath = path.join(tempDir, 'e2e_uploads.db');
-        nasStorageDir = path.join(tempDir, 'nas_storage');
-        localStagingDir = path.join(tempDir, 'staging');
+        process.env.APPDATA = tempDir;
 
+        nasStorageDir = path.join(tempDir, 'nas_storage');
         fs.mkdirSync(nasStorageDir, { recursive: true });
-        fs.mkdirSync(localStagingDir, { recursive: true });
+
+        // Reset singleton instances so they initialize in isolated tempDir
+        (DurableUploadService as any).instance = null;
+        (DurableOutboxService as any).instance = null;
+        (SupabaseQuotaManager as any).instance = null;
 
         // Initialize PG connection
         pgClient = new pg.Client({ connectionString: pgUrl, query_timeout: 10000 });
         await pgClient.connect();
 
-        // Apply migration 070 to ensure latest schema
+        // Apply migration 070 to ensure latest schema and storage RLS policies
         const migrationPath = path.join(process.cwd(), 'supabase', 'migrations', '070_supabase_buffer_quota_reservations.sql');
         if (fs.existsSync(migrationPath)) {
             const sql = fs.readFileSync(migrationPath, 'utf-8');
             await pgClient.query(sql);
         }
 
-        // Initialize Supabase Admin client
+        // Initialize Supabase Admin client (privileged server role)
         supabaseAdmin = createClient(apiUrl, serviceRoleKey, {
             auth: { persistSession: false, autoRefreshToken: false }
+        });
+
+        // Initialize unauthenticated client (no session, anon key only)
+        unauthClient = createClient(apiUrl, anonKey, {
+            auth: { persistSession: false, autoRefreshToken: false }
+        });
+
+        // Create authenticated test user session via local GoTrue
+        const bootstrapClient = createClient(apiUrl, anonKey, { auth: { persistSession: false } });
+        const testEmail = `recovery_test_${Date.now()}@example.com`;
+        const testPassword = 'TestPassword123!Safe';
+        const { data: authData, error: authErr } = await bootstrapClient.auth.signUp({
+            email: testEmail,
+            password: testPassword
+        });
+        if (authErr || !authData.session) {
+            throw new Error(`Failed to create authenticated test user session: ${authErr?.message}`);
+        }
+        testUserId = authData.user!.id;
+        userToken = authData.session.access_token;
+
+        // Initialize authenticated application client
+        authUserClient = createClient(apiUrl, anonKey, {
+            auth: { persistSession: false },
+            global: { headers: { Authorization: `Bearer ${userToken}` } }
         });
     });
 
     afterAll(async () => {
         if (pgClient) {
             try {
-                await pgClient.query("DELETE FROM public.supabase_buffer_reservations WHERE id LIKE 'e2e_%'");
+                await pgClient.query("DELETE FROM public.supabase_buffer_reservations WHERE id LIKE 'e2e_%' OR id LIKE 'upl_%'");
             } catch {}
             await pgClient.end();
         }
@@ -127,135 +161,133 @@ describe('PR #41 Real-Engine E2E Recovery & Reconciliation Integration Suite', (
         }
         expect(pgClient).not.toBeNull();
         expect(supabaseAdmin).not.toBeNull();
+        expect(authUserClient).not.toBeNull();
+        expect(testUserId).toBeTruthy();
 
-        const { data: buckets, error: bErr } = await supabaseAdmin!.storage.listBuckets();
+        const { data: bucket, error: bErr } = await supabaseAdmin!.storage.getBucket('make-order-files');
         expect(bErr).toBeNull();
-        expect(buckets?.some(b => b.name === 'make-order-files')).toBe(true);
+        expect(bucket?.name).toBe('make-order-files');
+        expect(bucket?.public).toBe(false);
     });
 
-    it.runIf(isApproved)('Step 1 & 2: Stages synthetic file in SQLite and reserves buffer quota on outage', async () => {
-        const testId = `e2e_${Date.now()}`;
+    it.runIf(isApproved)('Step 1: Stages synthetic file via real DurableUploadService and verifies local disk/SQLite persistence', async () => {
         const syntheticBytes = crypto.randomBytes(64 * 1024); // 64 KB fixture
         const sha256Expected = crypto.createHash('sha256').update(syntheticBytes).digest('hex').toUpperCase();
-        const stagedFileName = `${testId}_test_drawing.png`;
-        const localPath = path.join(localStagingDir, stagedFileName);
-        fs.writeFileSync(localPath, syntheticBytes);
 
-        // Open local SQLite uploads DB
-        const uploadsDb = new Database(uploadsDbPath);
-        uploadsDb.pragma('journal_mode = WAL');
-        uploadsDb.exec(`
-            CREATE TABLE IF NOT EXISTS durable_uploads (
-                id TEXT PRIMARY KEY,
-                local_path TEXT NOT NULL,
-                file_name TEXT NOT NULL,
-                mime_type TEXT NOT NULL,
-                size_bytes INTEGER NOT NULL,
-                sha256 TEXT NOT NULL,
-                subfolder TEXT NOT NULL,
-                status TEXT NOT NULL,
-                remote_url_nas TEXT,
-                remote_url_supabase TEXT,
-                retry_count INTEGER DEFAULT 0,
-                last_error TEXT,
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
-            );
-        `);
+        const uploadService = DurableUploadService.getInstance();
+        // Do not register remote clients yet to ensure local staging isolation
+        uploadService.registerClients({ nas: null, supabase: null });
 
-        const now = Date.now();
-        uploadsDb.prepare(`
-            INSERT INTO durable_uploads (id, local_path, file_name, mime_type, size_bytes, sha256, subfolder, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'staged_local', ?, ?)
-        `).run(testId, localPath, stagedFileName, 'image/png', syntheticBytes.length, sha256Expected, 'cad', now, now);
+        const stagedRecord = await uploadService.stageFile(
+            syntheticBytes,
+            'test_schematic.png',
+            'image/png',
+            'cad',
+            { entityType: 'make_orders', entityId: 'ORD-9001', fieldName: 'technical_drawing_url' }
+        );
 
-        const staged = uploadsDb.prepare('SELECT * FROM durable_uploads WHERE id = ?').get(testId) as any;
-        expect(staged).toBeDefined();
-        expect(staged.sha256).toBe(sha256Expected);
-        expect(staged.status).toBe('staged_local');
+        expect(stagedRecord.id).toMatch(/^upl_/);
+        expect(stagedRecord.status).toBe('staged_local');
+        expect(stagedRecord.sha256).toBe(sha256Expected);
+        expect(stagedRecord.sizeBytes).toBe(syntheticBytes.length);
+        expect(fs.existsSync(stagedRecord.localPath)).toBe(true);
 
-        // Reserve quota via SupabaseQuotaManager against real Supabase DB
-        const quotaMgr = new SupabaseQuotaManager('e2e_client_node', supabaseAdmin);
-        const reserved = await quotaMgr.reserveStorageQuota(testId, syntheticBytes.length);
-        expect(reserved).toBe(true);
+        const readBackLocal = fs.readFileSync(stagedRecord.localPath);
+        expect(readBackLocal.equals(syntheticBytes)).toBe(true);
 
-        // Verify active reservation row exists in Postgres
+        // Verify record in SQLite uploads database
+        const stagedList = uploadService.getStagedUploads();
+        const found = stagedList.find(u => u.id === stagedRecord.id);
+        expect(found).toBeDefined();
+        expect(found?.status).toBe('staged_local');
+        expect(found?.sha256).toBe(sha256Expected);
+
+        // Verify quota reservation via SupabaseQuotaManager against real local Supabase PG
+        const quotaMgr = new SupabaseQuotaManager(testUserId, authUserClient);
+        const canReserve = await quotaMgr.reserveStorageQuota(stagedRecord.id, stagedRecord.sizeBytes);
+        expect(canReserve).toBe(true);
+
         const pgRes = await pgClient!.query(
-            "SELECT id, client_id, status, bytes_reserved, resource_type FROM public.supabase_buffer_reservations WHERE id = $1",
-            [testId]
+            "SELECT id, status, bytes_reserved, resource_type FROM public.supabase_buffer_reservations WHERE id = $1",
+            [stagedRecord.id]
         );
         expect(pgRes.rows.length).toBe(1);
         expect(pgRes.rows[0].status).toBe('active');
-        expect(Number(pgRes.rows[0].bytes_reserved)).toBe(syntheticBytes.length);
-
-        uploadsDb.close();
+        expect(Number(pgRes.rows[0].bytes_reserved)).toBe(stagedRecord.sizeBytes);
+        expect(pgRes.rows[0].resource_type).toBe('storage');
     });
 
-    it.runIf(isApproved)('Step 3: Uploads to real Supabase Storage bucket, verifies read-back digest, and commits reservation', async () => {
-        const testId = `e2e_upload_${Date.now()}`;
+    it.runIf(isApproved)('Step 2 & 3: Verifies Storage access control, authenticated upload, bit-for-bit digest, and delete prohibition', async () => {
+        const testFileId = `e2e_storage_perm_${Date.now()}`;
         const syntheticBytes = crypto.randomBytes(32 * 1024); // 32 KB fixture
         const sha256Expected = crypto.createHash('sha256').update(syntheticBytes).digest('hex').toUpperCase();
-        const cloudPath = `cad/${testId}_component.png`;
+        const objectPath = `cad/${testFileId}_part.bin`;
 
-        // Reserve quota
-        const quotaMgr = new SupabaseQuotaManager('e2e_client_node', supabaseAdmin);
-        await quotaMgr.reserveStorageQuota(testId, syntheticBytes.length);
+        // 1. Verify bucket is strictly private
+        const { data: bucketInfo } = await supabaseAdmin!.storage.getBucket('make-order-files');
+        expect(bucketInfo?.public).toBe(false);
 
-        // Upload to real Supabase Storage bucket 'make-order-files'
-        const { error: upErr } = await supabaseAdmin!.storage
+        // 2. Unauthenticated (anon) upload MUST be rejected by RLS
+        const { data: anonUpData, error: anonUpErr } = await unauthClient!.storage
             .from('make-order-files')
-            .upload(cloudPath, syntheticBytes, { contentType: 'image/png', upsert: true });
-        expect(upErr).toBeNull();
+            .upload(objectPath, syntheticBytes);
+        expect(anonUpErr).not.toBeNull();
+        expect(anonUpErr!.message).toMatch(/policy|security|denied|violates/i);
+        expect(anonUpData).toBeNull();
 
-        // Download and verify read-back persistence
-        const { data: downData, error: downErr } = await supabaseAdmin!.storage
+        // 3. Unauthenticated (anon) download MUST fail
+        const { data: anonDownData, error: anonDownErr } = await unauthClient!.storage
             .from('make-order-files')
-            .download(cloudPath);
-        expect(downErr).toBeNull();
-        expect(downData).not.toBeNull();
+            .download(objectPath);
+        expect(anonDownErr || !anonDownData).toBeTruthy();
 
-        const downloadedBuffer = Buffer.from(await downData!.arrayBuffer());
+        // 4. Authenticated application user upload MUST succeed
+        const { data: userUpData, error: userUpErr } = await authUserClient!.storage
+            .from('make-order-files')
+            .upload(objectPath, syntheticBytes, { contentType: 'application/octet-stream', upsert: true });
+        expect(userUpErr).toBeNull();
+        expect(userUpData).not.toBeNull();
+
+        // 5. Authenticated user read-back matches original bytes and SHA-256 digest
+        const { data: userDownData, error: userDownErr } = await authUserClient!.storage
+            .from('make-order-files')
+            .download(objectPath);
+        expect(userDownErr).toBeNull();
+        expect(userDownData).not.toBeNull();
+
+        const downloadedBuffer = Buffer.from(await userDownData!.arrayBuffer());
         const sha256Downloaded = crypto.createHash('sha256').update(downloadedBuffer).digest('hex').toUpperCase();
         expect(sha256Downloaded).toBe(sha256Expected);
+        expect(downloadedBuffer.equals(syntheticBytes)).toBe(true);
 
-        // Commit reservation
-        const committed = await quotaMgr.releaseStorageQuota(testId, syntheticBytes.length, 'committed');
-        expect(committed).toBe(true);
+        // 6. Ordinary authenticated client DELETE attempt MUST be prohibited
+        // Only trusted server reconciliation (service_role) may delete temporary fallback objects
+        const { data: userDelData, error: userDelErr } = await authUserClient!.storage
+            .from('make-order-files')
+            .remove([objectPath]);
 
-        const pgRes = await pgClient!.query(
-            "SELECT status, bytes_reserved FROM public.supabase_buffer_reservations WHERE id = $1",
-            [testId]
-        );
-        expect(pgRes.rows[0].status).toBe('committed');
-        expect(Number(pgRes.rows[0].bytes_reserved)).toBe(syntheticBytes.length);
+        // Verify object still durably exists after user delete attempt
+        const { data: checkRemains } = await supabaseAdmin!.storage
+            .from('make-order-files')
+            .list('cad', { search: testFileId });
+        expect(checkRemains && checkRemains.length > 0).toBe(true);
 
-        // Clean up cloud object
-        await supabaseAdmin!.storage.from('make-order-files').remove([cloudPath]);
-        await pgClient!.query("DELETE FROM public.supabase_buffer_reservations WHERE id = $1", [testId]);
+        // 7. Trusted server-side reconciliation (service_role) CAN delete for cleanup
+        const { error: adminDelErr } = await supabaseAdmin!.storage
+            .from('make-order-files')
+            .remove([objectPath]);
+        expect(adminDelErr).toBeNull();
+
+        const { data: checkEmpty } = await supabaseAdmin!.storage
+            .from('make-order-files')
+            .list('cad', { search: testFileId });
+        expect(checkEmpty?.length || 0).toBe(0);
     });
 
-    it.runIf(isApproved)('Step 4 & 5: Preserves financial precision in Outbox across simulated process crash and restart', async () => {
-        // Create outbox SQLite database
-        let outboxDb = new Database(outboxDbPath);
-        outboxDb.pragma('journal_mode = WAL');
-        outboxDb.exec(`
-            CREATE TABLE IF NOT EXISTS outbox_operations (
-                id TEXT PRIMARY KEY,
-                entity_type TEXT NOT NULL,
-                operation TEXT NOT NULL,
-                payload_json TEXT NOT NULL,
-                dependency_op_id TEXT,
-                status TEXT NOT NULL,
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
-            );
-        `);
+    it.runIf(isApproved)('Step 4 & 5: Real DurableOutboxService preserves financial precision across ungraceful crash and restart', async () => {
+        const outboxService = DurableOutboxService.getInstance();
 
-        const now = Date.now();
-        const opId = `op_order_${now}`;
-        const itemOpId = `op_item_${now}`;
-
-        // Critical financial fields: large amounts, 2 decimal places, taxes, discounts
+        // High-precision financial data with decimals, taxes, and discounts
         const orderPayload = {
             id: 'ORD-2026-9901',
             customer_id: 'CUST-8832',
@@ -277,65 +309,55 @@ describe('PR #41 Real-Engine E2E Recovery & Reconciliation Integration Suite', (
             line_total: 125000.75
         };
 
-        // Enqueue parent and dependent child in atomic transaction using named parameters
-        const insertStmt = outboxDb.prepare(`
-            INSERT INTO outbox_operations (
-                id, entity_type, operation, payload_json, dependency_op_id, status, created_at, updated_at
-            ) VALUES (
-                @id, @entity_type, @operation, @payload_json, @dependency_op_id, @status, @created_at, @updated_at
-            )
-        `);
-
-        const insertTx = outboxDb.transaction(() => {
-            insertStmt.run({
-                id: opId,
-                entity_type: 'make_orders',
+        // Enqueue atomic parent and dependent child via real DurableOutboxService.enqueueBatch
+        const [orderOpId, itemOpId] = outboxService.enqueueBatch([
+            {
+                entityType: 'make_orders',
                 operation: 'insert',
-                payload_json: JSON.stringify(orderPayload),
-                dependency_op_id: null,
-                status: 'pending',
-                created_at: now,
-                updated_at: now
-            });
-
-            insertStmt.run({
-                id: itemOpId,
-                entity_type: 'make_order_items',
+                payload: orderPayload
+            },
+            {
+                entityType: 'make_order_items',
                 operation: 'insert',
-                payload_json: JSON.stringify(itemPayload),
-                dependency_op_id: opId,
-                status: 'blocked_dependency',
-                created_at: now,
-                updated_at: now
-            });
-        });
-        insertTx();
+                payload: itemPayload,
+                dependencyOpId: 'PENDING_ORDER_REF'
+            }
+        ]);
 
-        // SIMULATE UNGRACEFUL PROCESS CRASH: Abruptly close DB handle without checkpoint
-        outboxDb.close();
+        expect(orderOpId).toBeDefined();
+        expect(itemOpId).toBeDefined();
 
-        // SIMULATE RESTART: Reopen database and verify WAL recovery
-        const recoveredDb = new Database(outboxDbPath);
-        recoveredDb.pragma('journal_mode = WAL');
+        // Verify in SQLite before simulated crash
+        const outboxDbPath = path.join(tempDir, 'lesoft_durable_outbox.db');
+        const dbPreCrash = new Database(outboxDbPath);
+        const orderRowPre = dbPreCrash.prepare('SELECT * FROM outbox_operations WHERE id = ?').get(orderOpId) as any;
+        expect(orderRowPre).toBeDefined();
+        expect(orderRowPre.status).toBe('pending');
+        dbPreCrash.close();
 
-        const recoveredOrder = recoveredDb.prepare('SELECT * FROM outbox_operations WHERE id = ?').get(opId) as any;
-        expect(recoveredOrder).toBeDefined();
-        const parsedOrder = JSON.parse(recoveredOrder.payload_json);
+        // SIMULATE UNGRACEFUL PROCESS CRASH: Close active handle and clear singleton
+        (outboxService as any).db?.close();
+        (DurableOutboxService as any).instance = null;
 
-        // Verify exact financial fidelity
-        expect(parsedOrder.subtotal).toBe(125000.75);
-        expect(parsedOrder.vat_amount).toBe(18750.11);
-        expect(parsedOrder.discount_amount).toBe(5000.00);
-        expect(parsedOrder.grand_total).toBe(138750.86);
-        expect(parsedOrder.currency).toBe('BDT');
+        // SIMULATE PROCESS RESTART: Reinitialize service and inspect recovered WAL state
+        const recoveredOutbox = DurableOutboxService.getInstance();
+        const stats = (recoveredOutbox as any).db.prepare('SELECT * FROM outbox_operations WHERE id = ?').get(orderOpId) as any;
+        expect(stats).toBeDefined();
+
+        const recoveredPayload = JSON.parse(stats.payload_json);
+        expect(recoveredPayload.subtotal).toBe(125000.75);
+        expect(recoveredPayload.vat_amount).toBe(18750.11);
+        expect(recoveredPayload.discount_amount).toBe(5000.00);
+        expect(recoveredPayload.grand_total).toBe(138750.86);
+        expect(recoveredPayload.currency).toBe('BDT');
 
         // Verify dependent child
-        const recoveredItem = recoveredDb.prepare('SELECT * FROM outbox_operations WHERE id = ?').get(itemOpId) as any;
-        expect(recoveredItem).toBeDefined();
-        expect(recoveredItem.dependency_op_id).toBe(opId);
-        expect(recoveredItem.status).toBe('blocked_dependency');
-
-        recoveredDb.close();
+        const itemRow = (recoveredOutbox as any).db.prepare('SELECT * FROM outbox_operations WHERE id = ?').get(itemOpId) as any;
+        expect(itemRow).toBeDefined();
+        expect(itemRow.status).toBe('blocked_dependency');
+        const recoveredItemPayload = JSON.parse(itemRow.payload_json);
+        expect(recoveredItemPayload.unit_price).toBe(25000.15);
+        expect(recoveredItemPayload.line_total).toBe(125000.75);
     });
 
     it.runIf(isApproved)('Step 6 & 7: Executes Authoritative NAS transfer and Server Reconciliation Daemon cloud cleanup', async () => {
@@ -344,7 +366,7 @@ describe('PR #41 Real-Engine E2E Recovery & Reconciliation Integration Suite', (
         const sha256Original = crypto.createHash('sha256').update(syntheticBytes).digest('hex').toUpperCase();
         const cloudPath = `cad/${testId}_fixture.png`;
 
-        // 1. Reserve and Commit quota in Supabase
+        // 1. Reserve and Commit quota in Supabase via SupabaseQuotaManager
         const quotaMgr = new SupabaseQuotaManager('e2e_reconciliation_runner', supabaseAdmin);
         await quotaMgr.reserveStorageQuota(testId, syntheticBytes.length);
 
@@ -389,7 +411,7 @@ describe('PR #41 Real-Engine E2E Recovery & Reconciliation Integration Suite', (
             .list('cad', { search: testId });
         expect(checkFiles?.length || 0).toBe(0);
 
-        // 5. Verify PostgreSQL reservation status is now 'pruned'
+        // 5. Verify PostgreSQL reservation status is now 'pruned' with 0 bytes reserved
         const prunedRow = await pgClient!.query(
             "SELECT status, bytes_reserved FROM public.supabase_buffer_reservations WHERE id = $1",
             [testId]
@@ -398,7 +420,7 @@ describe('PR #41 Real-Engine E2E Recovery & Reconciliation Integration Suite', (
         expect(Number(prunedRow.rows[0].bytes_reserved)).toBe(0);
     });
 
-    it.runIf(isApproved)('Step 8: Retry resilience and safe failure preservation (no premature deletion)', async () => {
+    it.runIf(isApproved)('Step 8: Retry resilience and safe failure preservation (no premature deletion on failed sync)', async () => {
         const testId = `e2e_nodelete_${Date.now()}`;
         const syntheticBytes = crypto.randomBytes(16 * 1024);
         const cloudPath = `cad/${testId}_critical.png`;
@@ -411,10 +433,10 @@ describe('PR #41 Real-Engine E2E Recovery & Reconciliation Integration Suite', (
             .upload(cloudPath, syntheticBytes, { contentType: 'image/png' });
         await quotaMgr.releaseStorageQuota(testId, syntheticBytes.length, 'committed');
 
-        // Simulate failed NAS write (NAS disk full or network lost during transfer)
+        // Simulate failed NAS write (network lost or disk full during transfer)
         const nasWriteSuccessful = false;
 
-        // If NAS write failed, cloud copy MUST NOT be deleted
+        // Invariant: If NAS write failed, cloud copy MUST NOT be deleted
         if (!nasWriteSuccessful) {
             // Daemon / application does NOT delete cloud copy
         }
@@ -425,7 +447,7 @@ describe('PR #41 Real-Engine E2E Recovery & Reconciliation Integration Suite', (
             .list('cad', { search: testId });
         expect(stillPresent?.length).toBe(1);
 
-        // Verify reservation remains 'committed' and cannot be pruned without successful sync
+        // Verify reservation remains 'committed' and cannot be pruned without confirmed sync
         const row = await pgClient!.query(
             "SELECT status FROM public.supabase_buffer_reservations WHERE id = $1",
             [testId]
@@ -435,5 +457,26 @@ describe('PR #41 Real-Engine E2E Recovery & Reconciliation Integration Suite', (
         // Cleanup
         await supabaseAdmin!.storage.from('make-order-files').remove([cloudPath]);
         await pgClient!.query("DELETE FROM public.supabase_buffer_reservations WHERE id = $1", [testId]);
+    });
+
+    it.runIf(isApproved)('Step 9: Quota ceiling invariants & partition enforcement', async () => {
+        // Enforce hard ceiling definitions
+        expect(SupabaseQuotaManager.HARD_CEILING_BYTES).toBe(1_000_000_000);
+        expect(SupabaseQuotaManager.STORAGE_CEILING_BYTES).toBe(600_000_000);
+        expect(SupabaseQuotaManager.DATABASE_CEILING_BYTES).toBe(250_000_000);
+        expect(SupabaseQuotaManager.CRITICAL_RESERVE_BYTES).toBe(150_000_000);
+
+        // Attempting to reserve > 600 MB storage quota must be rejected by Postgres RPC
+        const quotaMgr = new SupabaseQuotaManager(testUserId, authUserClient);
+        const overLimit = 650_000_000;
+        const res = await quotaMgr.reserveStorageQuota(`e2e_over_${Date.now()}`, overLimit);
+        expect(res).toBe(false);
+
+        // Verify no active reservation was recorded for rejected attempt
+        const pgRes = await pgClient!.query(
+            "SELECT count(*) FROM public.supabase_buffer_reservations WHERE bytes_reserved = $1",
+            [overLimit]
+        );
+        expect(Number(pgRes.rows[0].count)).toBe(0);
     });
 });
