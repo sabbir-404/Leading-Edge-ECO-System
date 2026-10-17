@@ -20,6 +20,7 @@
  */
 
 import { supabase } from '../../supabase';
+import { DurableOutboxService } from '../outbox/DurableOutboxService';
 
 export const CANONICAL_PRODUCTION_STAGES = [
     'Work in process',
@@ -147,7 +148,20 @@ export class MakeProductionService {
 
     /**
      * Executes the stage transition in the database and dispatches notifications.
+     * Aliased as addProductionUpdate for foreign-key validation and production workflow consumers.
      */
+    public static async addProductionUpdate(params: {
+        orderId: number | string;
+        targetStage: string;
+        note?: string;
+        photoUrl?: string | null;
+        actorName: string;
+        actorRole: string;
+        actorUserId?: number | null;
+    }): Promise<{ success: boolean; stage: string; photo_url: string | null; error?: string }> {
+        return this.advanceOrderStage(params);
+    }
+
     public static async advanceOrderStage(params: {
         orderId: number | string;
         targetStage: string;
@@ -159,15 +173,81 @@ export class MakeProductionService {
     }): Promise<{ success: boolean; stage: string; photo_url: string | null; error?: string }> {
         const { orderId, targetStage, note, photoUrl, actorName, actorRole, actorUserId } = params;
 
-        // 1. Fetch current order
-        const { data: order, error: fetchErr } = await supabase
+        // 1. Fetch current order from primary Supabase source of truth
+        let order: any = null;
+        const { data: remoteOrder, error: fetchErr } = await supabase
             .from('make_orders')
             .select('*')
             .eq('id', orderId)
             .maybeSingle();
 
-        if (fetchErr || !order) {
-            return { success: false, stage: targetStage, photo_url: null, error: 'Order not found' };
+        if (remoteOrder) {
+            order = remoteOrder;
+        } else {
+            // Parent order not found in Supabase database.
+            // Check if parent order is currently staged/pending in the Durable Outbox!
+            const outbox = DurableOutboxService.getInstance();
+            const pendingParent = outbox.findPendingOrderOperation(orderId);
+
+            if (pendingParent) {
+                // Parent order is pending remote commitment in Supabase.
+                // Do NOT issue a direct insert to Supabase, which would violate foreign-key constraint 23503!
+                // Instead, defer this stage update in the Durable Outbox with strict dependency ordering.
+                const roleLabel = actorRole || 'Factory Manager';
+                const formattedActor = `${actorName} (${roleLabel})`;
+                const finalPhotoUrl = photoUrl || (pendingParent.payload as any)?.current_stage_photo || null;
+
+                const deferredUpdateRow = {
+                    order_id: orderId,
+                    status: targetStage,
+                    stage: targetStage,
+                    note: note || '',
+                    photo_url: finalPhotoUrl,
+                    photo_urls: finalPhotoUrl ? [finalPhotoUrl] : [],
+                    updated_by: formattedActor
+                };
+
+                const deferredOrderUpdates = {
+                    status: targetStage,
+                    current_stage: targetStage,
+                    updated_at: new Date().toISOString(),
+                    current_stage_photo: finalPhotoUrl,
+                    factory_manager_name: actorName,
+                    factory_manager_id: actorUserId || null
+                };
+
+                const childUpdateOpId = outbox.enqueueSingle({
+                    entityType: 'make_order_updates',
+                    operation: 'insert',
+                    payload: deferredUpdateRow,
+                    dependencyOpId: pendingParent.id,
+                    target: 'supabase'
+                });
+
+                outbox.enqueueSingle({
+                    entityType: 'make_orders',
+                    operation: 'update',
+                    payload: deferredOrderUpdates,
+                    filter: [{ column: 'id', value: orderId }],
+                    dependencyOpId: childUpdateOpId,
+                    target: 'supabase'
+                });
+
+                console.warn(`[MakeProductionService] Parent order ${orderId} is pending in durable outbox. Deferred stage update "${targetStage}" with dependency op ${pendingParent.id}.`);
+                return {
+                    success: true,
+                    stage: targetStage,
+                    photo_url: finalPhotoUrl,
+                    error: undefined
+                };
+            }
+
+            return {
+                success: false,
+                stage: targetStage,
+                photo_url: null,
+                error: `Parent order "${orderId}" does not exist in database or pending outbox.`
+            };
         }
 
         // 2. Validate transition
@@ -207,6 +287,13 @@ export class MakeProductionService {
         const { error: insErr } = await supabase.from('make_order_updates').insert(updateRow);
         if (insErr) {
             console.error('[MakeProductionService] Failed to insert update:', insErr);
+            // Fail closed: propagate actual persistence failure; DO NOT update order or imply success
+            return {
+                success: false,
+                stage: targetStage,
+                photo_url: finalPhotoUrl,
+                error: `Failed to insert production update: ${insErr.message}`
+            };
         }
 
         // 5. Update make_orders table
@@ -229,7 +316,12 @@ export class MakeProductionService {
             .eq('id', orderId);
 
         if (updErr) {
-            return { success: false, stage: targetStage, photo_url: finalPhotoUrl, error: updErr.message };
+            return {
+                success: false,
+                stage: targetStage,
+                photo_url: finalPhotoUrl,
+                error: `Failed to update order record: ${updErr.message}`
+            };
         }
 
         // 6. Send real-time notification to Salesman and Designer

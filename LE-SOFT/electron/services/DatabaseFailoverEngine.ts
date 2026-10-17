@@ -248,18 +248,13 @@ export class DatabaseFailoverEngine {
     }
 
     public getActiveClient(): SupabaseClient {
-        const inCooldown = Date.now() < this.cooldownUntil;
-        // If degraded, offline, or during cooldown, return Supabase fallback immediately without stalling
-        if (this.circuitState === 'degraded' || this.circuitState === 'offline' || inCooldown) {
-            if (this.supabaseClient) {
-                return this.supabaseClient;
-            }
-        }
-        if ((this.circuitState === 'healthy' || this.circuitState === 'recovering') && this.nasClient) {
-            return this.nasClient;
-        }
+        // Architecture invariant: Supabase is the primary write target and source of truth.
+        // The NAS is a pull/replication destination, not the first-write authority.
         if (this.supabaseClient) {
             return this.supabaseClient;
+        }
+        if (this.supabaseAdmin) {
+            return this.supabaseAdmin;
         }
         if (this.nasClient) {
             return this.nasClient;
@@ -940,10 +935,10 @@ export class DatabaseFailoverEngine {
                 throw new Error(`Table client for "${table}" does not support delete.`);
             }
             if (meta.primaryKey) {
-                const { error } = await tableClient.delete().eq(meta.primaryKey.name, meta.primaryKey.value);
+                const { error } = await (tableClient as any).delete().eq(meta.primaryKey.name, meta.primaryKey.value);
                 if (error) throw error;
             } else if (meta.filter && meta.filter.length > 0) {
-                let q = tableClient.delete();
+                let q = (tableClient as any).delete();
                 for (const f of meta.filter) {
                     q = q.eq(f.column, f.value);
                 }

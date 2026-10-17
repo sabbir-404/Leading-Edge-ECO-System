@@ -15,6 +15,8 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { supabase, getCfAccessHeaders } from '../../supabase';
+import { SupabaseQuotaManager } from '../quota/SupabaseQuotaManager';
+import { DurableUploadService } from '../media/DurableUploadService';
 
 export interface FileValidationResult {
     isValid: boolean;
@@ -23,6 +25,17 @@ export interface FileValidationResult {
     fileSize: number;
     fileBuffer: Buffer;
     sanitizedFileName: string;
+}
+
+export interface MakeUploadResult {
+    success: boolean;
+    status: 'synced_nas' | 'buffered_supabase' | 'staged_local' | 'awaiting_association' | 'failed';
+    storagePath: string;
+    publicUrl?: string;
+    durableKey?: string;
+    isPendingUpload: boolean;
+    uploadId?: string;
+    error?: string;
 }
 
 const ALLOWED_CAD_EXTENSIONS = new Set([
@@ -300,14 +313,82 @@ export class MakeCadService {
     }
 
     /**
-     * Uploads a validated file buffer to TrueNAS Storage or Supabase Storage bucket.
+     * Uploads a validated file buffer using DurableUploadService with TrueNAS primary
+     * and quota-managed Supabase Storage fallback, or direct pipeline if durable queue is unavailable.
      */
     public static async uploadValidatedBuffer(
         buffer: Buffer,
         fileName: string,
         mimeType: string,
-        subfolder: string
-    ): Promise<{ success: boolean; storagePath?: string; publicUrl?: string; error?: string }> {
+        subfolder: string,
+        meta?: { entityType?: string; entityId?: string | number; fieldName?: string }
+    ): Promise<MakeUploadResult> {
+        // 1. Resilient staging & durable dispatch
+        try {
+            const durableUpload = DurableUploadService.getInstance();
+            const staged = await durableUpload.stageFile(
+                buffer,
+                fileName,
+                mimeType,
+                subfolder,
+                meta,
+                { autoDispatch: false }
+            );
+            const result = await durableUpload.dispatchUpload(staged.id);
+            const durableKey = `${subfolder}/${staged.id}_${staged.fileName}`;
+
+            if (result.status === 'synced_nas') {
+                const confirmedUrl = result.activeUrl || result.url;
+                return {
+                    success: true,
+                    status: 'synced_nas',
+                    storagePath: durableKey,
+                    publicUrl: confirmedUrl,
+                    durableKey: confirmedUrl || durableKey,
+                    isPendingUpload: false,
+                    uploadId: staged.id
+                };
+            }
+
+            if (result.status === 'buffered_supabase') {
+                return {
+                    success: true,
+                    status: 'buffered_supabase',
+                    storagePath: durableKey,
+                    publicUrl: result.activeUrl,
+                    durableKey: result.durableKey || durableKey,
+                    isPendingUpload: true,
+                    uploadId: staged.id
+                };
+            }
+
+            if (result.status === 'staged_local' || result.status === 'awaiting_association') {
+                // Truthful contract: durably accepted and staged; NEVER guessed remote URLs, NEVER file://
+                return {
+                    success: !result.error,
+                    status: result.status,
+                    storagePath: staged.localPath,
+                    publicUrl: undefined,
+                    durableKey: durableKey,
+                    isPendingUpload: true,
+                    uploadId: staged.id,
+                    error: result.error
+                };
+            }
+
+            return {
+                success: false,
+                status: 'failed',
+                storagePath: '',
+                isPendingUpload: false,
+                uploadId: staged.id,
+                error: result.error || 'Failed to dispatch durable upload'
+            };
+        } catch (durableErr: any) {
+            console.warn('[MakeCadService] DurableUploadService exception, falling back to direct pipeline:', durableErr.message);
+        }
+
+        // 2. Direct pipeline fallback (for test environments without SQLite or direct mode)
         const timestamp = Date.now();
         const randomToken = crypto.randomBytes(4).toString('hex');
         const sanitized = this.sanitizeFileName(fileName);
@@ -327,44 +408,85 @@ export class MakeCadService {
                     headers: {
                         'x-subfolder': subfolder,
                         ...cfHeaders
-                    }
+                    },
+                    signal: AbortSignal.timeout(20000)
                 });
 
-                const data = await response.json();
-                if (data.success && (data.file_url || data.url)) {
-                    const rawUrl = data.file_url || data.url;
-                    return {
-                        success: true,
-                        storagePath: `${subfolder}/${storageFileName}`,
-                        publicUrl: encodeURI(rawUrl)
-                    };
+                if (response.ok || (response as any).status === undefined) {
+                    const data = await response.json();
+                    if (data && data.success && (data.file_url || data.url)) {
+                        const rawUrl = encodeURI(data.file_url || data.url);
+                        return {
+                            success: true,
+                            status: 'synced_nas',
+                            storagePath: storagePath,
+                            publicUrl: rawUrl,
+                            durableKey: rawUrl,
+                            isPendingUpload: false
+                        };
+                    }
                 }
-
-                // Fallback direct storage URL construction
-                return {
-                    success: true,
-                    storagePath: `${subfolder}/${storageFileName}`,
-                    publicUrl: encodeURI(`https://storage.lenas.me/files/${subfolder}/${storageFileName}`)
-                };
             } catch (nasErr: any) {
                 console.warn('[MakeCadService] NAS upload failed, attempting Supabase fallback:', nasErr.message);
             }
         }
 
-        // Supabase Storage Fallback
+        // Supabase Storage Fallback (strictly gated and tracked by Quota Manager)
+        const quotaMgr = SupabaseQuotaManager.getInstance();
+        if (!quotaMgr.canAcceptStorageUpload(buffer.length)) {
+            return {
+                success: false,
+                status: 'failed',
+                storagePath: '',
+                isPendingUpload: false,
+                error: 'Supabase Storage quota limit reached (600 MB / 1 GB ceiling).'
+            };
+        }
+
+        const canBuffer = await quotaMgr.reserveStorageQuota(storageFileName, buffer.length);
+        if (!canBuffer) {
+            return {
+                success: false,
+                status: 'failed',
+                storagePath: '',
+                isPendingUpload: false,
+                error: 'Supabase Storage quota reservation rejected.'
+            };
+        }
+
         const { error: sbErr } = await supabase.storage
             .from('make-order-files')
             .upload(storagePath, buffer, { contentType: mimeType, upsert: false });
 
         if (sbErr) {
-            return { success: false, error: sbErr.message };
+            await quotaMgr.releaseStorageQuota(storageFileName, 0, 'released');
+            return {
+                success: false,
+                status: 'failed',
+                storagePath: '',
+                isPendingUpload: false,
+                error: sbErr.message
+            };
         }
 
-        const { data: publicData } = supabase.storage.from('make-order-files').getPublicUrl(storagePath);
+        await quotaMgr.releaseStorageQuota(storageFileName, buffer.length, 'committed');
+        // Do not call getPublicUrl on private bucket! Resolve authorized signed URL on demand
+        let signedUrl: string | undefined = undefined;
+        try {
+            const storageBucket = supabase.storage.from('make-order-files');
+            if (typeof storageBucket.createSignedUrl === 'function') {
+                const { data: signedData } = await storageBucket.createSignedUrl(storagePath, 3600);
+                signedUrl = signedData?.signedUrl;
+            }
+        } catch {}
+
         return {
             success: true,
+            status: 'buffered_supabase',
             storagePath: storagePath,
-            publicUrl: publicData?.publicUrl || storagePath
+            durableKey: storagePath,
+            publicUrl: signedUrl,
+            isPendingUpload: true
         };
     }
 }

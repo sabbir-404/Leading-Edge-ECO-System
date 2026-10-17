@@ -16,6 +16,7 @@ import { MakePricingService, PricingItem, PricingOverride } from './MakePricingS
 import { MakeVersionService } from './MakeVersionService';
 import { MakeSearchService } from './MakeSearchService';
 import { SessionManager } from '../../session-manager';
+import { DurableUploadService } from '../media/DurableUploadService';
 
 export interface CreateMakeOrderInput {
     furniture_name: string;
@@ -59,6 +60,9 @@ export interface CreateMakeOrderInput {
         custom_dimensions?: string | null;
         designer_notes?: string | null;
         custom_notes?: string | null;
+        technical_drawing_url?: string | null;
+        pdf_urls?: string[];
+        drawings?: string[];
     }[];
 }
 
@@ -112,6 +116,49 @@ export class MakeOrderService {
             cleaned = '0' + cleaned.substring(3);
         }
         return cleaned;
+    }
+
+    /**
+     * Normalizes attachment references to durable keys (e.g. make-order-files/...) or confirmed TrueNAS URLs.
+     * Strips ephemeral signed tokens so order records remain permanently valid.
+     */
+    public static normalizeAttachmentReference(rawRef?: string | null): string {
+        if (!rawRef || typeof rawRef !== 'string') return '';
+        const trimmed = rawRef.trim();
+        if (!trimmed) return '';
+
+        // If it's a Supabase signed URL or public URL for make-order-files
+        const sbMatch = trimmed.match(/(?:supabase\.co|\/storage\/v1)\/object\/(?:sign|public)\/make-order-files\/([^?#]+)/i);
+        if (sbMatch) {
+            const rawKey = decodeURIComponent(sbMatch[1]).replace(/^\/+/, '');
+            return `make-order-files/${rawKey}`;
+        }
+
+        // If it's a supabase:// URI
+        if (/^supabase:\/\/make-order-files\//i.test(trimmed)) {
+            const rawKey = trimmed.replace(/^supabase:\/\/make-order-files\//i, '').split('?')[0].replace(/^\/+/, '');
+            return `make-order-files/${rawKey}`;
+        }
+
+        // If it's already a durable key: make-order-files/...
+        if (/^make-order-files\//i.test(trimmed)) {
+            return trimmed.split('?')[0];
+        }
+
+        // Confirmed TrueNAS URLs are kept intact
+        if (/^https?:\/\/(storage\.lenas\.me|100\.88\.85\.6|192\.168\.1\.14)/i.test(trimmed)) {
+            return trimmed;
+        }
+
+        // If another HTTP URL with token= parameter is detected, strip query params
+        if (/^https?:\/\//i.test(trimmed)) {
+            if (trimmed.includes('token=')) {
+                return trimmed.split('?')[0];
+            }
+            return trimmed;
+        }
+
+        return trimmed;
     }
 
     /**
@@ -213,7 +260,7 @@ export class MakeOrderService {
     public static async createOrder(
         input: CreateMakeOrderInput,
         actorSession: { userId: number; username: string; fullName: string; role: string }
-    ): Promise<{ success: boolean; id?: number; order_number?: string; items?: any[]; error?: string }> {
+    ): Promise<{ success: boolean; id?: number; order_number?: string; items?: any[]; unassociatedUploads?: any[]; error?: string }> {
         // 0. Validate customer name (required) and customer phone (optional, but validated if provided)
         if (!input.customer_name || !input.customer_name.trim()) {
             return { success: false, error: 'Customer name is required' };
@@ -269,9 +316,11 @@ export class MakeOrderService {
             requested_delivery_date: input.requested_delivery_date || null,
             salesman_id: input.salesman_id || null,
             customer_id: resolvedCustId,
-            invoice_attachment_urls: (Array.isArray(input.invoice_attachment_urls) && input.invoice_attachment_urls.length > 0)
+            invoice_attachment_urls: ((Array.isArray(input.invoice_attachment_urls) && input.invoice_attachment_urls.length > 0)
                 ? input.invoice_attachment_urls
-                : (Array.isArray((input as any).invoice_attachments) ? (input as any).invoice_attachments : []),
+                : (Array.isArray((input as any).invoice_attachments) ? (input as any).invoice_attachments : []))
+                .map((u: any) => typeof u === 'string' ? MakeOrderService.normalizeAttachmentReference(u) : u)
+                .filter(Boolean),
             is_approved: isApproved,
             customer_name: input.customer_name?.trim() || null,
             customer_phone: input.customer_phone?.trim() || null,
@@ -317,30 +366,41 @@ export class MakeOrderService {
         const orderId = createdOrder.id;
 
         // 3. Insert items with rollback guarantee on failure
-        const itemsPayload = input.items.map(item => ({
-            order_id: orderId,
-            product_id: item.product_id || null,
-            spec_id: item.spec_id || null,
-            size_id: item.size_id || null,
-            color_id: item.color_id || null,
-            product_name: item.product_name.trim(),
-            spec_name: item.spec_name || null,
-            spec_details: item.spec_details || null,
-            size_label: item.size_id ? (item.dimensions_text || (item as any).size_label || null) : ((item as any).size_label || null),
-            dimensions_text: item.dimensions_text || null,
-            custom_size: item.custom_size || (item.is_customized ? item.dimensions_text : null) || null,
-            custom_dimensions: item.custom_dimensions || (item.is_customized ? (item.custom_size || item.dimensions_text) : null) || null,
-            color_name: item.color_name || (item as any).custom_color || null,
-            quantity: Number(item.quantity) || 1,
-            item_cost_price: item.item_cost_price !== undefined && item.item_cost_price !== null && item.item_cost_price !== ''
-                ? Math.max(0, Number(item.item_cost_price))
-                : 0.00,
-            item_sale_price: item.item_sale_price !== undefined && item.item_sale_price !== null && item.item_sale_price !== ''
-                ? Math.max(0, Number(item.item_sale_price))
-                : null,
-            is_customized: !!(item.is_customized || (item as any).is_custom),
-            designer_notes: item.designer_notes || (item as any).custom_notes || null
-        }));
+        const itemsPayload = input.items.map(item => {
+            const rawTechDrawing = item.technical_drawing_url || (item as any).drawing_url || null;
+            const normTechDrawing = rawTechDrawing ? MakeOrderService.normalizeAttachmentReference(rawTechDrawing) : null;
+            const rawPdfs = (item as any).pdf_urls || (item as any).drawings || [];
+            const normPdfs = Array.isArray(rawPdfs)
+                ? rawPdfs.map((p: any) => typeof p === 'string' ? MakeOrderService.normalizeAttachmentReference(p) : p).filter(Boolean)
+                : (normTechDrawing ? [normTechDrawing] : []);
+
+            return {
+                order_id: orderId,
+                product_id: item.product_id || null,
+                spec_id: item.spec_id || null,
+                size_id: item.size_id || null,
+                color_id: item.color_id || null,
+                product_name: item.product_name.trim(),
+                spec_name: item.spec_name || null,
+                spec_details: item.spec_details || null,
+                size_label: item.size_id ? (item.dimensions_text || (item as any).size_label || null) : ((item as any).size_label || null),
+                dimensions_text: item.dimensions_text || null,
+                custom_size: item.custom_size || (item.is_customized ? item.dimensions_text : null) || null,
+                custom_dimensions: item.custom_dimensions || (item.is_customized ? (item.custom_size || item.dimensions_text) : null) || null,
+                color_name: item.color_name || (item as any).custom_color || null,
+                quantity: Number(item.quantity) || 1,
+                technical_drawing_url: normTechDrawing,
+                pdf_urls: normPdfs,
+                item_cost_price: item.item_cost_price !== undefined && item.item_cost_price !== null && item.item_cost_price !== ''
+                    ? Math.max(0, Number(item.item_cost_price))
+                    : 0.00,
+                item_sale_price: item.item_sale_price !== undefined && item.item_sale_price !== null && item.item_sale_price !== ''
+                    ? Math.max(0, Number(item.item_sale_price))
+                    : null,
+                is_customized: !!(item.is_customized || (item as any).is_custom),
+                designer_notes: item.designer_notes || (item as any).custom_notes || null
+            };
+        });
 
         let { data: insertedItems, error: itemsErr } = await supabase
             .from('make_order_items')
@@ -419,11 +479,68 @@ export class MakeOrderService {
             }
         }
 
+        // 6. Associate any pre-staged uploads with the newly created order and item records
+        const failedAssociations: Array<{ ref: string; meta: any }> = [];
+        try {
+            const durableUpload = DurableUploadService.getInstance();
+            const invAttachments = orderHeaderPayload.invoice_attachment_urls;
+            if (Array.isArray(invAttachments)) {
+                for (const att of invAttachments) {
+                    if (typeof att === 'string') {
+                        const meta = {
+                            entityType: 'make_orders',
+                            entityId: orderId,
+                            fieldName: 'invoice_attachment_urls'
+                        };
+                        const associated = durableUpload.associateUploadWithEntity(att, meta);
+                        if (!associated && (att.includes('upl_') || att.includes('make-order-files/'))) {
+                            console.warn(`[MakeOrderService] Failed to associate invoice attachment "${att}" with order ${orderId}. Stored in pending retry queue.`);
+                            failedAssociations.push({ ref: att, meta });
+                        }
+                    }
+                }
+            }
+
+            if (Array.isArray(insertedItems)) {
+                for (let idx = 0; idx < insertedItems.length; idx++) {
+                    const itemRecord = insertedItems[idx];
+                    const rawItem = input.items[idx];
+                    if (!itemRecord?.id || !rawItem) continue;
+
+                    const drawings = (rawItem as any).pdf_urls || (rawItem as any).drawings || [(rawItem as any).technical_drawing_url].filter(Boolean);
+                    if (Array.isArray(drawings)) {
+                        for (const d of drawings) {
+                            const dRef = typeof d === 'string' ? d : d?.url;
+                            if (dRef) {
+                                const meta = {
+                                    entityType: 'make_order_items',
+                                    entityId: itemRecord.id,
+                                    fieldName: 'technical_drawing_url'
+                                };
+                                const associated = durableUpload.associateUploadWithEntity(dRef, meta);
+                                if (!associated && (dRef.includes('upl_') || dRef.includes('make-order-files/'))) {
+                                    console.warn(`[MakeOrderService] Failed to associate drawing "${dRef}" with item ${itemRecord.id}. Stored in pending retry queue.`);
+                                    failedAssociations.push({ ref: dRef, meta });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (failedAssociations.length > 0) {
+                console.warn(`[MakeOrderService] Order ${orderNumber} created with ${failedAssociations.length} unassociated staged upload(s). Retained in durable queue for reconciliation.`);
+            }
+        } catch (assocErr: any) {
+            console.warn('[MakeOrderService] Pre-staged upload association warning (non-fatal):', assocErr.message);
+        }
+
         return {
             success: true,
             id: orderId,
             order_number: orderNumber,
-            items: insertedItems || []
+            items: insertedItems || [],
+            unassociatedUploads: failedAssociations.length > 0 ? failedAssociations : undefined
         };
     }
 
@@ -739,7 +856,7 @@ export class MakeOrderService {
             reason = paramsOrOrderId.reason;
             actorSession = paramsOrOrderId.actorSession || SessionManager.getSession() || (paramsOrOrderId.userRole ? { role: paramsOrOrderId.userRole, username: paramsOrOrderId.alteredBy || 'User' } : null);
         } else {
-            orderId = paramsOrOrderId;
+            orderId = paramsOrOrderId as number;
             changes = changesArg || {};
             itemChanges = itemsArg || [];
             reason = reasonArg;

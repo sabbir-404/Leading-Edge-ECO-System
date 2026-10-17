@@ -191,7 +191,7 @@ interface StatusUpdate {
   updated_by: string; 
   created_at: string; 
 }
-interface PdfEntry { path: string; name: string; url: string; }
+interface PdfEntry { path: string; name: string; url: string; isPending?: boolean; }
 interface Part { id: number; part_name: string; length: string; width: string; height: string; notes: string; sort_order: number; }
 
 const TrackOrders: React.FC = () => {
@@ -670,6 +670,10 @@ const TrackOrders: React.FC = () => {
   };
 
   const handleDownloadPdf = async (pdf: PdfEntry) => {
+    if (pdf.isPending || !pdf.url) {
+      alert('This attachment is currently staged locally and waiting for background synchronization.');
+      return;
+    }
     try {
       // @ts-ignore
       if (window.electron?.makeDownloadPdf) {
@@ -1186,9 +1190,34 @@ const TrackOrders: React.FC = () => {
                                             <div key={pdf.path} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 10px', background: 'var(--input-bg)', border: '1px solid var(--border-color)', borderRadius: '6px', fontSize: '0.8rem' }}>
                                               <FileText size={14} color="#f97316" style={{ flexShrink: 0 }} />
                                               <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 600 }} title={pdf.name}>{pdf.name}</span>
+                                              {pdf.isPending && (
+                                                <span style={{ fontSize: '0.65rem', background: '#f59e0b', color: '#fff', padding: '1px 5px', borderRadius: '4px', fontWeight: 700, letterSpacing: '0.5px', flexShrink: 0 }}>
+                                                  PENDING
+                                                </span>
+                                              )}
                                               <div style={{ display: 'flex', gap: '4px' }}>
-                                                <button onClick={() => setPdfViewer(pdf)} style={smallBtn('#3b82f6')} title="View Drawing"><Eye size={12} /></button>
-                                                <button onClick={() => handleDownloadPdf(pdf)} style={smallBtn('#10b981')} title="Download Drawing"><Download size={12} /></button>
+                                                <button
+                                                  onClick={() => {
+                                                    if (pdf.isPending || !pdf.url) {
+                                                      alert('This attachment is currently staged locally and waiting for background synchronization.');
+                                                      return;
+                                                    }
+                                                    setPdfViewer(pdf);
+                                                  }}
+                                                  disabled={pdf.isPending || !pdf.url}
+                                                  style={{ ...smallBtn('#3b82f6'), opacity: (pdf.isPending || !pdf.url) ? 0.5 : 1, cursor: (pdf.isPending || !pdf.url) ? 'not-allowed' : 'pointer' }}
+                                                  title={pdf.isPending ? 'Pending synchronization' : 'View Drawing'}
+                                                >
+                                                  <Eye size={12} />
+                                                </button>
+                                                <button
+                                                  onClick={() => handleDownloadPdf(pdf)}
+                                                  disabled={pdf.isPending || !pdf.url}
+                                                  style={{ ...smallBtn('#10b981'), opacity: (pdf.isPending || !pdf.url) ? 0.5 : 1, cursor: (pdf.isPending || !pdf.url) ? 'not-allowed' : 'pointer' }}
+                                                  title={pdf.isPending ? 'Pending synchronization' : 'Download Drawing'}
+                                                >
+                                                  <Download size={12} />
+                                                </button>
                                                 {userRole === 'admin' && (
                                                   <button onClick={() => handleDeletePdf(order.id, pdf.path)} style={smallBtn('#ef4444')} title="Remove Drawing"><Trash2 size={12} /></button>
                                                 )}
@@ -1359,11 +1388,34 @@ const TrackOrders: React.FC = () => {
                                                     <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 600 }} title={d.name}>
                                                       {d.name}
                                                     </span>
+                                                    {d.isPending && (
+                                                      <span style={{ fontSize: '0.65rem', background: '#f59e0b', color: '#fff', padding: '1px 5px', borderRadius: '4px', fontWeight: 700, letterSpacing: '0.5px', flexShrink: 0 }}>
+                                                        PENDING
+                                                      </span>
+                                                    )}
                                                     <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
-                                                      <button type="button" onClick={() => setPdfViewer(d)} style={smallBtn('#3b82f6')} title="View Drawing">
+                                                      <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                          if (d.isPending || !d.url) {
+                                                            alert('This attachment is currently staged locally and waiting for background synchronization.');
+                                                            return;
+                                                          }
+                                                          setPdfViewer(d);
+                                                        }}
+                                                        disabled={d.isPending || !d.url}
+                                                        style={{ ...smallBtn('#3b82f6'), opacity: (d.isPending || !d.url) ? 0.5 : 1, cursor: (d.isPending || !d.url) ? 'not-allowed' : 'pointer' }}
+                                                        title={d.isPending ? 'Pending synchronization' : 'View Drawing'}
+                                                      >
                                                         <Eye size={12} />
                                                       </button>
-                                                      <button type="button" onClick={() => handleDownloadPdf(d)} style={smallBtn('#10b981')} title="Download Drawing">
+                                                      <button
+                                                        type="button"
+                                                        onClick={() => handleDownloadPdf(d)}
+                                                        disabled={d.isPending || !d.url}
+                                                        style={{ ...smallBtn('#10b981'), opacity: (d.isPending || !d.url) ? 0.5 : 1, cursor: (d.isPending || !d.url) ? 'not-allowed' : 'pointer' }}
+                                                        title={d.isPending ? 'Pending synchronization' : 'Download Drawing'}
+                                                      >
                                                         <Download size={12} />
                                                       </button>
                                                       <button type="button" onClick={() => handleDeleteItemPdf(order.id, item.id, d.path)} style={smallBtn('#ef4444')} title="Remove Drawing">
@@ -1822,16 +1874,29 @@ const TrackOrders: React.FC = () => {
                               </div>
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                                 {order.invoice_attachment_urls.map((attUrl, attIdx) => {
-                                  const attName = attUrl.split('/').pop()?.replace(/^\d+_/, '') || `Invoice Attachment #${attIdx + 1}`;
-                                  const isPdf = attUrl.toLowerCase().endsWith('.pdf');
+                                  const attName = attUrl.split('/').pop()?.replace(/^\d+_/, '')?.split('?')[0] || `Invoice Attachment #${attIdx + 1}`;
+                                  const isPdf = attUrl.toLowerCase().endsWith('.pdf') || attUrl.toLowerCase().includes('.pdf?');
+                                  const isPending = attUrl.startsWith('upl_') || !attUrl.startsWith('http') || attUrl.includes('make-order-files/');
                                   return (
                                     <div key={attUrl + attIdx} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '9px 12px', background: 'rgba(99,102,241,0.05)', border: '1px solid rgba(99,102,241,0.18)', borderRadius: '8px' }}>
                                       {isPdf ? <FileText size={15} color="#3b82f6" /> : <Paperclip size={15} color="var(--accent-color)" />}
                                       <span style={{ flex: 1, fontSize: '0.85rem', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{attName}</span>
+                                      {isPending && (
+                                        <span style={{ fontSize: '0.7rem', padding: '2px 6px', borderRadius: '4px', background: 'rgba(234, 179, 8, 0.15)', color: '#d97706', fontWeight: 600 }}>
+                                          PENDING SYNC
+                                        </span>
+                                      )}
                                       <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
                                         <button
-                                          onClick={() => {
-                                            setPdfViewer({ path: attUrl, name: attName, url: attUrl });
+                                          onClick={async () => {
+                                            let targetUrl = attUrl;
+                                            if (window.electron?.makeResolveAttachmentUrl && (!targetUrl.startsWith('http') || targetUrl.includes('supabase.co'))) {
+                                              try {
+                                                const resolved = await window.electron.makeResolveAttachmentUrl(targetUrl);
+                                                if (resolved?.url) targetUrl = resolved.url;
+                                              } catch {}
+                                            }
+                                            setPdfViewer({ path: targetUrl, name: attName, url: targetUrl });
                                           }}
                                           style={smallBtn('#3b82f6')}
                                           title="View Attachment"
@@ -1839,7 +1904,16 @@ const TrackOrders: React.FC = () => {
                                           <Eye size={13} /> View
                                         </button>
                                         <button
-                                          onClick={() => handleDownloadPdf({ path: attUrl, name: attName, url: attUrl })}
+                                          onClick={async () => {
+                                            let targetUrl = attUrl;
+                                            if (window.electron?.makeResolveAttachmentUrl && (!targetUrl.startsWith('http') || targetUrl.includes('supabase.co'))) {
+                                              try {
+                                                const resolved = await window.electron.makeResolveAttachmentUrl(targetUrl);
+                                                if (resolved?.url) targetUrl = resolved.url;
+                                              } catch {}
+                                            }
+                                            handleDownloadPdf({ path: targetUrl, name: attName, url: targetUrl, isPending: false });
+                                          }}
                                           style={smallBtn('#10b981')}
                                           title="Download Attachment"
                                         >

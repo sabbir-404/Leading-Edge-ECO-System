@@ -137,7 +137,7 @@ export class NASConnectionManager {
         const baseCandidates: string[] = [];
 
         // 1. Dedicated heartbeat endpoints if defined
-        if (config.nasHeartbeatUrl) baseCandidates.push(config.nasHeartbeatUrl);
+        if ((config as any).nasHeartbeatUrl) baseCandidates.push((config as any).nasHeartbeatUrl);
 
         // 2. Derive from NAS storage or PostgREST candidates (port 8085 or /health)
         if (config.nasUrl) {

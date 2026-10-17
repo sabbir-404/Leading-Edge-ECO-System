@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Plus, AlertCircle, CheckCircle, Paperclip, X, FileText, 
   Trash2, MapPin, User, ShoppingBag, 
-  Palette, Maximize2, Tag, Shield, DollarSign, Lock, Box, Search, Save, FolderOpen, ChevronDown
+  Palette, Maximize2, Tag, Shield, DollarSign, Lock, Box, Search, Save, FolderOpen, ChevronDown, Copy
 } from 'lucide-react';
 import DashboardLayout from '../../components/DashboardLayout';
 import { 
@@ -285,7 +285,7 @@ const PlaceOrder: React.FC = () => {
   const productSearchSeqRef = React.useRef(0);
 
   // Invoice Attachments
-  const [invoiceAttachments, setInvoiceAttachments] = useState<{ name: string; url: string }[]>(() => Array.isArray(initialDraft.invoiceAttachments) ? initialDraft.invoiceAttachments : []);
+  const [invoiceAttachments, setInvoiceAttachments] = useState<{ name: string; url: string; isPending?: boolean }[]>(() => Array.isArray(initialDraft.invoiceAttachments) ? initialDraft.invoiceAttachments : []);
   const [uploadingInvoice, setUploadingInvoice] = useState(false);
 
   // Submission & Feedback
@@ -446,6 +446,18 @@ const PlaceOrder: React.FC = () => {
     setSavedDrafts(loadSavedPlaceOrderDrafts());
     if (activeSavedDraftId === savedDraft.id) setActiveSavedDraftId(null);
     showToast('Saved draft deleted.', 'success');
+  };
+
+  const handleDuplicateSavedDraft = (savedDraft: SavedPlaceOrderDraft) => {
+    try {
+      const duplicatedData = JSON.parse(JSON.stringify(savedDraft.data));
+      const duplicatedTitle = `${savedDraft.title} (Copy)`;
+      const saved = saveNamedPlaceOrderDraft(duplicatedData, duplicatedTitle);
+      setSavedDrafts(loadSavedPlaceOrderDrafts());
+      showToast('Draft duplicated: ' + saved.draft.title, 'success');
+    } catch (err: any) {
+      showToast('Could not duplicate draft: ' + (err?.message || 'Storage error'), 'error');
+    }
   };
 
 
@@ -769,8 +781,13 @@ const PlaceOrder: React.FC = () => {
     try {
       if (window.electron?.makePickAndUploadInvoiceAttachment) {
         const res = await window.electron.makePickAndUploadInvoiceAttachment();
-        if (res && res.success && res.publicUrl) {
-          setInvoiceAttachments(prev => [...prev, { name: res.fileName || 'Invoice Image', url: res.publicUrl }]);
+        const persistentUrl = res.durableKey || (res.publicUrl && !res.publicUrl.includes('token=') ? res.publicUrl : undefined) || res.durableKey;
+        if (res && (res.success || res.isPendingUpload) && persistentUrl) {
+          setInvoiceAttachments(prev => [...prev, {
+            name: res.fileName || 'Invoice Image',
+            url: persistentUrl,
+            isPending: Boolean(res.isPendingUpload)
+          }]);
         } else if (res && res.error) {
           alert('Upload failed: ' + res.error);
         }
@@ -801,8 +818,13 @@ const PlaceOrder: React.FC = () => {
             fileName: file.name,
             fileBase64: base64
           });
-          if (res && res.success && res.publicUrl) {
-            setInvoiceAttachments(prev => [...prev, { name: file.name, url: res.publicUrl }]);
+          const persistentUrl = res.durableKey || (res.publicUrl && !res.publicUrl.includes('token=') ? res.publicUrl : undefined) || res.durableKey;
+          if (res && (res.success || res.isPendingUpload) && persistentUrl) {
+            setInvoiceAttachments(prev => [...prev, {
+              name: file.name,
+              url: persistentUrl,
+              isPending: Boolean(res.isPendingUpload)
+            }]);
           } else if (res && res.error) {
             alert('Upload failed: ' + res.error);
           }
@@ -977,8 +999,13 @@ const PlaceOrder: React.FC = () => {
             fileName: file.name,
             fileBase64: base64
           });
-          if (res && res.success && res.publicUrl) {
-            setInvoiceAttachments(prev => [...prev, { name: file.name, url: res.publicUrl }]);
+          const persistentUrl = res.durableKey || (res.publicUrl && !res.publicUrl.includes('token=') ? res.publicUrl : undefined) || res.durableKey;
+          if (res && (res.success || res.isPendingUpload) && persistentUrl) {
+            setInvoiceAttachments(prev => [...prev, {
+              name: file.name,
+              url: persistentUrl,
+              isPending: Boolean(res.isPendingUpload)
+            }]);
           } else if (res && res.error) {
             alert('Upload failed: ' + res.error);
           }
@@ -2365,6 +2392,11 @@ const PlaceOrder: React.FC = () => {
                     <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: '8px' }}>
                       <FileText size={15} color="var(--accent-color)" />
                       <span style={{ flex: 1, fontSize: '0.85rem', color: 'var(--text-primary)' }}>{att.name}</span>
+                      {att.isPending && (
+                        <span style={{ fontSize: '0.7rem', padding: '2px 6px', borderRadius: '4px', background: 'rgba(234, 179, 8, 0.15)', color: '#d97706', fontWeight: 600 }}>
+                          PENDING UPLOAD
+                        </span>
+                      )}
                       <button type="button" onClick={() => setInvoiceAttachments(prev => prev.filter((_, idx) => idx !== i))}
                         style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}>
                         <X size={14} />
@@ -2472,6 +2504,14 @@ const PlaceOrder: React.FC = () => {
                               style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '6px 9px', marginRight: '6px', borderRadius: '7px', border: '1px solid var(--border-color)', background: 'var(--card-bg, #fff)', color: 'var(--text-primary)', cursor: 'pointer', fontWeight: 700 }}
                             >
                               <FolderOpen size={14} /> Load
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDuplicateSavedDraft(savedDraft)}
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '6px 9px', marginRight: '6px', borderRadius: '7px', border: '1px solid var(--border-color)', background: 'var(--card-bg, #fff)', color: 'var(--text-primary)', cursor: 'pointer', fontWeight: 700 }}
+                              title="Duplicate draft"
+                            >
+                              <Copy size={14} /> Duplicate
                             </button>
                             <button
                               type="button"

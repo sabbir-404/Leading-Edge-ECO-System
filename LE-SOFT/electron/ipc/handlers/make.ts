@@ -2,7 +2,7 @@
  * make.ts
  * ─────────────────────────────────────────────────────────────────────────────
  * Fortified, Authenticated, and Schema-Validated IPC Handlers for MAKE V1.
- * 
+ *
  * Guarantees:
  *  - Native Electron file selection (no arbitrary renderer-supplied file paths).
  *  - Main-process session resolution via SessionManager (no forged userRole or isSuperadmin).
@@ -23,6 +23,7 @@ import { MakeProductionService } from '../../services/make/MakeProductionService
 import { MakeVersionService } from '../../services/make/MakeVersionService';
 import { MakeCadService } from '../../services/make/MakeCadService';
 import { MakeSearchService } from '../../services/make/MakeSearchService';
+import { DurableUploadService } from '../../services/media/DurableUploadService';
 import { decryptRows, decryptObject } from '../../field-encryption';
 import {
     CreateMakeOrderSchema,
@@ -31,6 +32,9 @@ import {
     UpdateProductionStageSchema,
     AlterMakeOrderSchema,
     DeleteMakeOrderSchema,
+    DeleteOrderPdfSchema,
+    DeleteItemPdfSchema,
+    hasUnsupportedStorageScheme,
     CatalogProductSchema,
     CatalogSpecSchema,
     CatalogSizeSchema,
@@ -482,17 +486,52 @@ export async function downloadPdfFromNas(
     tempDir: string,
     timeoutMs: number = 6000
 ): Promise<{ success: boolean; path?: string; error?: string }> {
-    const validation = validateAndNormalizeDownloadUrl(url);
-    if (!validation.isValid) {
-        return { success: false, error: validation.error || 'Invalid download URL' };
-    }
-
     let targetPath: string;
     try {
         const dest = sanitizeDownloadDestination(fileName, tempDir);
         targetPath = dest.targetPath;
     } catch (err: any) {
         return { success: false, error: err.message || 'Invalid filename' };
+    }
+
+    // Check if this is a Supabase private bucket object or signed URL
+    const canonicalSupabase = extractCanonicalSupabaseKey(url);
+    const isSupabaseUrl = url.includes('.supabase.co/') || url.startsWith('make-order-files/') || url.startsWith('supabase://') || !!canonicalSupabase;
+    if (isSupabaseUrl) {
+        try {
+            let fetchUrl = url;
+            if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                const resolved = await resolveAttachmentUrl(canonicalSupabase ? canonicalSupabase.objectPath : url);
+                if (!resolved.url) {
+                    return { success: false, error: 'Could not resolve attachment for download' };
+                }
+                fetchUrl = resolved.url;
+            }
+
+            const electron = await import('electron').catch(() => null);
+            const fetchFn: typeof fetch = (electron as any)?.net?.fetch || globalThis.fetch;
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(new Error(`Download timed out after ${timeoutMs}ms`)), timeoutMs);
+
+            try {
+                const resp = await fetchFn(fetchUrl, { signal: controller.signal });
+                if (!resp.ok) {
+                    return { success: false, error: `Supabase download failed: HTTP ${resp.status}` };
+                }
+                const arrayBuf = await resp.arrayBuffer();
+                fs.writeFileSync(targetPath, Buffer.from(arrayBuf));
+                return { success: true, path: targetPath };
+            } finally {
+                clearTimeout(timeoutId);
+            }
+        } catch (err: any) {
+            return { success: false, error: err.message || 'Failed to download attachment from cloud buffer' };
+        }
+    }
+
+    const validation = validateAndNormalizeDownloadUrl(url);
+    if (!validation.isValid) {
+        return { success: false, error: validation.error || 'Invalid download URL' };
     }
 
     const { candidates } = validation;
@@ -606,6 +645,241 @@ export async function downloadPdfFromNas(
     return { success: false, error: `Failed to download file from NAS: ${lastError}` };
 }
 
+/**
+ * Validates whether a raw URL string is an authorized, exact TrueNAS endpoint.
+ * Enforces exact hostnames and approved ports, preventing lookalike domain prefix bypasses.
+ */
+export function isTrustedNasUrl(rawUrl: string): boolean {
+    if (!rawUrl || typeof rawUrl !== 'string') return false;
+    try {
+        const parsed = new URL(rawUrl);
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+        if (hasPathTraversal(parsed.pathname) || hasPathTraversal(decodeURIComponent(parsed.pathname))) return false;
+
+        const lowerHost = parsed.hostname.toLowerCase();
+        if (lowerHost === 'storage.lenas.me') {
+            const port = parsed.port || '443';
+            return parsed.protocol === 'https:' && port === '443';
+        }
+        if (lowerHost === '100.88.85.6' || lowerHost === '192.168.1.14') {
+            const port = parsed.port || '80';
+            return parsed.protocol === 'http:' && (port === '8080' || port === '8081' || port === '80');
+        }
+        return isApprovedNasHost(parsed.hostname, parsed.port);
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Extracts and canonicalizes the storage path within 'make-order-files' bucket.
+ * Guarantees no directory traversal or null bytes, and strips query parameters.
+ */
+export function extractCanonicalSupabaseKey(ref: string): { fullKey: string; objectPath: string } | null {
+    if (!ref || typeof ref !== 'string') return null;
+    const trimmed = ref.trim();
+    if (!trimmed) return null;
+    if (trimmed.includes('..') || trimmed.includes('\0') || trimmed.includes('%00')) return null;
+
+    let subPath = '';
+    if (trimmed.includes('/storage/v1/object/sign/make-order-files/')) {
+        subPath = decodeURIComponent(trimmed.split('/storage/v1/object/sign/make-order-files/')[1] || '').split('?')[0];
+    } else if (trimmed.includes('/storage/v1/object/public/make-order-files/')) {
+        subPath = decodeURIComponent(trimmed.split('/storage/v1/object/public/make-order-files/')[1] || '').split('?')[0];
+    } else if (trimmed.startsWith('supabase://make-order-files/')) {
+        subPath = trimmed.replace(/^supabase:\/\/make-order-files\//, '').split('?')[0];
+    } else if (trimmed.startsWith('make-order-files/')) {
+        subPath = trimmed.replace(/^make-order-files\//, '').split('?')[0];
+    } else if (trimmed.startsWith('/make-order-files/')) {
+        subPath = trimmed.replace(/^\/make-order-files\//, '').split('?')[0];
+    } else if (!trimmed.includes('://') && !/^[a-zA-Z]:[\\/]/.test(trimmed)) {
+        subPath = trimmed.split('?')[0];
+    } else {
+        return null;
+    }
+
+    subPath = subPath.replace(/^\/+/, '').trim();
+    if (!subPath || subPath.includes('..') || subPath.includes('\0')) return null;
+
+    return {
+        fullKey: `make-order-files/${subPath}`,
+        objectPath: subPath
+    };
+}
+
+/**
+ * Resolves a durable attachment reference (TrueNAS URL, Supabase private object key, or local pending file)
+ * into a safe, authorized access URL for viewing/downloading.
+ *
+ * Rules:
+ *  - Do NOT guess unconfirmed URLs.
+ *  - Do NOT return file:// as a successful remote attachment.
+ *  - Private bucket objects in 'make-order-files' are resolved on-demand via short-lived signed URLs (never persisted).
+ *  - TrueNAS confirmed URLs (storage.lenas.me or 100.88.85.6) are verified via exact hostname and port matching.
+ *  - Legacy unauthenticated public URLs to private buckets are recognized and resolved via signed URLs.
+ */
+export async function resolveAttachmentUrl(p: string): Promise<{ path: string; name: string; url: string; isPending?: boolean }> {
+    if (!p || typeof p !== 'string') return { path: '', name: 'attachment', url: '' };
+
+    const name = p.split('/').pop()?.replace(/^\d+_/, '')?.split('?')[0] || 'document';
+
+    // 1. Staged local / pending upload
+    if (p.startsWith('file://') || /^[a-zA-Z]:[\\/]/.test(p)) {
+        return { path: p, name, url: '', isPending: true };
+    }
+
+    // 2. Confirmed TrueNAS Remote URL (exact hostname & port check, not string prefix)
+    if (isTrustedNasUrl(p)) {
+        return { path: p, name, url: p, isPending: false };
+    }
+
+    // 3. Supabase Storage Object Key in private bucket 'make-order-files'
+    const canonical = extractCanonicalSupabaseKey(p);
+    if (canonical) {
+        const storagePath = canonical.objectPath;
+        try {
+            const { data, error } = await supabase.storage.from('make-order-files').createSignedUrl(storagePath, 3600);
+            if (!error && data?.signedUrl) {
+                return { path: p, name, url: data.signedUrl, isPending: true };
+            }
+        } catch (sErr: any) {
+            console.warn('[resolveAttachmentUrl] Signed URL creation failed:', sErr.message);
+        }
+    }
+
+    // 4. Other approved HTTP/HTTPS URLs (external or candidate hosts)
+    if (isTrustedNasUrl(p)) {
+        return { path: p, name, url: p, isPending: false };
+    }
+
+    // 5. If missing or unresolvable, NEVER return a guessed URL; mark pending if it resembles a durable key or upload reference
+    const isPending = p.includes('upl_') || p.includes('make-order-files/');
+    return { path: p, name, url: '', isPending: isPending || undefined };
+}
+
+/**
+ * Verifies if the session user has permissions to modify MAKE orders or their attachments.
+ *
+ * Rules:
+ *  - Superadmin, Admin, and Manager have global modification authority.
+ *  - Furniture Designers have modification authority over orders not yet in or past production.
+ *  - Users with explicit permissions ('make_edit', 'write_make', 'make_admin', 'delete_make_order',
+ *    'make_delete', 'alter_make_order', 'manage_orders') have modification authority.
+ *  - Read-only users, operators, guests, auditors, and unauthenticated sessions are strictly rejected.
+ *  - If an authoritative order record is provided and has reached or passed production ('Production On Going', etc.),
+ *    only Administrators retain modification rights.
+ */
+export function canModifyMakeOrder(
+    session: UserSession | null | undefined,
+    order?: { status?: string | null } | null
+): boolean {
+    if (!session) return false;
+    const role = (session.role || '').toLowerCase().trim();
+    const isAdmin = role === 'admin' || role === 'superadmin' || role === 'manager';
+    const isDesigner = (
+        role === 'furniture_designer' ||
+        role === 'furniture designer' ||
+        role === 'designer' ||
+        role === 'make_designer'
+    );
+    const hasModifyPerm = !!(
+        session.permissions && (
+            session.permissions['make_edit'] ||
+            session.permissions['write_make'] ||
+            session.permissions['make_admin'] ||
+            session.permissions['delete_make_order'] ||
+            session.permissions['make_delete'] ||
+            session.permissions['alter_make_order'] ||
+            session.permissions['manage_orders']
+        )
+    );
+
+    if (!isAdmin && !isDesigner && !hasModifyPerm) {
+        return false;
+    }
+
+    // If an authoritative order record is provided, check stage boundaries
+    if (order && order.status) {
+        const postProductionStages = [
+            'production on going',
+            'production',
+            'finishing',
+            'packaging',
+            'ready to ship',
+            'delivered',
+            'welding',
+            'painting',
+            'ready for dispatch'
+        ];
+        const statusNorm = order.status.trim().toLowerCase();
+        if (postProductionStages.includes(statusNorm) && !isAdmin) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/**
+ * Strictly verifies whether an attachment reference is an approved storage reference.
+ * Rejects illegal schemes (javascript:, file:, data:, etc.), traversal paths,
+ * null bytes, and untrusted HTTP/HTTPS endpoints.
+ */
+export function isAllowedAttachmentReference(ref: string): boolean {
+    if (!ref || typeof ref !== 'string') return false;
+    const trimmed = ref.trim();
+    if (trimmed.length === 0) return false;
+    if (hasPathTraversal(trimmed) || trimmed.includes('\0') || trimmed.includes('%00')) return false;
+    if (hasUnsupportedStorageScheme(trimmed)) return false;
+
+    if (/^https?:\/\//i.test(trimmed)) {
+        if (isTrustedNasUrl(trimmed)) return true;
+        if (extractCanonicalSupabaseKey(trimmed) !== null) return true;
+        return false;
+    }
+
+    if (/^app-media:\/\/nas\//i.test(trimmed)) return true;
+
+    // Relative storage key or filename without dangerous schemes or Windows drive prefixes
+    if (!trimmed.includes('://') && !/^[a-zA-Z]:[\\/]/.test(trimmed)) {
+        return true;
+    }
+
+    return false;
+}
+
+/**
+ * Checks if a stored attachment reference matches the requested deletion target.
+ * Supports exact string equality, canonical Supabase object key equivalence,
+ * and TrueNAS URL subpath equivalence.
+ */
+export function isMatchingAttachment(recordedRef: string, requestedRef: string): boolean {
+    if (!recordedRef || !requestedRef) return false;
+    const recTrim = recordedRef.trim();
+    const reqTrim = requestedRef.trim();
+    if (recTrim === reqTrim) return true;
+
+    // Supabase canonical key comparison
+    const canRec = extractCanonicalSupabaseKey(recTrim);
+    const canReq = extractCanonicalSupabaseKey(reqTrim);
+    if (canRec && canReq && canRec.objectPath === canReq.objectPath) {
+        return true;
+    }
+
+    // NAS subpath comparison
+    if (isTrustedNasUrl(recTrim) && isTrustedNasUrl(reqTrim)) {
+        try {
+            const u1 = new URL(recTrim);
+            const u2 = new URL(reqTrim);
+            const p1 = decodeURIComponent(u1.pathname).replace(/^\/+/, '');
+            const p2 = decodeURIComponent(u2.pathname).replace(/^\/+/, '');
+            if (p1 === p2) return true;
+        } catch {}
+    }
+
+    return false;
+}
+
 export function registerMakeHandlers(): void {
     /**
      * Resolves the active authenticated session strictly from the Electron Main Process.
@@ -631,8 +905,8 @@ export function registerMakeHandlers(): void {
         if (role === 'factory_manager' || role === 'factory manager' || role === 'factory') return false;
         if (role === 'admin' || role === 'superadmin' || role === 'manager') return true;
         if (
-            role === 'furniture_designer' || 
-            role === 'furniture designer' || 
+            role === 'furniture_designer' ||
+            role === 'furniture designer' ||
             role === 'designer' ||
             role === 'make_designer'
         ) return true;
@@ -687,6 +961,276 @@ export function registerMakeHandlers(): void {
         return !!(session.permissions['make_production'] || session.permissions['factory_manage']);
     }
 
+    /**
+     * Verifies if the session user has permissions to view MAKE orders and attachments.
+     */
+    function canViewMakeOrders(session: UserSession): boolean {
+        if (!session) return false;
+        const role = (session.role || '').toLowerCase();
+        if (role === 'admin' || role === 'superadmin' || role === 'manager') return true;
+        if (
+            role === 'furniture_designer' || role === 'furniture designer' || role === 'designer' || role === 'make_designer' ||
+            role === 'salesperson' || role === 'salesman' || role === 'sales' ||
+            role === 'factory_manager' || role === 'factory manager' || role === 'factory' ||
+            role === 'operator' || role === 'production'
+        ) return true;
+        return !!(
+            session.permissions && (
+                session.permissions['make_view'] ||
+                session.permissions['make_read'] ||
+                session.permissions['make_create'] ||
+                session.permissions['make_orders'] ||
+                session.permissions['make_admin'] ||
+                session.permissions['make_production'] ||
+                session.permissions['view_orders'] ||
+                session.permissions['read_orders']
+            )
+        );
+    }
+
+    /**
+     * Verifies that a given attachment reference or storage key belongs to an
+     * order or item the current session is authorized to access.
+     * Fails closed for unauthorized, malformed, or unassociated references.
+     * Guarantees that parsed upload IDs cannot bypass path authorization,
+     * unassociated buffered uploads cannot be signed, and NAS URLs require exact hostnames.
+     */
+    async function isAuthorizedAttachment(rawRef: string, _session: UserSession): Promise<{
+        authorized: boolean;
+        canonicalKey?: string;
+        isNas?: boolean;
+        isLocalPending?: boolean;
+        error?: string;
+    }> {
+        if (!rawRef || typeof rawRef !== 'string' || !rawRef.trim()) {
+            return { authorized: false, error: 'Empty or invalid attachment reference' };
+        }
+        // Reject path traversal, control chars, null bytes
+        if (hasPathTraversal(rawRef) || rawRef.includes('\0') || rawRef.includes('%00')) {
+            return { authorized: false, error: 'Path traversal or illegal characters detected' };
+        }
+
+        const uploadService = DurableUploadService.getInstance();
+        const db = (uploadService as any).db;
+
+        // 1. Confirmed TrueNAS Remote URLs (Exact hostname & port check)
+        if (isTrustedNasUrl(rawRef)) {
+            if (db) {
+                try {
+                    const row = db.prepare(`
+                        SELECT id, entity_type, entity_id, status FROM durable_uploads
+                        WHERE remote_url_nas = ?
+                    `).get(rawRef) as any;
+                    if (row && (row.entity_type === 'make_orders' || row.entity_type === 'make_order_items') && row.entity_id) {
+                        if (row.entity_type === 'make_orders') {
+                            const { data: order } = await supabase.from('make_orders')
+                                .select('id, pdf_urls, invoice_attachment_urls')
+                                .eq('id', row.entity_id)
+                                .maybeSingle();
+                            if (order) {
+                                const pdfs = Array.isArray(order.pdf_urls) ? order.pdf_urls : [];
+                                const invs = Array.isArray(order.invoice_attachment_urls) ? order.invoice_attachment_urls : [];
+                                if (pdfs.includes(rawRef) || invs.includes(rawRef)) {
+                                    return { authorized: true, canonicalKey: rawRef, isNas: true };
+                                }
+                            }
+                        } else if (row.entity_type === 'make_order_items') {
+                            const { data: item } = await supabase.from('make_order_items')
+                                .select('id, technical_drawing_url, pdf_urls')
+                                .eq('id', row.entity_id)
+                                .maybeSingle();
+                            if (item) {
+                                const pdfs = Array.isArray(item.pdf_urls) ? item.pdf_urls : [];
+                                if (item.technical_drawing_url === rawRef || pdfs.includes(rawRef)) {
+                                    return { authorized: true, canonicalKey: rawRef, isNas: true };
+                                }
+                            }
+                        }
+                    }
+                } catch {}
+            }
+
+            try {
+                const { data: matchedOrders } = await supabase.from('make_orders').select('id, pdf_urls, invoice_attachment_urls');
+                if (Array.isArray(matchedOrders)) {
+                    const found = matchedOrders.some((o: any) => {
+                        const pdfs = Array.isArray(o.pdf_urls) ? o.pdf_urls : [];
+                        const invs = Array.isArray(o.invoice_attachment_urls) ? o.invoice_attachment_urls : [];
+                        return pdfs.includes(rawRef) || invs.includes(rawRef);
+                    });
+                    if (found) return { authorized: true, canonicalKey: rawRef, isNas: true };
+                }
+            } catch {}
+
+            try {
+                const { data: matchedItems } = await supabase.from('make_order_items').select('id, technical_drawing_url, pdf_urls');
+                if (Array.isArray(matchedItems)) {
+                    const found = matchedItems.some((it: any) => {
+                        const pdfs = Array.isArray(it.pdf_urls) ? it.pdf_urls : [];
+                        return it.technical_drawing_url === rawRef || pdfs.includes(rawRef);
+                    });
+                    if (found) return { authorized: true, canonicalKey: rawRef, isNas: true };
+                }
+            } catch {}
+
+            return { authorized: false, error: 'Forbidden: Attachment is unassociated or access is unauthorized.' };
+        }
+
+        // 2. Staged Local Files (Narrow explicit policy: local file on disk staged in SQLite)
+        if (rawRef.startsWith('file://') || /^[a-zA-Z]:[\\/]/.test(rawRef)) {
+            if (db) {
+                try {
+                    const rawClean = rawRef.replace(/^file:\/\/\/?/, '');
+                    const row = db.prepare(`
+                        SELECT id, local_path, status FROM durable_uploads
+                        WHERE local_path = ? OR local_path LIKE ?
+                    `).get(rawClean, `%${rawClean}%`) as any;
+                    if (row && row.status === 'staged_local' && fs.existsSync(row.local_path)) {
+                        return { authorized: true, canonicalKey: rawRef, isLocalPending: true };
+                    }
+                } catch {}
+            }
+            return { authorized: false, error: 'Forbidden: Attachment is unassociated or access is unauthorized.' };
+        }
+
+        // 3. Supabase Storage Object Key in private bucket 'make-order-files'
+        const canonical = extractCanonicalSupabaseKey(rawRef);
+        if (!canonical) {
+            return { authorized: false, error: 'Forbidden: Attachment is unassociated or access is unauthorized.' };
+        }
+
+        const { fullKey, objectPath } = canonical;
+
+        // (a) Verify in local SQLite registry by exact recorded remote_url_supabase.
+        // A matching local record and nonempty owner metadata must NOT, by themselves, authorize a signed URL.
+        // For an ordinary owned attachment, verify that the claimed owner row exists and actually contains the key.
+        if (db) {
+            try {
+                const row = db.prepare(`
+                    SELECT id, entity_type, entity_id, status, remote_url_supabase FROM durable_uploads
+                    WHERE remote_url_supabase = ? OR remote_url_supabase = ?
+                `).get(fullKey, objectPath) as any;
+
+                if (row) {
+                    const hasValidOwner = (row.entity_type === 'make_orders' || row.entity_type === 'make_order_items') && !!row.entity_id;
+                    if (!hasValidOwner) {
+                        // Unassociated buffered upload: cannot be signed
+                        return { authorized: false, error: 'Forbidden: Attachment is unassociated or access is unauthorized.' };
+                    }
+
+                    if (row.entity_type === 'make_orders') {
+                        const { data: order } = await supabase.from('make_orders')
+                            .select('id, pdf_urls, invoice_attachment_urls')
+                            .eq('id', row.entity_id)
+                            .maybeSingle();
+
+                        if (order) {
+                            const pdfs = Array.isArray(order.pdf_urls) ? order.pdf_urls : [];
+                            const invs = Array.isArray(order.invoice_attachment_urls) ? order.invoice_attachment_urls : [];
+                            const allRefs = [...pdfs, ...invs].filter(Boolean);
+                            const matches = allRefs.some((r: string) => {
+                                const can = extractCanonicalSupabaseKey(r);
+                                return r === rawRef || r === fullKey || r === objectPath || (can && can.objectPath === objectPath);
+                            });
+                            if (matches) {
+                                return { authorized: true, canonicalKey: objectPath };
+                            }
+                        }
+                        // Claimed order does not exist or does not contain this attachment key
+                        return { authorized: false, error: 'Forbidden: Attachment is unassociated or access is unauthorized.' };
+                    } else if (row.entity_type === 'make_order_items') {
+                        const { data: item } = await supabase.from('make_order_items')
+                            .select('id, technical_drawing_url, pdf_urls')
+                            .eq('id', row.entity_id)
+                            .maybeSingle();
+
+                        if (item) {
+                            const pdfs = Array.isArray(item.pdf_urls) ? item.pdf_urls : [];
+                            const itemRefs = [item.technical_drawing_url, ...pdfs].filter(Boolean);
+                            const matches = itemRefs.some((r: string) => {
+                                const can = extractCanonicalSupabaseKey(r);
+                                return r === rawRef || r === fullKey || r === objectPath || (can && can.objectPath === objectPath);
+                            });
+                            if (matches) {
+                                return { authorized: true, canonicalKey: objectPath };
+                            }
+                        }
+                        // Claimed item does not exist or does not contain this attachment key
+                        return { authorized: false, error: 'Forbidden: Attachment is unassociated or access is unauthorized.' };
+                    }
+                }
+            } catch {}
+        }
+
+        // (b) Verify in remote database make_orders (for attachments not in local upload queue)
+        try {
+            const orderMatch = objectPath.match(/^(\d+)\//);
+            if (orderMatch) {
+                const candidateOrderId = parseInt(orderMatch[1], 10);
+                const { data: order } = await supabase.from('make_orders')
+                    .select('id, pdf_urls, invoice_attachment_urls')
+                    .eq('id', candidateOrderId)
+                    .maybeSingle();
+
+                if (order) {
+                    const pdfs = Array.isArray(order.pdf_urls) ? order.pdf_urls : [];
+                    const invs = Array.isArray(order.invoice_attachment_urls) ? order.invoice_attachment_urls : [];
+                    const allRefs = [...pdfs, ...invs].filter(Boolean);
+                    const matches = allRefs.some(r => {
+                        const can = extractCanonicalSupabaseKey(r);
+                        return r === rawRef || r === fullKey || r === objectPath || (can && can.objectPath === objectPath);
+                    });
+                    if (matches) {
+                        return { authorized: true, canonicalKey: objectPath };
+                    }
+                }
+            }
+
+            const { data: matchedOrders } = await supabase.from('make_orders')
+                .select('id, pdf_urls, invoice_attachment_urls');
+
+            if (Array.isArray(matchedOrders)) {
+                const found = matchedOrders.some((o: any) => {
+                    const pdfs = Array.isArray(o.pdf_urls) ? o.pdf_urls : [];
+                    const invs = Array.isArray(o.invoice_attachment_urls) ? o.invoice_attachment_urls : [];
+                    return [...pdfs, ...invs].filter(Boolean).some((r: string) => {
+                        const can = extractCanonicalSupabaseKey(r);
+                        return r === rawRef || r === fullKey || r === objectPath || (can && can.objectPath === objectPath);
+                    });
+                });
+                if (found) {
+                    return { authorized: true, canonicalKey: objectPath };
+                }
+            }
+        } catch (err: any) {
+            console.warn('[isAuthorizedAttachment] make_orders check error:', err.message);
+        }
+
+        // (c) Verify in remote database make_order_items (for attachments not in local upload queue)
+        try {
+            const { data: matchedItems } = await supabase.from('make_order_items')
+                .select('id, technical_drawing_url, pdf_urls');
+
+            if (Array.isArray(matchedItems)) {
+                const found = matchedItems.some((it: any) => {
+                    const pdfs = Array.isArray(it.pdf_urls) ? it.pdf_urls : [];
+                    const itemRefs = [it.technical_drawing_url, ...pdfs].filter(Boolean);
+                    return itemRefs.some((r: string) => {
+                        const can = extractCanonicalSupabaseKey(r);
+                        return r === rawRef || r === fullKey || r === objectPath || (can && can.objectPath === objectPath);
+                    });
+                });
+                if (found) {
+                    return { authorized: true, canonicalKey: objectPath };
+                }
+            }
+        } catch (err: any) {
+            console.warn('[isAuthorizedAttachment] make_order_items check error:', err.message);
+        }
+
+        return { authorized: false, error: 'Forbidden: Attachment is unassociated or access is unauthorized.' };
+    }
+
     // ── 1. Create Make Order ──────────────────────────────────────────────────
     ipcMain.handle('create-make-order', async (_e, rawOrder: any) => {
         try {
@@ -723,12 +1267,13 @@ export function registerMakeHandlers(): void {
                     throw new Error('Forbidden: Only managers or administrators can authorize loss-making order approval.');
                 }
                 parsed.override.authorizedBy = session.fullName || session.username;
+                (parsed.override as any).timestamp = (parsed.override as any).timestamp || new Date().toISOString();
             }
 
             const result = await MakeOrderService.approveOrder({
-                orderId: parsed.orderId,
+                orderId: Number(parsed.orderId),
                 actorSession: session,
-                override: parsed.override,
+                override: parsed.override as any,
                 notes: parsed.notes
             });
 
@@ -748,7 +1293,7 @@ export function registerMakeHandlers(): void {
             const session = requireSession();
             const parsed = DesignerSaveSpecsAndPricingSchema.parse(rawPayload);
             const result = await MakeOrderService.saveDesignerSpecsAndPricing({
-                orderId: parsed.orderId,
+                orderId: Number(parsed.orderId),
                 costPrice: parsed.costPrice ? Number(parsed.costPrice) : undefined,
                 salePrice: parsed.salePrice !== undefined && parsed.salePrice !== null ? Number(parsed.salePrice) : null,
                 items: parsed.items,
@@ -798,10 +1343,11 @@ export function registerMakeHandlers(): void {
                                 fileBuffer,
                                 fileName,
                                 mimeType,
-                                `make-order-files/${parsed.orderId}/stages`
+                                `make-order-files/${parsed.orderId}/stages`,
+                                { entityType: 'make_orders', entityId: parsed.orderId, fieldName: 'stage_photo_url' }
                             );
-                            if (uploadResult.success && uploadResult.publicUrl) {
-                                finalPhotoUrl = uploadResult.publicUrl;
+                            if (uploadResult.success || uploadResult.isPendingUpload) {
+                                finalPhotoUrl = uploadResult.durableKey || uploadResult.publicUrl || null;
                             }
                         }
                     }
@@ -861,7 +1407,10 @@ export function registerMakeHandlers(): void {
     // ── 7. Native Secure File Picker & Upload for Drawings ────────────────────
     ipcMain.handle('make-pick-and-upload-drawing', async (_e, { orderId, itemId }: { orderId: number; itemId?: number }) => {
         try {
-            requireSession();
+            const session = requireSession();
+            if (!canModifyMakeOrder(session)) {
+                throw new Error('Forbidden: Session lacks MAKE order modification permissions');
+            }
             const focusedWin = BrowserWindow.getFocusedWindow();
             const validation = await MakeCadService.pickAndValidateFile('cad', focusedWin);
             if ('canceled' in validation) {
@@ -872,36 +1421,49 @@ export function registerMakeHandlers(): void {
                 ? `make-order-files/${orderId}/items/${itemId}`
                 : `make-order-files/${orderId}`;
 
+            const meta = itemId
+                ? { entityType: 'make_order_items', entityId: itemId, fieldName: 'technical_drawing_url' }
+                : { entityType: 'make_orders', entityId: orderId, fieldName: 'pdf_urls' };
+
             const uploadResult = await MakeCadService.uploadValidatedBuffer(
                 validation.fileBuffer,
                 validation.sanitizedFileName,
                 validation.mimeType,
-                subfolder
+                subfolder,
+                meta
             );
 
-            if (!uploadResult.success || !uploadResult.publicUrl) {
+            if (!uploadResult.success && !uploadResult.isPendingUpload) {
                 return { success: false, error: uploadResult.error || 'Failed to upload to storage' };
             }
 
-            // Update item or order records with drawing path
+            const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+            if (!persistentRef) {
+                return { success: false, error: 'Failed to establish persistent storage reference' };
+            }
+
+            // Update item or order records with durable reference
             if (itemId) {
                 const { data: item } = await supabase.from('make_order_items').select('pdf_urls, technical_drawing_url').eq('id', itemId).maybeSingle();
                 const existing: string[] = Array.isArray(item?.pdf_urls) ? item.pdf_urls : [];
-                const combined = [...existing, uploadResult.publicUrl];
+                const combined = Array.from(new Set([...existing, persistentRef]));
                 await supabase.from('make_order_items').update({
                     pdf_urls: combined,
-                    technical_drawing_url: uploadResult.publicUrl
+                    technical_drawing_url: persistentRef
                 }).eq('id', itemId);
             } else {
                 const { data: order } = await supabase.from('make_orders').select('pdf_urls').eq('id', orderId).maybeSingle();
                 const existing: string[] = Array.isArray(order?.pdf_urls) ? order.pdf_urls : [];
-                const combined = [...existing, uploadResult.publicUrl];
+                const combined = Array.from(new Set([...existing, persistentRef]));
                 await supabase.from('make_orders').update({ pdf_urls: combined }).eq('id', orderId);
             }
 
             return {
                 success: true,
-                publicUrl: uploadResult.publicUrl,
+                publicUrl: uploadResult.publicUrl || undefined,
+                durableKey: persistentRef,
+                isPendingUpload: uploadResult.isPendingUpload,
+                status: uploadResult.status,
                 fileName: validation.sanitizedFileName
             };
         } catch (err: any) {
@@ -924,16 +1486,25 @@ export function registerMakeHandlers(): void {
                 validation.fileBuffer,
                 validation.sanitizedFileName,
                 validation.mimeType,
-                `make-order-files/${orderId}/stages`
+                `make-order-files/${orderId}/stages`,
+                { entityType: 'make_orders', entityId: orderId, fieldName: 'stage_photo_url' }
             );
 
-            if (!uploadResult.success || !uploadResult.publicUrl) {
+            if (!uploadResult.success && !uploadResult.isPendingUpload) {
                 return { success: false, error: uploadResult.error || 'Failed to upload photo' };
+            }
+
+            const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+            if (!persistentRef) {
+                return { success: false, error: 'Failed to obtain persistent photo reference' };
             }
 
             return {
                 success: true,
-                publicUrl: uploadResult.publicUrl,
+                publicUrl: uploadResult.publicUrl || undefined,
+                durableKey: persistentRef,
+                isPendingUpload: uploadResult.isPendingUpload,
+                status: uploadResult.status,
                 fileName: validation.sanitizedFileName
             };
         } catch (err: any) {
@@ -944,119 +1515,328 @@ export function registerMakeHandlers(): void {
 
     // ── 9. Hardened Legacy Upload Handlers (Backward Compatibility) ───────────
     ipcMain.handle('make-upload-item-pdf', async (_e, { orderId, itemId, filePath }: any) => {
-        if (filePath) {
-            return { error: 'Arbitrary filesystem paths are rejected. Use the native file picker.' };
+        try {
+            const session = requireSession();
+            if (!canModifyMakeOrder(session)) {
+                return { error: 'Forbidden: Session lacks MAKE order modification permissions' };
+            }
+            if (filePath) {
+                return { error: 'Arbitrary filesystem paths are rejected. Use the native file picker.' };
+            }
+
+            const focusedWin = BrowserWindow.getFocusedWindow();
+            const validation = await MakeCadService.pickAndValidateFile('cad', focusedWin);
+            if ('canceled' in validation) {
+                return { canceled: true, error: validation.error };
+            }
+
+            const subfolder = `make-order-files/${orderId}/items/${itemId}`;
+            const uploadResult = await MakeCadService.uploadValidatedBuffer(
+                validation.fileBuffer,
+                validation.sanitizedFileName,
+                validation.mimeType,
+                subfolder,
+                { entityType: 'make_order_items', entityId: itemId, fieldName: 'technical_drawing_url' }
+            );
+
+            if (!uploadResult.success && !uploadResult.isPendingUpload) {
+                return { error: uploadResult.error || 'Failed to upload drawing' };
+            }
+
+            const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+            if (!persistentRef) {
+                return { error: 'Failed to establish persistent drawing reference' };
+            }
+
+            const { data: item } = await supabase.from('make_order_items').select('pdf_urls').eq('id', itemId).maybeSingle();
+            const existing: string[] = Array.isArray(item?.pdf_urls) ? item.pdf_urls : [];
+            const combined = Array.from(new Set([...existing, persistentRef]));
+            await supabase.from('make_order_items').update({
+                pdf_urls: combined,
+                technical_drawing_url: persistentRef
+            }).eq('id', itemId);
+
+            return {
+                success: true,
+                paths: [persistentRef],
+                allPaths: combined,
+                publicUrl: uploadResult.publicUrl || undefined,
+                durableKey: persistentRef,
+                isPendingUpload: uploadResult.isPendingUpload,
+                status: uploadResult.status
+            };
+        } catch (err: any) {
+            return { error: err?.message || 'Upload failed' };
         }
-
-        const focusedWin = BrowserWindow.getFocusedWindow();
-        const validation = await MakeCadService.pickAndValidateFile('cad', focusedWin);
-        if ('canceled' in validation) {
-            return { canceled: true, error: validation.error };
-        }
-
-        const subfolder = `make-order-files/${orderId}/items/${itemId}`;
-        const uploadResult = await MakeCadService.uploadValidatedBuffer(
-            validation.fileBuffer,
-            validation.sanitizedFileName,
-            validation.mimeType,
-            subfolder
-        );
-
-        if (!uploadResult.success || !uploadResult.publicUrl) {
-            return { error: uploadResult.error || 'Failed to upload drawing' };
-        }
-
-        const { data: item } = await supabase.from('make_order_items').select('pdf_urls').eq('id', itemId).maybeSingle();
-        const existing: string[] = Array.isArray(item?.pdf_urls) ? item.pdf_urls : [];
-        const combined = [...existing, uploadResult.publicUrl];
-        await supabase.from('make_order_items').update({
-            pdf_urls: combined,
-            technical_drawing_url: uploadResult.publicUrl
-        }).eq('id', itemId);
-
-        return { success: true, paths: [uploadResult.publicUrl], allPaths: combined };
     });
 
     ipcMain.handle('make-upload-pdf', async (_e, { orderId, filePath }: any) => {
-        if (filePath) {
-            return { error: 'Arbitrary filesystem paths are rejected. Use the native file picker.' };
+        try {
+            const session = requireSession();
+            if (!canModifyMakeOrder(session)) {
+                return { error: 'Forbidden: Session lacks MAKE order modification permissions' };
+            }
+            if (filePath) {
+                return { error: 'Arbitrary filesystem paths are rejected. Use the native file picker.' };
+            }
+
+            const focusedWin = BrowserWindow.getFocusedWindow();
+            const validation = await MakeCadService.pickAndValidateFile('cad', focusedWin);
+            if ('canceled' in validation) {
+                return { canceled: true, error: validation.error };
+            }
+
+            const subfolder = `make-order-files/${orderId}`;
+            const uploadResult = await MakeCadService.uploadValidatedBuffer(
+                validation.fileBuffer,
+                validation.sanitizedFileName,
+                validation.mimeType,
+                subfolder,
+                { entityType: 'make_orders', entityId: orderId, fieldName: 'pdf_urls' }
+            );
+
+            if (!uploadResult.success && !uploadResult.isPendingUpload) {
+                return { error: uploadResult.error || 'Failed to upload drawing' };
+            }
+
+            const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+            if (!persistentRef) {
+                return { error: 'Failed to obtain persistent reference for uploaded drawing' };
+            }
+
+            const { data: order } = await supabase.from('make_orders').select('pdf_urls').eq('id', orderId).maybeSingle();
+            const existing: string[] = Array.isArray(order?.pdf_urls) ? order.pdf_urls : [];
+            const combined = Array.from(new Set([...existing, persistentRef]));
+            await supabase.from('make_orders').update({ pdf_urls: combined }).eq('id', orderId);
+
+            return {
+                success: true,
+                paths: [persistentRef],
+                publicUrl: uploadResult.publicUrl || undefined,
+                durableKey: persistentRef,
+                isPendingUpload: uploadResult.isPendingUpload,
+                status: uploadResult.status
+            };
+        } catch (err: any) {
+            return { error: err?.message || 'Upload failed' };
         }
-
-        const focusedWin = BrowserWindow.getFocusedWindow();
-        const validation = await MakeCadService.pickAndValidateFile('cad', focusedWin);
-        if ('canceled' in validation) {
-            return { canceled: true, error: validation.error };
-        }
-
-        const subfolder = `make-order-files/${orderId}`;
-        const uploadResult = await MakeCadService.uploadValidatedBuffer(
-            validation.fileBuffer,
-            validation.sanitizedFileName,
-            validation.mimeType,
-            subfolder
-        );
-
-        if (!uploadResult.success || !uploadResult.publicUrl) {
-            return { error: uploadResult.error || 'Failed to upload drawing' };
-        }
-
-        const { data: order } = await supabase.from('make_orders').select('pdf_urls').eq('id', orderId).maybeSingle();
-        const existing: string[] = Array.isArray(order?.pdf_urls) ? order.pdf_urls : [];
-        const combined = [...existing, uploadResult.publicUrl];
-        await supabase.from('make_orders').update({ pdf_urls: combined }).eq('id', orderId);
-
-        return { success: true, paths: [uploadResult.publicUrl] };
     });
 
     // ── 10. PDF Storage URLs and Deletion ─────────────────────────────────────
     ipcMain.handle('make-get-pdf-urls', async (_e, orderId: number) => {
+        const session = requireSession();
+        if (!canViewMakeOrders(session)) {
+            throw new Error('Forbidden: Session lacks MAKE permissions');
+        }
+        if (!orderId || typeof orderId !== 'number' || orderId <= 0) {
+            throw new Error('Invalid order ID');
+        }
         const { data: order } = await supabase.from('make_orders').select('pdf_urls').eq('id', orderId).maybeSingle();
-        const paths: string[] = order?.pdf_urls || [];
+        const paths: string[] = Array.isArray(order?.pdf_urls) ? order.pdf_urls : [];
 
         const signedUrls = await Promise.all(paths.map(async (p) => {
-            if (p.startsWith('http://') || p.startsWith('https://')) {
-                return { path: p, name: p.split('/').pop()?.replace(/^\d+_/, '') || 'drawing', url: p };
-            }
-            if (p.startsWith('make-order-files/')) {
-                const url = `https://storage.lenas.me/files/${p}`;
-                return { path: p, name: p.split('/').pop()?.replace(/^\d+_/, '') || 'drawing', url };
-            } else {
-                const { data } = await supabase.storage.from('make-order-files').createSignedUrl(p, 3600);
-                return { path: p, name: p.split('/').pop()?.replace(/^\d+_/, '') || 'drawing', url: data?.signedUrl || '' };
-            }
+            return await resolveAttachmentUrl(p);
         }));
-        return signedUrls.filter(u => u.url);
+        return signedUrls.filter(u => u.url || u.isPending);
     });
 
-    ipcMain.handle('make-delete-pdf', async (_e, { orderId, storagePath }: { orderId: number; storagePath: string }) => {
-        requireSession();
-        const { data: order } = await supabase.from('make_orders').select('pdf_urls').eq('id', orderId).maybeSingle();
-        const remaining = (order?.pdf_urls || []).filter((p: string) => p !== storagePath);
-        await supabase.from('make_orders').update({ pdf_urls: remaining }).eq('id', orderId);
+    // ── Delete Order PDF (Hardened Authorization & Ownership Gate) ───────────
+    ipcMain.handle('make-delete-pdf', async (_e, rawPayload: any) => {
+        // 1. Session verification
+        const session = requireSession();
+
+        // 2. Authorization verification: caller must possess MAKE order modification permission
+        if (!canModifyMakeOrder(session)) {
+            throw new Error('Forbidden: Session lacks MAKE order modification permissions');
+        }
+
+        // 3. Schema & payload validation
+        const parsed = DeleteOrderPdfSchema.parse(rawPayload);
+
+        // 4. Strict attachment reference validation (reject traversal, illegal schemes, untrusted hosts)
+        if (!isAllowedAttachmentReference(parsed.storagePath)) {
+            throw new Error('Invalid or unsupported attachment reference');
+        }
+
+        // 5. Authoritative database lookup
+        const { data: order, error: orderErr } = await supabase
+            .from('make_orders')
+            .select('id, status, pdf_urls')
+            .eq('id', parsed.orderId)
+            .maybeSingle();
+
+        if (orderErr) {
+            throw new Error(`Database error looking up order: ${orderErr.message}`);
+        }
+        if (!order) {
+            throw new Error(`Order with ID ${parsed.orderId} not found`);
+        }
+
+        // 6. Verify caller permission on this specific order (e.g. post-production requires Admin)
+        if (!canModifyMakeOrder(session, order)) {
+            throw new Error(`Order #${parsed.orderId} is in "${order.status}". Only Administrators can modify this order.`);
+        }
+
+        // 7. Verify attachment ownership: must actually belong to this order
+        const currentPdfs: string[] = Array.isArray(order.pdf_urls) ? order.pdf_urls : [];
+        const matchIndex = currentPdfs.findIndex(p => isMatchingAttachment(p, parsed.storagePath));
+        if (matchIndex === -1) {
+            throw new Error(`Attachment "${parsed.storagePath}" does not belong to order #${parsed.orderId}`);
+        }
+
+        // 8. Execute update and assert affected rows > 0 (fail closed)
+        const remaining = currentPdfs.filter((_, idx) => idx !== matchIndex);
+        const { data: updateRes, error: updateErr, count } = await supabase
+            .from('make_orders')
+            .update({ pdf_urls: remaining }, { count: 'exact' })
+            .eq('id', parsed.orderId)
+            .select('id');
+
+        if (updateErr) {
+            throw new Error(`Database error removing attachment: ${updateErr.message}`);
+        }
+        const affectedCount = Array.isArray(updateRes) ? updateRes.length : (updateRes ? 1 : (count ?? 0));
+        if (affectedCount === 0) {
+            throw new Error(`Order attachment deletion failed: 0 rows affected for order #${parsed.orderId}`);
+        }
+
+        // 9. Safe post-update cleanup of cloud copy if buffered in Supabase (preserving metadata on failure)
+        try {
+            const can = extractCanonicalSupabaseKey(parsed.storagePath);
+            if (can) {
+                const uploadService = DurableUploadService.getInstance();
+                await uploadService.pruneCloudCopy('make-order-files', can.fullKey, 0);
+            }
+        } catch (cleanupErr) {
+            console.warn('[make-delete-pdf] Background cloud cleanup deferred/failed:', cleanupErr);
+        }
+
         return { success: true };
     });
 
-    ipcMain.handle('make-delete-item-pdf', async (_e, { itemId, storagePath }: { itemId: number; storagePath: string }) => {
-        requireSession();
-        const { data: item } = await supabase.from('make_order_items').select('pdf_urls, technical_drawing_url').eq('id', itemId).maybeSingle();
-        const remaining = (item?.pdf_urls || []).filter((p: string) => p !== storagePath);
-        const newTechUrl = item?.technical_drawing_url === storagePath
-            ? (remaining.length > 0 ? remaining[0] : null)
-            : item?.technical_drawing_url;
+    // ── Delete Item PDF / Technical Drawing (Hardened Authorization Gate) ────
+    ipcMain.handle('make-delete-item-pdf', async (_e, rawPayload: any) => {
+        // 1. Session verification
+        const session = requireSession();
 
-        await supabase.from('make_order_items').update({
-            pdf_urls: remaining,
-            technical_drawing_url: newTechUrl
-        }).eq('id', itemId);
+        // 2. Authorization verification
+        if (!canModifyMakeOrder(session)) {
+            throw new Error('Forbidden: Session lacks MAKE order modification permissions');
+        }
+
+        // 3. Schema & payload validation
+        const parsed = DeleteItemPdfSchema.parse(rawPayload);
+
+        // 4. Strict attachment reference validation
+        if (!isAllowedAttachmentReference(parsed.storagePath)) {
+            throw new Error('Invalid or unsupported attachment reference');
+        }
+
+        // 5. Authoritative item database lookup
+        const { data: item, error: itemErr } = await supabase
+            .from('make_order_items')
+            .select('id, order_id, pdf_urls, technical_drawing_url')
+            .eq('id', parsed.itemId)
+            .maybeSingle();
+
+        if (itemErr) {
+            throw new Error(`Database error looking up item: ${itemErr.message}`);
+        }
+        if (!item) {
+            throw new Error(`Item with ID ${parsed.itemId} not found`);
+        }
+
+        // 6. Verify item relationship to parent order
+        if (!item.order_id) {
+            throw new Error(`Item #${parsed.itemId} has no associated parent order`);
+        }
+        if (parsed.orderId !== undefined && Number(item.order_id) !== Number(parsed.orderId)) {
+            throw new Error(`Item #${parsed.itemId} belongs to order #${item.order_id}, not order #${parsed.orderId}`);
+        }
+
+        // 7. Verify parent order exists and caller has permission to modify it
+        const { data: parentOrder, error: parentErr } = await supabase
+            .from('make_orders')
+            .select('id, status')
+            .eq('id', item.order_id)
+            .maybeSingle();
+
+        if (parentErr) {
+            throw new Error(`Database error verifying parent order: ${parentErr.message}`);
+        }
+        if (!parentOrder) {
+            throw new Error(`Parent order #${item.order_id} not found for item #${item.id}`);
+        }
+        if (!canModifyMakeOrder(session, parentOrder)) {
+            throw new Error(`Parent order #${item.order_id} is in "${parentOrder.status}". Only Administrators can modify this order.`);
+        }
+
+        // 8. Verify attachment ownership: must belong to this item
+        const currentPdfs: string[] = Array.isArray(item.pdf_urls) ? item.pdf_urls : [];
+        const pdfMatchIndex = currentPdfs.findIndex(p => isMatchingAttachment(p, parsed.storagePath));
+        const techMatch = item.technical_drawing_url && isMatchingAttachment(item.technical_drawing_url, parsed.storagePath);
+
+        if (pdfMatchIndex === -1 && !techMatch) {
+            throw new Error(`Attachment "${parsed.storagePath}" does not belong to item #${parsed.itemId}`);
+        }
+
+        // 9. Compute updated item values
+        const remaining = pdfMatchIndex !== -1
+            ? currentPdfs.filter((_, idx) => idx !== pdfMatchIndex)
+            : currentPdfs;
+
+        const newTechUrl = techMatch
+            ? (remaining.length > 0 ? remaining[0] : null)
+            : item.technical_drawing_url;
+
+        // 10. Execute update and assert affected rows > 0 (fail closed)
+        const { data: updateRes, error: updateErr, count } = await supabase
+            .from('make_order_items')
+            .update({
+                pdf_urls: remaining,
+                technical_drawing_url: newTechUrl
+            }, { count: 'exact' })
+            .eq('id', parsed.itemId)
+            .select('id');
+
+        if (updateErr) {
+            throw new Error(`Database error removing item attachment: ${updateErr.message}`);
+        }
+        const affectedCount = Array.isArray(updateRes) ? updateRes.length : (updateRes ? 1 : (count ?? 0));
+        if (affectedCount === 0) {
+            throw new Error(`Item attachment deletion failed: 0 rows affected for item #${parsed.itemId}`);
+        }
+
+        // 11. Safe post-update cleanup of cloud copy if buffered in Supabase
+        try {
+            const can = extractCanonicalSupabaseKey(parsed.storagePath);
+            if (can) {
+                const uploadService = DurableUploadService.getInstance();
+                await uploadService.pruneCloudCopy('make-order-files', can.fullKey, 0);
+            }
+        } catch (cleanupErr) {
+            console.warn('[make-delete-item-pdf] Background cloud cleanup deferred/failed:', cleanupErr);
+        }
 
         return { success: true };
     });
 
     ipcMain.handle('make-download-pdf', async (_e, { url, fileName }: { url: string; fileName: string }) => {
         try {
+            const session = requireSession();
+            if (!canViewMakeOrders(session)) {
+                throw new Error('Forbidden: Session lacks MAKE permissions');
+            }
+            if (!url || typeof url !== 'string' || !url.trim()) {
+                throw new Error('Invalid or malformed attachment reference');
+            }
+            const auth = await isAuthorizedAttachment(url, session);
+            if (!auth.authorized || !auth.canonicalKey) {
+                throw new Error('Forbidden: Attachment is unassociated or access is unauthorized.');
+            }
             const { app, shell } = await import('electron');
             const tempDir = app.getPath('temp');
-            const res = await downloadPdfFromNas(url, fileName, tempDir);
+            const res = await downloadPdfFromNas(auth.canonicalKey, fileName, tempDir);
             if (res.success && res.path) {
                 await shell.openPath(res.path);
             }
@@ -1065,6 +1845,21 @@ export function registerMakeHandlers(): void {
             console.error('[make-download-pdf] Download error:', e);
             return { success: false, error: e?.message || 'Download error' };
         }
+    });
+
+    ipcMain.handle('make-resolve-attachment-url', async (_e, rawUrl: string) => {
+        const session = requireSession();
+        if (!canViewMakeOrders(session)) {
+            throw new Error('Forbidden: Session lacks MAKE permissions');
+        }
+        if (!rawUrl || typeof rawUrl !== 'string' || !rawUrl.trim()) {
+            throw new Error('Invalid or malformed attachment reference');
+        }
+        const auth = await isAuthorizedAttachment(rawUrl, session);
+        if (!auth.authorized || !auth.canonicalKey) {
+            throw new Error('Forbidden: Attachment is unassociated or access is unauthorized.');
+        }
+        return await resolveAttachmentUrl(auth.canonicalKey);
     });
 
     // ── 11. Parts & Dimensions CRUD ──────────────────────────────────────────
@@ -1142,7 +1937,7 @@ export function registerMakeHandlers(): void {
             throw error;
         }
 
-        const products = decryptRows(data || []);
+        const products = decryptRows((data as any) || []);
 
         // Aggregate purchased counts from make_order_items for returned products only (bounded to first 100 to avoid huge joins)
         try {
@@ -1219,7 +2014,7 @@ export function registerMakeHandlers(): void {
 
         if (categoryIds.length > 0) {
             resolvedCategoryId = categoryIds[0];
-            const { data: catRows } = await failoverEngine.executeRead(async client => 
+            const { data: catRows } = await failoverEngine.executeRead(async client =>
                 client.from('make_product_categories').select('id, name').in('id', categoryIds),
                 'resolve-category-ids'
             );
@@ -1227,14 +2022,14 @@ export function registerMakeHandlers(): void {
                 resolvedCategoryName = catRows.map((c: any) => c.name).join(', ');
             }
         } else if (product.category) {
-            const { data: catRow } = await failoverEngine.executeRead(async client => 
+            const { data: catRow } = await failoverEngine.executeRead(async client =>
                 client.from('make_product_categories').select('id, name').ilike('name', product.category!.trim()).maybeSingle(),
                 'resolve-category-name'
             );
             if (catRow) {
-                resolvedCategoryId = catRow.id;
-                resolvedCategoryName = catRow.name;
-                categoryIds.push(catRow.id);
+                resolvedCategoryId = (catRow as any).id;
+                resolvedCategoryName = (catRow as any).name;
+                categoryIds.push((catRow as any).id);
             } else {
                 resolvedCategoryName = product.category.trim();
             }
@@ -1264,9 +2059,9 @@ export function registerMakeHandlers(): void {
         const writeResult = await failoverEngine.executeWrite(
             async (client) => {
                 if (isUpdate) {
-                    return await client.from('make_products').update(writePayload).eq('id', product.id).select().single();
+                    return await (client.from('make_products') as any).update(writePayload).eq('id', product.id).select().single();
                 } else {
-                    return await client.from('make_products').insert(writePayload).select().single();
+                    return await (client.from('make_products') as any).insert(writePayload).select().single();
                 }
             },
             {
@@ -1279,7 +2074,7 @@ export function registerMakeHandlers(): void {
         );
 
         if (writeResult.error) throw writeResult.error;
-        const savedData = writeResult.data;
+        const savedData = writeResult.data as any;
 
         // Process attribute junction links in parallel if provided
         const specIds = (product as any).specIds;
@@ -1370,34 +2165,38 @@ export function registerMakeHandlers(): void {
             throw new Error(`Forbidden: ${isGlobal ? 'Global specification modification requires "manage_global_product_attributes" permission.' : 'Catalog modification requires Administrator or Manager privileges.'}`);
         }
 
-        if (spec.id) {
-            const { data, error } = await supabase.from('make_product_specifications').update({
-                spec_code: spec.spec_code || null,
-                spec_name: spec.spec_name,
-                spec_details: spec.spec_details || null,
-                is_active: spec.is_active !== undefined ? spec.is_active : true
-            }).eq('id', spec.id).select().single();
-            if (error) throw error;
-            MakeSearchService.invalidateCache();
-            if (supabaseAdmin && data) {
-                supabaseAdmin.from('make_product_specifications').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud spec sync:', e.message));
+        const specImageUrl = spec.image_url || null;
+        const payload: Record<string, any> = {
+            spec_code: spec.spec_code || null,
+            spec_name: spec.spec_name,
+            spec_details: spec.spec_details || null,
+            is_active: spec.is_active !== undefined ? spec.is_active : true
+        };
+
+        const isMissingImageColumn = (e: any) =>
+            !!e && (e.code === 'PGRST204' || e.code === '42703') && /image_url/i.test(String(e.message || ''));
+
+        const writeSpec = async (body: any) => {
+            const q = supabase.from('make_product_specifications');
+            return spec.id
+                ? await q.update(body).eq('id', spec.id).select().single()
+                : await q.insert({ ...body, product_id: spec.product_id }).select().single();
+        };
+
+        const result = await writeSpec(specImageUrl ? { ...payload, image_url: specImageUrl } : payload);
+        if (result.error) {
+            if (specImageUrl && isMissingImageColumn(result.error)) {
+                throw new Error('Saving specification with an image requires database migration 066 (image_url column). Please contact your administrator.');
             }
-            return data;
-        } else {
-            const { data, error } = await supabase.from('make_product_specifications').insert({
-                product_id: spec.product_id,
-                spec_code: spec.spec_code || null,
-                spec_name: spec.spec_name,
-                spec_details: spec.spec_details || null,
-                is_active: spec.is_active !== undefined ? spec.is_active : true
-            }).select().single();
-            if (error) throw error;
-            MakeSearchService.invalidateCache();
-            if (supabaseAdmin && data) {
-                supabaseAdmin.from('make_product_specifications').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud spec sync:', e.message));
-            }
-            return data;
+            throw result.error;
         }
+
+        const data = result.data;
+        MakeSearchService.invalidateCache();
+        if (supabaseAdmin && data) {
+            (supabaseAdmin as any).from('make_product_specifications').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud spec sync:', e.message));
+        }
+        return data;
     });
 
     ipcMain.handle('make-delete-spec', async (_e, id: number) => {
@@ -1406,7 +2205,7 @@ export function registerMakeHandlers(): void {
             async client => client.from('make_product_specifications').select('product_id').eq('id', id).maybeSingle(),
             'check-spec-global'
         );
-        const isGlobal = !spec || spec.product_id === null;
+        const isGlobal = !spec || (spec as any).product_id === null;
         if (isGlobal ? !canManageGlobalProductAttributes(session) : !canManageCatalog(session)) {
             throw new Error(`Forbidden: ${isGlobal ? 'Global specification deletion requires "manage_global_product_attributes" permission.' : 'Catalog modification requires Administrator or Manager privileges.'}`);
         }
@@ -1445,7 +2244,7 @@ export function registerMakeHandlers(): void {
             if (error) throw error;
             MakeSearchService.invalidateCache();
             if (supabaseAdmin && data) {
-                supabaseAdmin.from('make_product_sizes').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud size sync:', e.message));
+                (supabaseAdmin as any).from('make_product_sizes').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud size sync:', e.message));
             }
             return data;
         } else {
@@ -1453,7 +2252,7 @@ export function registerMakeHandlers(): void {
             if (error) throw error;
             MakeSearchService.invalidateCache();
             if (supabaseAdmin && data) {
-                supabaseAdmin.from('make_product_sizes').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud size sync:', e.message));
+                (supabaseAdmin as any).from('make_product_sizes').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud size sync:', e.message));
             }
             return data;
         }
@@ -1465,7 +2264,7 @@ export function registerMakeHandlers(): void {
             async client => client.from('make_product_sizes').select('product_id').eq('id', id).maybeSingle(),
             'check-size-global'
         );
-        const isGlobal = !size || size.product_id === null;
+        const isGlobal = !size || (size as any).product_id === null;
         if (isGlobal ? !canManageGlobalProductAttributes(session) : !canManageCatalog(session)) {
             throw new Error(`Forbidden: ${isGlobal ? 'Global size deletion requires "manage_global_product_attributes" permission.' : 'Catalog modification requires Administrator or Manager privileges.'}`);
         }
@@ -1501,7 +2300,7 @@ export function registerMakeHandlers(): void {
             if (error) throw error;
             MakeSearchService.invalidateCache();
             if (supabaseAdmin && data) {
-                supabaseAdmin.from('make_product_colors').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud color sync:', e.message));
+                (supabaseAdmin as any).from('make_product_colors').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud color sync:', e.message));
             }
             return data;
         } else {
@@ -1509,7 +2308,7 @@ export function registerMakeHandlers(): void {
             if (error) throw error;
             MakeSearchService.invalidateCache();
             if (supabaseAdmin && data) {
-                supabaseAdmin.from('make_product_colors').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud color sync:', e.message));
+                (supabaseAdmin as any).from('make_product_colors').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud color sync:', e.message));
             }
             return data;
         }
@@ -1521,7 +2320,7 @@ export function registerMakeHandlers(): void {
             async client => client.from('make_product_colors').select('product_id').eq('id', id).maybeSingle(),
             'check-color-global'
         );
-        const isGlobal = !color || color.product_id === null;
+        const isGlobal = !color || (color as any).product_id === null;
         if (isGlobal ? !canManageGlobalProductAttributes(session) : !canManageCatalog(session)) {
             throw new Error(`Forbidden: ${isGlobal ? 'Global color deletion requires "manage_global_product_attributes" permission.' : 'Catalog modification requires Administrator or Manager privileges.'}`);
         }
@@ -1545,8 +2344,8 @@ export function registerMakeHandlers(): void {
                 .select(`
                     *,
                     order:make_orders(
-                        id, order_number, customer_name, customer_phone, delivery_address, 
-                        location_landmark, receiver_name, receiver_phone, status, 
+                        id, order_number, customer_name, customer_phone, delivery_address,
+                        location_landmark, receiver_name, receiver_phone, status,
                         approval_status, current_version, salesperson_name, designer_name,
                         created_at, delivery_date, cost_price, sale_price
                     )
@@ -1613,6 +2412,10 @@ export function registerMakeHandlers(): void {
 
     // ── 13. Order Items with Drawings ─────────────────────────────────────────
     ipcMain.handle('make-get-order-items', async (_e, orderId: number) => {
+        const session = requireSession();
+        if (!canViewMakeOrders(session)) {
+            throw new Error('Forbidden: Session lacks MAKE permissions');
+        }
         const { data, error } = await supabase
             .from('make_order_items')
             .select('*')
@@ -1629,26 +2432,16 @@ export function registerMakeHandlers(): void {
             }
 
             const drawings = await Promise.all(rawPaths.map(async (p: string) => {
-                if (p.startsWith('http://') || p.startsWith('https://')) {
-                    return { path: p, name: p.split('/').pop()?.replace(/^\d+_/, '') || 'drawing', url: p };
-                }
-                if (p.startsWith('make-order-files/')) {
-                    const url = `https://storage.lenas.me/files/${p}`;
-                    return { path: p, name: p.split('/').pop()?.replace(/^\d+_/, '') || 'drawing', url };
-                } else {
-                    const { data: sData } = await supabase.storage.from('make-order-files').createSignedUrl(p, 3600);
-                    return { path: p, name: p.split('/').pop()?.replace(/^\d+_/, '') || 'drawing', url: sData?.signedUrl || '' };
-                }
+                return await resolveAttachmentUrl(p);
             }));
 
             return {
                 ...item,
-                drawings: drawings.filter(d => d.url)
+                drawings: drawings.filter(d => d.url || d.isPending)
             };
         }));
 
-        const session = SessionManager.getSession();
-        const role = (session?.role || '').toLowerCase();
+        const role = (session.role || '').toLowerCase();
         if (role === 'factory_manager' || role === 'factory manager' || role === 'factory') {
             return itemsWithDrawings.map((it: any) => {
                 const { item_sale_price, unit_sale_price, total_sale_price, ...rest } = it;
@@ -1827,7 +2620,7 @@ export function registerMakeHandlers(): void {
                     await db.from('make_products').update({ category: categoryName }).eq('category_id', parsed.id);
                     MakeSearchService.invalidateCache();
                     if (supabaseAdmin && data) {
-                        supabaseAdmin.from('make_product_categories').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud category sync:', e.message));
+                        (supabaseAdmin as any).from('make_product_categories').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud category sync:', e.message));
                     }
                     return { success: true, attribute: data };
                 } else {
@@ -1835,7 +2628,7 @@ export function registerMakeHandlers(): void {
                     if (error) throw error;
                     MakeSearchService.invalidateCache();
                     if (supabaseAdmin && data) {
-                        supabaseAdmin.from('make_product_categories').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud category sync:', e.message));
+                        (supabaseAdmin as any).from('make_product_categories').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud category sync:', e.message));
                     }
                     return { success: true, attribute: data };
                 }
@@ -1876,7 +2669,7 @@ export function registerMakeHandlers(): void {
                 const data = result.data;
                 MakeSearchService.invalidateCache();
                 if (supabaseAdmin && data) {
-                    supabaseAdmin.from('make_product_specifications').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud spec sync:', e.message));
+                    (supabaseAdmin as any).from('make_product_specifications').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud spec sync:', e.message));
                 }
                 return { success: true, attribute: data };
             } else if (parsed.type === 'size') {
@@ -1897,7 +2690,7 @@ export function registerMakeHandlers(): void {
                     if (error) throw error;
                     MakeSearchService.invalidateCache();
                     if (supabaseAdmin && data) {
-                        supabaseAdmin.from('make_product_sizes').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud size sync:', e.message));
+                        (supabaseAdmin as any).from('make_product_sizes').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud size sync:', e.message));
                     }
                     return { success: true, attribute: data };
                 } else {
@@ -1905,7 +2698,7 @@ export function registerMakeHandlers(): void {
                     if (error) throw error;
                     MakeSearchService.invalidateCache();
                     if (supabaseAdmin && data) {
-                        supabaseAdmin.from('make_product_sizes').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud size sync:', e.message));
+                        (supabaseAdmin as any).from('make_product_sizes').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud size sync:', e.message));
                     }
                     return { success: true, attribute: data };
                 }
@@ -1926,7 +2719,7 @@ export function registerMakeHandlers(): void {
                     if (error) throw error;
                     MakeSearchService.invalidateCache();
                     if (supabaseAdmin && data) {
-                        supabaseAdmin.from('make_product_colors').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud color sync:', e.message));
+                        (supabaseAdmin as any).from('make_product_colors').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud color sync:', e.message));
                     }
                     return { success: true, attribute: data };
                 } else {
@@ -1934,7 +2727,7 @@ export function registerMakeHandlers(): void {
                     if (error) throw error;
                     MakeSearchService.invalidateCache();
                     if (supabaseAdmin && data) {
-                        supabaseAdmin.from('make_product_colors').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud color sync:', e.message));
+                        (supabaseAdmin as any).from('make_product_colors').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud color sync:', e.message));
                     }
                     return { success: true, attribute: data };
                 }
@@ -2068,23 +2861,32 @@ export function registerMakeHandlers(): void {
                 validation.fileBuffer,
                 validation.sanitizedFileName,
                 validation.mimeType,
-                subfolder
+                subfolder,
+                orderId ? { entityType: 'make_orders', entityId: orderId, fieldName: 'invoice_attachment_urls' } : undefined
             );
 
-            if (!uploadResult.success || !uploadResult.publicUrl) {
+            if (!uploadResult.success && !uploadResult.isPendingUpload) {
                 return { success: false, error: uploadResult.error || 'Failed to upload invoice image' };
+            }
+
+            const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+            if (!persistentRef) {
+                return { success: false, error: 'Failed to establish persistent invoice reference' };
             }
 
             if (orderId) {
                 const { data: order } = await supabase.from('make_orders').select('invoice_attachment_urls').eq('id', orderId).maybeSingle();
                 const existing: string[] = Array.isArray(order?.invoice_attachment_urls) ? order.invoice_attachment_urls : [];
-                const combined = [...existing, uploadResult.publicUrl];
+                const combined = Array.from(new Set([...existing, persistentRef]));
                 await supabase.from('make_orders').update({ invoice_attachment_urls: combined }).eq('id', orderId);
             }
 
             return {
                 success: true,
-                publicUrl: uploadResult.publicUrl,
+                publicUrl: uploadResult.publicUrl || undefined,
+                durableKey: persistentRef,
+                isPendingUpload: uploadResult.isPendingUpload,
+                status: uploadResult.status,
                 fileName: validation.sanitizedFileName
             };
         } catch (err: any) {
@@ -2118,35 +2920,48 @@ export function registerMakeHandlers(): void {
             const subfolder = itemId
                 ? `make-order-files/${orderId || 'general'}/items/${itemId}`
                 : (orderId ? `make-order-files/${orderId}/invoices` : 'make-order-files/invoices');
+            const meta = itemId
+                ? { entityType: 'make_order_items', entityId: itemId, fieldName: 'technical_drawing_url' }
+                : (orderId ? { entityType: 'make_orders', entityId: orderId, fieldName: 'invoice_attachment_urls' } : undefined);
+
             const uploadResult = await MakeCadService.uploadValidatedBuffer(
                 validation.fileBuffer,
                 validation.sanitizedFileName,
                 validation.mimeType,
-                subfolder
+                subfolder,
+                meta
             );
 
-            if (!uploadResult.success || !uploadResult.publicUrl) {
+            if (!uploadResult.success && !uploadResult.isPendingUpload) {
                 return { success: false, error: uploadResult.error || 'Failed to upload attachment' };
+            }
+
+            const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+            if (!persistentRef) {
+                return { success: false, error: 'Failed to establish persistent attachment reference' };
             }
 
             if (itemId) {
                 const { data: item } = await supabase.from('make_order_items').select('pdf_urls, technical_drawing_url').eq('id', itemId).maybeSingle();
                 const existing: string[] = Array.isArray(item?.pdf_urls) ? item.pdf_urls : [];
-                const combined = [...existing, uploadResult.publicUrl];
+                const combined = Array.from(new Set([...existing, persistentRef]));
                 await supabase.from('make_order_items').update({
                     pdf_urls: combined,
-                    technical_drawing_url: uploadResult.publicUrl
+                    technical_drawing_url: persistentRef
                 }).eq('id', itemId);
             } else if (orderId) {
                 const { data: order } = await supabase.from('make_orders').select('invoice_attachment_urls').eq('id', orderId).maybeSingle();
                 const existing: string[] = Array.isArray(order?.invoice_attachment_urls) ? order.invoice_attachment_urls : [];
-                const combined = [...existing, uploadResult.publicUrl];
+                const combined = Array.from(new Set([...existing, persistentRef]));
                 await supabase.from('make_orders').update({ invoice_attachment_urls: combined }).eq('id', orderId);
             }
 
             return {
                 success: true,
-                publicUrl: uploadResult.publicUrl,
+                publicUrl: uploadResult.publicUrl || undefined,
+                durableKey: persistentRef,
+                isPendingUpload: uploadResult.isPendingUpload,
+                status: uploadResult.status,
                 fileName: validation.sanitizedFileName
             };
         } catch (err: any) {
@@ -2236,7 +3051,7 @@ export function registerMakeHandlers(): void {
                 return { success: false, error: 'Customer not found' };
             }
 
-            const decrypted = decryptObject(customer, ['address']);
+            const decrypted = decryptObject(customer);
 
             // Optionally look up most recent make_orders delivery record for this customer
             let recentDelivery: any = null;
@@ -2277,4 +3092,3 @@ export function registerMakeHandlers(): void {
         }
     });
 }
-

@@ -103,43 +103,28 @@ export interface SyncOperation {
 }
 
 export async function enqueueOfflineWrite(op: SyncOperation): Promise<void> {
-    if (!db) return;
     try {
-        const stmt = db.prepare(`
-            INSERT INTO sync_queue (id, table_name, operation, payload_json, created_at, retry_count)
-            VALUES (?, ?, ?, ?, ?, 0)
-        `);
-        stmt.run(op.id, op.table, op.operation, JSON.stringify(op.payload), Date.now());
-        console.log(`[OfflineDB] Enqueued offline write: ${op.operation} on ${op.table}`);
+        const { DurableOutboxService } = await import('./services/outbox/DurableOutboxService');
+        DurableOutboxService.getInstance().enqueueSingle({
+            id: op.id,
+            entityType: op.table,
+            operation: op.operation === 'custom' ? 'insert' : op.operation,
+            payload: op.payload
+        });
     } catch (e: any) {
-        console.error(`[OfflineDB] Failed to enqueue offline write:`, e.message);
+        console.error(`[OfflineDB] Failed to delegate offline write to DurableOutboxService:`, e.message);
     }
 }
 
 export async function getPendingWrites(): Promise<SyncOperation[]> {
-    if (!db) return [];
-    try {
-        const rows = db.prepare(`SELECT * FROM sync_queue ORDER BY created_at ASC`).all() as any[];
-        return rows.map(r => ({
-            id: r.id,
-            table: r.table_name,
-            operation: r.operation as any,
-            payload: JSON.parse(r.payload_json),
-            created_at: r.created_at,
-            retry_count: r.retry_count
-        }));
-    } catch (e: any) {
-        console.error(`[OfflineDB] Failed to get pending writes:`, e.message);
-        return [];
-    }
+    // Deprecated: DurableOutboxService is the sole authoritative executor
+    return [];
 }
 
-export async function removePendingWrite(id: string): Promise<void> {
-    if (!db) return;
-    db.prepare(`DELETE FROM sync_queue WHERE id = ?`).run(id);
+export async function removePendingWrite(_id: string): Promise<void> {
+    // Deprecated: DurableOutboxService manages its own lifecycle
 }
 
-export async function incrementRetryCount(id: string): Promise<void> {
-    if (!db) return;
-    db.prepare(`UPDATE sync_queue SET retry_count = retry_count + 1 WHERE id = ?`).run(id);
+export async function incrementRetryCount(_id: string): Promise<void> {
+    // Deprecated: DurableOutboxService manages its own lifecycle
 }

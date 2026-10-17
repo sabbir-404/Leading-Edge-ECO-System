@@ -274,6 +274,7 @@ contextBridge.exposeInMainWorld('electron', {
     makeGetPdfUrls: (orderId: number | string) => ipcRenderer.invoke('make-get-pdf-urls', orderId),
     makeDeletePdf: (data: any) => ipcRenderer.invoke('make-delete-pdf', data),
     makeDownloadPdf: (data: any) => ipcRenderer.invoke('make-download-pdf', data),
+    makeResolveAttachmentUrl: (url: string) => ipcRenderer.invoke('make-resolve-attachment-url', url),
     makeUploadItemPdf: (data: any) => ipcRenderer.invoke('make-upload-item-pdf', data),
     makeDeleteItemPdf: (data: any) => ipcRenderer.invoke('make-delete-item-pdf', data),
     makePickAndUploadDrawing: (data: { orderId: number | string; itemId?: number | string }) => ipcRenderer.invoke('make-pick-and-upload-drawing', data),
@@ -532,5 +533,16 @@ contextBridge.exposeInMainWorld('electron', {
     sendWatchdogPong: () => {
         ipcRenderer.send('watchdog-pong');
     },
+
+    // ─── SMART FAILOVER, DURABLE OUTBOX & 1GB QUOTA ───
+    getOutboxStatus: () => ipcRenderer.invoke('get-outbox-status'),
+    getDeadLetterOperations: () => ipcRenderer.invoke('get-dead-letter-operations'),
+    replayDeadLetterOperation: (id: string) => ipcRenderer.invoke('replay-dead-letter-operation', id),
+    replayAllDeadLetters: () => ipcRenderer.invoke('replay-all-dead-letters'),
+    getSupabaseQuotaStatus: () => ipcRenderer.invoke('get-supabase-quota-status'),
+    auditSupabaseQuota: () => ipcRenderer.invoke('audit-supabase-quota'),
+    getConsolidatedHealth: () => ipcRenderer.invoke('get-consolidated-health'),
+    getPendingUploads: () => ipcRenderer.invoke('get-pending-uploads'),
+    retryStagedUpload: (id: string) => ipcRenderer.invoke('retry-staged-upload', id),
 
 });

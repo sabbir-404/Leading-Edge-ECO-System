@@ -17,12 +17,16 @@ try {
     console.warn('[IPC] sharp native module not loaded:', err);
 }
 
-import supabase, { supabaseAdmin, nasClient, isNasOnline, decryptEmbeddedCredentials, bootstrapPublicClientConfig, reinitSupabaseClients, getNasStorageUrl, getNasStorageCandidates, getCfAccessHeaders, loadConfig, saveSupabaseConfig } from './supabase';
+import supabase, { supabaseAdmin, nasClient, isNasOnline, decryptEmbeddedCredentials, bootstrapPublicClientConfig, reinitSupabaseClients, getNasStorageUrl, getNasStorageCandidates, getCfAccessHeaders, loadConfig, saveSupabaseConfig, getDbClients } from './supabase';
+import { DurableOutboxService } from './services/outbox/DurableOutboxService';
+import { DurableUploadService } from './services/media/DurableUploadService';
+import { SupabaseQuotaManager } from './services/quota/SupabaseQuotaManager';
+import { ConsolidatedHealthEngine } from './services/health/ConsolidatedHealthEngine';
 import mysql from 'mysql2/promise';
 import * as licenseManager from './license-manager';
 import { getConnectedDevices, setBackupNode, DEVICE_ID } from './device-monitor';
 import { encryptObject, encryptField, decryptRows, decryptObject, decryptField } from './field-encryption';
-import { enqueue, getQueueStats } from './write-queue';
+import { enqueue, enqueueGraph, getQueueStats } from './write-queue';
 import * as cache from './cache-manager';
 import { saveSession, loadSession, clearSession } from './session-vault';
 import { encryptStandardSecret, decryptStandardSecret } from './secure-storage';
@@ -83,11 +87,31 @@ export function toPublicStorageUrl(url: string | null | undefined): string {
 
 async function uploadOptimizedImage(buffer: Buffer, filenamePrefix: string): Promise<string> {
     const optimized = await optimizeImageBuffer(buffer);
-    const candidates = getNasStorageCandidates();
     const finalFilename = `${filenamePrefix}_${Date.now()}.webp`;
 
+    try {
+        const staged = await DurableUploadService.getInstance().stageFile(
+            optimized,
+            finalFilename,
+            'image/webp',
+            'product-images',
+            undefined,
+            { autoDispatch: false }
+        );
+
+        const result = await DurableUploadService.getInstance().dispatchUpload(staged.id);
+        if (result.success || result.status === 'buffered_supabase') {
+            return result.activeUrl || `https://storage.lenas.me/files/product-images/${finalFilename}`;
+        }
+        if (result.status === 'staged_local') {
+            return `file://${staged.localPath}`;
+        }
+    } catch (err: any) {
+        console.warn('[uploadOptimizedImage] DurableUploadService exception, falling back to direct pipeline:', err.message);
+    }
+
+    const candidates = getNasStorageCandidates();
     if (candidates.length > 0) {
-        let lastError: any = null;
         for (const candidateUrl of candidates) {
             try {
                 const formData = new FormData();
@@ -101,7 +125,7 @@ async function uploadOptimizedImage(buffer: Buffer, filenamePrefix: string): Pro
                         'x-subfolder': 'product-images',
                         ...cfHeaders
                     },
-                    signal: AbortSignal.timeout(3000)
+                    signal: AbortSignal.timeout(20000)
                 });
                 if (response.ok) {
                     const data = await response.json();
@@ -109,25 +133,42 @@ async function uploadOptimizedImage(buffer: Buffer, filenamePrefix: string): Pro
                         return `https://storage.lenas.me/files/product-images/${finalFilename}`;
                     }
                 }
-            } catch (err) {
-                lastError = err;
-            }
+            } catch {}
         }
     }
 
-    // Upload to Hostinger (fallback)
-    const formData = new FormData();
-    formData.append('secret_key', HOSTINGER_UPLOAD_SECRET);
-    formData.append('image', new Blob([new Uint8Array(optimized)], { type: 'image/webp' }), finalFilename);
+    // Supabase Storage fallback within quota
+    try {
+        const quotaMgr = SupabaseQuotaManager.getInstance();
+        if (quotaMgr.canAcceptStorageUpload(optimized.length)) {
+            const storagePath = `product-images/${finalFilename}`;
+            const { error: sbErr } = await supabase.storage
+                .from('make-order-files')
+                .upload(storagePath, optimized, { contentType: 'image/webp', upsert: false });
+            if (!sbErr) {
+                // Return durable object key for private storage; never an unauthenticated public URL
+                return storagePath;
+            }
+        }
+    } catch {}
 
-    const response = await fetch(HOSTINGER_UPLOAD_URL, { method: 'POST', body: formData });
-    const data = await response.json();
+    // Upload to Hostinger (legacy fallback only if secret configured)
+    if (HOSTINGER_UPLOAD_SECRET) {
+        try {
+            const formData = new FormData();
+            formData.append('secret_key', HOSTINGER_UPLOAD_SECRET);
+            formData.append('image', new Blob([new Uint8Array(optimized)], { type: 'image/webp' }), finalFilename);
 
-    if (!data.success || !data.url) {
-        throw new Error(data.error || 'Failed to upload image');
+            const response = await fetch(HOSTINGER_UPLOAD_URL, { method: 'POST', body: formData, signal: AbortSignal.timeout(10000) });
+            const data = await response.json();
+
+            if (data.success && data.url) {
+                return data.url;
+            }
+        } catch {}
     }
 
-    return data.url;
+    throw new Error('Failed to upload image');
 }
 
 async function createSystemNotification(input: {
@@ -375,6 +416,10 @@ try {
 } catch { /* MySQL optional */ }
 
 // ── MySQL sync helpers ────────────────────────────────────────────────────────
+export function setMySQLPool(pool: any): void {
+    mysqlPool = pool;
+}
+
 async function syncProductToMySQL(p: { localId: number; name: string; sku: string; category: string; sellingPrice: number; description: string; imagePath: string; quantity: number }) {
     if (!mysqlPool) return;
     const { localId, name, sku, category, sellingPrice, description, imagePath, quantity } = p;
@@ -388,9 +433,70 @@ async function syncProductToMySQL(p: { localId: number; name: string; sku: strin
         if (category) await mysqlPool.query('INSERT IGNORE INTO product_categories (product_id, category_name) VALUES (?,?)', [id, category]);
     }
 }
-async function syncStockToMySQL(localId: number, soldQty: number) {
-    if (!mysqlPool) return;
-    await mysqlPool.query('UPDATE products SET quantity = GREATEST(quantity - ?, 0) WHERE le_local_id = ?', [soldQty, localId]).catch(() => { });
+export async function syncStockToMySQL(localId: number, soldQty: number, syncId?: string, invoiceNumber?: string): Promise<void> {
+    if (!mysqlPool) {
+        throw new Error('[MySQLSync] MySQL connection pool is not configured or offline; cannot sync stock');
+    }
+    const dedupKey = syncId || (invoiceNumber ? `sync_${invoiceNumber}_${localId}` : `sync_p${localId}_q${soldQty}_${Date.now()}`);
+
+    // Destination-enforced idempotency: ensure table exists on MySQL destination
+    try {
+        await mysqlPool.query(`
+            CREATE TABLE IF NOT EXISTS le_stock_sync_idempotency (
+                dedup_key VARCHAR(191) PRIMARY KEY,
+                invoice_number VARCHAR(100),
+                product_id INT NOT NULL,
+                quantity INT NOT NULL,
+                synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB;
+        `);
+    } catch (createErr: any) {
+        // If CREATE TABLE fails (e.g. read-only/DML-only user), check if table already exists
+        try {
+            await mysqlPool.query('SELECT 1 FROM le_stock_sync_idempotency LIMIT 1');
+        } catch {
+            throw new Error(`[MySQLSync] Idempotency schema prerequisite missing: table 'le_stock_sync_idempotency' does not exist on MySQL destination and cannot be auto-provisioned: ${createErr.message}`);
+        }
+    }
+
+    const connection = await mysqlPool.getConnection();
+    try {
+        await connection.beginTransaction();
+
+        // 1. Record the idempotency marker on the MySQL destination inside the transaction.
+        // Direct INSERT relies on the PRIMARY KEY constraint and avoids InnoDB gap-lock deadlocks
+        // caused by preliminary SELECT ... FOR UPDATE on non-existent keys in MySQL 8.
+        try {
+            await connection.query(
+                'INSERT INTO le_stock_sync_idempotency (dedup_key, invoice_number, product_id, quantity) VALUES (?, ?, ?, ?)',
+                [dedupKey, invoiceNumber || null, localId, soldQty]
+            );
+        } catch (insertErr: any) {
+            if (insertErr.code === 'ER_DUP_ENTRY' || insertErr.errno === 1062 || insertErr.message?.includes('Duplicate entry')) {
+                console.log(`[MySQLSync] Operation ${dedupKey} was already applied on MySQL destination. Skipping duplicate decrement.`);
+                await connection.rollback();
+                return;
+            }
+            throw insertErr;
+        }
+
+        // 3. Decrement stock safely on destination
+        const [updateResult]: any = await connection.query(
+            'UPDATE products SET quantity = GREATEST(quantity - ?, 0) WHERE le_local_id = ?',
+            [soldQty, localId]
+        );
+
+        if (updateResult && updateResult.affectedRows === 0) {
+            throw new Error(`Product with le_local_id ${localId} not found on MySQL destination`);
+        }
+
+        await connection.commit();
+    } catch (err: any) {
+        await connection.rollback();
+        throw new Error(`[MySQLSync] Failed to decrement MySQL stock for product ${localId}: ${err.message}`);
+    } finally {
+        connection.release();
+    }
 }
 
 // ── In-memory presence stores ─────────────────────────────────────────────────
@@ -431,6 +537,15 @@ export function registerHandlers() {
 
     // Register Fortified MAKE Module Handlers
     registerMakeHandlers();
+
+    // Register durable custom handlers for background outbox processing
+    DurableOutboxService.registerCustomHandler('mysql_stock_sync', async (payload: any) => {
+        const { product_id, quantity, invoice_number, sync_id } = payload || {};
+        if (product_id && quantity) {
+            await syncStockToMySQL(Number(product_id), Number(quantity), sync_id, invoice_number);
+            await checkLowStockForProduct(Number(product_id)).catch(() => {});
+        }
+    });
 
     /**
      * Resolves the active authenticated session strictly from the Electron Main Process.
@@ -2233,6 +2348,21 @@ export function registerHandlers() {
         const insertedWithPlain = { ...inserted, address: address || null };
         // Update cache
         cache.addOne('billing_customers', insertedWithPlain);
+
+        // Mirror new customer to Supabase Cloud so that when a subsequent bill
+        // is written with this customer_id, Supabase's foreign key constraint (bills_customer_id_fkey)
+        // is guaranteed to be satisfied!
+        (async () => {
+            try {
+                const { supabase: sbClient } = getDbClients();
+                if (sbClient && inserted?.id) {
+                    await sbClient.from('billing_customers').upsert(inserted, { onConflict: 'id' });
+                }
+            } catch (mirrorErr) {
+                console.warn('[create-billing-customer] Async Supabase mirror deferral:', mirrorErr);
+            }
+        })();
+
         // Broadcast so ledger list refreshes
         const { BrowserWindow } = require('electron');
         BrowserWindow.getAllWindows().forEach((win: any) => win.webContents.send('data-updated', 'billing_customers'));
@@ -2268,172 +2398,180 @@ export function registerHandlers() {
             platform: 'desktop',
         };
 
-        // Enqueue the bill insert — returns immediately to user
-        enqueue({
+        // ── Single Authoritative Durable Operation Graph for Create-Bill ─────
+        const billGraphOps: any[] = [];
+
+        // 1. Authoritative Bill Operation
+        const billOpId = `bill_${invoiceNumber}`;
+        billGraphOps.push({
+            id: billOpId,
             table: 'bills',
             operation: 'insert',
             data: billRow,
-            onSuccess: async () => {
-                // After bill is saved, enqueue items write
-                if (items && items.length > 0) {
-                    // Fetch the bill ID by matching the local plain-text invoice_number
-                    const { data: savedBill } = await supabase
-                        .from('bills').select('id').eq('invoice_number', invoiceNumber).maybeSingle();
-
-                    const savedBillId = savedBill?.id;
-                    if (savedBillId) {
-                        const billItems = items.map((item: any) => ({
-                            bill_id: savedBillId,
-                            product_id: item.product_id,
-                            product_name: item.product_name,
-                            sku: item.sku || '',
-                            quantity: item.quantity,
-                            cost_price: Number(item.cost_price || item.item_cost_price || 0),
-                            mrp: item.mrp,
-                            discount_pct: item.discount_pct || 0,
-                            discount_amt: item.discount_amt || 0,
-                            price: item.price,
-                            notes: item.notes || null,
-                            customization: item.customization || {},
-                        }));
-                        enqueue({
-                            table: 'bill_items',
-                            operation: 'insert',
-                            data: billItems,
-                            onSuccess: async () => {
-                                try {
-                                    const { data: insertedItems, error: itemsErr } = await supabase
-                                        .from('bill_items')
-                                        .select('id, product_id, product_name, customization, quantity, cost_price, mrp, price')
-                                        .eq('bill_id', savedBillId);
-                                    
-                                    if (!itemsErr && insertedItems) {
-                                        for (const bItem of insertedItems) {
-                                            const cust = bItem.customization;
-                                            if (cust && typeof cust === 'object' && Object.keys(cust).length > 0) {
-                                                const descDetails = Object.entries(cust)
-                                                    .map(([k, v]) => `${k}: ${v}`)
-                                                    .join(', ');
-                                                
-                                                const matchingOriginal = items.find((i: any) => i.product_id === bItem.product_id || i.product_name === bItem.product_name);
-                                                const costP = Number(bItem.cost_price || matchingOriginal?.cost_price || matchingOriginal?.item_cost_price || 0);
-                                                const saleP = Number(matchingOriginal?.sale_price || bItem.price || bItem.mrp || 0);
-                                                
-                                                enqueue({
-                                                    table: 'make_orders',
-                                                    operation: 'insert',
-                                                    data: {
-                                                        furniture_name: bItem.product_name || 'Custom Furniture',
-                                                        description: `Customized order linked to Invoice ${invoiceNumber}. Attributes: ${descDetails}`,
-                                                        quantity: Number(bItem.quantity) || 1,
-                                                        designer_name: actor,
-                                                        status: saleP > 0 ? 'Pricing Done' : 'Awaiting Pricing',
-                                                        priority: 'Normal',
-                                                        bill_id: savedBillId,
-                                                        bill_item_id: bItem.id,
-                                                        cost_price: costP,
-                                                        sale_price: saleP > 0 ? saleP : null,
-                                                        custom_price: saleP,
-                                                        custom_details: cust
-                                                    }
-                                                });
-                                            }
-                                        }
-                                    }
-                                } catch (e) {
-                                    console.error('[create-bill make-orders sync] Failed:', e);
-                                }
-                            }
-                        });
-                        // Decrement product stock per item
-                        for (const item of items) {
-                            if (item.product_id && item.quantity) {
-                                (async () => {
-                                    try {
-                                        const pId = Number(item.product_id);
-                                        const qty = Number(item.quantity || 0);
-                                        const { data: prod } = await supabase.from('products').select('quantity').eq('id', pId).maybeSingle();
-                                        if (prod) {
-                                            const currentQty = Number(prod.quantity || 0);
-                                            const newQty = Math.max(0, currentQty - qty);
-                                            await supabase.from('products').update({ quantity: newQty }).eq('id', pId);
-                                        }
-                                        await checkLowStockForProduct(pId);
-                                        syncStockToMySQL(pId, qty);
-                                    } catch (err) {
-                                        console.error('[create-bill stock decrement failed]:', err);
-                                    }
-                                })();
-                            }
-                        }
-                    } else {
-                        console.error('[create-bill] Failed to find saved bill ID for items mapping:', invoiceNumber);
-                    }
-                }
-                
-                // If shipping info was passed along
-                if (shipping && shipping.ship_to_name && shipping.ship_to_address) {
-                    const { data: b } = await supabase.from('bills').select('id').eq('invoice_number', invoiceNumber).maybeSingle();
-                    const bId = b?.id;
-                    if (bId) {
-                        // Create the shipping payload matching exactly the DB schema
-                        const shippingPayload = {
-                            bill_id: bId, 
-                            ship_to_name: shipping.ship_to_name, 
-                            ship_to_address: shipping.ship_to_address, 
-                            ship_to_phone: shipping.ship_to_phone || '', 
-                            ship_from_name: shipping.ship_from_name || '', 
-                            ship_from_address: shipping.ship_from_address || '', 
-                            shipping_charge: shipping.shipping_charge || 0, 
-                            updated_by: actor, 
-                            status: 'pending_payment'
-                        };
-                        
-                        enqueue({
-                            table: 'bill_shipping',
-                            operation: 'insert',
-                            data: shippingPayload,
-                            onSuccess: async () => {
-                                // After successful replication of shipping record, we can add the initial status log.
-                                // It requires the shipment_id, which we now fetch directly.
-                                try {
-                                    const { data: sh } = await supabase.from('bill_shipping').select('id').eq('bill_id', bId).maybeSingle();
-                                    if (sh?.id) {
-                                        enqueue({
-                                            table: 'shipping_status_log',
-                                            operation: 'insert',
-                                            data: {
-                                                shipment_id: sh.id, 
-                                                bill_id: bId, 
-                                                status: 'pending_payment', 
-                                                note: 'Shipping order created', 
-                                                updated_by: actor, 
-                                                updated_by_role: session.role || 'cashier' 
-                                            }
-                                        });
-                                    }
-                                } catch (e) {
-                                    console.error('[create-bill shipping log] Failed:', e);
-                                }
-                                
-                                // Broadcast update so Shipping Dashboard sees the new record
-                                try {
-                                    BrowserWindow.getAllWindows().forEach(win => {
-                                        if (!win.isDestroyed()) win.webContents.send('data-updated', 'bill_shipping');
-                                    });
-                                } catch { }
-                            }
-                        });
-                    }
-                }
-                // Broadcast so BillHistory and CustomerLedger auto-refresh
+            upsertConflict: 'invoice_number',
+            metadata: { invoiceNumber, actor },
+            onSuccess: () => {
+                // UI refresh signals only — no side effects created in transient memory!
                 try {
                     BrowserWindow.getAllWindows().forEach(win => {
-                        if (!win.isDestroyed()) win.webContents.send('data-updated', 'bills');
+                        if (!win.isDestroyed()) {
+                            win.webContents.send('data-updated', 'bills');
+                            win.webContents.send('data-updated', 'bill_items');
+                            win.webContents.send('data-updated', 'bill_shipping');
+                        }
                     });
                 } catch { }
-            },
+            }
         });
+
+        // 2. Authoritative Child Bill Items
+        if (items && items.length > 0) {
+            const itemsOpId = `bill_items_${invoiceNumber}`;
+            const billItems = items.map((item: any) => ({
+                bill_id: null, // Resolved per destination from billOpId by resolveDependentPayload
+                product_id: item.product_id,
+                product_name: item.product_name,
+                sku: item.sku || '',
+                quantity: item.quantity,
+                cost_price: Number(item.cost_price || item.item_cost_price || 0),
+                mrp: item.mrp,
+                discount_pct: item.discount_pct || 0,
+                discount_amt: item.discount_amt || 0,
+                price: item.price,
+                notes: item.notes || null,
+                customization: item.customization || {},
+            }));
+
+            billGraphOps.push({
+                id: itemsOpId,
+                table: 'bill_items',
+                operation: 'insert',
+                data: billItems,
+                dependencyOpId: billOpId,
+                metadata: { invoiceNumber }
+            });
+
+            // 3. Authoritative Customized Orders (make_orders)
+            items.forEach((item: any, idx: number) => {
+                const cust = item.customization;
+                if (cust && typeof cust === 'object' && Object.keys(cust).length > 0) {
+                    const descDetails = Object.entries(cust)
+                        .map(([k, v]) => `${k}: ${v}`)
+                        .join(', ');
+                    const costP = Number(item.cost_price || item.item_cost_price || 0);
+                    const saleP = Number(item.sale_price || item.price || item.mrp || 0);
+
+                    const orderOpId = `make_order_${invoiceNumber}_${idx}`;
+                    billGraphOps.push({
+                        id: orderOpId,
+                        table: 'make_orders',
+                        operation: 'insert',
+                        data: {
+                            furniture_name: item.product_name || 'Custom Furniture',
+                            description: `Customized order linked to Invoice ${invoiceNumber}. Attributes: ${descDetails}`,
+                            quantity: Number(item.quantity) || 1,
+                            designer_name: actor,
+                            status: saleP > 0 ? 'Pricing Done' : 'Awaiting Pricing',
+                            priority: 'Normal',
+                            bill_id: null, // Resolved from billOpId
+                            cost_price: costP,
+                            sale_price: saleP > 0 ? saleP : null,
+                            custom_price: saleP,
+                            custom_details: cust
+                        },
+                        dependencyOpId: billOpId,
+                        metadata: { invoiceNumber, itemIndex: idx }
+                    });
+                }
+            });
+
+            // 4. Authoritative Inventory Decrement & Durable MySQL Stock Sync
+            items.forEach((item: any, idx: number) => {
+                if (item.product_id && item.quantity) {
+                    const pId = Number(item.product_id);
+                    const qty = Number(item.quantity || 0);
+                    const stockOpId = `stock_dec_${invoiceNumber}_${pId}_${idx}`;
+                    const mysqlSyncOpId = `mysql_stock_sync_${invoiceNumber}_${pId}_${idx}`;
+
+                    // Database stock decrement
+                    billGraphOps.push({
+                        id: stockOpId,
+                        table: 'inventory_decrement',
+                        operation: 'custom',
+                        data: {
+                            product_id: pId,
+                            quantity: qty,
+                            invoice_number: invoiceNumber
+                        },
+                        dependencyOpId: billOpId,
+                        metadata: { invoiceNumber, product_id: pId, quantity: qty }
+                    });
+
+                    // Durable MySQL stock sync & low stock check as a dependent outbox operation!
+                    billGraphOps.push({
+                        id: mysqlSyncOpId,
+                        table: 'mysql_stock_sync',
+                        operation: 'custom',
+                        data: {
+                            product_id: pId,
+                            quantity: qty,
+                            invoice_number: invoiceNumber,
+                            sync_id: mysqlSyncOpId
+                        },
+                        dependencyOpId: stockOpId,
+                        metadata: { invoiceNumber, product_id: pId, quantity: qty }
+                    });
+                }
+            });
+        }
+
+        // 5. Authoritative Shipping (bill_shipping)
+        if (shipping && shipping.ship_to_name && shipping.ship_to_address) {
+            const shippingOpId = `shipping_${invoiceNumber}`;
+            const shippingPayload = {
+                bill_id: null, // Resolved from billOpId
+                invoice_number: invoiceNumber,
+                ship_to_name: shipping.ship_to_name,
+                ship_to_address: shipping.ship_to_address,
+                ship_to_phone: shipping.ship_to_phone || '',
+                ship_from_name: shipping.ship_from_name || '',
+                ship_from_address: shipping.ship_from_address || '',
+                shipping_charge: shipping.shipping_charge || 0,
+                updated_by: actor,
+                status: 'pending_payment'
+            };
+
+            billGraphOps.push({
+                id: shippingOpId,
+                table: 'bill_shipping',
+                operation: 'insert',
+                data: shippingPayload,
+                upsertConflict: 'bill_id',
+                dependencyOpId: billOpId,
+                metadata: { invoiceNumber }
+            });
+
+            // 6. Authoritative Initial Shipping Status Log
+            const shippingLogOpId = `shipping_log_${invoiceNumber}`;
+            billGraphOps.push({
+                id: shippingLogOpId,
+                table: 'shipping_status_log',
+                operation: 'insert',
+                data: {
+                    shipment_id: null, // Resolved from shippingOpId
+                    bill_id: null,
+                    status: 'pending_payment',
+                    note: 'Shipping order created',
+                    updated_by: actor,
+                    updated_by_role: session.role || 'cashier'
+                },
+                dependencyOpId: shippingOpId,
+                metadata: { invoiceNumber }
+            });
+        }
+
+        // Atomically commit full bill graph into durable SQLite outbox
+        enqueueGraph(billGraphOps);
 
         await writeAuditLog({
             module: 'Billing',
@@ -3275,7 +3413,7 @@ export function registerHandlers() {
         const isActiveValue = (isActive === undefined || isActive === null) ? 1 : (Number(isActive) ? 1 : 0);
         
         // Fetch current user from ACTIVE DB (TrueNAS)
-        const { data: currentUser } = await supabase.from('users').select('role, auth_id, group_id').eq('id', id).maybeSingle();
+        const { data: currentUser } = await supabase.from('users').select('role, auth_id, group_id, username').eq('id', id).maybeSingle();
         
         if (role && role === 'superadmin' && currentUser?.role !== 'superadmin' && reqRole !== 'superadmin') {
             throw new Error('Only Super Administrators can assign the Super Admin role.');
@@ -3520,6 +3658,14 @@ export function registerHandlers() {
 
             await supabase.from('users').update({ is_online: true, device_type: 'PC' }).eq('id', row.id);
 
+            // Register trusted reconciliation identity if user holds authorized role
+            const userAppRole = authData.user?.app_metadata?.role;
+            if (userAppRole === 'reconciliation_operator' || userAppRole === 'service_role') {
+                SupabaseQuotaManager.getInstance().registerReconciliationClient(supabase);
+            } else {
+                SupabaseQuotaManager.getInstance().registerReconciliationClient(null);
+            }
+
             const { password_hash: _omit, user_groups, ...safeUser } = row;
             // BUG-11: Fall back to empty object (not string '{}') so JSON.stringify in Login.tsx
             // produces valid permissions JSON and doesn't double-encode the value.
@@ -3615,6 +3761,7 @@ export function registerHandlers() {
     ipcMain.handle('clear-session', async () => {
         try {
             await supabase.auth.signOut();
+            SupabaseQuotaManager.getInstance().registerReconciliationClient(null);
             clearSession();
             SessionManager.clearSession();
             return { success: true };
@@ -6972,6 +7119,90 @@ export function registerHandlers() {
             return WatchdogService.getInstance().getSanitizedDiagnostics();
         } catch {
             return [];
+        }
+    });
+
+    // ─── SMART FAILOVER, DURABLE OUTBOX & 1GB QUOTA ───
+    ipcMain.handle('get-outbox-status', async () => {
+        try {
+            return DurableOutboxService.getInstance().getStats();
+        } catch {
+            return {
+                totalPending: 0,
+                bufferedSupabase: 0,
+                blockedDependencies: 0,
+                deadLetterCount: 0,
+                oldestPendingTime: null,
+                recentErrors: []
+            };
+        }
+    });
+
+    ipcMain.handle('get-dead-letter-operations', async () => {
+        try {
+            return DurableOutboxService.getInstance().getDeadLetters();
+        } catch {
+            return [];
+        }
+    });
+
+    ipcMain.handle('replay-dead-letter-operation', async (_e, id: string) => {
+        try {
+            return { success: DurableOutboxService.getInstance().replayDeadLetter(id) };
+        } catch (e: any) {
+            return { success: false, error: e.message };
+        }
+    });
+
+    ipcMain.handle('replay-all-dead-letters', async () => {
+        try {
+            return { count: DurableOutboxService.getInstance().replayAllDeadLetters() };
+        } catch (e: any) {
+            return { count: 0, error: e.message };
+        }
+    });
+
+    ipcMain.handle('get-supabase-quota-status', async () => {
+        try {
+            return SupabaseQuotaManager.getInstance().getQuotaStatus();
+        } catch {
+            return null;
+        }
+    });
+
+    ipcMain.handle('audit-supabase-quota', async () => {
+        try {
+            return await SupabaseQuotaManager.getInstance().auditUsage();
+        } catch (e: any) {
+            return { error: e.message };
+        }
+    });
+
+    ipcMain.handle('get-consolidated-health', async () => {
+        try {
+            const engine = ConsolidatedHealthEngine.getInstance();
+            return {
+                state: engine.getCurrentState(),
+                probes: engine.getProbeDetails()
+            };
+        } catch {
+            return null;
+        }
+    });
+
+    ipcMain.handle('get-pending-uploads', async () => {
+        try {
+            return DurableUploadService.getInstance().getStagedUploads();
+        } catch {
+            return [];
+        }
+    });
+
+    ipcMain.handle('retry-staged-upload', async (_e, id: string) => {
+        try {
+            return await DurableUploadService.getInstance().dispatchUpload(id);
+        } catch (e: any) {
+            return { success: false, error: e.message };
         }
     });
 

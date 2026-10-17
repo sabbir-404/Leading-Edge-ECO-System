@@ -33,7 +33,7 @@ export const CreateMakeOrderSchema = z.object({
     requested_delivery_date: z.string().nullable().optional(),
     salesman_id: z.number().int().positive().nullable().optional(),
     customer_id: z.union([z.string(), z.number()]).nullable().optional(),
-    customer_name: z.string({ required_error: 'Customer name is required' }).min(1, 'Customer name is required').max(255),
+    customer_name: z.string().min(1, 'Customer name is required').max(255),
     customer_phone: z.string().max(50).nullable().optional().refine(val => {
         if (!val || val.trim() === '') return true;
         const cleaned = val.trim();
@@ -126,7 +126,7 @@ export const AlterMakeOrderItemSchema = z.object({
 
 export const AlterMakeOrderSchema = z.object({
     orderId: z.union([z.string().min(1), z.number()]),
-    changes: z.record(z.any()).optional().default({}),
+    changes: z.record(z.string(), z.any()).optional().default({}),
     itemChanges: z.array(AlterMakeOrderItemSchema).optional(),
     items: z.array(AlterMakeOrderItemSchema).optional(),
     reason: z.string().optional(),
@@ -271,5 +271,91 @@ export const SearchCatalogProductsSchema = z.object({
     query: z.string().optional().default(''),
     category: z.string().optional(),
     activeOnly: z.boolean().optional().default(true)
+});
+
+/**
+ * Detects directory traversal patterns or illegal null-byte sequences in raw / decoded strings.
+ */
+export function hasUnsafePathSequence(str: string): boolean {
+    if (!str || typeof str !== 'string') return false;
+    if (str.includes('\0') || str.includes('%00') || str.includes('\\0')) return true;
+    if (
+        str.includes('../') ||
+        str.includes('..\\') ||
+        str.includes('/..') ||
+        str.includes('\\..') ||
+        str === '..'
+    ) {
+        return true;
+    }
+    if (/%2e%2e|%2e\.|\.%2e|\.\.%2f|\.\.%5c|%2f\.\.|%5c\.\./i.test(str)) {
+        return true;
+    }
+    let currentStr = str;
+    for (let depth = 0; depth < 2; depth++) {
+        try {
+            const decoded = decodeURIComponent(currentStr);
+            if (decoded === currentStr) break;
+            currentStr = decoded;
+            if (
+                currentStr.includes('../') ||
+                currentStr.includes('..\\') ||
+                currentStr.includes('/..') ||
+                currentStr.includes('\\..') ||
+                currentStr === '..'
+            ) {
+                return true;
+            }
+            const segments = currentStr.split(/[/\\]/);
+            for (const seg of segments) {
+                if (seg.trim() === '..') return true;
+            }
+        } catch {
+            if (/%2e/i.test(currentStr)) return true;
+            break;
+        }
+    }
+    return false;
+}
+
+/**
+ * Validates whether a storage reference has an unsupported or dangerous scheme.
+ */
+export function hasUnsupportedStorageScheme(str: string): boolean {
+    if (!str || typeof str !== 'string') return false;
+    const lower = str.trim().toLowerCase();
+    const dangerousSchemes = ['javascript:', 'file:', 'data:', 'ftp:', 'vbscript:', 'blob:', 'php:'];
+    for (const scheme of dangerousSchemes) {
+        if (lower.startsWith(scheme)) return true;
+    }
+    return false;
+}
+
+export const DeleteOrderPdfSchema = z.object({
+    orderId: z.union([
+        z.number().int().positive('Order ID must be a positive integer'),
+        z.string().regex(/^\d+$/, 'Order ID must be a numeric integer').transform(Number)
+    ]),
+    storagePath: z.string().trim().min(1, 'storagePath cannot be empty')
+}).refine(data => !hasUnsafePathSequence(data.storagePath), {
+    message: 'Invalid storagePath: Directory traversal or null bytes detected'
+}).refine(data => !hasUnsupportedStorageScheme(data.storagePath), {
+    message: 'Invalid storagePath: Unsupported storage reference scheme'
+});
+
+export const DeleteItemPdfSchema = z.object({
+    itemId: z.union([
+        z.number().int().positive('Item ID must be a positive integer'),
+        z.string().regex(/^\d+$/, 'Item ID must be a numeric integer').transform(Number)
+    ]),
+    orderId: z.union([
+        z.number().int().positive('Order ID must be a positive integer'),
+        z.string().regex(/^\d+$/, 'Order ID must be a numeric integer').transform(Number)
+    ]).optional(),
+    storagePath: z.string().trim().min(1, 'storagePath cannot be empty')
+}).refine(data => !hasUnsafePathSequence(data.storagePath), {
+    message: 'Invalid storagePath: Directory traversal or null bytes detected'
+}).refine(data => !hasUnsupportedStorageScheme(data.storagePath), {
+    message: 'Invalid storagePath: Unsupported storage reference scheme'
 });
 
