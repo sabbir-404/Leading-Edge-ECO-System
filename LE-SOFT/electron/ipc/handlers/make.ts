@@ -482,17 +482,51 @@ export async function downloadPdfFromNas(
     tempDir: string,
     timeoutMs: number = 6000
 ): Promise<{ success: boolean; path?: string; error?: string }> {
-    const validation = validateAndNormalizeDownloadUrl(url);
-    if (!validation.isValid) {
-        return { success: false, error: validation.error || 'Invalid download URL' };
-    }
-
     let targetPath: string;
     try {
         const dest = sanitizeDownloadDestination(fileName, tempDir);
         targetPath = dest.targetPath;
     } catch (err: any) {
         return { success: false, error: err.message || 'Invalid filename' };
+    }
+
+    // Check if this is a Supabase private bucket object or signed URL
+    const isSupabaseUrl = url.includes('.supabase.co/') || url.startsWith('make-order-files/') || url.startsWith('supabase://');
+    if (isSupabaseUrl) {
+        try {
+            let fetchUrl = url;
+            if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                const resolved = await resolveAttachmentUrl(url);
+                if (!resolved.url) {
+                    return { success: false, error: 'Could not resolve attachment for download' };
+                }
+                fetchUrl = resolved.url;
+            }
+
+            const electron = await import('electron').catch(() => null);
+            const fetchFn: typeof fetch = (electron as any)?.net?.fetch || globalThis.fetch;
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(new Error(`Download timed out after ${timeoutMs}ms`)), timeoutMs);
+
+            try {
+                const resp = await fetchFn(fetchUrl, { signal: controller.signal });
+                if (!resp.ok) {
+                    return { success: false, error: `Supabase download failed: HTTP ${resp.status}` };
+                }
+                const arrayBuf = await resp.arrayBuffer();
+                fs.writeFileSync(targetPath, Buffer.from(arrayBuf));
+                return { success: true, path: targetPath };
+            } finally {
+                clearTimeout(timeoutId);
+            }
+        } catch (err: any) {
+            return { success: false, error: err.message || 'Failed to download attachment from cloud buffer' };
+        }
+    }
+
+    const validation = validateAndNormalizeDownloadUrl(url);
+    if (!validation.isValid) {
+        return { success: false, error: validation.error || 'Invalid download URL' };
     }
 
     const { candidates } = validation;
@@ -620,7 +654,7 @@ export async function downloadPdfFromNas(
 export async function resolveAttachmentUrl(p: string): Promise<{ path: string; name: string; url: string; isPending?: boolean }> {
     if (!p || typeof p !== 'string') return { path: '', name: 'attachment', url: '' };
 
-    const name = p.split('/').pop()?.replace(/^\d+_/, '') || 'document';
+    const name = p.split('/').pop()?.replace(/^\d+_/, '')?.split('?')[0] || 'document';
 
     // 1. Staged local / pending upload
     if (p.startsWith('file://') || /^[a-zA-Z]:[\\/]/.test(p)) {
@@ -629,38 +663,41 @@ export async function resolveAttachmentUrl(p: string): Promise<{ path: string; n
 
     // 2. Confirmed TrueNAS Remote URL
     if (p.startsWith('https://storage.lenas.me') || p.startsWith('http://100.88.85.6') || p.startsWith('http://192.168.1.14')) {
-        return { path: p, name, url: p };
+        return { path: p, name, url: p, isPending: false };
     }
 
     // 3. Supabase Storage Object Key in private bucket 'make-order-files'
-    // Handles durable keys: 'make-order-files/101/drawing.pdf' or '101/drawing.pdf'
-    // or legacy unauthenticated public URLs pointing to make-order-files
+    // Handles durable keys ('make-order-files/...'), expired signed URLs, public URLs, and supabase:// URIs
     let storagePath = p;
-    if (p.includes('/storage/v1/object/public/make-order-files/')) {
-        storagePath = decodeURIComponent(p.split('/storage/v1/object/public/make-order-files/')[1] || '');
+    if (p.includes('/storage/v1/object/sign/make-order-files/')) {
+        storagePath = decodeURIComponent(p.split('/storage/v1/object/sign/make-order-files/')[1] || '').split('?')[0];
+    } else if (p.includes('/storage/v1/object/public/make-order-files/')) {
+        storagePath = decodeURIComponent(p.split('/storage/v1/object/public/make-order-files/')[1] || '').split('?')[0];
     } else if (p.startsWith('supabase://make-order-files/')) {
-        storagePath = p.replace(/^supabase:\/\/make-order-files\//, '');
+        storagePath = p.replace(/^supabase:\/\/make-order-files\//, '').split('?')[0];
+    } else if (p.startsWith('make-order-files/')) {
+        storagePath = p.replace(/^make-order-files\//, '').split('?')[0];
     }
 
     storagePath = storagePath.replace(/^\/+/, '');
 
-    if (storagePath) {
+    if (storagePath && (p.includes('make-order-files') || p.includes('supabase') || !p.startsWith('http'))) {
         try {
             const { data, error } = await supabase.storage.from('make-order-files').createSignedUrl(storagePath, 3600);
             if (!error && data?.signedUrl) {
-                return { path: p, name, url: data.signedUrl };
+                return { path: p, name, url: data.signedUrl, isPending: true };
             }
             if (storagePath.startsWith('make-order-files/')) {
                 const altPath = storagePath.replace(/^make-order-files\//, '');
                 const { data: altData, error: altErr } = await supabase.storage.from('make-order-files').createSignedUrl(altPath, 3600);
                 if (!altErr && altData?.signedUrl) {
-                    return { path: p, name, url: altData.signedUrl };
+                    return { path: p, name, url: altData.signedUrl, isPending: true };
                 }
             } else {
                 const altPath = `make-order-files/${storagePath}`;
                 const { data: altData, error: altErr } = await supabase.storage.from('make-order-files').createSignedUrl(altPath, 3600);
                 if (!altErr && altData?.signedUrl) {
-                    return { path: p, name, url: altData.signedUrl };
+                    return { path: p, name, url: altData.signedUrl, isPending: true };
                 }
             }
         } catch (sErr: any) {
@@ -670,7 +707,7 @@ export async function resolveAttachmentUrl(p: string): Promise<{ path: string; n
 
     // 4. Other HTTP/HTTPS URLs (external or non-make-order-files)
     if (p.startsWith('http://') || p.startsWith('https://')) {
-        return { path: p, name, url: p };
+        return { path: p, name, url: p, isPending: false };
     }
 
     // 5. If missing or unresolvable, NEVER return a guessed URL; mark pending if it resembles a durable key or upload reference
@@ -1179,6 +1216,10 @@ export function registerMakeHandlers(): void {
             console.error('[make-download-pdf] Download error:', e);
             return { success: false, error: e?.message || 'Download error' };
         }
+    });
+
+    ipcMain.handle('make-resolve-attachment-url', async (_e, rawUrl: string) => {
+        return await resolveAttachmentUrl(rawUrl);
     });
 
     // ── 11. Parts & Dimensions CRUD ──────────────────────────────────────────

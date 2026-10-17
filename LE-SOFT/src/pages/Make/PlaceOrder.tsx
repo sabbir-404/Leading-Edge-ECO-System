@@ -781,7 +781,7 @@ const PlaceOrder: React.FC = () => {
     try {
       if (window.electron?.makePickAndUploadInvoiceAttachment) {
         const res = await window.electron.makePickAndUploadInvoiceAttachment();
-        const persistentUrl = res.publicUrl || res.durableKey;
+        const persistentUrl = res.durableKey || (res.publicUrl && !res.publicUrl.includes('token=') ? res.publicUrl : undefined) || res.durableKey;
         if (res && (res.success || res.isPendingUpload) && persistentUrl) {
           setInvoiceAttachments(prev => [...prev, {
             name: res.fileName || 'Invoice Image',
@@ -818,7 +818,7 @@ const PlaceOrder: React.FC = () => {
             fileName: file.name,
             fileBase64: base64
           });
-          const persistentUrl = res.publicUrl || res.durableKey;
+          const persistentUrl = res.durableKey || (res.publicUrl && !res.publicUrl.includes('token=') ? res.publicUrl : undefined) || res.durableKey;
           if (res && (res.success || res.isPendingUpload) && persistentUrl) {
             setInvoiceAttachments(prev => [...prev, {
               name: file.name,
@@ -999,7 +999,7 @@ const PlaceOrder: React.FC = () => {
             fileName: file.name,
             fileBase64: base64
           });
-          const persistentUrl = res.publicUrl || res.durableKey;
+          const persistentUrl = res.durableKey || (res.publicUrl && !res.publicUrl.includes('token=') ? res.publicUrl : undefined) || res.durableKey;
           if (res && (res.success || res.isPendingUpload) && persistentUrl) {
             setInvoiceAttachments(prev => [...prev, {
               name: file.name,

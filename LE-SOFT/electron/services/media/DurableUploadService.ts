@@ -607,12 +607,19 @@ export class DurableUploadService {
         }
 
         try {
+            // First verify the target record actually exists
+            const { data: existing, error: selectErr } = await client
+                .from(entityType)
+                .select(`id, ${fieldName}`)
+                .eq('id', entityId)
+                .maybeSingle();
+
+            if (selectErr || !existing) {
+                console.warn(`[DurableUpload] Target record does not exist for ${entityType} ID ${entityId}:`, selectErr?.message || 'Record not found');
+                return false;
+            }
+
             if (fieldName === 'pdf_urls' || fieldName === 'invoice_attachment_urls') {
-                const { data: existing, error: selectErr } = await client.from(entityType).select(fieldName).eq('id', entityId).maybeSingle();
-                if (selectErr) {
-                    console.warn(`[DurableUpload] Could not fetch entity record for ${entityType} ID ${entityId}:`, selectErr.message);
-                    return false;
-                }
                 const list: string[] = Array.isArray((existing as any)?.[fieldName]) ? (existing as any)[fieldName] : [];
                 const uploadPrefix = uploadId ? `${uploadId}_` : null;
 
@@ -630,9 +637,15 @@ export class DurableUploadService {
                 }
 
                 const deduplicated = Array.from(new Set(updatedList));
-                const { error: updErr } = await client.from(entityType).update({ [fieldName]: deduplicated }).eq('id', entityId);
-                if (updErr) {
-                    console.warn(`[DurableUpload] Could not update entity array for ${entityType} ID ${entityId}:`, updErr.message);
+                const { data: updatedRows, error: updErr } = await client
+                    .from(entityType)
+                    .update({ [fieldName]: deduplicated })
+                    .eq('id', entityId)
+                    .select('id');
+
+                const rowsAffected = Array.isArray(updatedRows) ? updatedRows.length : (updatedRows ? 1 : 0);
+                if (updErr || rowsAffected === 0) {
+                    console.warn(`[DurableUpload] Could not update entity array for ${entityType} ID ${entityId} (affected ${rowsAffected} rows):`, updErr?.message);
                     return false;
                 }
             } else {
@@ -658,9 +671,15 @@ export class DurableUploadService {
                     } catch {}
                 }
 
-                const { error: updErr } = await client.from(entityType).update(updatePayload).eq('id', entityId);
-                if (updErr) {
-                    console.warn(`[DurableUpload] Could not update entity field for ${entityType} ID ${entityId}:`, updErr.message);
+                const { data: updatedRows, error: updErr } = await client
+                    .from(entityType)
+                    .update(updatePayload)
+                    .eq('id', entityId)
+                    .select('id');
+
+                const rowsAffected = Array.isArray(updatedRows) ? updatedRows.length : (updatedRows ? 1 : 0);
+                if (updErr || rowsAffected === 0) {
+                    console.warn(`[DurableUpload] Could not update entity field for ${entityType} ID ${entityId} (affected ${rowsAffected} rows):`, updErr?.message);
                     return false;
                 }
             }

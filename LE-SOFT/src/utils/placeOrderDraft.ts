@@ -116,12 +116,45 @@ function getSavedPlaceOrderDraftsStorageKey(): string {
   );
 }
 
-function getPersistentAttachmentReference(url?: string | null): string | undefined {
+export function getPersistentAttachmentReference(url?: string | null): string | undefined {
   const value = typeof url === 'string' ? url.trim() : '';
   if (!value || /^(data:|blob:)/i.test(value)) return undefined;
-  if (/^(https?:\/\/|app-media:\/\/|file:\/\/)/i.test(value)) return value;
+
+  // Supabase storage URLs (signed or public) for make-order-files -> extract durable key
+  const sbMatch = value.match(/(?:supabase\.co|\/storage\/v1)\/object\/(?:sign|public)\/make-order-files\/([^?#]+)/i);
+  if (sbMatch) {
+    const rawKey = decodeURIComponent(sbMatch[1]).replace(/^\/+/, '');
+    return `make-order-files/${rawKey}`;
+  }
+
+  // Supabase URI scheme
+  if (/^supabase:\/\/make-order-files\//i.test(value)) {
+    const rawKey = value.replace(/^supabase:\/\/make-order-files\//i, '').split('?')[0].replace(/^\/+/, '');
+    return `make-order-files/${rawKey}`;
+  }
+
+  // Durable key
+  if (/^make-order-files\//i.test(value)) {
+    return value.split('?')[0];
+  }
+
+  // Confirmed TrueNAS URLs
+  if (/^https?:\/\/(storage\.lenas\.me|100\.88\.85\.6|192\.168\.1\.14)/i.test(value)) {
+    return value;
+  }
+
+  // If another HTTP URL with token= parameter is detected, strip query params to prevent persisting ephemeral tokens
+  if (/^https?:\/\//i.test(value)) {
+    if (value.includes('token=')) {
+      return value.split('?')[0];
+    }
+    return value;
+  }
+
+  if (/^(app-media:\/\/|file:\/\/)/i.test(value)) return value;
   if (/^[a-z]:[\\/]/i.test(value) || /^\/(?!\/)/.test(value)) return value;
-  if (/^make-order-files\//i.test(value) || /^supabase:\/\/make-order-files\//i.test(value)) return value;
+  if (/^upl_[0-9]+_[0-9a-f]+/i.test(value)) return value;
+
   return undefined;
 }
 

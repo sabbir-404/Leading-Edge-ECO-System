@@ -26709,12 +26709,12 @@ var init_DurableUploadService = __esm({
           return false;
         }
         try {
+          const { data: existing, error: selectErr } = await client.from(entityType).select(`id, ${fieldName}`).eq("id", entityId).maybeSingle();
+          if (selectErr || !existing) {
+            console.warn(`[DurableUpload] Target record does not exist for ${entityType} ID ${entityId}:`, selectErr?.message || "Record not found");
+            return false;
+          }
           if (fieldName === "pdf_urls" || fieldName === "invoice_attachment_urls") {
-            const { data: existing, error: selectErr } = await client.from(entityType).select(fieldName).eq("id", entityId).maybeSingle();
-            if (selectErr) {
-              console.warn(`[DurableUpload] Could not fetch entity record for ${entityType} ID ${entityId}:`, selectErr.message);
-              return false;
-            }
             const list = Array.isArray(existing?.[fieldName]) ? existing[fieldName] : [];
             const uploadPrefix = uploadId ? `${uploadId}_` : null;
             let replaced = false;
@@ -26729,9 +26729,10 @@ var init_DurableUploadService = __esm({
               updatedList.push(newUrl);
             }
             const deduplicated = Array.from(new Set(updatedList));
-            const { error: updErr } = await client.from(entityType).update({ [fieldName]: deduplicated }).eq("id", entityId);
-            if (updErr) {
-              console.warn(`[DurableUpload] Could not update entity array for ${entityType} ID ${entityId}:`, updErr.message);
+            const { data: updatedRows, error: updErr } = await client.from(entityType).update({ [fieldName]: deduplicated }).eq("id", entityId).select("id");
+            const rowsAffected = Array.isArray(updatedRows) ? updatedRows.length : updatedRows ? 1 : 0;
+            if (updErr || rowsAffected === 0) {
+              console.warn(`[DurableUpload] Could not update entity array for ${entityType} ID ${entityId} (affected ${rowsAffected} rows):`, updErr?.message);
               return false;
             }
           } else {
@@ -26757,9 +26758,10 @@ var init_DurableUploadService = __esm({
               } catch {
               }
             }
-            const { error: updErr } = await client.from(entityType).update(updatePayload).eq("id", entityId);
-            if (updErr) {
-              console.warn(`[DurableUpload] Could not update entity field for ${entityType} ID ${entityId}:`, updErr.message);
+            const { data: updatedRows, error: updErr } = await client.from(entityType).update(updatePayload).eq("id", entityId).select("id");
+            const rowsAffected = Array.isArray(updatedRows) ? updatedRows.length : updatedRows ? 1 : 0;
+            if (updErr || rowsAffected === 0) {
+              console.warn(`[DurableUpload] Could not update entity field for ${entityType} ID ${entityId} (affected ${rowsAffected} rows):`, updErr?.message);
               return false;
             }
           }
@@ -115922,7 +115924,7 @@ var MakeSearchService = class {
 
 // electron/services/make/MakeOrderService.ts
 init_DurableUploadService();
-var MakeOrderService = class {
+var MakeOrderService = class _MakeOrderService {
   /**
    * Generates a canonical, human-readable order number: MAKE-YYYY-XXXXXX
    */
@@ -115968,6 +115970,37 @@ var MakeOrderService = class {
       cleaned = "0" + cleaned.substring(3);
     }
     return cleaned;
+  }
+  /**
+   * Normalizes attachment references to durable keys (e.g. make-order-files/...) or confirmed TrueNAS URLs.
+   * Strips ephemeral signed tokens so order records remain permanently valid.
+   */
+  static normalizeAttachmentReference(rawRef) {
+    if (!rawRef || typeof rawRef !== "string") return "";
+    const trimmed = rawRef.trim();
+    if (!trimmed) return "";
+    const sbMatch = trimmed.match(/(?:supabase\.co|\/storage\/v1)\/object\/(?:sign|public)\/make-order-files\/([^?#]+)/i);
+    if (sbMatch) {
+      const rawKey = decodeURIComponent(sbMatch[1]).replace(/^\/+/, "");
+      return `make-order-files/${rawKey}`;
+    }
+    if (/^supabase:\/\/make-order-files\//i.test(trimmed)) {
+      const rawKey = trimmed.replace(/^supabase:\/\/make-order-files\//i, "").split("?")[0].replace(/^\/+/, "");
+      return `make-order-files/${rawKey}`;
+    }
+    if (/^make-order-files\//i.test(trimmed)) {
+      return trimmed.split("?")[0];
+    }
+    if (/^https?:\/\/(storage\.lenas\.me|100\.88\.85\.6|192\.168\.1\.14)/i.test(trimmed)) {
+      return trimmed;
+    }
+    if (/^https?:\/\//i.test(trimmed)) {
+      if (trimmed.includes("token=")) {
+        return trimmed.split("?")[0];
+      }
+      return trimmed;
+    }
+    return trimmed;
   }
   /**
    * Intelligent multi-entity whole-catalog product search with relevance scoring & ranking.
@@ -116071,7 +116104,7 @@ var MakeOrderService = class {
       requested_delivery_date: input.requested_delivery_date || null,
       salesman_id: input.salesman_id || null,
       customer_id: resolvedCustId,
-      invoice_attachment_urls: Array.isArray(input.invoice_attachment_urls) && input.invoice_attachment_urls.length > 0 ? input.invoice_attachment_urls : Array.isArray(input.invoice_attachments) ? input.invoice_attachments : [],
+      invoice_attachment_urls: (Array.isArray(input.invoice_attachment_urls) && input.invoice_attachment_urls.length > 0 ? input.invoice_attachment_urls : Array.isArray(input.invoice_attachments) ? input.invoice_attachments : []).map((u) => typeof u === "string" ? _MakeOrderService.normalizeAttachmentReference(u) : u).filter(Boolean),
       is_approved: isApproved,
       customer_name: input.customer_name?.trim() || null,
       customer_phone: input.customer_phone?.trim() || null,
@@ -116101,26 +116134,34 @@ var MakeOrderService = class {
       return { success: false, error: `Failed to create order header: ${orderErr?.message || "Database error"}` };
     }
     const orderId = createdOrder.id;
-    const itemsPayload = input.items.map((item) => ({
-      order_id: orderId,
-      product_id: item.product_id || null,
-      spec_id: item.spec_id || null,
-      size_id: item.size_id || null,
-      color_id: item.color_id || null,
-      product_name: item.product_name.trim(),
-      spec_name: item.spec_name || null,
-      spec_details: item.spec_details || null,
-      size_label: item.size_id ? item.dimensions_text || item.size_label || null : item.size_label || null,
-      dimensions_text: item.dimensions_text || null,
-      custom_size: item.custom_size || (item.is_customized ? item.dimensions_text : null) || null,
-      custom_dimensions: item.custom_dimensions || (item.is_customized ? item.custom_size || item.dimensions_text : null) || null,
-      color_name: item.color_name || item.custom_color || null,
-      quantity: Number(item.quantity) || 1,
-      item_cost_price: item.item_cost_price !== void 0 && item.item_cost_price !== null && item.item_cost_price !== "" ? Math.max(0, Number(item.item_cost_price)) : 0,
-      item_sale_price: item.item_sale_price !== void 0 && item.item_sale_price !== null && item.item_sale_price !== "" ? Math.max(0, Number(item.item_sale_price)) : null,
-      is_customized: !!(item.is_customized || item.is_custom),
-      designer_notes: item.designer_notes || item.custom_notes || null
-    }));
+    const itemsPayload = input.items.map((item) => {
+      const rawTechDrawing = item.technical_drawing_url || item.drawing_url || null;
+      const normTechDrawing = rawTechDrawing ? _MakeOrderService.normalizeAttachmentReference(rawTechDrawing) : null;
+      const rawPdfs = item.pdf_urls || item.drawings || [];
+      const normPdfs = Array.isArray(rawPdfs) ? rawPdfs.map((p) => typeof p === "string" ? _MakeOrderService.normalizeAttachmentReference(p) : p).filter(Boolean) : normTechDrawing ? [normTechDrawing] : [];
+      return {
+        order_id: orderId,
+        product_id: item.product_id || null,
+        spec_id: item.spec_id || null,
+        size_id: item.size_id || null,
+        color_id: item.color_id || null,
+        product_name: item.product_name.trim(),
+        spec_name: item.spec_name || null,
+        spec_details: item.spec_details || null,
+        size_label: item.size_id ? item.dimensions_text || item.size_label || null : item.size_label || null,
+        dimensions_text: item.dimensions_text || null,
+        custom_size: item.custom_size || (item.is_customized ? item.dimensions_text : null) || null,
+        custom_dimensions: item.custom_dimensions || (item.is_customized ? item.custom_size || item.dimensions_text : null) || null,
+        color_name: item.color_name || item.custom_color || null,
+        quantity: Number(item.quantity) || 1,
+        technical_drawing_url: normTechDrawing,
+        pdf_urls: normPdfs,
+        item_cost_price: item.item_cost_price !== void 0 && item.item_cost_price !== null && item.item_cost_price !== "" ? Math.max(0, Number(item.item_cost_price)) : 0,
+        item_sale_price: item.item_sale_price !== void 0 && item.item_sale_price !== null && item.item_sale_price !== "" ? Math.max(0, Number(item.item_sale_price)) : null,
+        is_customized: !!(item.is_customized || item.is_custom),
+        designer_notes: item.designer_notes || item.custom_notes || null
+      };
+    });
     let { data: insertedItems, error: itemsErr } = await supabase.from("make_order_items").insert(itemsPayload).select("id, product_name");
     if (itemsErr && (itemsErr.code === "42703" || itemsErr.message && /column.*does not exist/i.test(itemsErr.message))) {
       console.warn("[MakeOrderService] Detected missing column on make_order_items insert:", itemsErr.message, "Retrying with schema-compatible payload...");
@@ -117230,7 +117271,7 @@ var MakeCadService = class {
           storagePath: durableKey,
           publicUrl: result.activeUrl,
           durableKey: result.durableKey || durableKey,
-          isPendingUpload: false,
+          isPendingUpload: true,
           uploadId: staged.id
         };
       }
@@ -117342,7 +117383,7 @@ var MakeCadService = class {
       storagePath,
       durableKey: storagePath,
       publicUrl: signedUrl,
-      isPendingUpload: false
+      isPendingUpload: true
     };
   }
 };
@@ -132397,16 +132438,46 @@ async function readResponseBodyWithSignal(res, signal, timeoutMs) {
   });
 }
 async function downloadPdfFromNas(url2, fileName, tempDir, timeoutMs = 6e3) {
-  const validation = validateAndNormalizeDownloadUrl(url2);
-  if (!validation.isValid) {
-    return { success: false, error: validation.error || "Invalid download URL" };
-  }
   let targetPath;
   try {
     const dest = sanitizeDownloadDestination(fileName, tempDir);
     targetPath = dest.targetPath;
   } catch (err) {
     return { success: false, error: err.message || "Invalid filename" };
+  }
+  const isSupabaseUrl = url2.includes(".supabase.co/") || url2.startsWith("make-order-files/") || url2.startsWith("supabase://");
+  if (isSupabaseUrl) {
+    try {
+      let fetchUrl = url2;
+      if (!url2.startsWith("http://") && !url2.startsWith("https://")) {
+        const resolved = await resolveAttachmentUrl(url2);
+        if (!resolved.url) {
+          return { success: false, error: "Could not resolve attachment for download" };
+        }
+        fetchUrl = resolved.url;
+      }
+      const electron2 = await import("electron").catch(() => null);
+      const fetchFn2 = electron2?.net?.fetch || globalThis.fetch;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(new Error(`Download timed out after ${timeoutMs}ms`)), timeoutMs);
+      try {
+        const resp = await fetchFn2(fetchUrl, { signal: controller.signal });
+        if (!resp.ok) {
+          return { success: false, error: `Supabase download failed: HTTP ${resp.status}` };
+        }
+        const arrayBuf = await resp.arrayBuffer();
+        fs15.writeFileSync(targetPath, Buffer.from(arrayBuf));
+        return { success: true, path: targetPath };
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    } catch (err) {
+      return { success: false, error: err.message || "Failed to download attachment from cloud buffer" };
+    }
+  }
+  const validation = validateAndNormalizeDownloadUrl(url2);
+  if (!validation.isValid) {
+    return { success: false, error: validation.error || "Invalid download URL" };
   }
   const { candidates } = validation;
   const cfHeaders = typeof getCfAccessHeaders === "function" ? getCfAccessHeaders() : {};
@@ -132490,37 +132561,41 @@ async function downloadPdfFromNas(url2, fileName, tempDir, timeoutMs = 6e3) {
 }
 async function resolveAttachmentUrl(p) {
   if (!p || typeof p !== "string") return { path: "", name: "attachment", url: "" };
-  const name = p.split("/").pop()?.replace(/^\d+_/, "") || "document";
+  const name = p.split("/").pop()?.replace(/^\d+_/, "")?.split("?")[0] || "document";
   if (p.startsWith("file://") || /^[a-zA-Z]:[\\/]/.test(p)) {
     return { path: p, name, url: "", isPending: true };
   }
   if (p.startsWith("https://storage.lenas.me") || p.startsWith("http://100.88.85.6") || p.startsWith("http://192.168.1.14")) {
-    return { path: p, name, url: p };
+    return { path: p, name, url: p, isPending: false };
   }
   let storagePath = p;
-  if (p.includes("/storage/v1/object/public/make-order-files/")) {
-    storagePath = decodeURIComponent(p.split("/storage/v1/object/public/make-order-files/")[1] || "");
+  if (p.includes("/storage/v1/object/sign/make-order-files/")) {
+    storagePath = decodeURIComponent(p.split("/storage/v1/object/sign/make-order-files/")[1] || "").split("?")[0];
+  } else if (p.includes("/storage/v1/object/public/make-order-files/")) {
+    storagePath = decodeURIComponent(p.split("/storage/v1/object/public/make-order-files/")[1] || "").split("?")[0];
   } else if (p.startsWith("supabase://make-order-files/")) {
-    storagePath = p.replace(/^supabase:\/\/make-order-files\//, "");
+    storagePath = p.replace(/^supabase:\/\/make-order-files\//, "").split("?")[0];
+  } else if (p.startsWith("make-order-files/")) {
+    storagePath = p.replace(/^make-order-files\//, "").split("?")[0];
   }
   storagePath = storagePath.replace(/^\/+/, "");
-  if (storagePath) {
+  if (storagePath && (p.includes("make-order-files") || p.includes("supabase") || !p.startsWith("http"))) {
     try {
       const { data: data2, error: error51 } = await supabase.storage.from("make-order-files").createSignedUrl(storagePath, 3600);
       if (!error51 && data2?.signedUrl) {
-        return { path: p, name, url: data2.signedUrl };
+        return { path: p, name, url: data2.signedUrl, isPending: true };
       }
       if (storagePath.startsWith("make-order-files/")) {
         const altPath = storagePath.replace(/^make-order-files\//, "");
         const { data: altData, error: altErr } = await supabase.storage.from("make-order-files").createSignedUrl(altPath, 3600);
         if (!altErr && altData?.signedUrl) {
-          return { path: p, name, url: altData.signedUrl };
+          return { path: p, name, url: altData.signedUrl, isPending: true };
         }
       } else {
         const altPath = `make-order-files/${storagePath}`;
         const { data: altData, error: altErr } = await supabase.storage.from("make-order-files").createSignedUrl(altPath, 3600);
         if (!altErr && altData?.signedUrl) {
-          return { path: p, name, url: altData.signedUrl };
+          return { path: p, name, url: altData.signedUrl, isPending: true };
         }
       }
     } catch (sErr) {
@@ -132528,7 +132603,7 @@ async function resolveAttachmentUrl(p) {
     }
   }
   if (p.startsWith("http://") || p.startsWith("https://")) {
-    return { path: p, name, url: p };
+    return { path: p, name, url: p, isPending: false };
   }
   const isPending = p.includes("upl_") || p.includes("make-order-files/");
   return { path: p, name, url: "", isPending: isPending || void 0 };
@@ -132918,6 +132993,9 @@ function registerMakeHandlers() {
       console.error("[make-download-pdf] Download error:", e2);
       return { success: false, error: e2?.message || "Download error" };
     }
+  });
+  import_electron18.ipcMain.handle("make-resolve-attachment-url", async (_e, rawUrl) => {
+    return await resolveAttachmentUrl(rawUrl);
   });
   import_electron18.ipcMain.handle("make-get-order-parts", async (_e, orderId) => {
     const { data: data2, error: error51 } = await supabase.from("make_order_parts").select("*").eq("order_id", orderId).order("sort_order", { ascending: true });

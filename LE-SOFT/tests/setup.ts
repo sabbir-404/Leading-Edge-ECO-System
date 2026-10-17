@@ -204,7 +204,13 @@ vi.mock('better-sqlite3', async (importOriginal) => {
             if (lower.includes("status = 'synced_nas'")) {
               r.status = 'synced_nas';
               r.remote_url_nas = args[0];
+              if (lower.includes('remote_url_supabase = null') || lower.includes('remote_url_supabase = ?')) {
+                r.remote_url_supabase = null;
+              }
               r.last_error = null;
+              if (args[1] !== undefined) {
+                r.updated_at = args[1];
+              }
             } else if (lower.includes("status = 'awaiting_association'")) {
               r.status = 'awaiting_association';
               r.remote_url_nas = args[0];

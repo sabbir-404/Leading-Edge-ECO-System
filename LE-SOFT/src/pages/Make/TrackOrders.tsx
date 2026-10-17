@@ -1874,16 +1874,29 @@ const TrackOrders: React.FC = () => {
                               </div>
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                                 {order.invoice_attachment_urls.map((attUrl, attIdx) => {
-                                  const attName = attUrl.split('/').pop()?.replace(/^\d+_/, '') || `Invoice Attachment #${attIdx + 1}`;
-                                  const isPdf = attUrl.toLowerCase().endsWith('.pdf');
+                                  const attName = attUrl.split('/').pop()?.replace(/^\d+_/, '')?.split('?')[0] || `Invoice Attachment #${attIdx + 1}`;
+                                  const isPdf = attUrl.toLowerCase().endsWith('.pdf') || attUrl.toLowerCase().includes('.pdf?');
+                                  const isPending = attUrl.startsWith('upl_') || !attUrl.startsWith('http') || attUrl.includes('make-order-files/');
                                   return (
                                     <div key={attUrl + attIdx} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '9px 12px', background: 'rgba(99,102,241,0.05)', border: '1px solid rgba(99,102,241,0.18)', borderRadius: '8px' }}>
                                       {isPdf ? <FileText size={15} color="#3b82f6" /> : <Paperclip size={15} color="var(--accent-color)" />}
                                       <span style={{ flex: 1, fontSize: '0.85rem', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{attName}</span>
+                                      {isPending && (
+                                        <span style={{ fontSize: '0.7rem', padding: '2px 6px', borderRadius: '4px', background: 'rgba(234, 179, 8, 0.15)', color: '#d97706', fontWeight: 600 }}>
+                                          PENDING SYNC
+                                        </span>
+                                      )}
                                       <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
                                         <button
-                                          onClick={() => {
-                                            setPdfViewer({ path: attUrl, name: attName, url: attUrl });
+                                          onClick={async () => {
+                                            let targetUrl = attUrl;
+                                            if (window.electron?.makeResolveAttachmentUrl && (!targetUrl.startsWith('http') || targetUrl.includes('supabase.co'))) {
+                                              try {
+                                                const resolved = await window.electron.makeResolveAttachmentUrl(targetUrl);
+                                                if (resolved?.url) targetUrl = resolved.url;
+                                              } catch {}
+                                            }
+                                            setPdfViewer({ path: targetUrl, name: attName, url: targetUrl });
                                           }}
                                           style={smallBtn('#3b82f6')}
                                           title="View Attachment"
@@ -1891,7 +1904,16 @@ const TrackOrders: React.FC = () => {
                                           <Eye size={13} /> View
                                         </button>
                                         <button
-                                          onClick={() => handleDownloadPdf({ path: attUrl, name: attName, url: attUrl })}
+                                          onClick={async () => {
+                                            let targetUrl = attUrl;
+                                            if (window.electron?.makeResolveAttachmentUrl && (!targetUrl.startsWith('http') || targetUrl.includes('supabase.co'))) {
+                                              try {
+                                                const resolved = await window.electron.makeResolveAttachmentUrl(targetUrl);
+                                                if (resolved?.url) targetUrl = resolved.url;
+                                              } catch {}
+                                            }
+                                            handleDownloadPdf({ path: targetUrl, name: attName, url: targetUrl, isPending: false });
+                                          }}
                                           style={smallBtn('#10b981')}
                                           title="Download Attachment"
                                         >

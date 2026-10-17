@@ -258,6 +258,7 @@ export interface ElectronAPI {
     makeGetPdfUrls: (orderId: number) => Promise<any[]>;
     makeDeletePdf: (data: any) => Promise<any>;
     makeDownloadPdf: (data: any) => Promise<any>;
+    makeResolveAttachmentUrl?: (url: string) => Promise<{ path: string; name: string; url: string; isPending?: boolean }>;
     makeUploadItemPdf?: (data: { orderId: number; itemId: number; filePath?: string }) => Promise<any>;
     makeDeleteItemPdf?: (data: { itemId: number; storagePath: string }) => Promise<any>;
     makePickAndUploadDrawing?: (data: { orderId: number; itemId?: number }) => Promise<any>;
@@ -402,6 +403,7 @@ export interface ElectronAPI {
     makeGetPdfUrls: (orderId: number | string) => Promise<any[]>;
     makeDeletePdf: (data: any) => Promise<any>;
     makeDownloadPdf: (data: any) => Promise<any>;
+    makeResolveAttachmentUrl?: (url: string) => Promise<{ path: string; name: string; url: string; isPending?: boolean }>;
     makeUploadItemPdf?: (data: { orderId: number | string; itemId: number | string; filePath?: string }) => Promise<any>;
     makeDeleteItemPdf?: (data: { itemId: number | string; storagePath: string }) => Promise<any>;
     makePickAndUploadDrawing?: (data: { orderId: number | string; itemId?: number | string }) => Promise<any>;

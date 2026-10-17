@@ -357,7 +357,7 @@ export class MakeCadService {
                     storagePath: durableKey,
                     publicUrl: result.activeUrl,
                     durableKey: result.durableKey || durableKey,
-                    isPendingUpload: false,
+                    isPendingUpload: true,
                     uploadId: staged.id
                 };
             }
@@ -486,7 +486,7 @@ export class MakeCadService {
             storagePath: storagePath,
             durableKey: storagePath,
             publicUrl: signedUrl,
-            isPendingUpload: false
+            isPendingUpload: true
         };
     }
 }

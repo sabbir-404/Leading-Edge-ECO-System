@@ -240,6 +240,7 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   makeGetPdfUrls: (orderId) => import_electron.ipcRenderer.invoke("make-get-pdf-urls", orderId),
   makeDeletePdf: (data) => import_electron.ipcRenderer.invoke("make-delete-pdf", data),
   makeDownloadPdf: (data) => import_electron.ipcRenderer.invoke("make-download-pdf", data),
+  makeResolveAttachmentUrl: (url) => import_electron.ipcRenderer.invoke("make-resolve-attachment-url", url),
   makeUploadItemPdf: (data) => import_electron.ipcRenderer.invoke("make-upload-item-pdf", data),
   makeDeleteItemPdf: (data) => import_electron.ipcRenderer.invoke("make-delete-item-pdf", data),
   makePickAndUploadDrawing: (data) => import_electron.ipcRenderer.invoke("make-pick-and-upload-drawing", data),

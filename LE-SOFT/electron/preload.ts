@@ -274,6 +274,7 @@ contextBridge.exposeInMainWorld('electron', {
     makeGetPdfUrls: (orderId: number | string) => ipcRenderer.invoke('make-get-pdf-urls', orderId),
     makeDeletePdf: (data: any) => ipcRenderer.invoke('make-delete-pdf', data),
     makeDownloadPdf: (data: any) => ipcRenderer.invoke('make-download-pdf', data),
+    makeResolveAttachmentUrl: (url: string) => ipcRenderer.invoke('make-resolve-attachment-url', url),
     makeUploadItemPdf: (data: any) => ipcRenderer.invoke('make-upload-item-pdf', data),
     makeDeleteItemPdf: (data: any) => ipcRenderer.invoke('make-delete-item-pdf', data),
     makePickAndUploadDrawing: (data: { orderId: number | string; itemId?: number | string }) => ipcRenderer.invoke('make-pick-and-upload-drawing', data),

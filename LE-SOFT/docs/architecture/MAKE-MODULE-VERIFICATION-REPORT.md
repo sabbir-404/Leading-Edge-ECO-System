@@ -12,7 +12,7 @@
 
 This report documents the architectural audit, upload-safety review, and comprehensive verification conducted on the **MAKE Module** of LE-SOFT v1.8.12. In accordance with project instructions, all work was restricted to the MAKE module, CAD and attachment upload dispatch safety, truthful URL resolution for private buckets, named order drafts, global specification image persistence (Migration 066 compatibility), resilient upload staging, failover recovery corrections, durable object key cleanup, and quota-managed cloud storage fallback. Unrelated Sales, Billing, inventory, and MySQL synchronization components were kept untouched.
 
-All 30 MAKE test suites (comprising **504 automated tests**) pass cleanly. In addition, real native SQLite Write-Ahead Logging (WAL) was validated under Electron's Node runtime (ABI 143), real PostgreSQL Migration 070 quota RPC functions were validated against the local PostgreSQL container, and both TypeScript compilation targets (`tsc --noEmit` and `tsc -p tsconfig.electron.json --noEmit`), ESLint (`npm run lint`), Vite production build, and Electron esbuild bundling passed with zero errors or warnings.
+All 30 MAKE test suites (comprising **511 automated tests**) pass cleanly. In addition, real native SQLite Write-Ahead Logging (WAL) was validated under Electron's Node runtime (ABI 143), real PostgreSQL Migration 070 quota RPC functions were validated against the local PostgreSQL container, and both TypeScript compilation targets (`tsc --noEmit` and `tsc -p tsconfig.electron.json --noEmit`), ESLint (`npm run lint`), Vite production build, and Electron esbuild bundling passed with zero errors or warnings.
 
 ---
 
@@ -93,6 +93,20 @@ All 30 MAKE test suites (comprising **504 automated tests**) pass cleanly. In ad
   7. Covered the background worker race condition: unassociated uploads remain in `'awaiting_association'` until the order-creation process associates them, at which point reconciliation updates the entity and prunes the cloud copy.
   8. Made dispatch retry idempotent: already `synced_nas` records return early without redundant NAS transfers or quota calls, and `remote_url_supabase` is set to `NULL` upon verified cloud pruning.
 
+### Defect 8: Final Data-Integrity Gate: Durable Reference Persistence, Verified Atomic Updates, and Read-Time URL Resolution
+- **Location**: `electron/services/make/MakeCadService.ts`, `electron/services/make/MakeOrderService.ts`, `electron/services/media/DurableUploadService.ts`, `electron/ipc/handlers/make.ts`, `src/utils/placeOrderDraft.ts`, `src/pages/Make/PlaceOrder.tsx`, `src/pages/Make/TrackOrders.tsx`
+- **Root Cause**:
+  1. Place Order and draft persistence previously accepted temporary Supabase signed URLs (containing ephemeral `?token=...` query parameters), which expired after 3600 seconds and broke subsequent attachment viewing.
+  2. `DurableUploadService.updateEntityRecord()` did not assert the row-count of database updates (`rowsAffected === 0`), risking unconfirmed updates permitting premature cloud cleanup if a referenced order or item record did not exist.
+  3. Invoice attachment readers in `TrackOrders.tsx` lacked on-demand signed URL generation via IPC and did not clearly distinguish pending TrueNAS sync from confirmed persistent files.
+- **Resolution**:
+  1. **Durable References Enforced**: Added `normalizeAttachmentReference()` to `MakeOrderService.ts` and updated `getPersistentAttachmentReference()` in `placeOrderDraft.ts` to strip Supabase hostnames, signed URL endpoints (`/storage/v1/object/sign/`), and tokens (`?token=...`), persisting only durable object keys (`make-order-files/...`) or confirmed TrueNAS URLs (`https://storage.lenas.me/...`).
+  2. **Draft & UI Protection**: Updated `PlaceOrder.tsx` to strictly prefer `res.durableKey` over ephemeral signed URLs, ensuring order records and local drafts remain permanently valid even after temporary tokens expire.
+  3. **Atomic Owner Update Verification**: In `DurableUploadService.updateEntityRecord()`, added a pre-update `select('id')` check and chained `.select('id')` to `.update()`, asserting `rowsAffected > 0`. Updates affecting 0 rows strictly return `false`, preventing destructive cloud removal or quota prune.
+  4. **Strict Reconciliation Sequence**: Verified the exact execution sequence: `db_update_order_reference` -> `cloud_storage_remove` -> `quota_prune_release`. Cloud cleanup and quota release are strictly blocked if order reference updates fail.
+  5. **Read-Time Signed URL Resolution**: Registered `make-resolve-attachment-url` IPC handler (exposed via `preload.ts` and typed in `electron.d.ts`). Expired signed URLs passed to `resolveAttachmentUrl()` are automatically parsed back to clean storage keys and issued fresh, authorized 3600-second tokens on demand without storing tokens in the database.
+  6. **Track Orders Transparency**: Added a `PENDING SYNC` badge in `TrackOrders.tsx` for attachments awaiting TrueNAS confirmation. On-click view and download operations dynamically re-resolve fresh signed URLs via IPC.
+
 ---
 
 ## 3. End-to-End MAKE Architectural Audit
@@ -116,11 +130,11 @@ All 30 MAKE test suites (comprising **504 automated tests**) pass cleanly. In ad
 ### 4.1 MAKE Automated Test Suite (Vitest)
 Ran `npx vitest run tests/make`:
 - **Test Files**: 30 passed (30 total)
-- **Individual Tests**: 504 passed (504 total, 0 failed, 0 skipped)
+- **Individual Tests**: 511 passed (511 total, 0 failed, 0 skipped)
 - **Exit Code**: `0`
-- **Duration**: ~15.8 seconds
+- **Duration**: ~15.9 seconds
 - **Covered Test Files**:
-  1. `tests/make/make-module-stability.integration.test.ts` (38/38 passed) **[EXPANDED with Complete Pre-Order Invoice Lifecycle & Cloud-Cleanup Protection Regressions]**
+  1. `tests/make/make-module-stability.integration.test.ts` (45/45 passed) **[EXPANDED with Complete Pre-Order Invoice Lifecycle & Data-Integrity Verification Gate Regressions]**
   2. `tests/make/attributes.test.ts` (19/19 passed)
   3. `tests/make/catalog-image-regression.test.ts` (11/11 passed)
   4. `tests/make/color-swatch-selector.test.ts` (8/8 passed)
@@ -212,5 +226,6 @@ While all programmatic layers (IPC, schema, services, local storage, quota manag
   3. Pre-order staged attachments safely linked to orders/items upon creation via `associateUploadWithEntity()`.
   4. Array fields (`pdf_urls`, `invoice_attachment_urls`) deduplicated during recovery reconciliation.
   5. Offline pending state represented truthfully (`isPendingUpload: true`, `publicUrl: undefined`, `durableKey: ...`) with `PENDING` badge in TrackOrders UI.
+  6. Data-Integrity Gate verified: durable keys persisted in drafts and order records without token expiration vulnerability; signed URLs generated on-demand at read-time via `makeResolveAttachmentUrl`; entity updates asserted with `rowsAffected > 0` before cloud cleanup; full lifecycle from offline buffer -> order creation -> association -> TrueNAS recovery -> reference update -> cloud cleanup -> quota release verified.
 - **Quality Gates**: All 6 gates passed (TSC frontend 0 errors, TSC electron 0 errors, ESLint 0 warnings, Vite build exit 0, Electron build exit 0, License verification exit 0).
 
