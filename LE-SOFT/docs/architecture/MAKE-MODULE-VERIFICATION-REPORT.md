@@ -474,9 +474,12 @@ sequenceDiagram
 ```
 
 #### Checkpointing, Idempotency, and Retention Policy
-1. **Durable Checkpoints**: Checkpoints are stored in TrueNAS PostgreSQL table `nas_replication_checkpoints`. Upon worker restart, it queries this table and resumes from the exact committed watermark without duplicate processing.
-2. **Authoritative Business Data Retention**: Committed Supabase database records are permanently retained and **never deleted**.
-3. **Storage Retention Policy**: Cloud storage objects in Supabase Storage are retained by default. Only if `PRUNE_CLOUD_AFTER_NAS_CONFIRMATION=true` is explicitly enabled in the NAS server environment, and only after successful disk persistence verification, does the daemon prune the cloud copy and release the quota reservation.
+1. **Durable Compound Watermark Checkpoints**: Checkpoints are stored in TrueNAS PostgreSQL table `nas_replication_checkpoints`. Mutable tables (`make_orders`) use a deterministic compound watermark `(last_replicated_at, last_replicated_id)` with SQL `WHERE updated_at > $1 OR (updated_at = $1 AND id > $2) ORDER BY updated_at ASC, id ASC`. This completely eliminates the bug where checkpointing on `id > last_replicated_id` missed updates to already-replicated orders.
+2. **Mutable Row Updates & Attachment Modifications**: When an existing order changes production stage (e.g., Draft -> Cutting), updates pricing, or attaches new technical drawings (`invoice_attachment_urls`, `current_stage_photo`), the updated timestamp triggers replication. The TrueNAS PostgreSQL replica executes an idempotent upsert updating all mutable fields.
+3. **Deletion & Tombstone Propagation**: Deletions are detected and propagated through two mechanisms: (a) explicit tombstones via `replication_tombstones` / `make_order_tombstones` feed, and (b) soft-deletion status (`is_deleted = true`, `deleted_at`, or `status = 'deleted'`). Both trigger clean deletion on TrueNAS PostgreSQL (`DELETE FROM make_orders WHERE id = $1`).
+4. **Authoritative File Manifest & Scoped Pull Flow**: Files are discovered directly from authoritative, committed Supabase entity metadata (`make_orders.invoice_attachment_urls`, `make_orders.current_stage_photo`, `make_order_updates.photo_urls`) as well as committed quota reservations (`supabase_buffer_reservations`). Files are pulled using server-side scoped credentials, validated via SHA-256, persisted to TrueNAS disk with `fs.statSync` size verification, and recorded in TrueNAS table `nas_replicated_files`.
+5. **No Competing Electron Client Push**: The Electron client writes exclusively to Supabase Cloud, marks tasks as `buffered_supabase`, and delegates downstream replication to the authoritative NAS pull daemon. The client does not run a competing push path to the NAS for these replication tasks.
+6. **Authoritative Business Data & Cloud Storage Retention**: Committed Supabase database records are permanently retained and **never deleted**. Cloud storage objects in Supabase Storage are retained by default; pruning only occurs if `PRUNE_CLOUD_AFTER_NAS_CONFIRMATION=true` is explicitly enabled and disk persistence is verified.
 
 ---
 
@@ -484,19 +487,19 @@ sequenceDiagram
 
 | Test Suite / Quality Gate | Scope | Total Tests | Passed | Failed | Skipped | Exit Code | Duration |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **All MAKE Test Suites (`tests/make`)** | Unit / Mock / Failover | **560** | **560** | **0** | **0** | **`0`** | **15.81s** |
-| `smart-failover-uploads-buffer.test.ts` | 46 Scenarios (Buffer/Failover) | 46 | 46 | 0 | 0 | `0` | 0.75s |
+| **All MAKE Test Suites (`tests/make`)** | Unit / Mock / Failover | **560** | **560** | **0** | **0** | **`0`** | **15.97s** |
+| `smart-failover-uploads-buffer.test.ts` | 46 Scenarios (Buffer/Failover) | 46 | 46 | 0 | 0 | `0` | 0.63s |
 | `make-module-stability.integration.test.ts` | Stability & Stages | 73 | 73 | 0 | 0 | `0` | 0.65s |
-| **NAS Pull Replication Worker Suite** | NAS Pull Daemon Tests | **9** | **9** | **0** | **0** | **`0`** | **0.33s** |
-| **Real PostgreSQL 17 Integration** | Real PG 17 (port 54322) | **13** | **13** | **0** | **0** | **`0`** | **0.46s** |
+| **NAS Pull Replication Worker Suite** | NAS Pull Daemon & Regression Tests | **15** | **15** | **0** | **0** | **`0`** | **0.06s** |
+| **Real PostgreSQL 17 Integration** | Real PG 17 (port 54322) | **13** | **13** | **0** | **0** | **`0`** | **0.22s** |
 | **Server Reconciliation Daemon** | Server Reconciliation Tests | **6** | **6** | **0** | **0** | **`0`** | **0.01s** |
 | **Real SQLite Outbox Integration** | Electron Node ABI 143 | **5** | **5** | **0** | **0** | **`0`** | **1.21s** |
 | **Real SQLite Upload Integration** | Electron Node ABI 143 | **4** | **4** | **0** | **0** | **`0`** | **1.18s** |
-| **Frontend Typecheck (`tsc --noEmit`)** | TypeScript Renderer Check | — | — | 0 | — | **`0`** | 10.8s |
-| **Electron Typecheck (`tsc (electron)`)** | TypeScript Main Check | — | — | 0 | — | **`0`** | 5.2s |
-| **Linter (`npm run lint`)** | ESLint Strict Gate | — | — | 0 (0 warnings) | — | **`0`** | 7.1s |
-| **Vite Production Build (`npm run build`)** | Vite Asset Bundle | — | — | 0 | — | **`0`** | 9.49s |
-| **Electron Bundle (`node build-electron.cjs`)**| Electron Main (`core/main.cjs`)| — | — | 0 (5.9 MB) | — | **`0`** | 1.30s |
+| **Frontend Typecheck (`tsc --noEmit`)** | TypeScript Renderer Check | — | — | 0 | — | **`0`** | 10.0s |
+| **Electron Typecheck (`tsc (electron)`)** | TypeScript Main Check | — | — | 0 | — | **`0`** | 5.0s |
+| **Linter (`npm run lint`)** | ESLint Strict Gate | — | — | 0 (0 warnings) | — | **`0`** | 5.0s |
+| **Vite Production Build (`npm run build`)** | Vite Asset Bundle | — | — | 0 | — | **`0`** | 10.76s |
+| **Electron Bundle (`node build-electron.cjs`)**| Electron Main (`core/main.cjs`)| — | — | 0 (5.9 MB) | — | **`0`** | 1.23s |
 | **License Check (`npm run license:check`)** | Ed25519 License Verification | — | — | 0 (Verified) | — | **`0`** | 0.8s |
 | **Git Whitespace Hygiene (`git diff --check`)**| Git Diff Hygiene | — | — | 0 | — | **`0`** | 0.1s |
 
@@ -515,6 +518,7 @@ Supabase-first behavior was verified under comprehensive simulated and integrati
 6. **Scenario 43**: Proves dependency ordering during recovery: parent order commits before child update, and replay is idempotent.
 7. **Scenario 44 & 45**: Proves strict 600 MB storage / 1 GB database quota enforcement, failing closed to local staging upon exhaustion or RPC mismatch.
 8. **Scenario 46**: Proves parent order validation: non-existent orders fail closed, and pending parent orders defer child updates with strict dependency chaining.
+9. **NAS Worker Tests 10–15**: Proves that modifying an already-replicated order propagates cleanly via compound watermark `(updated_at, id)`, attachment reference updates pull binary bytes to TrueNAS, soft and explicit tombstone deletions are propagated, mid-batch crashes resume cleanly from persistent checkpoints, and replaying identical changes produces zero duplicate records.
 
 ---
 
@@ -533,25 +537,13 @@ Supabase-first behavior was verified under comprehensive simulated and integrati
 
 - **Base Version**: `LE-SOFT v1.8.12` (strictly preserved in `package.json`).
 - **Target Branch**: `feat/failover-uploads-buffer`.
-- **Latest Commit SHA**: `561074acdd56d098692078fadb56bf31d11fb776`.
+- **Latest Commit SHA**: `54f9e8688888bd379fe73e155551d506472478b5` (prior to this audit commit).
 - **Pull Request**: PR #41 (Status: **OPEN and UNMERGED**).
 - **Production Isolation**: Zero writes to production endpoints (`ildkkgjrolcjijwfokek`, `100.88.85.6`).
-- **Modified & Added Files**:
-  1. `docker-compose-truenas.yml` — Added `nas-pull-worker` service definition for containerized pull replication on TrueNAS.
-  2. `scripts/nas-pull-replication-worker.cjs` — Authoritative NAS-side pull replication daemon pulling business records and file buffers from Supabase Cloud to TrueNAS.
-  3. `tests/integration/nas-pull-replication-worker.test.ts` — Comprehensive 9-test integration suite covering pull replication, dependency ordering, SHA-256 verification, and cloud data retention.
-  4. `supabase/migrations/070_supabase_buffer_quota_reservations.sql` — Added least-privilege grants (`REVOKE FROM PUBLIC, anon; GRANT TO authenticated, service_role`), caller role enforcement, and `get_buffer_quota_status` telemetry function.
-  5. `tests/integration/supabase-quota-rpc.pg-integration.test.ts` — Added tests 11 and 12 for anonymous caller rejection and quota telemetry against local PostgreSQL 17 container.
-  6. `electron/services/DatabaseFailoverEngine.ts` — Inverted primary write authority to Supabase; designated TrueNAS as downstream replica; blocked cloud record deletion.
-  7. `electron/services/make/MakeProductionService.ts` — Added `findPendingOrderOperation` outbox check; deferred child updates with `dependencyOpId` to prevent FK 23503 error; added `addProductionUpdate` method.
-  8. `electron/services/media/DurableUploadService.ts` — Refactored to Supabase-first upload with quota reservation; persists `last_error` on NAS replication failure; leaves cloud copy intact in `buffered_supabase`.
-  9. `electron/services/outbox/DurableOutboxService.ts` — Sets `status = 'buffered_supabase'` upon Supabase write with pending NAS replication; added duplicate NAS write suppression.
-  10. `electron/supabase.ts` — Ensures proxy points to authoritative active client; eliminates circular dependencies.
-  11. `tests/make/catalog-image-regression.test.ts` & `nas-performance-benchmark.test.ts` — Tuned test timeout parameters to accommodate Tailscale WAN latency without runner starvation.
-  12. `tests/make/make-module-stability.integration.test.ts` — Stability, stage transitions, and failover resilience tests.
-  13. `tests/make/smart-failover-uploads-buffer.test.ts` — Scenarios 1–46 covering Supabase-first writes, NAS replication recovery, quota exhaustion, and FK 23503 prevention.
-  14. `tests/setup.ts` — Mock SQLite engine fixes: correct `retry_count = ?` ordering, outbox `dependency_op_id` resolution, and timestamp parsing.
-  15. `docs/architecture/MAKE-MODULE-VERIFICATION-REPORT.md` — Updated verification report with complete architectural audit, NAS pull worker documentation, and verification evidence.
+- **Modified Files**:
+  1. `scripts/nas-pull-replication-worker.cjs` — Authoritative NAS-side pull replication daemon with compound watermark checkpointing `(updated_at, id)`, mutable row updates replication, deletion and tombstone propagation, self-healing replica schema, and authoritative file manifest discovery.
+  2. `tests/integration/nas-pull-replication-worker.test.ts` — Comprehensive 15-test integration suite covering pull replication, compound watermark updates, attachment reference modifications, tombstone and soft deletion propagation, mid-batch restart recovery, and exact-once replay idempotency.
+  3. `docs/architecture/MAKE-MODULE-VERIFICATION-REPORT.md` — Updated verification report with complete replication-correctness audit findings, regression test results, and deployment verdict.
 
 #### Required Final Verdict
 
