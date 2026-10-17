@@ -522,14 +522,24 @@ Supabase-first behavior was verified under comprehensive simulated and integrati
 
 ---
 
-### 7.8 Remaining Risks & Untested Paths
+### 7.8 Operational Preflight Findings & Remote TrueNAS Status
 
-1. **Physical TrueNAS Host Deployment**:
-   - The daemon `scripts/nas-pull-replication-worker.cjs` and `docker-compose-truenas.yml` have been verified locally using unit tests and mock/disposable databases. Physical deployment and container startup on the remote TrueNAS appliance at `100.88.85.6` require production deployment access.
-2. **Full OS Process Relaunch**:
-   - Automated tests validated SQLite WAL persistence, state rehydration, and startup reconciliation under Electron's Node runtime (ABI 143) using real `better-sqlite3`. Spawning a completely new OS process from the desktop shell after a hard kill remains a manual exploratory QA test.
-3. **Extreme TrueNAS WAN Latency Fluctuations**:
-   - Extreme network latency spikes (> 30s) on TrueNAS Cloudflare Tunnel endpoints can trigger replication retries. The outbox backoff policy caps retry delays at 60s to prevent worker exhaustion.
+During the operational deployment preflight over Tailscale (`100.88.85.6` / `le-nas-server`):
+1. **Tailscale Connectivity**:
+   - Node `le-nas-server` (`100.88.85.6`) was verified online via Tailscale DERP (latency ~568–619ms) with zero public port exposure.
+2. **Administrative Access**:
+   - Secure SSH access on port 22 verified with temporary account `truenas_admin` (member of `builtin_administrators`, sudo privilege `(ALL) ALL`, Docker version 28.3.1).
+3. **TrueNAS Database & Storage Architecture**:
+   - Database: Container `lesoft-postgres` (PostgreSQL 16.15 on Alpine), database `lesoft`, table owner `admin`. All 70 core business tables verified intact (e.g. `make_orders` contains 37 rows).
+   - Checkpoint Tables: `nas_replication_checkpoints` and `nas_replicated_files` DDL applied and schema self-healing columns verified.
+   - Storage Destination: Real uploads dataset is at `/mnt/data_pool/lesoft/lesoft-storage/uploads` (1.4 TB free space), served by `lesoft-storage` on port 8081.
+4. **Container Networking Resolution**:
+   - A critical networking defect in `docker-compose-truenas.yml` was identified: default bridge networking cannot resolve `127.0.0.1:5432` to the host's PostgreSQL.
+   - Resolved by configuring `extra_hosts: ["host.docker.internal:host-gateway"]` and `TRUENAS_PG_HOST: host.docker.internal` with user `admin`. Verified via direct container TCP test executing `SELECT count(*) FROM make_orders` (37 rows).
+5. **Production Deployment Blockers**:
+   - **Blocker 1 (NAS-Side Replication Secret)**: Neither `SUPABASE_URL` nor `SUPABASE_REPLICATION_KEY` (service-role replication secret) exists on the NAS in any configuration or environment file. The daemon fails closed on startup if these variables are absent (`exit code 1`).
+   - **Blocker 2 (Hosted Migration 070)**: Migration `070_supabase_buffer_quota_reservations.sql` has deliberately not been applied to hosted production Supabase (`ildkkgjrolcjijwfokek`) per policy. Without this migration and the service key, the worker cannot pull quota reservations or verify server-side buffer states.
+   - **Blocker 3 (Live End-to-End Test Path)**: Live replication of a disposable test record from Supabase Cloud to TrueNAS is blocked until Migration 070 is applied on Supabase and `SUPABASE_REPLICATION_KEY` is securely injected into the NAS worker environment.
 
 ---
 
@@ -537,19 +547,19 @@ Supabase-first behavior was verified under comprehensive simulated and integrati
 
 - **Base Version**: `LE-SOFT v1.8.12` (strictly preserved in `package.json`).
 - **Target Branch**: `feat/failover-uploads-buffer`.
-- **Latest Commit SHA**: `54f9e8688888bd379fe73e155551d506472478b5` (prior to this audit commit).
+- **Latest Upstream Commit**: `e2a0cb56bf41199294076d1d35689c0cf1affaba`.
 - **Pull Request**: PR #41 (Status: **OPEN and UNMERGED**).
-- **Production Isolation**: Zero writes to production endpoints (`ildkkgjrolcjijwfokek`, `100.88.85.6`).
+- **Production Isolation**: Zero modifications to hosted production database (`ildkkgjrolcjijwfokek`). TrueNAS services running without disruption.
 - **Modified Files**:
-  1. `scripts/nas-pull-replication-worker.cjs` — Authoritative NAS-side pull replication daemon with compound watermark checkpointing `(updated_at, id)`, mutable row updates replication, deletion and tombstone propagation, self-healing replica schema, and authoritative file manifest discovery.
-  2. `tests/integration/nas-pull-replication-worker.test.ts` — Comprehensive 15-test integration suite covering pull replication, compound watermark updates, attachment reference modifications, tombstone and soft deletion propagation, mid-batch restart recovery, and exact-once replay idempotency.
-  3. `docs/architecture/MAKE-MODULE-VERIFICATION-REPORT.md` — Updated verification report with complete replication-correctness audit findings, regression test results, and deployment verdict.
+  1. `docker-compose-truenas.yml` — Corrected container networking with `extra_hosts: ["host.docker.internal:host-gateway"]`, defaulted `TRUENAS_PG_HOST` to `host.docker.internal`, `TRUENAS_PG_USER` to `admin`, and mounted real TrueNAS storage dataset `/mnt/data_pool/lesoft/lesoft-storage/uploads`.
+  2. `docs/architecture/MAKE-MODULE-VERIFICATION-REPORT.md` — Updated verification report with operational preflight audit findings, container networking resolution, and clear blocker analysis.
 
 #### Required Final Verdict
 
 **Locally verified, deployment blocked**
 
 *Rationale*:
-All code, database migrations, service definitions, unit tests, and integration test suites pass locally with 100% success across all quality gates. However, two external infrastructure deployment actions remain blocked and require authorized deployment access to live production systems:
-1. **Remote TrueNAS Deployment**: The `nas-pull-worker` container service in `docker-compose-truenas.yml` and `scripts/nas-pull-replication-worker.cjs` must be deployed and started on the physical TrueNAS appliance at `100.88.85.6`.
-2. **Hosted Supabase Migration**: Migration `070_supabase_buffer_quota_reservations.sql` must be applied to the hosted production Supabase database (`ildkkgjrolcjijwfokek`), followed by a PostgREST schema-cache reload (`NOTIFY pgrst, 'reload schema'`). Until applied to the target hosted environment, the original PostgREST 404 runtime error cannot be resolved there.
+All local tests, integration suites, build pipelines, and remote TrueNAS preflight audits pass. However, operational deployment of the live replication pipeline cannot proceed to completion due to two external prerequisites:
+1. **Hosted Supabase Migration 070**: Migration `070_supabase_buffer_quota_reservations.sql` must be approved and applied to hosted production Supabase project `ildkkgjrolcjijwfokek`, followed by a PostgREST schema cache reload (`NOTIFY pgrst, 'reload schema'`).
+2. **TrueNAS Worker Secret Provisioning**: `SUPABASE_REPLICATION_KEY` must be provisioned onto the NAS through an approved secret injection mechanism (e.g. NAS `.env` file or Docker secret).
+

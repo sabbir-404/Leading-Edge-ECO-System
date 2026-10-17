@@ -64,13 +64,15 @@ services:
     working_dir: /app
     volumes:
       - ./scripts/nas-pull-replication-worker.cjs:/app/nas-pull-replication-worker.cjs:ro
-      - /mnt/storage/uploads:/data/uploads
+      - ${TRUENAS_STORAGE_MOUNT:-/mnt/data_pool/lesoft/lesoft-storage/uploads}:/data/uploads
     command: sh -c "npm install -g pg @supabase/supabase-js && NODE_PATH=$$(npm root -g) node /app/nas-pull-replication-worker.cjs --daemon"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
-      TRUENAS_PG_HOST: ${TRUENAS_PG_HOST:-127.0.0.1}
+      TRUENAS_PG_HOST: ${TRUENAS_PG_HOST:-host.docker.internal}
       TRUENAS_PG_PORT: ${TRUENAS_PG_PORT:-5432}
       TRUENAS_PG_DATABASE: ${TRUENAS_PG_DATABASE:-lesoft}
-      TRUENAS_PG_USER: ${TRUENAS_PG_USER:-postgres}
+      TRUENAS_PG_USER: ${TRUENAS_PG_USER:-admin}
       TRUENAS_PG_PASSWORD: ${TRUENAS_PG_PASSWORD}
       TRUENAS_STORAGE_PATH: /data/uploads
       SUPABASE_URL: ${SUPABASE_URL}
