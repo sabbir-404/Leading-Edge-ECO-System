@@ -896,7 +896,30 @@ export function registerMakeHandlers(): void {
                         WHERE remote_url_nas = ?
                     `).get(rawRef) as any;
                     if (row && (row.entity_type === 'make_orders' || row.entity_type === 'make_order_items') && row.entity_id) {
-                        return { authorized: true, canonicalKey: rawRef, isNas: true };
+                        if (row.entity_type === 'make_orders') {
+                            const { data: order } = await supabase.from('make_orders')
+                                .select('id, pdf_urls, invoice_attachment_urls')
+                                .eq('id', row.entity_id)
+                                .maybeSingle();
+                            if (order) {
+                                const pdfs = Array.isArray(order.pdf_urls) ? order.pdf_urls : [];
+                                const invs = Array.isArray(order.invoice_attachment_urls) ? order.invoice_attachment_urls : [];
+                                if (pdfs.includes(rawRef) || invs.includes(rawRef)) {
+                                    return { authorized: true, canonicalKey: rawRef, isNas: true };
+                                }
+                            }
+                        } else if (row.entity_type === 'make_order_items') {
+                            const { data: item } = await supabase.from('make_order_items')
+                                .select('id, technical_drawing_url, pdf_urls')
+                                .eq('id', row.entity_id)
+                                .maybeSingle();
+                            if (item) {
+                                const pdfs = Array.isArray(item.pdf_urls) ? item.pdf_urls : [];
+                                if (item.technical_drawing_url === rawRef || pdfs.includes(rawRef)) {
+                                    return { authorized: true, canonicalKey: rawRef, isNas: true };
+                                }
+                            }
+                        }
                     }
                 } catch {}
             }
@@ -924,7 +947,7 @@ export function registerMakeHandlers(): void {
                 }
             } catch {}
 
-            return { authorized: false, error: 'Unrecorded or unowned NAS attachment' };
+            return { authorized: false, error: 'Forbidden: Attachment is unassociated or access is unauthorized.' };
         }
 
         // 2. Staged Local Files (Narrow explicit policy: local file on disk staged in SQLite)
@@ -941,20 +964,20 @@ export function registerMakeHandlers(): void {
                     }
                 } catch {}
             }
-            return { authorized: false, error: 'Unrecognized or missing local staged file' };
+            return { authorized: false, error: 'Forbidden: Attachment is unassociated or access is unauthorized.' };
         }
 
         // 3. Supabase Storage Object Key in private bucket 'make-order-files'
         const canonical = extractCanonicalSupabaseKey(rawRef);
         if (!canonical) {
-            return { authorized: false, error: 'Reference does not map to a recognized make-order-files object key' };
+            return { authorized: false, error: 'Forbidden: Attachment is unassociated or access is unauthorized.' };
         }
 
         const { fullKey, objectPath } = canonical;
 
         // (a) Verify in local SQLite registry by exact recorded remote_url_supabase.
-        // DO NOT authorize merely because an upload ID is present in the path.
-        // Require valid owner metadata for normal access; unassociated buffered uploads cannot be signed.
+        // A matching local record and nonempty owner metadata must NOT, by themselves, authorize a signed URL.
+        // For an ordinary owned attachment, verify that the claimed owner row exists and actually contains the key.
         if (db) {
             try {
                 const row = db.prepare(`
@@ -964,16 +987,56 @@ export function registerMakeHandlers(): void {
 
                 if (row) {
                     const hasValidOwner = (row.entity_type === 'make_orders' || row.entity_type === 'make_order_items') && !!row.entity_id;
-                    if (hasValidOwner) {
-                        return { authorized: true, canonicalKey: objectPath };
+                    if (!hasValidOwner) {
+                        // Unassociated buffered upload: cannot be signed
+                        return { authorized: false, error: 'Forbidden: Attachment is unassociated or access is unauthorized.' };
                     }
-                    // Unassociated buffered upload: cannot be signed
-                    return { authorized: false, error: 'Upload is unassociated with an owning order or item' };
+
+                    if (row.entity_type === 'make_orders') {
+                        const { data: order } = await supabase.from('make_orders')
+                            .select('id, pdf_urls, invoice_attachment_urls')
+                            .eq('id', row.entity_id)
+                            .maybeSingle();
+
+                        if (order) {
+                            const pdfs = Array.isArray(order.pdf_urls) ? order.pdf_urls : [];
+                            const invs = Array.isArray(order.invoice_attachment_urls) ? order.invoice_attachment_urls : [];
+                            const allRefs = [...pdfs, ...invs].filter(Boolean);
+                            const matches = allRefs.some((r: string) => {
+                                const can = extractCanonicalSupabaseKey(r);
+                                return r === rawRef || r === fullKey || r === objectPath || (can && can.objectPath === objectPath);
+                            });
+                            if (matches) {
+                                return { authorized: true, canonicalKey: objectPath };
+                            }
+                        }
+                        // Claimed order does not exist or does not contain this attachment key
+                        return { authorized: false, error: 'Forbidden: Attachment is unassociated or access is unauthorized.' };
+                    } else if (row.entity_type === 'make_order_items') {
+                        const { data: item } = await supabase.from('make_order_items')
+                            .select('id, technical_drawing_url, pdf_urls')
+                            .eq('id', row.entity_id)
+                            .maybeSingle();
+
+                        if (item) {
+                            const pdfs = Array.isArray(item.pdf_urls) ? item.pdf_urls : [];
+                            const itemRefs = [item.technical_drawing_url, ...pdfs].filter(Boolean);
+                            const matches = itemRefs.some((r: string) => {
+                                const can = extractCanonicalSupabaseKey(r);
+                                return r === rawRef || r === fullKey || r === objectPath || (can && can.objectPath === objectPath);
+                            });
+                            if (matches) {
+                                return { authorized: true, canonicalKey: objectPath };
+                            }
+                        }
+                        // Claimed item does not exist or does not contain this attachment key
+                        return { authorized: false, error: 'Forbidden: Attachment is unassociated or access is unauthorized.' };
+                    }
                 }
             } catch {}
         }
 
-        // (b) Verify in remote database make_orders
+        // (b) Verify in remote database make_orders (for attachments not in local upload queue)
         try {
             const orderMatch = objectPath.match(/^(\d+)\//);
             if (orderMatch) {
@@ -1017,7 +1080,7 @@ export function registerMakeHandlers(): void {
             console.warn('[isAuthorizedAttachment] make_orders check error:', err.message);
         }
 
-        // (c) Verify in remote database make_order_items
+        // (c) Verify in remote database make_order_items (for attachments not in local upload queue)
         try {
             const { data: matchedItems } = await supabase.from('make_order_items')
                 .select('id, technical_drawing_url, pdf_urls');

@@ -1555,7 +1555,7 @@ describe('MAKE Module Stability & Verification Suite (LE-SOFT v1.8.12)', () => {
             expect(finalRow.remote_url_nas).toBe(nasUrl);
         });
 
-        it('8. genuine process restart reloads persisted pending associations and completes recovery before cloud cleanup', async () => {
+        it('8. mocked service reinitialization: reloads persisted pending associations and completes recovery before cloud cleanup', async () => {
             const uploadService = DurableUploadService.getInstance();
             (uploadService as any).supabaseClient = supabase;
             (uploadService as any).nasClient = supabase;
@@ -1907,6 +1907,172 @@ describe('MAKE Module Stability & Verification Suite (LE-SOFT v1.8.12)', () => {
             h.state.responder = () => ({ data: null, error: null });
 
             await expect(handler({} as any, lookalikeUrl))
+                .rejects.toThrow('Forbidden: Attachment is unassociated or access is unauthorized.');
+        });
+
+        it('18. IPC security gate: local SQLite owner metadata exists but remote owner row does not -> rejected', async () => {
+            SessionManager.setSession({
+                id: 1,
+                username: 'designer',
+                full_name: 'Lead Designer',
+                role: 'furniture_designer',
+                permissions: {}
+            });
+            const handler = h.state.handlers['make-resolve-attachment-url'];
+
+            // Register an upload in local SQLite claiming to belong to order 777
+            const uploadService = DurableUploadService.getInstance();
+            const orphanKey = 'make-order-files/777/orphan_drawing.pdf';
+            (uploadService as any).db.prepare(`
+                INSERT INTO durable_uploads (
+                    id, local_path, file_name, mime_type, size_bytes, sha256,
+                    subfolder, entity_type, entity_id, field_name, status,
+                    remote_url_supabase, retry_count, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'make_orders', '777', 'pdf_urls', 'buffered_supabase', ?, 0, ?, ?)
+            `).run(
+                'upl_orphan_777',
+                'C:/temp/orphan.pdf',
+                'orphan.pdf',
+                'application/pdf',
+                1024,
+                'SHA256_ORPHAN',
+                'make-order-files/777',
+                orphanKey,
+                Date.now(),
+                Date.now()
+            );
+
+            // Remote database: order 777 does not exist
+            h.state.responder = (table: string) => {
+                if (table === 'make_orders') return { data: null, error: null };
+                return { data: null, error: null };
+            };
+
+            // Local SQLite metadata alone must not authorize a signed URL when remote owner row is missing
+            await expect(handler({} as any, orphanKey))
+                .rejects.toThrow('Forbidden: Attachment is unassociated or access is unauthorized.');
+        });
+
+        it('19. IPC security gate: owner row exists but attachment field contains a different key -> rejected', async () => {
+            SessionManager.setSession({
+                id: 1,
+                username: 'designer',
+                full_name: 'Lead Designer',
+                role: 'furniture_designer',
+                permissions: {}
+            });
+            const handler = h.state.handlers['make-resolve-attachment-url'];
+
+            // Register an upload in SQLite claiming order 101, but with an unlisted key
+            const uploadService = DurableUploadService.getInstance();
+            const unlistedKey = 'make-order-files/101/unlisted_file.pdf';
+            (uploadService as any).db.prepare(`
+                INSERT INTO durable_uploads (
+                    id, local_path, file_name, mime_type, size_bytes, sha256,
+                    subfolder, entity_type, entity_id, field_name, status,
+                    remote_url_supabase, retry_count, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'make_orders', '101', 'pdf_urls', 'buffered_supabase', ?, 0, ?, ?)
+            `).run(
+                'upl_unlisted_101',
+                'C:/temp/unlisted.pdf',
+                'unlisted.pdf',
+                'application/pdf',
+                1024,
+                'SHA256_UNLISTED',
+                'make-order-files/101',
+                unlistedKey,
+                Date.now(),
+                Date.now()
+            );
+
+            // Remote database: order 101 exists, but its pdf_urls contains only a different key
+            h.state.responder = (table: string, op: string) => {
+                if (table === 'make_orders' && op === 'select') {
+                    return {
+                        data: {
+                            id: 101,
+                            pdf_urls: ['make-order-files/101/different_approved_file.pdf'],
+                            invoice_attachment_urls: []
+                        },
+                        error: null
+                    };
+                }
+                return { data: null, error: null };
+            };
+
+            // Mismatched attachment field in existing owner row must be rejected
+            await expect(handler({} as any, unlistedKey))
+                .rejects.toThrow('Forbidden: Attachment is unassociated or access is unauthorized.');
+        });
+
+        it('20. IPC security gate: legitimately linked order attachment remains accessible', async () => {
+            SessionManager.setSession({
+                id: 1,
+                username: 'designer',
+                full_name: 'Lead Designer',
+                role: 'furniture_designer',
+                permissions: {}
+            });
+            const handler = h.state.handlers['make-resolve-attachment-url'];
+
+            const legitKey = 'make-order-files/101/valid_attached_blueprint.pdf';
+
+            // Remote database: order 101 exists and explicitly contains legitKey
+            h.state.responder = (table: string, op: string) => {
+                if (table === 'make_orders' && op === 'select') {
+                    return {
+                        data: {
+                            id: 101,
+                            pdf_urls: [legitKey],
+                            invoice_attachment_urls: []
+                        },
+                        error: null
+                    };
+                }
+                return { data: null, error: null };
+            };
+
+            const result = await handler({} as any, legitKey);
+            expect(result.url).toContain('/sign/make-order-files/101/valid_attached_blueprint.pdf');
+            expect(result.url).toContain('token=mock_signed');
+        });
+
+        it('21. IPC security gate: pending upload with no confirmed owner cannot be signed', async () => {
+            SessionManager.setSession({
+                id: 1,
+                username: 'designer',
+                full_name: 'Lead Designer',
+                role: 'furniture_designer',
+                permissions: {}
+            });
+            const handler = h.state.handlers['make-resolve-attachment-url'];
+
+            // Register an upload staged in Supabase with no confirmed owner
+            const uploadService = DurableUploadService.getInstance();
+            const unconfirmedKey = 'make-order-files/temp/upl_unconfirmed_999_draft.pdf';
+            (uploadService as any).db.prepare(`
+                INSERT INTO durable_uploads (
+                    id, local_path, file_name, mime_type, size_bytes, sha256,
+                    subfolder, entity_type, entity_id, field_name, status,
+                    remote_url_supabase, retry_count, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, 'buffered_supabase', ?, 0, ?, ?)
+            `).run(
+                'upl_unconfirmed_999',
+                'C:/temp/draft.pdf',
+                'draft.pdf',
+                'application/pdf',
+                1024,
+                'SHA256_UNCONFIRMED',
+                'make-order-files/temp',
+                unconfirmedKey,
+                Date.now(),
+                Date.now()
+            );
+
+            h.state.responder = () => ({ data: null, error: null });
+
+            // Pending upload with no confirmed owner MUST NOT be signed
+            await expect(handler({} as any, unconfirmedKey))
                 .rejects.toThrow('Forbidden: Attachment is unassociated or access is unauthorized.');
         });
     });

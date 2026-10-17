@@ -132811,7 +132811,24 @@ function registerMakeHandlers() {
                         WHERE remote_url_nas = ?
                     `).get(rawRef);
           if (row && (row.entity_type === "make_orders" || row.entity_type === "make_order_items") && row.entity_id) {
-            return { authorized: true, canonicalKey: rawRef, isNas: true };
+            if (row.entity_type === "make_orders") {
+              const { data: order } = await supabase.from("make_orders").select("id, pdf_urls, invoice_attachment_urls").eq("id", row.entity_id).maybeSingle();
+              if (order) {
+                const pdfs = Array.isArray(order.pdf_urls) ? order.pdf_urls : [];
+                const invs = Array.isArray(order.invoice_attachment_urls) ? order.invoice_attachment_urls : [];
+                if (pdfs.includes(rawRef) || invs.includes(rawRef)) {
+                  return { authorized: true, canonicalKey: rawRef, isNas: true };
+                }
+              }
+            } else if (row.entity_type === "make_order_items") {
+              const { data: item } = await supabase.from("make_order_items").select("id, technical_drawing_url, pdf_urls").eq("id", row.entity_id).maybeSingle();
+              if (item) {
+                const pdfs = Array.isArray(item.pdf_urls) ? item.pdf_urls : [];
+                if (item.technical_drawing_url === rawRef || pdfs.includes(rawRef)) {
+                  return { authorized: true, canonicalKey: rawRef, isNas: true };
+                }
+              }
+            }
           }
         } catch {
         }
@@ -132839,7 +132856,7 @@ function registerMakeHandlers() {
         }
       } catch {
       }
-      return { authorized: false, error: "Unrecorded or unowned NAS attachment" };
+      return { authorized: false, error: "Forbidden: Attachment is unassociated or access is unauthorized." };
     }
     if (rawRef.startsWith("file://") || /^[a-zA-Z]:[\\/]/.test(rawRef)) {
       if (db2) {
@@ -132855,11 +132872,11 @@ function registerMakeHandlers() {
         } catch {
         }
       }
-      return { authorized: false, error: "Unrecognized or missing local staged file" };
+      return { authorized: false, error: "Forbidden: Attachment is unassociated or access is unauthorized." };
     }
     const canonical = extractCanonicalSupabaseKey(rawRef);
     if (!canonical) {
-      return { authorized: false, error: "Reference does not map to a recognized make-order-files object key" };
+      return { authorized: false, error: "Forbidden: Attachment is unassociated or access is unauthorized." };
     }
     const { fullKey, objectPath } = canonical;
     if (db2) {
@@ -132870,10 +132887,39 @@ function registerMakeHandlers() {
                 `).get(fullKey, objectPath);
         if (row) {
           const hasValidOwner = (row.entity_type === "make_orders" || row.entity_type === "make_order_items") && !!row.entity_id;
-          if (hasValidOwner) {
-            return { authorized: true, canonicalKey: objectPath };
+          if (!hasValidOwner) {
+            return { authorized: false, error: "Forbidden: Attachment is unassociated or access is unauthorized." };
           }
-          return { authorized: false, error: "Upload is unassociated with an owning order or item" };
+          if (row.entity_type === "make_orders") {
+            const { data: order } = await supabase.from("make_orders").select("id, pdf_urls, invoice_attachment_urls").eq("id", row.entity_id).maybeSingle();
+            if (order) {
+              const pdfs = Array.isArray(order.pdf_urls) ? order.pdf_urls : [];
+              const invs = Array.isArray(order.invoice_attachment_urls) ? order.invoice_attachment_urls : [];
+              const allRefs = [...pdfs, ...invs].filter(Boolean);
+              const matches = allRefs.some((r2) => {
+                const can = extractCanonicalSupabaseKey(r2);
+                return r2 === rawRef || r2 === fullKey || r2 === objectPath || can && can.objectPath === objectPath;
+              });
+              if (matches) {
+                return { authorized: true, canonicalKey: objectPath };
+              }
+            }
+            return { authorized: false, error: "Forbidden: Attachment is unassociated or access is unauthorized." };
+          } else if (row.entity_type === "make_order_items") {
+            const { data: item } = await supabase.from("make_order_items").select("id, technical_drawing_url, pdf_urls").eq("id", row.entity_id).maybeSingle();
+            if (item) {
+              const pdfs = Array.isArray(item.pdf_urls) ? item.pdf_urls : [];
+              const itemRefs = [item.technical_drawing_url, ...pdfs].filter(Boolean);
+              const matches = itemRefs.some((r2) => {
+                const can = extractCanonicalSupabaseKey(r2);
+                return r2 === rawRef || r2 === fullKey || r2 === objectPath || can && can.objectPath === objectPath;
+              });
+              if (matches) {
+                return { authorized: true, canonicalKey: objectPath };
+              }
+            }
+            return { authorized: false, error: "Forbidden: Attachment is unassociated or access is unauthorized." };
+          }
         }
       } catch {
       }
