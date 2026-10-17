@@ -145,6 +145,25 @@ vi.mock('better-sqlite3', async (importOriginal) => {
           } else {
             rows.push({ op_id: args[0], target: args[1], resolved_id: args[2], created_at: args[3] });
           }
+        } else if (table === 'pending_associations') {
+          const id = args[0];
+          const existing = rows.find(r => r.identifier === id);
+          if (existing) {
+            existing.entity_type = args[1];
+            existing.entity_id = args[2];
+            existing.field_name = args[3];
+            existing.updated_at = args[6] || Date.now();
+          } else {
+            rows.push({
+              identifier: id,
+              entity_type: args[1],
+              entity_id: args[2],
+              field_name: args[3],
+              retry_count: 0,
+              created_at: args[5] || Date.now(),
+              updated_at: args[6] || Date.now()
+            });
+          }
         } else {
           rows.push({ id: args[0], args });
         }
@@ -235,6 +254,13 @@ vi.mock('better-sqlite3', async (importOriginal) => {
           return { changes: 0 };
         }
       } else if (lower.startsWith('delete')) {
+        if (table === 'pending_associations') {
+          const id1 = args[0];
+          const id2 = args[1];
+          const idx = rows.findIndex(x => x.identifier === id1 || (id2 && x.identifier === id2));
+          if (idx >= 0) rows.splice(idx, 1);
+          return { changes: 1 };
+        }
         const id = args[0];
         const idx = rows.findIndex(x => x.id === id);
         if (idx >= 0) rows.splice(idx, 1);
@@ -247,6 +273,18 @@ vi.mock('better-sqlite3', async (importOriginal) => {
       const rows = globalTables.get(table) || [];
       const lower = this.sql.toLowerCase();
       if (lower.includes('count(')) {
+        if (table === 'durable_uploads') {
+          return {
+            staged_cnt: rows.filter(r => r.status === 'staged_local').length,
+            buffered_cnt: rows.filter(r => r.status === 'buffered_supabase').length,
+            awaiting_assoc_cnt: rows.filter(r => r.status === 'awaiting_association').length,
+            total_bytes: rows.filter(r => r.status === 'staged_local' || r.status === 'buffered_supabase' || r.status === 'awaiting_association')
+                             .reduce((acc, r) => acc + (r.size_bytes || 0), 0)
+          };
+        }
+        if (table === 'pending_associations') {
+          return { cnt: rows.length };
+        }
         return {
           pending_cnt: rows.filter(r => r.status === 'pending').length,
           buffered_cnt: rows.filter(r => r.status === 'buffered_supabase').length,
@@ -254,6 +292,12 @@ vi.mock('better-sqlite3', async (importOriginal) => {
           dead_letter_cnt: rows.filter(r => r.status === 'dead_letter').length,
           oldest_pending: rows[0]?.created_at || null,
         };
+      }
+      if (table === 'pending_associations') {
+        const id1 = args[0];
+        const id2 = args[1];
+        const id3 = args[2] ? args[2].replace(/%/g, '') : null;
+        return rows.find(r => r.identifier === id1 || (id2 && r.identifier === id2) || (id3 && r.identifier.includes(id3)));
       }
       if (table === 'outbox_id_map') {
         if (args.length >= 2) {
@@ -280,6 +324,9 @@ vi.mock('better-sqlite3', async (importOriginal) => {
       const table = this.getTargetTable();
       const rows = globalTables.get(table) || [];
       const lower = this.sql.toLowerCase();
+      if (table === 'pending_associations') {
+        return [...rows];
+      }
       if (lower.includes("status in ('pending', 'buffered_supabase'")) {
         return rows.filter(r => r.status === 'pending' || r.status === 'buffered_supabase' || r.status === 'cleanup_pending');
       }

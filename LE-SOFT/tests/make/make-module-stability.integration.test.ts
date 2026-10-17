@@ -1487,7 +1487,7 @@ describe('MAKE Module Stability & Verification Suite (LE-SOFT v1.8.12)', () => {
             ]);
         });
 
-        it('7. failures and restarts preserve the attachment and quota accounting until recovery succeeds', async () => {
+        it('7. cloud prune failures and consecutive dispatch retries preserve attachment and quota accounting', async () => {
             const uploadService = DurableUploadService.getInstance();
             (uploadService as any).supabaseClient = supabase;
             const quotaMgr = SupabaseQuotaManager.getInstance();
@@ -1553,6 +1553,259 @@ describe('MAKE Module Stability & Verification Suite (LE-SOFT v1.8.12)', () => {
             expect(finalRow.status).toBe('synced_nas');
             expect(finalRow.remote_url_supabase).toBeNull();
             expect(finalRow.remote_url_nas).toBe(nasUrl);
+        });
+
+        it('8. genuine process restart reloads persisted pending associations and completes recovery before cloud cleanup', async () => {
+            const uploadService = DurableUploadService.getInstance();
+            (uploadService as any).supabaseClient = supabase;
+            (uploadService as any).nasClient = supabase;
+            const quotaMgr = SupabaseQuotaManager.getInstance();
+
+            // Stage and buffer an upload without initial entity association
+            const buffer = Buffer.from('%PDF-1.7 genuine process restart recovery test');
+            const staged = await uploadService.stageFile(
+                buffer,
+                'process_restart_test.pdf',
+                'application/pdf',
+                'make-order-files/999',
+                undefined, // NO owner entity yet
+                { autoDispatch: false }
+            );
+
+            const cloudUrl = `make-order-files/999/${staged.id}_process_restart_test.pdf`;
+            (uploadService as any).db.prepare(`
+                UPDATE durable_uploads
+                SET status = 'buffered_supabase', remote_url_supabase = ?
+                WHERE id = ?
+            `).run(cloudUrl, staged.id);
+
+            // Attempting to dispatch before entity association moves upload to awaiting_association
+            const nasUrl = `https://storage.lenas.me/files/make-order-files/999/${staged.id}_process_restart_test.pdf`;
+            vi.spyOn(uploadService as any, 'uploadToNasStorage').mockResolvedValue({
+                success: true,
+                url: nasUrl,
+                sha256: staged.sha256
+            });
+
+            const mockStorage = (supabase.storage.from as any)('make-order-files');
+            const removeSpy = vi.spyOn(mockStorage, 'remove');
+            const quotaSpy = vi.spyOn(quotaMgr, 'pruneConfirmedStorage');
+            removeSpy.mockClear();
+            quotaSpy.mockClear();
+
+            const dispatchBeforeAssoc = await uploadService.dispatchUpload(staged.id);
+            expect(dispatchBeforeAssoc.status).toBe('awaiting_association');
+            expect(removeSpy).not.toHaveBeenCalled();
+            expect(quotaSpy).not.toHaveBeenCalled();
+
+            // Verify awaiting_association is included in pending metrics
+            const pendingStats = uploadService.getPendingUploadStats();
+            expect(pendingStats.awaitingAssociationCount).toBeGreaterThanOrEqual(1);
+            expect(pendingStats.totalPendingBytes).toBeGreaterThanOrEqual(staged.sizeBytes);
+
+            // Force association to fail / queue by using an unmatched identifier, verifying retry info is persisted in SQLite
+            const unmatchedId = `upl_delayed_${Date.now()}`;
+            const assocSuccess = uploadService.associateUploadWithEntity(unmatchedId, {
+                entityType: 'make_orders',
+                entityId: 999,
+                fieldName: 'invoice_attachment_urls'
+            });
+            expect(assocSuccess).toBe(false);
+
+            const persistedPending = (uploadService as any).db.prepare(`
+                SELECT * FROM pending_associations WHERE identifier = ?
+            `).get(unmatchedId);
+            expect(persistedPending).toBeDefined();
+            expect(persistedPending.entity_type).toBe('make_orders');
+            expect(persistedPending.entity_id).toBe('999');
+
+            // Now associate with the staged upload ID, verifying successful association cleans up or persists
+            uploadService.associateUploadWithEntity(staged.id, {
+                entityType: 'make_orders',
+                entityId: 999,
+                fieldName: 'invoice_attachment_urls'
+            });
+
+            // SIMULATE GENUINE PROCESS RESTART:
+            // Reset the singleton, stopping all workers and recreating the service against the same SQLite database
+            DurableUploadService.resetInstanceForTesting();
+            const restartedService = DurableUploadService.getInstance();
+            (restartedService as any).supabaseClient = supabase;
+            (restartedService as any).nasClient = supabase;
+
+            // Restore the owning order in the mock database responder
+            const executionSequence: string[] = [];
+            const mockOrder = { id: 999, invoice_attachment_urls: [cloudUrl] };
+            h.state.responder = (table: string, op: string, body?: any) => {
+                if (table === 'make_orders') {
+                    if (op === 'select') return { data: mockOrder, error: null };
+                    if (op === 'update') {
+                        executionSequence.push('db_update_order_reference');
+                        Object.assign(mockOrder, body);
+                        return { data: [mockOrder], error: null };
+                    }
+                }
+                return { data: null, error: null };
+            };
+
+            vi.spyOn(restartedService as any, 'uploadToNasStorage').mockResolvedValue({
+                success: true,
+                url: nasUrl,
+                sha256: staged.sha256
+            });
+            vi.spyOn(mockStorage, 'remove').mockImplementation(async () => {
+                executionSequence.push('cloud_storage_remove');
+                return { data: [cloudUrl], error: null };
+            });
+            vi.spyOn(quotaMgr, 'pruneConfirmedStorage').mockImplementation(async () => {
+                executionSequence.push('quota_prune_release');
+                return true;
+            });
+
+            // Perform recovery under the restarted service
+            const recoveryRes = await restartedService.dispatchUpload(staged.id);
+            expect(recoveryRes.success).toBe(true);
+            expect(recoveryRes.status).toBe('synced_nas');
+
+            // Strictly verify:
+            // 1. Owning record is updated and confirmed before cloud removal and quota release
+            expect(executionSequence).toEqual([
+                'db_update_order_reference',
+                'cloud_storage_remove',
+                'quota_prune_release'
+            ]);
+            expect(mockOrder.invoice_attachment_urls).toContain(nasUrl);
+            expect(mockOrder.invoice_attachment_urls).not.toContain(cloudUrl);
+
+            // 2. Persisted SQLite record confirms cleanup of cloud copy
+            const recoveredRow = (restartedService as any).db.prepare('SELECT * FROM durable_uploads WHERE id = ?').get(staged.id);
+            expect(recoveredRow.status).toBe('synced_nas');
+            expect(recoveredRow.remote_url_supabase).toBeNull();
+            expect(recoveredRow.remote_url_nas).toBe(nasUrl);
+        });
+
+        it('9. IPC security gate: make-resolve-attachment-url rejects unauthenticated callers', async () => {
+            SessionManager.clearSession();
+            const handler = h.state.handlers['make-resolve-attachment-url'];
+            expect(handler).toBeDefined();
+
+            await expect(handler({} as any, 'make-order-files/101/blueprint.dwg'))
+                .rejects.toThrow('Unauthorized: Authentication required');
+        });
+
+        it('10. IPC security gate: make-resolve-attachment-url rejects unauthorized roles', async () => {
+            SessionManager.setSession({
+                id: 88,
+                username: 'unauth_user',
+                full_name: 'Guest User',
+                role: 'guest',
+                permissions: {}
+            });
+            const handler = h.state.handlers['make-resolve-attachment-url'];
+
+            await expect(handler({} as any, 'make-order-files/101/blueprint.dwg'))
+                .rejects.toThrow('Forbidden: Session lacks MAKE permissions');
+        });
+
+        it('11. IPC security gate: make-resolve-attachment-url rejects malformed or path-traversal references', async () => {
+            SessionManager.setSession({
+                id: 1,
+                username: 'designer',
+                full_name: 'Lead Designer',
+                role: 'furniture_designer',
+                permissions: {}
+            });
+            const handler = h.state.handlers['make-resolve-attachment-url'];
+
+            // Empty or whitespace
+            await expect(handler({} as any, ''))
+                .rejects.toThrow('Invalid or malformed attachment reference');
+
+            // Path traversal attempt
+            await expect(handler({} as any, 'make-order-files/../../etc/passwd'))
+                .rejects.toThrow('Forbidden: Attachment is unassociated or access is unauthorized.');
+
+            // Null byte injection attempt
+            await expect(handler({} as any, 'make-order-files/101/file.pdf\0.exe'))
+                .rejects.toThrow('Forbidden: Attachment is unassociated or access is unauthorized.');
+        });
+
+        it('12. IPC security gate: make-resolve-attachment-url rejects unassociated object keys (fail closed)', async () => {
+            SessionManager.setSession({
+                id: 1,
+                username: 'designer',
+                full_name: 'Lead Designer',
+                role: 'furniture_designer',
+                permissions: {}
+            });
+            const handler = h.state.handlers['make-resolve-attachment-url'];
+
+            // Mock database: no order or item owns this key
+            h.state.responder = () => ({ data: null, error: null });
+
+            // Random unassociated key cannot be probed or signed
+            await expect(handler({} as any, 'make-order-files/999/attacker_probe.pdf'))
+                .rejects.toThrow('Forbidden: Attachment is unassociated or access is unauthorized.');
+        });
+
+        it('13. IPC security gate: make-resolve-attachment-url authorizes access to valid order attachments', async () => {
+            SessionManager.setSession({
+                id: 1,
+                username: 'designer',
+                full_name: 'Lead Designer',
+                role: 'furniture_designer',
+                permissions: {}
+            });
+            const handler = h.state.handlers['make-resolve-attachment-url'];
+
+            const validKey = 'make-order-files/505/approved_blueprint.pdf';
+            h.state.responder = (table: string, op: string) => {
+                if (table === 'make_orders' && op === 'select') {
+                    return { data: { id: 505, pdf_urls: [validKey], invoice_attachment_urls: [] }, error: null };
+                }
+                return { data: null, error: null };
+            };
+
+            const result = await handler({} as any, validKey);
+            expect(result.url).toContain('/sign/make-order-files/');
+            expect(result.url).toContain('token=mock_signed');
+        });
+
+        it('14. IPC security gate: make-get-pdf-urls and make-download-pdf enforce authentication and authorization', async () => {
+            // (a) make-get-pdf-urls rejects unauthenticated callers
+            SessionManager.clearSession();
+            const getPdfHandler = h.state.handlers['make-get-pdf-urls'];
+            await expect(getPdfHandler({} as any, 101)).rejects.toThrow('Unauthorized: Authentication required');
+
+            // (b) make-get-pdf-urls rejects invalid order ID
+            SessionManager.setSession({
+                id: 1,
+                username: 'designer',
+                full_name: 'Lead Designer',
+                role: 'furniture_designer',
+                permissions: {}
+            });
+            await expect(getPdfHandler({} as any, -5)).rejects.toThrow('Invalid order ID');
+
+            // (c) make-download-pdf rejects unauthenticated callers
+            SessionManager.clearSession();
+            const downloadPdfHandler = h.state.handlers['make-download-pdf'];
+            const unauthDownload = await downloadPdfHandler({} as any, { url: 'https://storage.lenas.me/files/doc.pdf', fileName: 'doc.pdf' });
+            expect(unauthDownload.success).toBe(false);
+            expect(unauthDownload.error).toContain('Unauthorized');
+
+            // (d) make-download-pdf rejects unassociated references
+            SessionManager.setSession({
+                id: 1,
+                username: 'designer',
+                full_name: 'Lead Designer',
+                role: 'furniture_designer',
+                permissions: {}
+            });
+            h.state.responder = () => ({ data: null, error: null });
+            const unassociatedDownload = await downloadPdfHandler({} as any, { url: 'make-order-files/888/unassociated.pdf', fileName: 'unassociated.pdf' });
+            expect(unassociatedDownload.success).toBe(false);
+            expect(unassociatedDownload.error).toContain('Forbidden');
         });
     });
 });

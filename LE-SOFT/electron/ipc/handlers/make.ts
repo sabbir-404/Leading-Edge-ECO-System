@@ -23,6 +23,7 @@ import { MakeProductionService } from '../../services/make/MakeProductionService
 import { MakeVersionService } from '../../services/make/MakeVersionService';
 import { MakeCadService } from '../../services/make/MakeCadService';
 import { MakeSearchService } from '../../services/make/MakeSearchService';
+import { DurableUploadService } from '../../services/media/DurableUploadService';
 import { decryptRows, decryptObject } from '../../field-encryption';
 import {
     CreateMakeOrderSchema,
@@ -796,6 +797,126 @@ export function registerMakeHandlers(): void {
         return !!(session.permissions['make_production'] || session.permissions['factory_manage']);
     }
 
+    /**
+     * Verifies if the session user has permissions to view MAKE orders and attachments.
+     */
+    function canViewMakeOrders(session: UserSession): boolean {
+        if (!session) return false;
+        const role = (session.role || '').toLowerCase();
+        if (role === 'admin' || role === 'superadmin' || role === 'manager') return true;
+        if (
+            role === 'furniture_designer' || role === 'furniture designer' || role === 'designer' || role === 'make_designer' ||
+            role === 'salesperson' || role === 'salesman' || role === 'sales' ||
+            role === 'factory_manager' || role === 'factory manager' || role === 'factory' ||
+            role === 'operator' || role === 'production'
+        ) return true;
+        return !!(
+            session.permissions && (
+                session.permissions['make_view'] ||
+                session.permissions['make_read'] ||
+                session.permissions['make_create'] ||
+                session.permissions['make_orders'] ||
+                session.permissions['make_admin'] ||
+                session.permissions['make_production'] ||
+                session.permissions['view_orders'] ||
+                session.permissions['read_orders']
+            )
+        );
+    }
+
+    /**
+     * Verifies that a given attachment reference or storage key belongs to an
+     * order or item the current session is authorized to access.
+     * Fails closed for unauthorized, malformed, or unassociated references.
+     */
+    async function isAuthorizedAttachment(rawRef: string, _session: UserSession): Promise<boolean> {
+        if (!rawRef || typeof rawRef !== 'string' || !rawRef.trim()) return false;
+        // Reject path traversal, control chars, null bytes
+        if (rawRef.includes('..') || rawRef.includes('\0') || rawRef.includes('%00')) return false;
+
+        // Must belong to recognized MAKE order files storage namespace or contain an upload ID
+        const hasMakePrefix = rawRef.includes('make-order-files') || /upl_[0-9]+_[0-9a-f]+/i.test(rawRef);
+        if (!hasMakePrefix) return false;
+
+        const cleanKey = MakeOrderService.normalizeAttachmentReference(rawRef);
+        const uploadMatch = rawRef.match(/(upl_[0-9]+_[0-9a-f]+)/i);
+        const uploadId = uploadMatch ? uploadMatch[1] : null;
+
+        // 1. Check local DurableUploadService SQLite registry
+        const uploadService = DurableUploadService.getInstance();
+        const db = (uploadService as any).db;
+        if (db) {
+            try {
+                const row = db.prepare(`
+                    SELECT id, entity_type, entity_id, status FROM durable_uploads
+                    WHERE id = ? OR remote_url_nas = ? OR remote_url_supabase = ?
+                       OR local_path LIKE ? OR remote_url_nas LIKE ? OR remote_url_supabase LIKE ?
+                `).get(uploadId || cleanKey, rawRef, cleanKey, `%${uploadId || cleanKey}%`, `%${cleanKey}%`, `%${cleanKey}%`) as any;
+
+                if (row) {
+                    if (row.status === 'staged_local' || row.status === 'buffered_supabase' || row.status === 'awaiting_association') {
+                        return true;
+                    }
+                    if (row.entity_type === 'make_orders' || row.entity_type === 'make_order_items') {
+                        return true;
+                    }
+                }
+            } catch {}
+        }
+
+        // 2. Check remote database make_orders and make_order_items
+        try {
+            // (a) If the storage path contains an explicit order ID, e.g. make-order-files/101/...
+            const orderPathMatch = rawRef.match(/make-order-files\/(\d+)\//);
+            if (orderPathMatch) {
+                const candidateOrderId = parseInt(orderPathMatch[1], 10);
+                const { data: order } = await supabase.from('make_orders').select('id, pdf_urls, invoice_attachment_urls').eq('id', candidateOrderId).maybeSingle();
+                if (order) {
+                    const pdfs: string[] = Array.isArray(order.pdf_urls) ? order.pdf_urls : [];
+                    const invs: string[] = Array.isArray(order.invoice_attachment_urls) ? order.invoice_attachment_urls : [];
+                    const all = [...pdfs, ...invs];
+                    if (all.some(u => u === rawRef || u === cleanKey || (uploadId && u.includes(uploadId)))) {
+                        return true;
+                    }
+                }
+            }
+
+            // (b) Query make_orders for matching invoice_attachment_urls or pdf_urls
+            const { data: matchedOrders } = await supabase
+                .from('make_orders')
+                .select('id, invoice_attachment_urls, pdf_urls');
+
+            if (Array.isArray(matchedOrders)) {
+                const found = matchedOrders.some((o: any) => {
+                    const pdfs: string[] = Array.isArray(o.pdf_urls) ? o.pdf_urls : [];
+                    const invs: string[] = Array.isArray(o.invoice_attachment_urls) ? o.invoice_attachment_urls : [];
+                    return [...pdfs, ...invs].some(u => u === rawRef || u === cleanKey || (uploadId && u.includes(uploadId)));
+                });
+                if (found) return true;
+            }
+
+            // (c) Query make_order_items for matching technical_drawing_url or pdf_urls
+            const { data: matchedItems } = await supabase
+                .from('make_order_items')
+                .select('id, order_id, technical_drawing_url, pdf_urls');
+
+            if (Array.isArray(matchedItems)) {
+                const found = matchedItems.some((it: any) => {
+                    const pdfs: string[] = Array.isArray(it.pdf_urls) ? it.pdf_urls : [];
+                    return it.technical_drawing_url === cleanKey ||
+                           it.technical_drawing_url === rawRef ||
+                           (uploadId && it.technical_drawing_url?.includes(uploadId)) ||
+                           pdfs.some(u => u === rawRef || u === cleanKey || (uploadId && u.includes(uploadId)));
+                });
+                if (found) return true;
+            }
+        } catch (err: any) {
+            console.warn('[MAKE IPC] isAuthorizedAttachment query error:', err.message);
+        }
+
+        return false;
+    }
+
     // ── 1. Create Make Order ──────────────────────────────────────────────────
     ipcMain.handle('create-make-order', async (_e, rawOrder: any) => {
         try {
@@ -1170,8 +1291,15 @@ export function registerMakeHandlers(): void {
 
     // ── 10. PDF Storage URLs and Deletion ─────────────────────────────────────
     ipcMain.handle('make-get-pdf-urls', async (_e, orderId: number) => {
+        const session = requireSession();
+        if (!canViewMakeOrders(session)) {
+            throw new Error('Forbidden: Session lacks MAKE permissions');
+        }
+        if (!orderId || typeof orderId !== 'number' || orderId <= 0) {
+            throw new Error('Invalid order ID');
+        }
         const { data: order } = await supabase.from('make_orders').select('pdf_urls').eq('id', orderId).maybeSingle();
-        const paths: string[] = order?.pdf_urls || [];
+        const paths: string[] = Array.isArray(order?.pdf_urls) ? order.pdf_urls : [];
 
         const signedUrls = await Promise.all(paths.map(async (p) => {
             return await resolveAttachmentUrl(p);
@@ -1205,6 +1333,17 @@ export function registerMakeHandlers(): void {
 
     ipcMain.handle('make-download-pdf', async (_e, { url, fileName }: { url: string; fileName: string }) => {
         try {
+            const session = requireSession();
+            if (!canViewMakeOrders(session)) {
+                throw new Error('Forbidden: Session lacks MAKE permissions');
+            }
+            if (!url || typeof url !== 'string' || !url.trim()) {
+                throw new Error('Invalid or malformed attachment reference');
+            }
+            const isAuthorized = await isAuthorizedAttachment(url, session);
+            if (!isAuthorized) {
+                throw new Error('Forbidden: Attachment is unassociated or access is unauthorized.');
+            }
             const { app, shell } = await import('electron');
             const tempDir = app.getPath('temp');
             const res = await downloadPdfFromNas(url, fileName, tempDir);
@@ -1219,6 +1358,17 @@ export function registerMakeHandlers(): void {
     });
 
     ipcMain.handle('make-resolve-attachment-url', async (_e, rawUrl: string) => {
+        const session = requireSession();
+        if (!canViewMakeOrders(session)) {
+            throw new Error('Forbidden: Session lacks MAKE permissions');
+        }
+        if (!rawUrl || typeof rawUrl !== 'string' || !rawUrl.trim()) {
+            throw new Error('Invalid or malformed attachment reference');
+        }
+        const isAuthorized = await isAuthorizedAttachment(rawUrl, session);
+        if (!isAuthorized) {
+            throw new Error('Forbidden: Attachment is unassociated or access is unauthorized.');
+        }
         return await resolveAttachmentUrl(rawUrl);
     });
 
@@ -1772,6 +1922,10 @@ export function registerMakeHandlers(): void {
 
     // ── 13. Order Items with Drawings ─────────────────────────────────────────
     ipcMain.handle('make-get-order-items', async (_e, orderId: number) => {
+        const session = requireSession();
+        if (!canViewMakeOrders(session)) {
+            throw new Error('Forbidden: Session lacks MAKE permissions');
+        }
         const { data, error } = await supabase
             .from('make_order_items')
             .select('*')
@@ -1797,8 +1951,7 @@ export function registerMakeHandlers(): void {
             };
         }));
 
-        const session = SessionManager.getSession();
-        const role = (session?.role || '').toLowerCase();
+        const role = (session.role || '').toLowerCase();
         if (role === 'factory_manager' || role === 'factory manager' || role === 'factory') {
             return itemsWithDrawings.map((it: any) => {
                 const { item_sale_price, unit_sale_price, total_sale_price, ...rest } = it;

@@ -26301,6 +26301,17 @@ var init_DurableUploadService = __esm({
 
                 CREATE INDEX IF NOT EXISTS idx_upload_status ON durable_uploads(status);
                 CREATE INDEX IF NOT EXISTS idx_upload_created ON durable_uploads(created_at);
+
+                CREATE TABLE IF NOT EXISTS pending_associations (
+                    identifier TEXT PRIMARY KEY,
+                    entity_type TEXT NOT NULL,
+                    entity_id TEXT NOT NULL,
+                    field_name TEXT NOT NULL,
+                    retry_count INTEGER DEFAULT 0,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_pending_assoc_created ON pending_associations(created_at);
             `);
           const columns = this.db.pragma("table_info(durable_uploads)");
           if (Array.isArray(columns)) {
@@ -26315,6 +26326,7 @@ var init_DurableUploadService = __esm({
               this.db.exec(`ALTER TABLE durable_uploads ADD COLUMN field_name TEXT;`);
             }
           }
+          this.reconcilePendingAssociations();
           console.log("[DurableUpload] Initialized upload queue at:", dbPath);
         } catch (err) {
           console.error("[DurableUpload] Failed to initialize upload database:", err.message);
@@ -26325,6 +26337,18 @@ var init_DurableUploadService = __esm({
           _DurableUploadService.instance = new _DurableUploadService();
         }
         return _DurableUploadService.instance;
+      }
+      static resetInstanceForTesting() {
+        if (_DurableUploadService.instance) {
+          _DurableUploadService.instance.stopWorker();
+          try {
+            if (_DurableUploadService.instance.db) {
+              _DurableUploadService.instance.db.close();
+            }
+          } catch {
+          }
+          _DurableUploadService.instance = null;
+        }
       }
       registerClients(clients) {
         this.nasClient = clients.nas;
@@ -26350,7 +26374,23 @@ var init_DurableUploadService = __esm({
         }
         let effectiveMeta = meta3;
         if (!effectiveMeta?.entityId) {
-          const pending = this.pendingAssociations.get(uploadId) || this.pendingAssociations.get(sanitized) || this.pendingAssociations.get(fileName);
+          let pending = this.pendingAssociations.get(uploadId) || this.pendingAssociations.get(sanitized) || this.pendingAssociations.get(fileName);
+          if (!pending && this.db) {
+            try {
+              const rowPending = this.db.prepare(`
+                        SELECT * FROM pending_associations
+                        WHERE identifier = ? OR identifier = ? OR identifier = ? OR identifier LIKE ?
+                    `).get(uploadId, sanitized, fileName, `%${uploadId}%`);
+              if (rowPending) {
+                pending = {
+                  entityType: rowPending.entity_type,
+                  entityId: rowPending.entity_id,
+                  fieldName: rowPending.field_name
+                };
+              }
+            } catch {
+            }
+          }
           if (pending) {
             effectiveMeta = pending;
           }
@@ -26422,6 +26462,7 @@ var init_DurableUploadService = __esm({
         if (!this.db || this.isWorking) return;
         this.isWorking = true;
         try {
+          this.reconcilePendingAssociations();
           const rows = this.db.prepare(`
                 SELECT * FROM durable_uploads
                 WHERE status IN ('staged_local', 'buffered_supabase', 'awaiting_association')
@@ -26470,7 +26511,23 @@ var init_DurableUploadService = __esm({
           };
         }
         if (!row.entity_type || !row.entity_id || !row.field_name) {
-          const pending = this.pendingAssociations.get(uploadId) || this.pendingAssociations.get(row.file_name);
+          let pending = this.pendingAssociations.get(uploadId) || this.pendingAssociations.get(row.file_name);
+          if (!pending && this.db) {
+            try {
+              const rowPending = this.db.prepare(`
+                        SELECT * FROM pending_associations
+                        WHERE identifier = ? OR identifier = ? OR identifier LIKE ?
+                    `).get(uploadId, row.file_name, `%${uploadId}%`);
+              if (rowPending) {
+                pending = {
+                  entityType: rowPending.entity_type,
+                  entityId: rowPending.entity_id,
+                  fieldName: rowPending.field_name
+                };
+              }
+            } catch {
+            }
+          }
           if (pending && pending.entityType && pending.entityId && pending.fieldName) {
             this.associateUploadWithEntity(uploadId, {
               entityType: pending.entityType,
@@ -26680,10 +26737,30 @@ var init_DurableUploadService = __esm({
             `).run(meta3.entityType, String(meta3.entityId), meta3.fieldName, Date.now(), uploadId, identifier, `%${uploadId}%`, `%${uploadId}%`, `%${uploadId}%`);
           const associated = res.changes > 0;
           if (associated) {
+            try {
+              this.db.prepare(`
+                        DELETE FROM pending_associations
+                        WHERE identifier = ? OR identifier = ?
+                    `).run(uploadId, identifier);
+            } catch {
+            }
             this.pendingAssociations.delete(uploadId);
             this.pendingAssociations.delete(identifier);
           } else {
-            console.warn(`[DurableUpload] associateUploadWithEntity found no matching upload for identifier "${identifier}". Queuing pending association.`);
+            console.warn(`[DurableUpload] associateUploadWithEntity found no matching upload for identifier "${identifier}". Queuing durable pending association.`);
+            try {
+              this.db.prepare(`
+                        INSERT INTO pending_associations (identifier, entity_type, entity_id, field_name, retry_count, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, 0, ?, ?)
+                        ON CONFLICT(identifier) DO UPDATE SET
+                            entity_type = excluded.entity_type,
+                            entity_id = excluded.entity_id,
+                            field_name = excluded.field_name,
+                            updated_at = excluded.updated_at
+                    `).run(identifier, meta3.entityType, String(meta3.entityId), meta3.fieldName, Date.now(), Date.now());
+            } catch (dbErr) {
+              console.warn("[DurableUpload] Failed to persist pending_association:", dbErr.message);
+            }
             this.pendingAssociations.set(uploadId, meta3);
             if (uploadId !== identifier) {
               this.pendingAssociations.set(identifier, meta3);
@@ -26695,8 +26772,44 @@ var init_DurableUploadService = __esm({
           return false;
         }
       }
+      /**
+       * Reconciles persisted pending associations against staged uploads.
+       * Called on startup and before processing pending batches.
+       */
+      reconcilePendingAssociations() {
+        if (!this.db) return;
+        try {
+          const pendingList = this.db.prepare(`SELECT * FROM pending_associations`).all();
+          for (const p of pendingList) {
+            let uploadId = p.identifier;
+            const match = p.identifier.match(/(upl_[0-9]+_[0-9a-f]+)/i);
+            if (match) {
+              uploadId = match[1];
+            }
+            const res = this.db.prepare(`
+                    UPDATE durable_uploads
+                    SET entity_type = ?, entity_id = ?, field_name = ?, updated_at = ?
+                    WHERE (id = ? OR id = ? OR local_path LIKE ? OR remote_url_supabase LIKE ? OR remote_url_nas LIKE ?)
+                      AND (entity_type IS NULL OR entity_id IS NULL)
+                `).run(p.entity_type, String(p.entity_id), p.field_name, Date.now(), uploadId, p.identifier, `%${uploadId}%`, `%${uploadId}%`, `%${uploadId}%`);
+            if (res.changes > 0) {
+              this.db.prepare(`DELETE FROM pending_associations WHERE identifier = ?`).run(p.identifier);
+              this.pendingAssociations.delete(p.identifier);
+              this.pendingAssociations.delete(uploadId);
+            }
+          }
+        } catch (err) {
+          console.warn("[DurableUpload] Reconciling pending associations error:", err.message);
+        }
+      }
       getPendingAssociationsCount() {
-        return this.pendingAssociations.size;
+        if (!this.db) return this.pendingAssociations.size;
+        try {
+          const row = this.db.prepare(`SELECT COUNT(*) as cnt FROM pending_associations`).get();
+          return row?.cnt ?? this.pendingAssociations.size;
+        } catch {
+          return this.pendingAssociations.size;
+        }
       }
       async updateEntityRecord(entityType, entityId, fieldName, newUrl, oldRef, uploadId) {
         if (!entityType || !entityId || !fieldName) {
@@ -26826,22 +26939,24 @@ var init_DurableUploadService = __esm({
         }
       }
       getPendingUploadStats() {
-        if (!this.db) return { stagedCount: 0, bufferedCount: 0, totalPendingBytes: 0 };
+        if (!this.db) return { stagedCount: 0, bufferedCount: 0, awaitingAssociationCount: 0, totalPendingBytes: 0 };
         try {
           const res = this.db.prepare(`
                 SELECT 
                     COUNT(CASE WHEN status = 'staged_local' THEN 1 END) as staged_cnt,
                     COUNT(CASE WHEN status = 'buffered_supabase' THEN 1 END) as buffered_cnt,
-                    SUM(CASE WHEN status IN ('staged_local', 'buffered_supabase') THEN size_bytes ELSE 0 END) as total_bytes
+                    COUNT(CASE WHEN status = 'awaiting_association' THEN 1 END) as awaiting_assoc_cnt,
+                    SUM(CASE WHEN status IN ('staged_local', 'buffered_supabase', 'awaiting_association') THEN size_bytes ELSE 0 END) as total_bytes
                 FROM durable_uploads
             `).get();
           return {
             stagedCount: res.staged_cnt || 0,
             bufferedCount: res.buffered_cnt || 0,
+            awaitingAssociationCount: res.awaiting_assoc_cnt || 0,
             totalPendingBytes: res.total_bytes || 0
           };
         } catch {
-          return { stagedCount: 0, bufferedCount: 0, totalPendingBytes: 0 };
+          return { stagedCount: 0, bufferedCount: 0, awaitingAssociationCount: 0, totalPendingBytes: 0 };
         }
       }
       async verifyRemoteObject(url2, expectedSha256) {
@@ -117389,6 +117504,7 @@ var MakeCadService = class {
 };
 
 // electron/ipc/handlers/make.ts
+init_DurableUploadService();
 init_field_encryption();
 
 // node_modules/zod/v4/classic/external.js
@@ -132644,6 +132760,77 @@ function registerMakeHandlers() {
     if (role === "admin" || role === "superadmin" || role === "factory_manager" || role === "operator" || role === "production") return true;
     return !!(session2.permissions["make_production"] || session2.permissions["factory_manage"]);
   }
+  function canViewMakeOrders(session2) {
+    if (!session2) return false;
+    const role = (session2.role || "").toLowerCase();
+    if (role === "admin" || role === "superadmin" || role === "manager") return true;
+    if (role === "furniture_designer" || role === "furniture designer" || role === "designer" || role === "make_designer" || role === "salesperson" || role === "salesman" || role === "sales" || role === "factory_manager" || role === "factory manager" || role === "factory" || role === "operator" || role === "production") return true;
+    return !!(session2.permissions && (session2.permissions["make_view"] || session2.permissions["make_read"] || session2.permissions["make_create"] || session2.permissions["make_orders"] || session2.permissions["make_admin"] || session2.permissions["make_production"] || session2.permissions["view_orders"] || session2.permissions["read_orders"]));
+  }
+  async function isAuthorizedAttachment(rawRef, _session) {
+    if (!rawRef || typeof rawRef !== "string" || !rawRef.trim()) return false;
+    if (rawRef.includes("..") || rawRef.includes("\0") || rawRef.includes("%00")) return false;
+    const hasMakePrefix = rawRef.includes("make-order-files") || /upl_[0-9]+_[0-9a-f]+/i.test(rawRef);
+    if (!hasMakePrefix) return false;
+    const cleanKey = MakeOrderService.normalizeAttachmentReference(rawRef);
+    const uploadMatch = rawRef.match(/(upl_[0-9]+_[0-9a-f]+)/i);
+    const uploadId = uploadMatch ? uploadMatch[1] : null;
+    const uploadService = DurableUploadService.getInstance();
+    const db2 = uploadService.db;
+    if (db2) {
+      try {
+        const row = db2.prepare(`
+                    SELECT id, entity_type, entity_id, status FROM durable_uploads
+                    WHERE id = ? OR remote_url_nas = ? OR remote_url_supabase = ?
+                       OR local_path LIKE ? OR remote_url_nas LIKE ? OR remote_url_supabase LIKE ?
+                `).get(uploadId || cleanKey, rawRef, cleanKey, `%${uploadId || cleanKey}%`, `%${cleanKey}%`, `%${cleanKey}%`);
+        if (row) {
+          if (row.status === "staged_local" || row.status === "buffered_supabase" || row.status === "awaiting_association") {
+            return true;
+          }
+          if (row.entity_type === "make_orders" || row.entity_type === "make_order_items") {
+            return true;
+          }
+        }
+      } catch {
+      }
+    }
+    try {
+      const orderPathMatch = rawRef.match(/make-order-files\/(\d+)\//);
+      if (orderPathMatch) {
+        const candidateOrderId = parseInt(orderPathMatch[1], 10);
+        const { data: order } = await supabase.from("make_orders").select("id, pdf_urls, invoice_attachment_urls").eq("id", candidateOrderId).maybeSingle();
+        if (order) {
+          const pdfs = Array.isArray(order.pdf_urls) ? order.pdf_urls : [];
+          const invs = Array.isArray(order.invoice_attachment_urls) ? order.invoice_attachment_urls : [];
+          const all = [...pdfs, ...invs];
+          if (all.some((u) => u === rawRef || u === cleanKey || uploadId && u.includes(uploadId))) {
+            return true;
+          }
+        }
+      }
+      const { data: matchedOrders } = await supabase.from("make_orders").select("id, invoice_attachment_urls, pdf_urls");
+      if (Array.isArray(matchedOrders)) {
+        const found = matchedOrders.some((o) => {
+          const pdfs = Array.isArray(o.pdf_urls) ? o.pdf_urls : [];
+          const invs = Array.isArray(o.invoice_attachment_urls) ? o.invoice_attachment_urls : [];
+          return [...pdfs, ...invs].some((u) => u === rawRef || u === cleanKey || uploadId && u.includes(uploadId));
+        });
+        if (found) return true;
+      }
+      const { data: matchedItems } = await supabase.from("make_order_items").select("id, order_id, technical_drawing_url, pdf_urls");
+      if (Array.isArray(matchedItems)) {
+        const found = matchedItems.some((it) => {
+          const pdfs = Array.isArray(it.pdf_urls) ? it.pdf_urls : [];
+          return it.technical_drawing_url === cleanKey || it.technical_drawing_url === rawRef || uploadId && it.technical_drawing_url?.includes(uploadId) || pdfs.some((u) => u === rawRef || u === cleanKey || uploadId && u.includes(uploadId));
+        });
+        if (found) return true;
+      }
+    } catch (err) {
+      console.warn("[MAKE IPC] isAuthorizedAttachment query error:", err.message);
+    }
+    return false;
+  }
   import_electron18.ipcMain.handle("create-make-order", async (_e, rawOrder) => {
     try {
       const session2 = requireSession();
@@ -132955,8 +133142,15 @@ function registerMakeHandlers() {
     };
   });
   import_electron18.ipcMain.handle("make-get-pdf-urls", async (_e, orderId) => {
+    const session2 = requireSession();
+    if (!canViewMakeOrders(session2)) {
+      throw new Error("Forbidden: Session lacks MAKE permissions");
+    }
+    if (!orderId || typeof orderId !== "number" || orderId <= 0) {
+      throw new Error("Invalid order ID");
+    }
     const { data: order } = await supabase.from("make_orders").select("pdf_urls").eq("id", orderId).maybeSingle();
-    const paths = order?.pdf_urls || [];
+    const paths = Array.isArray(order?.pdf_urls) ? order.pdf_urls : [];
     const signedUrls = await Promise.all(paths.map(async (p) => {
       return await resolveAttachmentUrl(p);
     }));
@@ -132982,6 +133176,17 @@ function registerMakeHandlers() {
   });
   import_electron18.ipcMain.handle("make-download-pdf", async (_e, { url: url2, fileName }) => {
     try {
+      const session2 = requireSession();
+      if (!canViewMakeOrders(session2)) {
+        throw new Error("Forbidden: Session lacks MAKE permissions");
+      }
+      if (!url2 || typeof url2 !== "string" || !url2.trim()) {
+        throw new Error("Invalid or malformed attachment reference");
+      }
+      const isAuthorized = await isAuthorizedAttachment(url2, session2);
+      if (!isAuthorized) {
+        throw new Error("Forbidden: Attachment is unassociated or access is unauthorized.");
+      }
       const { app: app22, shell: shell2 } = await import("electron");
       const tempDir = app22.getPath("temp");
       const res = await downloadPdfFromNas(url2, fileName, tempDir);
@@ -132995,6 +133200,17 @@ function registerMakeHandlers() {
     }
   });
   import_electron18.ipcMain.handle("make-resolve-attachment-url", async (_e, rawUrl) => {
+    const session2 = requireSession();
+    if (!canViewMakeOrders(session2)) {
+      throw new Error("Forbidden: Session lacks MAKE permissions");
+    }
+    if (!rawUrl || typeof rawUrl !== "string" || !rawUrl.trim()) {
+      throw new Error("Invalid or malformed attachment reference");
+    }
+    const isAuthorized = await isAuthorizedAttachment(rawUrl, session2);
+    if (!isAuthorized) {
+      throw new Error("Forbidden: Attachment is unassociated or access is unauthorized.");
+    }
     return await resolveAttachmentUrl(rawUrl);
   });
   import_electron18.ipcMain.handle("make-get-order-parts", async (_e, orderId) => {
@@ -133465,6 +133681,10 @@ function registerMakeHandlers() {
     }
   });
   import_electron18.ipcMain.handle("make-get-order-items", async (_e, orderId) => {
+    const session2 = requireSession();
+    if (!canViewMakeOrders(session2)) {
+      throw new Error("Forbidden: Session lacks MAKE permissions");
+    }
     const { data: data2, error: error51 } = await supabase.from("make_order_items").select("*").eq("order_id", orderId).order("id", { ascending: true });
     if (error51) throw error51;
     const decrypted = decryptRows(data2 || []);
@@ -133481,8 +133701,7 @@ function registerMakeHandlers() {
         drawings: drawings.filter((d) => d.url || d.isPending)
       };
     }));
-    const session2 = SessionManager.getSession();
-    const role = (session2?.role || "").toLowerCase();
+    const role = (session2.role || "").toLowerCase();
     if (role === "factory_manager" || role === "factory manager" || role === "factory") {
       return itemsWithDrawings.map((it) => {
         const { item_sale_price, unit_sale_price, total_sale_price, ...rest } = it;

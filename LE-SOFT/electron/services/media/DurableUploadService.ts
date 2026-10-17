@@ -105,6 +105,17 @@ export class DurableUploadService {
 
                 CREATE INDEX IF NOT EXISTS idx_upload_status ON durable_uploads(status);
                 CREATE INDEX IF NOT EXISTS idx_upload_created ON durable_uploads(created_at);
+
+                CREATE TABLE IF NOT EXISTS pending_associations (
+                    identifier TEXT PRIMARY KEY,
+                    entity_type TEXT NOT NULL,
+                    entity_id TEXT NOT NULL,
+                    field_name TEXT NOT NULL,
+                    retry_count INTEGER DEFAULT 0,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_pending_assoc_created ON pending_associations(created_at);
             `);
 
             // Schema migration: ensure entity tracking columns exist on pre-existing databases
@@ -122,6 +133,9 @@ export class DurableUploadService {
                 }
             }
 
+            // Reload and reconcile any durable pending associations on startup
+            this.reconcilePendingAssociations();
+
             console.log('[DurableUpload] Initialized upload queue at:', dbPath);
         } catch (err: any) {
             console.error('[DurableUpload] Failed to initialize upload database:', err.message);
@@ -133,6 +147,18 @@ export class DurableUploadService {
             DurableUploadService.instance = new DurableUploadService();
         }
         return DurableUploadService.instance;
+    }
+
+    public static resetInstanceForTesting(): void {
+        if (DurableUploadService.instance) {
+            DurableUploadService.instance.stopWorker();
+            try {
+                if (DurableUploadService.instance.db) {
+                    DurableUploadService.instance.db.close();
+                }
+            } catch {}
+            DurableUploadService.instance = null as any;
+        }
     }
 
     public registerClients(clients: { nas: SupabaseClient | null; supabase: SupabaseClient | null }): void {
@@ -172,7 +198,22 @@ export class DurableUploadService {
         // Check if there was a pre-queued pending association for this upload
         let effectiveMeta = meta;
         if (!effectiveMeta?.entityId) {
-            const pending = this.pendingAssociations.get(uploadId) || this.pendingAssociations.get(sanitized) || this.pendingAssociations.get(fileName);
+            let pending: any = this.pendingAssociations.get(uploadId) || this.pendingAssociations.get(sanitized) || this.pendingAssociations.get(fileName);
+            if (!pending && this.db) {
+                try {
+                    const rowPending = this.db.prepare(`
+                        SELECT * FROM pending_associations
+                        WHERE identifier = ? OR identifier = ? OR identifier = ? OR identifier LIKE ?
+                    `).get(uploadId, sanitized, fileName, `%${uploadId}%`) as any;
+                    if (rowPending) {
+                        pending = {
+                            entityType: rowPending.entity_type,
+                            entityId: rowPending.entity_id,
+                            fieldName: rowPending.field_name
+                        };
+                    }
+                } catch {}
+            }
             if (pending) {
                 effectiveMeta = pending;
             }
@@ -254,6 +295,9 @@ export class DurableUploadService {
         this.isWorking = true;
 
         try {
+            // Reconcile pending associations before dispatching next batch
+            this.reconcilePendingAssociations();
+
             // Find actionable uploads: staged_local (needs upload), buffered_supabase (needs NAS reconciliation), or awaiting_association
             const rows = this.db.prepare(`
                 SELECT * FROM durable_uploads
@@ -311,7 +355,22 @@ export class DurableUploadService {
 
         // If row is missing owner metadata, check if a pending association was queued
         if (!row.entity_type || !row.entity_id || !row.field_name) {
-            const pending = this.pendingAssociations.get(uploadId) || this.pendingAssociations.get(row.file_name);
+            let pending: any = this.pendingAssociations.get(uploadId) || this.pendingAssociations.get(row.file_name);
+            if (!pending && this.db) {
+                try {
+                    const rowPending = this.db.prepare(`
+                        SELECT * FROM pending_associations
+                        WHERE identifier = ? OR identifier = ? OR identifier LIKE ?
+                    `).get(uploadId, row.file_name, `%${uploadId}%`) as any;
+                    if (rowPending) {
+                        pending = {
+                            entityType: rowPending.entity_type,
+                            entityId: rowPending.entity_id,
+                            fieldName: rowPending.field_name
+                        };
+                    }
+                } catch {}
+            }
             if (pending && pending.entityType && pending.entityId && pending.fieldName) {
                 this.associateUploadWithEntity(uploadId, {
                     entityType: pending.entityType,
@@ -567,10 +626,29 @@ export class DurableUploadService {
 
             const associated = res.changes > 0;
             if (associated) {
+                try {
+                    this.db.prepare(`
+                        DELETE FROM pending_associations
+                        WHERE identifier = ? OR identifier = ?
+                    `).run(uploadId, identifier);
+                } catch {}
                 this.pendingAssociations.delete(uploadId);
                 this.pendingAssociations.delete(identifier);
             } else {
-                console.warn(`[DurableUpload] associateUploadWithEntity found no matching upload for identifier "${identifier}". Queuing pending association.`);
+                console.warn(`[DurableUpload] associateUploadWithEntity found no matching upload for identifier "${identifier}". Queuing durable pending association.`);
+                try {
+                    this.db.prepare(`
+                        INSERT INTO pending_associations (identifier, entity_type, entity_id, field_name, retry_count, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, 0, ?, ?)
+                        ON CONFLICT(identifier) DO UPDATE SET
+                            entity_type = excluded.entity_type,
+                            entity_id = excluded.entity_id,
+                            field_name = excluded.field_name,
+                            updated_at = excluded.updated_at
+                    `).run(identifier, meta.entityType, String(meta.entityId), meta.fieldName, Date.now(), Date.now());
+                } catch (dbErr: any) {
+                    console.warn('[DurableUpload] Failed to persist pending_association:', dbErr.message);
+                }
                 this.pendingAssociations.set(uploadId, meta);
                 if (uploadId !== identifier) {
                     this.pendingAssociations.set(identifier, meta);
@@ -584,8 +662,47 @@ export class DurableUploadService {
         }
     }
 
+    /**
+     * Reconciles persisted pending associations against staged uploads.
+     * Called on startup and before processing pending batches.
+     */
+    public reconcilePendingAssociations(): void {
+        if (!this.db) return;
+        try {
+            const pendingList = this.db.prepare(`SELECT * FROM pending_associations`).all() as any[];
+            for (const p of pendingList) {
+                let uploadId = p.identifier;
+                const match = p.identifier.match(/(upl_[0-9]+_[0-9a-f]+)/i);
+                if (match) {
+                    uploadId = match[1];
+                }
+
+                const res = this.db.prepare(`
+                    UPDATE durable_uploads
+                    SET entity_type = ?, entity_id = ?, field_name = ?, updated_at = ?
+                    WHERE (id = ? OR id = ? OR local_path LIKE ? OR remote_url_supabase LIKE ? OR remote_url_nas LIKE ?)
+                      AND (entity_type IS NULL OR entity_id IS NULL)
+                `).run(p.entity_type, String(p.entity_id), p.field_name, Date.now(), uploadId, p.identifier, `%${uploadId}%`, `%${uploadId}%`, `%${uploadId}%`);
+
+                if (res.changes > 0) {
+                    this.db.prepare(`DELETE FROM pending_associations WHERE identifier = ?`).run(p.identifier);
+                    this.pendingAssociations.delete(p.identifier);
+                    this.pendingAssociations.delete(uploadId);
+                }
+            }
+        } catch (err: any) {
+            console.warn('[DurableUpload] Reconciling pending associations error:', err.message);
+        }
+    }
+
     public getPendingAssociationsCount(): number {
-        return this.pendingAssociations.size;
+        if (!this.db) return this.pendingAssociations.size;
+        try {
+            const row = this.db.prepare(`SELECT COUNT(*) as cnt FROM pending_associations`).get() as any;
+            return row?.cnt ?? this.pendingAssociations.size;
+        } catch {
+            return this.pendingAssociations.size;
+        }
     }
 
     private async updateEntityRecord(
@@ -757,23 +874,25 @@ export class DurableUploadService {
         }
     }
 
-    public getPendingUploadStats(): { stagedCount: number; bufferedCount: number; totalPendingBytes: number } {
-        if (!this.db) return { stagedCount: 0, bufferedCount: 0, totalPendingBytes: 0 };
+    public getPendingUploadStats(): { stagedCount: number; bufferedCount: number; awaitingAssociationCount: number; totalPendingBytes: number } {
+        if (!this.db) return { stagedCount: 0, bufferedCount: 0, awaitingAssociationCount: 0, totalPendingBytes: 0 };
         try {
             const res = this.db.prepare(`
                 SELECT 
                     COUNT(CASE WHEN status = 'staged_local' THEN 1 END) as staged_cnt,
                     COUNT(CASE WHEN status = 'buffered_supabase' THEN 1 END) as buffered_cnt,
-                    SUM(CASE WHEN status IN ('staged_local', 'buffered_supabase') THEN size_bytes ELSE 0 END) as total_bytes
+                    COUNT(CASE WHEN status = 'awaiting_association' THEN 1 END) as awaiting_assoc_cnt,
+                    SUM(CASE WHEN status IN ('staged_local', 'buffered_supabase', 'awaiting_association') THEN size_bytes ELSE 0 END) as total_bytes
                 FROM durable_uploads
             `).get() as any;
             return {
                 stagedCount: res.staged_cnt || 0,
                 bufferedCount: res.buffered_cnt || 0,
+                awaitingAssociationCount: res.awaiting_assoc_cnt || 0,
                 totalPendingBytes: res.total_bytes || 0
             };
         } catch {
-            return { stagedCount: 0, bufferedCount: 0, totalPendingBytes: 0 };
+            return { stagedCount: 0, bufferedCount: 0, awaitingAssociationCount: 0, totalPendingBytes: 0 };
         }
     }
 

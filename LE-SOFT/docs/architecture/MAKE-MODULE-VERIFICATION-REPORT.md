@@ -12,7 +12,7 @@
 
 This report documents the architectural audit, upload-safety review, and comprehensive verification conducted on the **MAKE Module** of LE-SOFT v1.8.12. In accordance with project instructions, all work was restricted to the MAKE module, CAD and attachment upload dispatch safety, truthful URL resolution for private buckets, named order drafts, global specification image persistence (Migration 066 compatibility), resilient upload staging, failover recovery corrections, durable object key cleanup, and quota-managed cloud storage fallback. Unrelated Sales, Billing, inventory, and MySQL synchronization components were kept untouched.
 
-All 30 MAKE test suites (comprising **511 automated tests**) pass cleanly. In addition, real native SQLite Write-Ahead Logging (WAL) was validated under Electron's Node runtime (ABI 143), real PostgreSQL Migration 070 quota RPC functions were validated against the local PostgreSQL container, and both TypeScript compilation targets (`tsc --noEmit` and `tsc -p tsconfig.electron.json --noEmit`), ESLint (`npm run lint`), Vite production build, and Electron esbuild bundling passed with zero errors or warnings.
+All 30 MAKE test suites (comprising **518 automated tests**) pass cleanly. In addition, real native SQLite Write-Ahead Logging (WAL) was validated under Electron's Node runtime (ABI 143), real PostgreSQL Migration 070 quota RPC functions were validated against the local PostgreSQL container, and both TypeScript compilation targets (`tsc --noEmit` and `tsc -p tsconfig.electron.json --noEmit`), ESLint (`npm run lint`), Vite production build, and Electron esbuild bundling passed with zero errors or warnings.
 
 ---
 
@@ -107,6 +107,23 @@ All 30 MAKE test suites (comprising **511 automated tests**) pass cleanly. In ad
   5. **Read-Time Signed URL Resolution**: Registered `make-resolve-attachment-url` IPC handler (exposed via `preload.ts` and typed in `electron.d.ts`). Expired signed URLs passed to `resolveAttachmentUrl()` are automatically parsed back to clean storage keys and issued fresh, authorized 3600-second tokens on demand without storing tokens in the database.
   6. **Track Orders Transparency**: Added a `PENDING SYNC` badge in `TrackOrders.tsx` for attachments awaiting TrueNAS confirmation. On-click view and download operations dynamically re-resolve fresh signed URLs via IPC.
 
+### Defect 9: Attachment URL Resolution Security Gate & Durable Association Recovery Across Process Restarts
+- **Location**: `electron/ipc/handlers/make.ts`, `electron/services/media/DurableUploadService.ts`, `tests/setup.ts`, `tests/make/make-module-stability.integration.test.ts`
+- **Root Cause**:
+  1. `make-resolve-attachment-url` previously lacked main-process `requireSession()` authentication and role authorization checks.
+  2. `make-get-pdf-urls`, `make-download-pdf`, and `make-get-order-items` lacked explicit session enforcement and role checks.
+  3. Renderer-supplied URLs and storage keys could theoretically be requested without verifying that the attachment belongs to an order or item the session is authorized to access.
+  4. Association retries were stored in an in-memory `Map` (`pendingAssociations`), meaning if the Electron process restarted before the association occurred, the retry metadata was lost, leaving unassociated uploads in SQLite without durable context.
+  5. Uploads in `awaiting_association` state needed durable metrics tracking.
+- **Resolution**:
+  1. **Main-Process Session Enforcement**: Added `requireSession()` and `canViewMakeOrders(session)` to `make-resolve-attachment-url`, `make-get-pdf-urls`, `make-download-pdf`, and `make-get-order-items`.
+  2. **Fail-Closed Attachment Authorization**: Implemented `isAuthorizedAttachment(rawRef, session)` in `electron/ipc/handlers/make.ts`. Rejects path traversal (`..`), null bytes (`\0`, `%00`), non-MAKE namespaces, and unassociated keys. Cross-checks against local SQLite `durable_uploads` records and remote database `make_orders` and `make_order_items`. Fails closed if no authorized owning entity or pending upload is found.
+  3. **Persisted Association Metadata (`pending_associations` SQLite table)**: Replaced process-local-only `pendingAssociations` fallback with durable SQLite table `pending_associations (identifier TEXT PRIMARY KEY, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, field_name TEXT NOT NULL, retry_count INTEGER DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`.
+  4. **Startup & Worker Reconciliation**: Added `reconcilePendingAssociations()` executed on `initDatabase()` and before `processNextBatch()`, reloading persisted pending associations from SQLite and linking them to `durable_uploads`.
+  5. **Durable Metrics & Quota Retention**: Updated `getPendingUploadStats()` to return `{ stagedCount, bufferedCount, awaitingAssociationCount, totalPendingBytes }`, including `awaiting_association` bytes in `totalPendingBytes` so cloud copy and quota remain preserved.
+  6. **Process-Restart Regression Verification**: Added a genuine process-restart regression test (`resetInstanceForTesting()` recreating the service against the same SQLite database), validating that retry info is reloaded, the order reference is updated and confirmed before cloud cleanup, and quota is released only after confirmed cleanup. Renamed Test 7 to accurately describe cloud prune retries without overstating restart coverage.
+  7. **Accurate Ordering & Protection Semantics**: Verified multi-step sequence ordering: `update_order_reference` -> `cloud_storage_remove` -> `quota_prune_release`. Accurately documented that this sequence is an ordered fail-closed pipeline with retry retention rather than an atomic distributed transaction. If entity updates or cloud pruning fail, the local state is preserved for retry without losing reachable files or corrupting quota accounting.
+
 ---
 
 ## 3. End-to-End MAKE Architectural Audit
@@ -130,11 +147,11 @@ All 30 MAKE test suites (comprising **511 automated tests**) pass cleanly. In ad
 ### 4.1 MAKE Automated Test Suite (Vitest)
 Ran `npx vitest run tests/make`:
 - **Test Files**: 30 passed (30 total)
-- **Individual Tests**: 511 passed (511 total, 0 failed, 0 skipped)
+- **Individual Tests**: 518 passed (518 total, 0 failed, 0 skipped)
 - **Exit Code**: `0`
-- **Duration**: ~15.9 seconds
+- **Duration**: ~15.8 seconds
 - **Covered Test Files**:
-  1. `tests/make/make-module-stability.integration.test.ts` (45/45 passed) **[EXPANDED with Complete Pre-Order Invoice Lifecycle & Data-Integrity Verification Gate Regressions]**
+  1. `tests/make/make-module-stability.integration.test.ts` (52/52 passed) **[EXPANDED with Process Restart Safety, Persisted Association Recovery, & IPC Security Gate Tests]**
   2. `tests/make/attributes.test.ts` (19/19 passed)
   3. `tests/make/catalog-image-regression.test.ts` (11/11 passed)
   4. `tests/make/color-swatch-selector.test.ts` (8/8 passed)
@@ -227,5 +244,6 @@ While all programmatic layers (IPC, schema, services, local storage, quota manag
   4. Array fields (`pdf_urls`, `invoice_attachment_urls`) deduplicated during recovery reconciliation.
   5. Offline pending state represented truthfully (`isPendingUpload: true`, `publicUrl: undefined`, `durableKey: ...`) with `PENDING` badge in TrackOrders UI.
   6. Data-Integrity Gate verified: durable keys persisted in drafts and order records without token expiration vulnerability; signed URLs generated on-demand at read-time via `makeResolveAttachmentUrl`; entity updates asserted with `rowsAffected > 0` before cloud cleanup; full lifecycle from offline buffer -> order creation -> association -> TrueNAS recovery -> reference update -> cloud cleanup -> quota release verified.
+  7. Final Security & Restart-Safety Gate verified: main-process `requireSession()` and role checks enforced on all attachment read, download, and URL resolution endpoints; fail-closed authorization via `isAuthorizedAttachment()`; durable association metadata persisted in SQLite `pending_associations` table and recovered across process restarts; genuine service restart tested with `resetInstanceForTesting()`; pending upload metrics track `awaitingAssociationCount` and hold cloud copies and quota; multi-step recovery sequence strictly enforced (`update_order_reference` -> `cloud_storage_remove` -> `quota_prune_release`) with local state retry protection.
 - **Quality Gates**: All 6 gates passed (TSC frontend 0 errors, TSC electron 0 errors, ESLint 0 warnings, Vite build exit 0, Electron build exit 0, License verification exit 0).
 
