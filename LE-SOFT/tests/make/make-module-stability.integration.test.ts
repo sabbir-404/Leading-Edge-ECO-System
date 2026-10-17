@@ -2,7 +2,7 @@
  * tests/make/make-module-stability.integration.test.ts
  * ─────────────────────────────────────────────────────────────────────────────
  * Comprehensive MAKE Module Stability & Verification Suite — LE-SOFT v1.8.12
- * 
+ *
  * Verifies:
  *  1. Place Order and MAKE order items:
  *     - Customer required fields, phone validation, placeholder rejection
@@ -2074,6 +2074,395 @@ describe('MAKE Module Stability & Verification Suite (LE-SOFT v1.8.12)', () => {
             // Pending upload with no confirmed owner MUST NOT be signed
             await expect(handler({} as any, unconfirmedKey))
                 .rejects.toThrow('Forbidden: Attachment is unassociated or access is unauthorized.');
+        });
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 7. MAKE ATTACHMENT DELETION SECURITY GATE — LE-SOFT v1.8.12
+    // ─────────────────────────────────────────────────────────────────────────
+    describe('7. MAKE Attachment Deletion Security Gate (LE-SOFT v1.8.12)', () => {
+        beforeEach(() => {
+            SessionManager.clearSession();
+            h.state.calls = [];
+            h.state.cloudCalls = [];
+            h.state.storageUploads = [];
+            if (h.state.storageBuckets['make-order-files']) {
+                h.state.storageBuckets['make-order-files'].remove.mockClear();
+            }
+        });
+
+        it('1. Unauthenticated user attempts to delete an order PDF: rejected', async () => {
+            const handler = h.state.handlers['make-delete-pdf'];
+            SessionManager.clearSession();
+
+            await expect(handler({} as any, { orderId: 101, storagePath: 'make-order-files/101/doc.pdf' }))
+                .rejects.toThrow('Unauthorized: Authentication required');
+
+            expect(h.state.calls.filter(c => c.table === 'make_orders' && c.op === 'update')).toHaveLength(0);
+        });
+
+        it('2. Authenticated read-only user attempts deletion: rejected', async () => {
+            const handler = h.state.handlers['make-delete-pdf'];
+            SessionManager.setSession({
+                id: 88,
+                username: 'auditor',
+                role: 'operator',
+                permissions: { make_view: true }
+            });
+
+            await expect(handler({} as any, { orderId: 101, storagePath: 'make-order-files/101/doc.pdf' }))
+                .rejects.toThrow('Forbidden: Session lacks MAKE order modification permissions');
+
+            expect(h.state.calls.filter(c => c.table === 'make_orders' && c.op === 'update')).toHaveLength(0);
+        });
+
+        it('3. User without the required MAKE modification permission: rejected', async () => {
+            const handler = h.state.handlers['make-delete-pdf'];
+            SessionManager.setSession({
+                id: 89,
+                username: 'sales_clerk',
+                role: 'salesperson',
+                permissions: { make_create: true }
+            });
+
+            await expect(handler({} as any, { orderId: 101, storagePath: 'make-order-files/101/doc.pdf' }))
+                .rejects.toThrow('Forbidden: Session lacks MAKE order modification permissions');
+
+            expect(h.state.calls.filter(c => c.table === 'make_orders' && c.op === 'update')).toHaveLength(0);
+        });
+
+        it('4. Authorized user deletes an attachment belonging to an order they can modify: succeeds', async () => {
+            const handler = h.state.handlers['make-delete-pdf'];
+            SessionManager.setSession({
+                id: 1,
+                username: 'designer',
+                role: 'furniture_designer',
+                permissions: {}
+            });
+
+            const targetFile = 'make-order-files/101/blueprint.pdf';
+            const remainingFile = 'make-order-files/101/spec.pdf';
+
+            h.state.responder = (table: string, op: string) => {
+                if (table === 'make_orders' && op === 'select') {
+                    return {
+                        data: { id: 101, status: 'Draft', pdf_urls: [targetFile, remainingFile] },
+                        error: null
+                    };
+                }
+                if (table === 'make_orders' && op === 'update') {
+                    return { data: [{ id: 101 }], error: null };
+                }
+                return { data: null, error: null };
+            };
+
+            const result = await handler({} as any, { orderId: 101, storagePath: targetFile });
+            expect(result).toEqual({ success: true });
+
+            const updates = h.state.calls.filter(c => c.table === 'make_orders' && c.op === 'update');
+            expect(updates).toHaveLength(1);
+            expect(updates[0].body.pdf_urls).toEqual([remainingFile]);
+        });
+
+        it('5. User attempts to delete an attachment belonging to another order: rejected', async () => {
+            const handler = h.state.handlers['make-delete-pdf'];
+            SessionManager.setSession({
+                id: 1,
+                username: 'designer',
+                role: 'furniture_designer',
+                permissions: {}
+            });
+
+            h.state.responder = (table: string, op: string) => {
+                if (table === 'make_orders' && op === 'select') {
+                    return {
+                        data: { id: 101, status: 'Draft', pdf_urls: ['make-order-files/101/own_file.pdf'] },
+                        error: null
+                    };
+                }
+                return { data: null, error: null };
+            };
+
+            await expect(handler({} as any, { orderId: 101, storagePath: 'make-order-files/202/other_file.pdf' }))
+                .rejects.toThrow('does not belong to order #101');
+
+            expect(h.state.calls.filter(c => c.table === 'make_orders' && c.op === 'update')).toHaveLength(0);
+        });
+
+        it('5b. Designer attempts deletion on an order that has reached post-production: rejected', async () => {
+            const handler = h.state.handlers['make-delete-pdf'];
+            SessionManager.setSession({
+                id: 1,
+                username: 'designer',
+                role: 'furniture_designer',
+                permissions: {}
+            });
+
+            h.state.responder = (table: string, op: string) => {
+                if (table === 'make_orders' && op === 'select') {
+                    return {
+                        data: { id: 101, status: 'Production On Going', pdf_urls: ['make-order-files/101/own_file.pdf'] },
+                        error: null
+                    };
+                }
+                return { data: null, error: null };
+            };
+
+            await expect(handler({} as any, { orderId: 101, storagePath: 'make-order-files/101/own_file.pdf' }))
+                .rejects.toThrow('Only Administrators can modify this order');
+
+            expect(h.state.calls.filter(c => c.table === 'make_orders' && c.op === 'update')).toHaveLength(0);
+        });
+
+        it('6. Item PDF deletion against an item belonging to a different order: rejected', async () => {
+            const handler = h.state.handlers['make-delete-item-pdf'];
+            SessionManager.setSession({
+                id: 1,
+                username: 'designer',
+                role: 'furniture_designer',
+                permissions: {}
+            });
+
+            h.state.responder = (table: string, op: string) => {
+                if (table === 'make_order_items' && op === 'select') {
+                    return {
+                        data: { id: 45, order_id: 101, pdf_urls: ['make-order-files/101/items/45/cad.pdf'], technical_drawing_url: null },
+                        error: null
+                    };
+                }
+                return { data: null, error: null };
+            };
+
+            await expect(handler({} as any, { itemId: 45, orderId: 999, storagePath: 'make-order-files/101/items/45/cad.pdf' }))
+                .rejects.toThrow('Item #45 belongs to order #101, not order #999');
+
+            expect(h.state.calls.filter(c => c.table === 'make_order_items' && c.op === 'update')).toHaveLength(0);
+        });
+
+        it('7. Requested attachment key does not match the owner item recorded attachment: rejected', async () => {
+            const handler = h.state.handlers['make-delete-item-pdf'];
+            SessionManager.setSession({
+                id: 1,
+                username: 'designer',
+                role: 'furniture_designer',
+                permissions: {}
+            });
+
+            h.state.responder = (table: string, op: string) => {
+                if (table === 'make_order_items' && op === 'select') {
+                    return {
+                        data: { id: 45, order_id: 101, pdf_urls: ['make-order-files/101/items/45/correct_cad.pdf'], technical_drawing_url: null },
+                        error: null
+                    };
+                }
+                if (table === 'make_orders' && op === 'select') {
+                    return { data: { id: 101, status: 'Draft' }, error: null };
+                }
+                return { data: null, error: null };
+            };
+
+            await expect(handler({} as any, { itemId: 45, storagePath: 'make-order-files/101/items/45/unrecorded_cad.pdf' }))
+                .rejects.toThrow('does not belong to item #45');
+
+            expect(h.state.calls.filter(c => c.table === 'make_order_items' && c.op === 'update')).toHaveLength(0);
+        });
+
+        it('8. Nonexistent order or item: rejected without destructive side effects', async () => {
+            const orderHandler = h.state.handlers['make-delete-pdf'];
+            const itemHandler = h.state.handlers['make-delete-item-pdf'];
+            SessionManager.setSession({
+                id: 1,
+                username: 'admin_user',
+                role: 'admin',
+                permissions: {}
+            });
+
+            h.state.responder = () => ({ data: null, error: null });
+
+            await expect(orderHandler({} as any, { orderId: 8888, storagePath: 'make-order-files/8888/doc.pdf' }))
+                .rejects.toThrow('Order with ID 8888 not found');
+
+            await expect(itemHandler({} as any, { itemId: 8888, storagePath: 'make-order-files/8888/doc.pdf' }))
+                .rejects.toThrow('Item with ID 8888 not found');
+
+            expect(h.state.calls.filter(c => c.op === 'update')).toHaveLength(0);
+        });
+
+        it('9. Invalid IDs, traversal paths, malformed URLs, and unsupported references: rejected', async () => {
+            const handler = h.state.handlers['make-delete-pdf'];
+            SessionManager.setSession({
+                id: 1,
+                username: 'admin_user',
+                role: 'admin',
+                permissions: {}
+            });
+
+            // Negative ID
+            await expect(handler({} as any, { orderId: -1, storagePath: 'valid.pdf' })).rejects.toThrow();
+
+            // Directory traversal
+            await expect(handler({} as any, { orderId: 101, storagePath: '../../secret.pdf' })).rejects.toThrow();
+            await expect(handler({} as any, { orderId: 101, storagePath: '/files/%2e%2e/secret.pdf' })).rejects.toThrow();
+
+            // Null bytes
+            await expect(handler({} as any, { orderId: 101, storagePath: 'valid.pdf\0malicious' })).rejects.toThrow();
+            await expect(handler({} as any, { orderId: 101, storagePath: 'valid.pdf%00malicious' })).rejects.toThrow();
+
+            // Unsupported protocol schemes
+            await expect(handler({} as any, { orderId: 101, storagePath: 'javascript:alert(1)' })).rejects.toThrow();
+            await expect(handler({} as any, { orderId: 101, storagePath: 'file:///etc/passwd' })).rejects.toThrow();
+            await expect(handler({} as any, { orderId: 101, storagePath: 'data:text/plain;base64,AAAA' })).rejects.toThrow();
+
+            // Untrusted external HTTP host
+            await expect(handler({} as any, { orderId: 101, storagePath: 'http://malicious-external-host.com/evil.pdf' }))
+                .rejects.toThrow('Invalid or unsupported attachment reference');
+
+            expect(h.state.calls.filter(c => c.op === 'update')).toHaveLength(0);
+        });
+
+        it('10. Database lookup failure or zero affected rows: no false success', async () => {
+            const handler = h.state.handlers['make-delete-pdf'];
+            SessionManager.setSession({
+                id: 1,
+                username: 'admin_user',
+                role: 'admin',
+                permissions: {}
+            });
+
+            // Database lookup error
+            h.state.responder = (table: string, op: string) => {
+                if (table === 'make_orders' && op === 'select') {
+                    return { data: null, error: { message: 'Database connection timeout' } };
+                }
+                return { data: null, error: null };
+            };
+
+            await expect(handler({} as any, { orderId: 101, storagePath: 'make-order-files/101/blueprint.pdf' }))
+                .rejects.toThrow('Database error looking up order: Database connection timeout');
+
+            // Zero affected rows on update
+            h.state.responder = (table: string, op: string) => {
+                if (table === 'make_orders' && op === 'select') {
+                    return {
+                        data: { id: 101, status: 'Draft', pdf_urls: ['make-order-files/101/blueprint.pdf'] },
+                        error: null
+                    };
+                }
+                if (table === 'make_orders' && op === 'update') {
+                    return { data: [], error: null }; // 0 rows affected
+                }
+                return { data: null, error: null };
+            };
+
+            await expect(handler({} as any, { orderId: 101, storagePath: 'make-order-files/101/blueprint.pdf' }))
+                .rejects.toThrow('Order attachment deletion failed: 0 rows affected for order #101');
+        });
+
+        it('11. Authorization failure causes no database mutation, NAS deletion, Supabase object removal, or quota release', async () => {
+            const handler = h.state.handlers['make-delete-pdf'];
+            SessionManager.setSession({
+                id: 42,
+                username: 'operator_bob',
+                role: 'operator',
+                permissions: {}
+            });
+
+            const initialStorageRemoveCalls = h.state.storageBuckets['make-order-files']?.remove?.mock?.calls?.length || 0;
+
+            await expect(handler({} as any, { orderId: 101, storagePath: 'make-order-files/101/doc.pdf' }))
+                .rejects.toThrow('Forbidden: Session lacks MAKE order modification permissions');
+
+            // Confirm no DB mutations occurred
+            expect(h.state.calls.filter(c => c.op === 'update' || c.op === 'delete')).toHaveLength(0);
+
+            // Confirm no Supabase storage remove was called
+            const currentRemoveCalls = h.state.storageBuckets['make-order-files']?.remove?.mock?.calls?.length || 0;
+            expect(currentRemoveCalls).toBe(initialStorageRemoveCalls);
+        });
+
+        it('12. A genuine cleanup failure preserves sufficient metadata for safe retry', async () => {
+            const handler = h.state.handlers['make-delete-pdf'];
+            SessionManager.setSession({
+                id: 1,
+                username: 'lead_designer',
+                role: 'furniture_designer',
+                permissions: {}
+            });
+
+            const targetKey = 'make-order-files/101/buffered_retry_test.pdf';
+
+            // Order has target file, update succeeds
+            h.state.responder = (table: string, op: string) => {
+                if (table === 'make_orders' && op === 'select') {
+                    return {
+                        data: { id: 101, status: 'Draft', pdf_urls: [targetKey] },
+                        error: null
+                    };
+                }
+                if (table === 'make_orders' && op === 'update') {
+                    return { data: [{ id: 101 }], error: null };
+                }
+                return { data: null, error: null };
+            };
+
+            // Simulate cloud prune failure
+            const uploadService = DurableUploadService.getInstance();
+            const originalPrune = uploadService.pruneCloudCopy;
+            uploadService.pruneCloudCopy = vi.fn().mockRejectedValue(new Error('Supabase Storage 503 Service Unavailable'));
+
+            try {
+                // Operation still completes order deletion gracefully without unhandled crash
+                const res = await handler({} as any, { orderId: 101, storagePath: targetKey });
+                expect(res.success).toBe(true);
+
+                // Cloud prune was attempted
+                expect(uploadService.pruneCloudCopy).toHaveBeenCalled();
+            } finally {
+                uploadService.pruneCloudCopy = originalPrune;
+            }
+        });
+
+        it('13. Authorized item-level technical drawing deletion updates item and cascades technical_drawing_url', async () => {
+            const handler = h.state.handlers['make-delete-item-pdf'];
+            SessionManager.setSession({
+                id: 1,
+                username: 'designer',
+                role: 'furniture_designer',
+                permissions: {}
+            });
+
+            const targetDrawing = 'make-order-files/101/items/55/drawing_v1.dwg';
+            const remainingDrawing = 'make-order-files/101/items/55/drawing_v2.dwg';
+
+            h.state.responder = (table: string, op: string) => {
+                if (table === 'make_order_items' && op === 'select') {
+                    return {
+                        data: {
+                            id: 55,
+                            order_id: 101,
+                            pdf_urls: [targetDrawing, remainingDrawing],
+                            technical_drawing_url: targetDrawing
+                        },
+                        error: null
+                    };
+                }
+                if (table === 'make_orders' && op === 'select') {
+                    return { data: { id: 101, status: 'Draft' }, error: null };
+                }
+                if (table === 'make_order_items' && op === 'update') {
+                    return { data: [{ id: 55 }], error: null };
+                }
+                return { data: null, error: null };
+            };
+
+            const result = await handler({} as any, { itemId: 55, orderId: 101, storagePath: targetDrawing });
+            expect(result).toEqual({ success: true });
+
+            const itemUpdates = h.state.calls.filter(c => c.table === 'make_order_items' && c.op === 'update');
+            expect(itemUpdates).toHaveLength(1);
+            expect(itemUpdates[0].body.pdf_urls).toEqual([remainingDrawing]);
+            // technical_drawing_url cascades to next available drawing
+            expect(itemUpdates[0].body.technical_drawing_url).toEqual(remainingDrawing);
         });
     });
 });

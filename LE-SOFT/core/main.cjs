@@ -132256,6 +132256,70 @@ var SearchCatalogProductsSchema = external_exports.object({
   category: external_exports.string().optional(),
   activeOnly: external_exports.boolean().optional().default(true)
 });
+function hasUnsafePathSequence(str) {
+  if (!str || typeof str !== "string") return false;
+  if (str.includes("\0") || str.includes("%00") || str.includes("\\0")) return true;
+  if (str.includes("../") || str.includes("..\\") || str.includes("/..") || str.includes("\\..") || str === "..") {
+    return true;
+  }
+  if (/%2e%2e|%2e\.|\.%2e|\.\.%2f|\.\.%5c|%2f\.\.|%5c\.\./i.test(str)) {
+    return true;
+  }
+  let currentStr = str;
+  for (let depth = 0; depth < 2; depth++) {
+    try {
+      const decoded = decodeURIComponent(currentStr);
+      if (decoded === currentStr) break;
+      currentStr = decoded;
+      if (currentStr.includes("../") || currentStr.includes("..\\") || currentStr.includes("/..") || currentStr.includes("\\..") || currentStr === "..") {
+        return true;
+      }
+      const segments = currentStr.split(/[/\\]/);
+      for (const seg of segments) {
+        if (seg.trim() === "..") return true;
+      }
+    } catch {
+      if (/%2e/i.test(currentStr)) return true;
+      break;
+    }
+  }
+  return false;
+}
+function hasUnsupportedStorageScheme(str) {
+  if (!str || typeof str !== "string") return false;
+  const lower2 = str.trim().toLowerCase();
+  const dangerousSchemes = ["javascript:", "file:", "data:", "ftp:", "vbscript:", "blob:", "php:"];
+  for (const scheme of dangerousSchemes) {
+    if (lower2.startsWith(scheme)) return true;
+  }
+  return false;
+}
+var DeleteOrderPdfSchema = external_exports.object({
+  orderId: external_exports.union([
+    external_exports.number().int().positive("Order ID must be a positive integer"),
+    external_exports.string().regex(/^\d+$/, "Order ID must be a numeric integer").transform(Number)
+  ]),
+  storagePath: external_exports.string().trim().min(1, "storagePath cannot be empty")
+}).refine((data2) => !hasUnsafePathSequence(data2.storagePath), {
+  message: "Invalid storagePath: Directory traversal or null bytes detected"
+}).refine((data2) => !hasUnsupportedStorageScheme(data2.storagePath), {
+  message: "Invalid storagePath: Unsupported storage reference scheme"
+});
+var DeleteItemPdfSchema = external_exports.object({
+  itemId: external_exports.union([
+    external_exports.number().int().positive("Item ID must be a positive integer"),
+    external_exports.string().regex(/^\d+$/, "Item ID must be a numeric integer").transform(Number)
+  ]),
+  orderId: external_exports.union([
+    external_exports.number().int().positive("Order ID must be a positive integer"),
+    external_exports.string().regex(/^\d+$/, "Order ID must be a numeric integer").transform(Number)
+  ]).optional(),
+  storagePath: external_exports.string().trim().min(1, "storagePath cannot be empty")
+}).refine((data2) => !hasUnsafePathSequence(data2.storagePath), {
+  message: "Invalid storagePath: Directory traversal or null bytes detected"
+}).refine((data2) => !hasUnsupportedStorageScheme(data2.storagePath), {
+  message: "Invalid storagePath: Unsupported storage reference scheme"
+});
 
 // electron/ipc/handlers/make.ts
 function isApprovedNasHost(hostname3, port) {
@@ -132751,6 +132815,73 @@ async function resolveAttachmentUrl(p) {
   const isPending = p.includes("upl_") || p.includes("make-order-files/");
   return { path: p, name, url: "", isPending: isPending || void 0 };
 }
+function canModifyMakeOrder(session2, order) {
+  if (!session2) return false;
+  const role = (session2.role || "").toLowerCase().trim();
+  const isAdmin = role === "admin" || role === "superadmin" || role === "manager";
+  const isDesigner = role === "furniture_designer" || role === "furniture designer" || role === "designer" || role === "make_designer";
+  const hasModifyPerm = !!(session2.permissions && (session2.permissions["make_edit"] || session2.permissions["write_make"] || session2.permissions["make_admin"] || session2.permissions["delete_make_order"] || session2.permissions["make_delete"] || session2.permissions["alter_make_order"] || session2.permissions["manage_orders"]));
+  if (!isAdmin && !isDesigner && !hasModifyPerm) {
+    return false;
+  }
+  if (order && order.status) {
+    const postProductionStages = [
+      "production on going",
+      "production",
+      "finishing",
+      "packaging",
+      "ready to ship",
+      "delivered",
+      "welding",
+      "painting",
+      "ready for dispatch"
+    ];
+    const statusNorm = order.status.trim().toLowerCase();
+    if (postProductionStages.includes(statusNorm) && !isAdmin) {
+      return false;
+    }
+  }
+  return true;
+}
+function isAllowedAttachmentReference(ref) {
+  if (!ref || typeof ref !== "string") return false;
+  const trimmed = ref.trim();
+  if (trimmed.length === 0) return false;
+  if (hasPathTraversal(trimmed) || trimmed.includes("\0") || trimmed.includes("%00")) return false;
+  if (hasUnsupportedStorageScheme(trimmed)) return false;
+  if (/^https?:\/\//i.test(trimmed)) {
+    if (isTrustedNasUrl(trimmed)) return true;
+    if (extractCanonicalSupabaseKey(trimmed) !== null) return true;
+    return false;
+  }
+  if (/^app-media:\/\/nas\//i.test(trimmed)) return true;
+  if (!trimmed.includes("://") && !/^[a-zA-Z]:[\\/]/.test(trimmed)) {
+    return true;
+  }
+  return false;
+}
+function isMatchingAttachment(recordedRef, requestedRef) {
+  if (!recordedRef || !requestedRef) return false;
+  const recTrim = recordedRef.trim();
+  const reqTrim = requestedRef.trim();
+  if (recTrim === reqTrim) return true;
+  const canRec = extractCanonicalSupabaseKey(recTrim);
+  const canReq = extractCanonicalSupabaseKey(reqTrim);
+  if (canRec && canReq && canRec.objectPath === canReq.objectPath) {
+    return true;
+  }
+  if (isTrustedNasUrl(recTrim) && isTrustedNasUrl(reqTrim)) {
+    try {
+      const u1 = new URL(recTrim);
+      const u2 = new URL(reqTrim);
+      const p1 = decodeURIComponent(u1.pathname).replace(/^\/+/, "");
+      const p2 = decodeURIComponent(u2.pathname).replace(/^\/+/, "");
+      if (p1 === p2) return true;
+    } catch {
+    }
+  }
+  return false;
+}
 function registerMakeHandlers() {
   function requireSession() {
     const session2 = SessionManager.getSession();
@@ -133127,7 +133258,10 @@ function registerMakeHandlers() {
   });
   import_electron18.ipcMain.handle("make-pick-and-upload-drawing", async (_e, { orderId, itemId }) => {
     try {
-      requireSession();
+      const session2 = requireSession();
+      if (!canModifyMakeOrder(session2)) {
+        throw new Error("Forbidden: Session lacks MAKE order modification permissions");
+      }
       const focusedWin = import_electron18.BrowserWindow.getFocusedWindow();
       const validation = await MakeCadService.pickAndValidateFile("cad", focusedWin);
       if ("canceled" in validation) {
@@ -133212,82 +133346,98 @@ function registerMakeHandlers() {
     }
   });
   import_electron18.ipcMain.handle("make-upload-item-pdf", async (_e, { orderId, itemId, filePath }) => {
-    if (filePath) {
-      return { error: "Arbitrary filesystem paths are rejected. Use the native file picker." };
+    try {
+      const session2 = requireSession();
+      if (!canModifyMakeOrder(session2)) {
+        return { error: "Forbidden: Session lacks MAKE order modification permissions" };
+      }
+      if (filePath) {
+        return { error: "Arbitrary filesystem paths are rejected. Use the native file picker." };
+      }
+      const focusedWin = import_electron18.BrowserWindow.getFocusedWindow();
+      const validation = await MakeCadService.pickAndValidateFile("cad", focusedWin);
+      if ("canceled" in validation) {
+        return { canceled: true, error: validation.error };
+      }
+      const subfolder = `make-order-files/${orderId}/items/${itemId}`;
+      const uploadResult = await MakeCadService.uploadValidatedBuffer(
+        validation.fileBuffer,
+        validation.sanitizedFileName,
+        validation.mimeType,
+        subfolder,
+        { entityType: "make_order_items", entityId: itemId, fieldName: "technical_drawing_url" }
+      );
+      if (!uploadResult.success && !uploadResult.isPendingUpload) {
+        return { error: uploadResult.error || "Failed to upload drawing" };
+      }
+      const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+      if (!persistentRef) {
+        return { error: "Failed to establish persistent drawing reference" };
+      }
+      const { data: item } = await supabase.from("make_order_items").select("pdf_urls").eq("id", itemId).maybeSingle();
+      const existing = Array.isArray(item?.pdf_urls) ? item.pdf_urls : [];
+      const combined = Array.from(/* @__PURE__ */ new Set([...existing, persistentRef]));
+      await supabase.from("make_order_items").update({
+        pdf_urls: combined,
+        technical_drawing_url: persistentRef
+      }).eq("id", itemId);
+      return {
+        success: true,
+        paths: [persistentRef],
+        allPaths: combined,
+        publicUrl: uploadResult.publicUrl || void 0,
+        durableKey: persistentRef,
+        isPendingUpload: uploadResult.isPendingUpload,
+        status: uploadResult.status
+      };
+    } catch (err) {
+      return { error: err?.message || "Upload failed" };
     }
-    const focusedWin = import_electron18.BrowserWindow.getFocusedWindow();
-    const validation = await MakeCadService.pickAndValidateFile("cad", focusedWin);
-    if ("canceled" in validation) {
-      return { canceled: true, error: validation.error };
-    }
-    const subfolder = `make-order-files/${orderId}/items/${itemId}`;
-    const uploadResult = await MakeCadService.uploadValidatedBuffer(
-      validation.fileBuffer,
-      validation.sanitizedFileName,
-      validation.mimeType,
-      subfolder,
-      { entityType: "make_order_items", entityId: itemId, fieldName: "technical_drawing_url" }
-    );
-    if (!uploadResult.success && !uploadResult.isPendingUpload) {
-      return { error: uploadResult.error || "Failed to upload drawing" };
-    }
-    const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
-    if (!persistentRef) {
-      return { error: "Failed to establish persistent drawing reference" };
-    }
-    const { data: item } = await supabase.from("make_order_items").select("pdf_urls").eq("id", itemId).maybeSingle();
-    const existing = Array.isArray(item?.pdf_urls) ? item.pdf_urls : [];
-    const combined = Array.from(/* @__PURE__ */ new Set([...existing, persistentRef]));
-    await supabase.from("make_order_items").update({
-      pdf_urls: combined,
-      technical_drawing_url: persistentRef
-    }).eq("id", itemId);
-    return {
-      success: true,
-      paths: [persistentRef],
-      allPaths: combined,
-      publicUrl: uploadResult.publicUrl || void 0,
-      durableKey: persistentRef,
-      isPendingUpload: uploadResult.isPendingUpload,
-      status: uploadResult.status
-    };
   });
   import_electron18.ipcMain.handle("make-upload-pdf", async (_e, { orderId, filePath }) => {
-    if (filePath) {
-      return { error: "Arbitrary filesystem paths are rejected. Use the native file picker." };
+    try {
+      const session2 = requireSession();
+      if (!canModifyMakeOrder(session2)) {
+        return { error: "Forbidden: Session lacks MAKE order modification permissions" };
+      }
+      if (filePath) {
+        return { error: "Arbitrary filesystem paths are rejected. Use the native file picker." };
+      }
+      const focusedWin = import_electron18.BrowserWindow.getFocusedWindow();
+      const validation = await MakeCadService.pickAndValidateFile("cad", focusedWin);
+      if ("canceled" in validation) {
+        return { canceled: true, error: validation.error };
+      }
+      const subfolder = `make-order-files/${orderId}`;
+      const uploadResult = await MakeCadService.uploadValidatedBuffer(
+        validation.fileBuffer,
+        validation.sanitizedFileName,
+        validation.mimeType,
+        subfolder,
+        { entityType: "make_orders", entityId: orderId, fieldName: "pdf_urls" }
+      );
+      if (!uploadResult.success && !uploadResult.isPendingUpload) {
+        return { error: uploadResult.error || "Failed to upload drawing" };
+      }
+      const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+      if (!persistentRef) {
+        return { error: "Failed to obtain persistent reference for uploaded drawing" };
+      }
+      const { data: order } = await supabase.from("make_orders").select("pdf_urls").eq("id", orderId).maybeSingle();
+      const existing = Array.isArray(order?.pdf_urls) ? order.pdf_urls : [];
+      const combined = Array.from(/* @__PURE__ */ new Set([...existing, persistentRef]));
+      await supabase.from("make_orders").update({ pdf_urls: combined }).eq("id", orderId);
+      return {
+        success: true,
+        paths: [persistentRef],
+        publicUrl: uploadResult.publicUrl || void 0,
+        durableKey: persistentRef,
+        isPendingUpload: uploadResult.isPendingUpload,
+        status: uploadResult.status
+      };
+    } catch (err) {
+      return { error: err?.message || "Upload failed" };
     }
-    const focusedWin = import_electron18.BrowserWindow.getFocusedWindow();
-    const validation = await MakeCadService.pickAndValidateFile("cad", focusedWin);
-    if ("canceled" in validation) {
-      return { canceled: true, error: validation.error };
-    }
-    const subfolder = `make-order-files/${orderId}`;
-    const uploadResult = await MakeCadService.uploadValidatedBuffer(
-      validation.fileBuffer,
-      validation.sanitizedFileName,
-      validation.mimeType,
-      subfolder,
-      { entityType: "make_orders", entityId: orderId, fieldName: "pdf_urls" }
-    );
-    if (!uploadResult.success && !uploadResult.isPendingUpload) {
-      return { error: uploadResult.error || "Failed to upload drawing" };
-    }
-    const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
-    if (!persistentRef) {
-      return { error: "Failed to obtain persistent reference for uploaded drawing" };
-    }
-    const { data: order } = await supabase.from("make_orders").select("pdf_urls").eq("id", orderId).maybeSingle();
-    const existing = Array.isArray(order?.pdf_urls) ? order.pdf_urls : [];
-    const combined = Array.from(/* @__PURE__ */ new Set([...existing, persistentRef]));
-    await supabase.from("make_orders").update({ pdf_urls: combined }).eq("id", orderId);
-    return {
-      success: true,
-      paths: [persistentRef],
-      publicUrl: uploadResult.publicUrl || void 0,
-      durableKey: persistentRef,
-      isPendingUpload: uploadResult.isPendingUpload,
-      status: uploadResult.status
-    };
   });
   import_electron18.ipcMain.handle("make-get-pdf-urls", async (_e, orderId) => {
     const session2 = requireSession();
@@ -133304,22 +133454,110 @@ function registerMakeHandlers() {
     }));
     return signedUrls.filter((u) => u.url || u.isPending);
   });
-  import_electron18.ipcMain.handle("make-delete-pdf", async (_e, { orderId, storagePath }) => {
-    requireSession();
-    const { data: order } = await supabase.from("make_orders").select("pdf_urls").eq("id", orderId).maybeSingle();
-    const remaining = (order?.pdf_urls || []).filter((p) => p !== storagePath);
-    await supabase.from("make_orders").update({ pdf_urls: remaining }).eq("id", orderId);
+  import_electron18.ipcMain.handle("make-delete-pdf", async (_e, rawPayload) => {
+    const session2 = requireSession();
+    if (!canModifyMakeOrder(session2)) {
+      throw new Error("Forbidden: Session lacks MAKE order modification permissions");
+    }
+    const parsed = DeleteOrderPdfSchema.parse(rawPayload);
+    if (!isAllowedAttachmentReference(parsed.storagePath)) {
+      throw new Error("Invalid or unsupported attachment reference");
+    }
+    const { data: order, error: orderErr } = await supabase.from("make_orders").select("id, status, pdf_urls").eq("id", parsed.orderId).maybeSingle();
+    if (orderErr) {
+      throw new Error(`Database error looking up order: ${orderErr.message}`);
+    }
+    if (!order) {
+      throw new Error(`Order with ID ${parsed.orderId} not found`);
+    }
+    if (!canModifyMakeOrder(session2, order)) {
+      throw new Error(`Order #${parsed.orderId} is in "${order.status}". Only Administrators can modify this order.`);
+    }
+    const currentPdfs = Array.isArray(order.pdf_urls) ? order.pdf_urls : [];
+    const matchIndex = currentPdfs.findIndex((p) => isMatchingAttachment(p, parsed.storagePath));
+    if (matchIndex === -1) {
+      throw new Error(`Attachment "${parsed.storagePath}" does not belong to order #${parsed.orderId}`);
+    }
+    const remaining = currentPdfs.filter((_, idx) => idx !== matchIndex);
+    const { data: updateRes, error: updateErr, count } = await supabase.from("make_orders").update({ pdf_urls: remaining }, { count: "exact" }).eq("id", parsed.orderId).select("id");
+    if (updateErr) {
+      throw new Error(`Database error removing attachment: ${updateErr.message}`);
+    }
+    const affectedCount = Array.isArray(updateRes) ? updateRes.length : updateRes ? 1 : count ?? 0;
+    if (affectedCount === 0) {
+      throw new Error(`Order attachment deletion failed: 0 rows affected for order #${parsed.orderId}`);
+    }
+    try {
+      const can = extractCanonicalSupabaseKey(parsed.storagePath);
+      if (can) {
+        const uploadService = DurableUploadService.getInstance();
+        await uploadService.pruneCloudCopy("make-order-files", can.fullKey, 0);
+      }
+    } catch (cleanupErr) {
+      console.warn("[make-delete-pdf] Background cloud cleanup deferred/failed:", cleanupErr);
+    }
     return { success: true };
   });
-  import_electron18.ipcMain.handle("make-delete-item-pdf", async (_e, { itemId, storagePath }) => {
-    requireSession();
-    const { data: item } = await supabase.from("make_order_items").select("pdf_urls, technical_drawing_url").eq("id", itemId).maybeSingle();
-    const remaining = (item?.pdf_urls || []).filter((p) => p !== storagePath);
-    const newTechUrl = item?.technical_drawing_url === storagePath ? remaining.length > 0 ? remaining[0] : null : item?.technical_drawing_url;
-    await supabase.from("make_order_items").update({
+  import_electron18.ipcMain.handle("make-delete-item-pdf", async (_e, rawPayload) => {
+    const session2 = requireSession();
+    if (!canModifyMakeOrder(session2)) {
+      throw new Error("Forbidden: Session lacks MAKE order modification permissions");
+    }
+    const parsed = DeleteItemPdfSchema.parse(rawPayload);
+    if (!isAllowedAttachmentReference(parsed.storagePath)) {
+      throw new Error("Invalid or unsupported attachment reference");
+    }
+    const { data: item, error: itemErr } = await supabase.from("make_order_items").select("id, order_id, pdf_urls, technical_drawing_url").eq("id", parsed.itemId).maybeSingle();
+    if (itemErr) {
+      throw new Error(`Database error looking up item: ${itemErr.message}`);
+    }
+    if (!item) {
+      throw new Error(`Item with ID ${parsed.itemId} not found`);
+    }
+    if (!item.order_id) {
+      throw new Error(`Item #${parsed.itemId} has no associated parent order`);
+    }
+    if (parsed.orderId !== void 0 && Number(item.order_id) !== Number(parsed.orderId)) {
+      throw new Error(`Item #${parsed.itemId} belongs to order #${item.order_id}, not order #${parsed.orderId}`);
+    }
+    const { data: parentOrder, error: parentErr } = await supabase.from("make_orders").select("id, status").eq("id", item.order_id).maybeSingle();
+    if (parentErr) {
+      throw new Error(`Database error verifying parent order: ${parentErr.message}`);
+    }
+    if (!parentOrder) {
+      throw new Error(`Parent order #${item.order_id} not found for item #${item.id}`);
+    }
+    if (!canModifyMakeOrder(session2, parentOrder)) {
+      throw new Error(`Parent order #${item.order_id} is in "${parentOrder.status}". Only Administrators can modify this order.`);
+    }
+    const currentPdfs = Array.isArray(item.pdf_urls) ? item.pdf_urls : [];
+    const pdfMatchIndex = currentPdfs.findIndex((p) => isMatchingAttachment(p, parsed.storagePath));
+    const techMatch = item.technical_drawing_url && isMatchingAttachment(item.technical_drawing_url, parsed.storagePath);
+    if (pdfMatchIndex === -1 && !techMatch) {
+      throw new Error(`Attachment "${parsed.storagePath}" does not belong to item #${parsed.itemId}`);
+    }
+    const remaining = pdfMatchIndex !== -1 ? currentPdfs.filter((_, idx) => idx !== pdfMatchIndex) : currentPdfs;
+    const newTechUrl = techMatch ? remaining.length > 0 ? remaining[0] : null : item.technical_drawing_url;
+    const { data: updateRes, error: updateErr, count } = await supabase.from("make_order_items").update({
       pdf_urls: remaining,
       technical_drawing_url: newTechUrl
-    }).eq("id", itemId);
+    }, { count: "exact" }).eq("id", parsed.itemId).select("id");
+    if (updateErr) {
+      throw new Error(`Database error removing item attachment: ${updateErr.message}`);
+    }
+    const affectedCount = Array.isArray(updateRes) ? updateRes.length : updateRes ? 1 : count ?? 0;
+    if (affectedCount === 0) {
+      throw new Error(`Item attachment deletion failed: 0 rows affected for item #${parsed.itemId}`);
+    }
+    try {
+      const can = extractCanonicalSupabaseKey(parsed.storagePath);
+      if (can) {
+        const uploadService = DurableUploadService.getInstance();
+        await uploadService.pruneCloudCopy("make-order-files", can.fullKey, 0);
+      }
+    } catch (cleanupErr) {
+      console.warn("[make-delete-item-pdf] Background cloud cleanup deferred/failed:", cleanupErr);
+    }
     return { success: true };
   });
   import_electron18.ipcMain.handle("make-download-pdf", async (_e, { url: url2, fileName }) => {
@@ -133770,8 +134008,8 @@ function registerMakeHandlers() {
       const { data: items, error: error51 } = await supabase.from("make_order_items").select(`
                     *,
                     order:make_orders(
-                        id, order_number, customer_name, customer_phone, delivery_address, 
-                        location_landmark, receiver_name, receiver_phone, status, 
+                        id, order_number, customer_name, customer_phone, delivery_address,
+                        location_landmark, receiver_name, receiver_phone, status,
                         approval_status, current_version, salesperson_name, designer_name,
                         created_at, delivery_date, cost_price, sale_price
                     )

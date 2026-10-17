@@ -153,6 +153,20 @@ All 30 MAKE test suites (comprising **525 automated tests**) pass cleanly. In ad
      - Test 20: Legitimately linked order attachment remains authorized and accessible via signed URL.
      - Test 21: Pending upload with no confirmed owner cannot be signed.
 
+### Defect 9: PDF Attachment Deletion Authorization Gap & Missing Ownership Verification
+- **Location**: `electron/ipc/handlers/make.ts` (`make-delete-pdf`, `make-delete-item-pdf`), `electron/ipc/schemas/make.schema.ts`
+- **Root Cause**: `make-delete-pdf` and `make-delete-item-pdf` previously checked `requireSession()` but omitted explicit MAKE order modification permission verification (`canModifyMakeOrder`). Consequently, read-only operators or unauthorized roles could request attachment deletion. Furthermore, the handlers lacked payload schema validation, accepted arbitrary input without rejecting directory traversal sequences or null bytes, did not authoritatively verify that the requested attachment actually belonged to the claimed order or item, did not verify item-parent order relationships, and falsely succeeded even when the order/item record was nonexistent or when zero rows were affected.
+- **Resolution**:
+  1. **Main Process Authorization Gate**: Created `canModifyMakeOrder(session, order)` enforcing that only Superadmin, Admin, Manager, Furniture Designers (on pre-production orders), or users with explicit permissions (`write_make`, `make_edit`, `make_admin`, `delete_make_order`, `make_delete`, `alter_make_order`, `manage_orders`) can modify or delete attachments. Read-only operators, guests, auditors, and unauthenticated sessions are strictly rejected. Post-production orders require Administrator privileges.
+  2. **Strict Zod Payload Validation**: Created and exported `DeleteOrderPdfSchema` and `DeleteItemPdfSchema` validating positive integer identifiers, rejecting empty or whitespace strings, and enforcing `hasUnsafePathSequence` (rejecting `../`, `..\`, `%2e%2e`, double encoding, and `\0` / `%00` null bytes) and `hasUnsupportedStorageScheme` (rejecting `javascript:`, `file:`, `data:`, `ftp:`, etc.).
+  3. **Strict Storage Reference Policy**: Implemented `isAllowedAttachmentReference` rejecting untrusted external hosts, non-approved schemes, and traversal, while approving confirmed TrueNAS endpoints, canonical Supabase bucket object keys, `app-media://` URLs, and safe relative keys.
+  4. **Authoritative Ownership Verification**: Implemented `isMatchingAttachment` cross-checking exact string equality, canonical Supabase object path equivalence, and TrueNAS URL subpath equivalence. Requests targeting unlisted files, unrelated orders, or mismatched items are rejected fail-closed without destructive side effects.
+  5. **Item-Order Relationship Integrity**: Verified that the item exists, has an associated parent order, matches any supplied `orderId`, and that the parent order exists and is modifiable by the caller.
+  6. **Fail-Closed Update Semantics**: Asserted that database updates affect > 0 rows (`affectedCount === 0` throws an error). Zero affected rows and database lookup/update errors prevent false success.
+  7. **Attachment & Failover Safety**: All authorization and ownership checks strictly precede any database update or storage operation. NAS files are preserved as authoritative storage. Supabase cloud pruning (`pruneCloudCopy`) runs safely after database confirmation, and cloud failures are caught and logged, preserving durable SQLite retry metadata.
+  8. **Audit of Adjacent Attachment Handlers**: Hardened `make-upload-item-pdf`, `make-upload-pdf`, and `make-pick-and-upload-drawing` with `canModifyMakeOrder` authorization checks.
+  9. **Comprehensive Regression Coverage**: Added 14 integration test cases in Section 7 of `make-module-stability.integration.test.ts` (suite total: 73 passed) and 14 unit test cases in Section 9 of `security.test.ts` (suite total: 37 passed), covering all 13 required security test scenarios.
+
 ---
 
 ## 3. End-to-End MAKE Architectural Audit
@@ -176,11 +190,11 @@ All 30 MAKE test suites (comprising **525 automated tests**) pass cleanly. In ad
 ### 4.1 MAKE Automated Test Suite (Vitest)
 Ran `npx vitest run tests/make`:
 - **Test Files**: 30 passed (30 total)
-- **Individual Tests**: 525 passed (525 total, 0 failed, 0 skipped)
+- **Individual Tests**: 553 passed (553 total, 0 failed, 0 skipped)
 - **Exit Code**: `0`
-- **Duration**: ~16.2 seconds
+- **Duration**: ~15.8 seconds
 - **Covered Test Files**:
-  1. `tests/make/make-module-stability.integration.test.ts` (59/59 passed) **[EXPANDED with Owner Existence Verification, Field Mismatch Rejection, Pending Association Recovery, & IPC Security Gate Tests]**
+  1. `tests/make/make-module-stability.integration.test.ts` (73/73 passed) **[EXPANDED with Section 7 Attachment Deletion Security Gate: Unauthenticated/Read-only/Unauthorized Rejection, Ownership Verification, Mismatched Order/Item Rejection, Traversal Rejection, Zero-Row Fail-Closed, & Post-Production Stage Boundaries]**
   2. `tests/make/attributes.test.ts` (19/19 passed)
   3. `tests/make/catalog-image-regression.test.ts` (11/11 passed)
   4. `tests/make/color-swatch-selector.test.ts` (8/8 passed)
@@ -202,7 +216,7 @@ Ran `npx vitest run tests/make`:
   20. `tests/make/product-catalog-features.test.ts` (22/22 passed)
   21. `tests/make/product-search.test.ts` (14/14 passed)
   22. `tests/make/responsive-layout.test.ts` (10/10 passed)
-  23. `tests/make/security.test.ts` (18/18 passed)
+  23. `tests/make/security.test.ts` (37/37 passed) **[EXPANDED with Section 9 canModifyMakeOrder Role Rules, DeleteOrderPdfSchema, DeleteItemPdfSchema, & isAllowedAttachmentReference Validation Gates]**
   24. `tests/make/simplified-image-ui-and-nas-audit.test.ts` (12/12 passed)
   25. `tests/make/smart-failover-uploads-buffer.test.ts` (39/39 passed)
   26. `tests/make/smart-nas-access.test.ts` (18/18 passed)
@@ -260,6 +274,10 @@ While all programmatic layers (IPC, schema, services, local storage, quota manag
    - In Track Orders → Production Stage progression, using the camera input to capture and attach a live stage completion photo.
 4. **Physical Printer Print Preview**:
    - Printing the MAKE Order Traveler Card / Job Sheet from the Track Orders detail drawer to confirm print media CSS pagination.
+5. **PDF Attachment Deletion in Order Details & Item Drawers**:
+   - In Track Orders detail view, clicking the delete icon on an order PDF or item technical drawing attachment.
+   - Verifying that confirmation dialog appears, deletion completes smoothly, and UI refreshes without errors.
+   - Verifying that users without edit permissions (or on post-production orders without Admin role) see disabled delete actions or clear error notifications.
 
 ---
 
@@ -278,5 +296,5 @@ While all programmatic layers (IPC, schema, services, local storage, quota manag
   5. Offline pending state represented truthfully (`isPendingUpload: true`, `publicUrl: undefined`, `durableKey: ...`) with `PENDING` badge in TrackOrders UI.
   6. Data-Integrity Gate verified: durable keys persisted in drafts and order records without token expiration vulnerability; signed URLs generated on-demand at read-time via `makeResolveAttachmentUrl`; entity updates asserted with `rowsAffected > 0` before cloud cleanup; full lifecycle from offline buffer -> order creation -> association -> TrueNAS recovery -> reference update -> cloud cleanup -> quota release verified.
   7. Final Security & Restart-Safety Gate verified: main-process `requireSession()` and role checks enforced on all attachment read, download, and URL resolution endpoints; strict canonical object-key authorization via `isAuthorizedAttachment()` cross-checking exact recorded keys and requiring that claimed owner rows actually exist and contain the matching canonical key in their attachment field (unassociated buffered uploads cannot be signed, and spoofed object paths or unlisted keys are rejected); exact hostname/port validation on TrueNAS endpoints; real native SQLite pending-association recovery tested under Electron Node runtime with `better-sqlite3` in an isolated disposable directory, proving startup reconciliation links the upload, failure retains cloud copies and quota, and database update precedes cloud removal and quota release. Mocked service reinitialization is distinguished from real native SQLite testing, and testing limitations (no OS-level process relaunch and no remote CI assertion) are documented.
+  8. Final Security & PDF Deletion Gate verified: main-process authentication and explicit MAKE modification authorization (`canModifyMakeOrder`) enforced on `make-delete-pdf` and `make-delete-item-pdf` as well as upload handlers; strict Zod payload validation (`DeleteOrderPdfSchema`, `DeleteItemPdfSchema`) rejecting path traversal, null bytes, unsupported protocols, and untrusted domains; authoritative ownership cross-checks (`isMatchingAttachment`) verifying attachment existence on owner records; item-parent order relationship validation; fail-closed update semantics (`affectedCount > 0`); and safe cloud pruning without deleting authoritative NAS files.
 - **Quality Gates**: All 6 gates passed (TSC frontend 0 errors, TSC electron 0 errors, ESLint 0 warnings, Vite build exit 0, Electron build exit 0, License verification exit 0).
-

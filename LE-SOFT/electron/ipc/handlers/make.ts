@@ -2,7 +2,7 @@
  * make.ts
  * ─────────────────────────────────────────────────────────────────────────────
  * Fortified, Authenticated, and Schema-Validated IPC Handlers for MAKE V1.
- * 
+ *
  * Guarantees:
  *  - Native Electron file selection (no arbitrary renderer-supplied file paths).
  *  - Main-process session resolution via SessionManager (no forged userRole or isSuperadmin).
@@ -32,6 +32,9 @@ import {
     UpdateProductionStageSchema,
     AlterMakeOrderSchema,
     DeleteMakeOrderSchema,
+    DeleteOrderPdfSchema,
+    DeleteItemPdfSchema,
+    hasUnsupportedStorageScheme,
     CatalogProductSchema,
     CatalogSpecSchema,
     CatalogSizeSchema,
@@ -754,6 +757,129 @@ export async function resolveAttachmentUrl(p: string): Promise<{ path: string; n
     return { path: p, name, url: '', isPending: isPending || undefined };
 }
 
+/**
+ * Verifies if the session user has permissions to modify MAKE orders or their attachments.
+ *
+ * Rules:
+ *  - Superadmin, Admin, and Manager have global modification authority.
+ *  - Furniture Designers have modification authority over orders not yet in or past production.
+ *  - Users with explicit permissions ('make_edit', 'write_make', 'make_admin', 'delete_make_order',
+ *    'make_delete', 'alter_make_order', 'manage_orders') have modification authority.
+ *  - Read-only users, operators, guests, auditors, and unauthenticated sessions are strictly rejected.
+ *  - If an authoritative order record is provided and has reached or passed production ('Production On Going', etc.),
+ *    only Administrators retain modification rights.
+ */
+export function canModifyMakeOrder(
+    session: UserSession | null | undefined,
+    order?: { status?: string | null } | null
+): boolean {
+    if (!session) return false;
+    const role = (session.role || '').toLowerCase().trim();
+    const isAdmin = role === 'admin' || role === 'superadmin' || role === 'manager';
+    const isDesigner = (
+        role === 'furniture_designer' ||
+        role === 'furniture designer' ||
+        role === 'designer' ||
+        role === 'make_designer'
+    );
+    const hasModifyPerm = !!(
+        session.permissions && (
+            session.permissions['make_edit'] ||
+            session.permissions['write_make'] ||
+            session.permissions['make_admin'] ||
+            session.permissions['delete_make_order'] ||
+            session.permissions['make_delete'] ||
+            session.permissions['alter_make_order'] ||
+            session.permissions['manage_orders']
+        )
+    );
+
+    if (!isAdmin && !isDesigner && !hasModifyPerm) {
+        return false;
+    }
+
+    // If an authoritative order record is provided, check stage boundaries
+    if (order && order.status) {
+        const postProductionStages = [
+            'production on going',
+            'production',
+            'finishing',
+            'packaging',
+            'ready to ship',
+            'delivered',
+            'welding',
+            'painting',
+            'ready for dispatch'
+        ];
+        const statusNorm = order.status.trim().toLowerCase();
+        if (postProductionStages.includes(statusNorm) && !isAdmin) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/**
+ * Strictly verifies whether an attachment reference is an approved storage reference.
+ * Rejects illegal schemes (javascript:, file:, data:, etc.), traversal paths,
+ * null bytes, and untrusted HTTP/HTTPS endpoints.
+ */
+export function isAllowedAttachmentReference(ref: string): boolean {
+    if (!ref || typeof ref !== 'string') return false;
+    const trimmed = ref.trim();
+    if (trimmed.length === 0) return false;
+    if (hasPathTraversal(trimmed) || trimmed.includes('\0') || trimmed.includes('%00')) return false;
+    if (hasUnsupportedStorageScheme(trimmed)) return false;
+
+    if (/^https?:\/\//i.test(trimmed)) {
+        if (isTrustedNasUrl(trimmed)) return true;
+        if (extractCanonicalSupabaseKey(trimmed) !== null) return true;
+        return false;
+    }
+
+    if (/^app-media:\/\/nas\//i.test(trimmed)) return true;
+
+    // Relative storage key or filename without dangerous schemes or Windows drive prefixes
+    if (!trimmed.includes('://') && !/^[a-zA-Z]:[\\/]/.test(trimmed)) {
+        return true;
+    }
+
+    return false;
+}
+
+/**
+ * Checks if a stored attachment reference matches the requested deletion target.
+ * Supports exact string equality, canonical Supabase object key equivalence,
+ * and TrueNAS URL subpath equivalence.
+ */
+export function isMatchingAttachment(recordedRef: string, requestedRef: string): boolean {
+    if (!recordedRef || !requestedRef) return false;
+    const recTrim = recordedRef.trim();
+    const reqTrim = requestedRef.trim();
+    if (recTrim === reqTrim) return true;
+
+    // Supabase canonical key comparison
+    const canRec = extractCanonicalSupabaseKey(recTrim);
+    const canReq = extractCanonicalSupabaseKey(reqTrim);
+    if (canRec && canReq && canRec.objectPath === canReq.objectPath) {
+        return true;
+    }
+
+    // NAS subpath comparison
+    if (isTrustedNasUrl(recTrim) && isTrustedNasUrl(reqTrim)) {
+        try {
+            const u1 = new URL(recTrim);
+            const u2 = new URL(reqTrim);
+            const p1 = decodeURIComponent(u1.pathname).replace(/^\/+/, '');
+            const p2 = decodeURIComponent(u2.pathname).replace(/^\/+/, '');
+            if (p1 === p2) return true;
+        } catch {}
+    }
+
+    return false;
+}
+
 export function registerMakeHandlers(): void {
     /**
      * Resolves the active authenticated session strictly from the Electron Main Process.
@@ -779,8 +905,8 @@ export function registerMakeHandlers(): void {
         if (role === 'factory_manager' || role === 'factory manager' || role === 'factory') return false;
         if (role === 'admin' || role === 'superadmin' || role === 'manager') return true;
         if (
-            role === 'furniture_designer' || 
-            role === 'furniture designer' || 
+            role === 'furniture_designer' ||
+            role === 'furniture designer' ||
             role === 'designer' ||
             role === 'make_designer'
         ) return true;
@@ -1281,7 +1407,10 @@ export function registerMakeHandlers(): void {
     // ── 7. Native Secure File Picker & Upload for Drawings ────────────────────
     ipcMain.handle('make-pick-and-upload-drawing', async (_e, { orderId, itemId }: { orderId: number; itemId?: number }) => {
         try {
-            requireSession();
+            const session = requireSession();
+            if (!canModifyMakeOrder(session)) {
+                throw new Error('Forbidden: Session lacks MAKE order modification permissions');
+            }
             const focusedWin = BrowserWindow.getFocusedWindow();
             const validation = await MakeCadService.pickAndValidateFile('cad', focusedWin);
             if ('canceled' in validation) {
@@ -1386,95 +1515,111 @@ export function registerMakeHandlers(): void {
 
     // ── 9. Hardened Legacy Upload Handlers (Backward Compatibility) ───────────
     ipcMain.handle('make-upload-item-pdf', async (_e, { orderId, itemId, filePath }: any) => {
-        if (filePath) {
-            return { error: 'Arbitrary filesystem paths are rejected. Use the native file picker.' };
+        try {
+            const session = requireSession();
+            if (!canModifyMakeOrder(session)) {
+                return { error: 'Forbidden: Session lacks MAKE order modification permissions' };
+            }
+            if (filePath) {
+                return { error: 'Arbitrary filesystem paths are rejected. Use the native file picker.' };
+            }
+
+            const focusedWin = BrowserWindow.getFocusedWindow();
+            const validation = await MakeCadService.pickAndValidateFile('cad', focusedWin);
+            if ('canceled' in validation) {
+                return { canceled: true, error: validation.error };
+            }
+
+            const subfolder = `make-order-files/${orderId}/items/${itemId}`;
+            const uploadResult = await MakeCadService.uploadValidatedBuffer(
+                validation.fileBuffer,
+                validation.sanitizedFileName,
+                validation.mimeType,
+                subfolder,
+                { entityType: 'make_order_items', entityId: itemId, fieldName: 'technical_drawing_url' }
+            );
+
+            if (!uploadResult.success && !uploadResult.isPendingUpload) {
+                return { error: uploadResult.error || 'Failed to upload drawing' };
+            }
+
+            const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+            if (!persistentRef) {
+                return { error: 'Failed to establish persistent drawing reference' };
+            }
+
+            const { data: item } = await supabase.from('make_order_items').select('pdf_urls').eq('id', itemId).maybeSingle();
+            const existing: string[] = Array.isArray(item?.pdf_urls) ? item.pdf_urls : [];
+            const combined = Array.from(new Set([...existing, persistentRef]));
+            await supabase.from('make_order_items').update({
+                pdf_urls: combined,
+                technical_drawing_url: persistentRef
+            }).eq('id', itemId);
+
+            return {
+                success: true,
+                paths: [persistentRef],
+                allPaths: combined,
+                publicUrl: uploadResult.publicUrl || undefined,
+                durableKey: persistentRef,
+                isPendingUpload: uploadResult.isPendingUpload,
+                status: uploadResult.status
+            };
+        } catch (err: any) {
+            return { error: err?.message || 'Upload failed' };
         }
-
-        const focusedWin = BrowserWindow.getFocusedWindow();
-        const validation = await MakeCadService.pickAndValidateFile('cad', focusedWin);
-        if ('canceled' in validation) {
-            return { canceled: true, error: validation.error };
-        }
-
-        const subfolder = `make-order-files/${orderId}/items/${itemId}`;
-        const uploadResult = await MakeCadService.uploadValidatedBuffer(
-            validation.fileBuffer,
-            validation.sanitizedFileName,
-            validation.mimeType,
-            subfolder,
-            { entityType: 'make_order_items', entityId: itemId, fieldName: 'technical_drawing_url' }
-        );
-
-        if (!uploadResult.success && !uploadResult.isPendingUpload) {
-            return { error: uploadResult.error || 'Failed to upload drawing' };
-        }
-
-        const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
-        if (!persistentRef) {
-            return { error: 'Failed to establish persistent drawing reference' };
-        }
-
-        const { data: item } = await supabase.from('make_order_items').select('pdf_urls').eq('id', itemId).maybeSingle();
-        const existing: string[] = Array.isArray(item?.pdf_urls) ? item.pdf_urls : [];
-        const combined = Array.from(new Set([...existing, persistentRef]));
-        await supabase.from('make_order_items').update({
-            pdf_urls: combined,
-            technical_drawing_url: persistentRef
-        }).eq('id', itemId);
-
-        return {
-            success: true,
-            paths: [persistentRef],
-            allPaths: combined,
-            publicUrl: uploadResult.publicUrl || undefined,
-            durableKey: persistentRef,
-            isPendingUpload: uploadResult.isPendingUpload,
-            status: uploadResult.status
-        };
     });
 
     ipcMain.handle('make-upload-pdf', async (_e, { orderId, filePath }: any) => {
-        if (filePath) {
-            return { error: 'Arbitrary filesystem paths are rejected. Use the native file picker.' };
+        try {
+            const session = requireSession();
+            if (!canModifyMakeOrder(session)) {
+                return { error: 'Forbidden: Session lacks MAKE order modification permissions' };
+            }
+            if (filePath) {
+                return { error: 'Arbitrary filesystem paths are rejected. Use the native file picker.' };
+            }
+
+            const focusedWin = BrowserWindow.getFocusedWindow();
+            const validation = await MakeCadService.pickAndValidateFile('cad', focusedWin);
+            if ('canceled' in validation) {
+                return { canceled: true, error: validation.error };
+            }
+
+            const subfolder = `make-order-files/${orderId}`;
+            const uploadResult = await MakeCadService.uploadValidatedBuffer(
+                validation.fileBuffer,
+                validation.sanitizedFileName,
+                validation.mimeType,
+                subfolder,
+                { entityType: 'make_orders', entityId: orderId, fieldName: 'pdf_urls' }
+            );
+
+            if (!uploadResult.success && !uploadResult.isPendingUpload) {
+                return { error: uploadResult.error || 'Failed to upload drawing' };
+            }
+
+            const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+            if (!persistentRef) {
+                return { error: 'Failed to obtain persistent reference for uploaded drawing' };
+            }
+
+            const { data: order } = await supabase.from('make_orders').select('pdf_urls').eq('id', orderId).maybeSingle();
+            const existing: string[] = Array.isArray(order?.pdf_urls) ? order.pdf_urls : [];
+            const combined = Array.from(new Set([...existing, persistentRef]));
+            await supabase.from('make_orders').update({ pdf_urls: combined }).eq('id', orderId);
+
+            return {
+                success: true,
+                paths: [persistentRef],
+                publicUrl: uploadResult.publicUrl || undefined,
+                durableKey: persistentRef,
+                isPendingUpload: uploadResult.isPendingUpload,
+                status: uploadResult.status
+            };
+        } catch (err: any) {
+            return { error: err?.message || 'Upload failed' };
         }
-
-        const focusedWin = BrowserWindow.getFocusedWindow();
-        const validation = await MakeCadService.pickAndValidateFile('cad', focusedWin);
-        if ('canceled' in validation) {
-            return { canceled: true, error: validation.error };
-        }
-
-        const subfolder = `make-order-files/${orderId}`;
-        const uploadResult = await MakeCadService.uploadValidatedBuffer(
-            validation.fileBuffer,
-            validation.sanitizedFileName,
-            validation.mimeType,
-            subfolder,
-            { entityType: 'make_orders', entityId: orderId, fieldName: 'pdf_urls' }
-        );
-
-        if (!uploadResult.success && !uploadResult.isPendingUpload) {
-            return { error: uploadResult.error || 'Failed to upload drawing' };
-        }
-
-        const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
-        if (!persistentRef) {
-            return { error: 'Failed to obtain persistent reference for uploaded drawing' };
-        }
-
-        const { data: order } = await supabase.from('make_orders').select('pdf_urls').eq('id', orderId).maybeSingle();
-        const existing: string[] = Array.isArray(order?.pdf_urls) ? order.pdf_urls : [];
-        const combined = Array.from(new Set([...existing, persistentRef]));
-        await supabase.from('make_orders').update({ pdf_urls: combined }).eq('id', orderId);
-
-        return {
-            success: true,
-            paths: [persistentRef],
-            publicUrl: uploadResult.publicUrl || undefined,
-            durableKey: persistentRef,
-            isPendingUpload: uploadResult.isPendingUpload,
-            status: uploadResult.status
-        };
     });
 
     // ── 10. PDF Storage URLs and Deletion ─────────────────────────────────────
@@ -1495,26 +1640,183 @@ export function registerMakeHandlers(): void {
         return signedUrls.filter(u => u.url || u.isPending);
     });
 
-    ipcMain.handle('make-delete-pdf', async (_e, { orderId, storagePath }: { orderId: number; storagePath: string }) => {
-        requireSession();
-        const { data: order } = await supabase.from('make_orders').select('pdf_urls').eq('id', orderId).maybeSingle();
-        const remaining = (order?.pdf_urls || []).filter((p: string) => p !== storagePath);
-        await supabase.from('make_orders').update({ pdf_urls: remaining }).eq('id', orderId);
+    // ── Delete Order PDF (Hardened Authorization & Ownership Gate) ───────────
+    ipcMain.handle('make-delete-pdf', async (_e, rawPayload: any) => {
+        // 1. Session verification
+        const session = requireSession();
+
+        // 2. Authorization verification: caller must possess MAKE order modification permission
+        if (!canModifyMakeOrder(session)) {
+            throw new Error('Forbidden: Session lacks MAKE order modification permissions');
+        }
+
+        // 3. Schema & payload validation
+        const parsed = DeleteOrderPdfSchema.parse(rawPayload);
+
+        // 4. Strict attachment reference validation (reject traversal, illegal schemes, untrusted hosts)
+        if (!isAllowedAttachmentReference(parsed.storagePath)) {
+            throw new Error('Invalid or unsupported attachment reference');
+        }
+
+        // 5. Authoritative database lookup
+        const { data: order, error: orderErr } = await supabase
+            .from('make_orders')
+            .select('id, status, pdf_urls')
+            .eq('id', parsed.orderId)
+            .maybeSingle();
+
+        if (orderErr) {
+            throw new Error(`Database error looking up order: ${orderErr.message}`);
+        }
+        if (!order) {
+            throw new Error(`Order with ID ${parsed.orderId} not found`);
+        }
+
+        // 6. Verify caller permission on this specific order (e.g. post-production requires Admin)
+        if (!canModifyMakeOrder(session, order)) {
+            throw new Error(`Order #${parsed.orderId} is in "${order.status}". Only Administrators can modify this order.`);
+        }
+
+        // 7. Verify attachment ownership: must actually belong to this order
+        const currentPdfs: string[] = Array.isArray(order.pdf_urls) ? order.pdf_urls : [];
+        const matchIndex = currentPdfs.findIndex(p => isMatchingAttachment(p, parsed.storagePath));
+        if (matchIndex === -1) {
+            throw new Error(`Attachment "${parsed.storagePath}" does not belong to order #${parsed.orderId}`);
+        }
+
+        // 8. Execute update and assert affected rows > 0 (fail closed)
+        const remaining = currentPdfs.filter((_, idx) => idx !== matchIndex);
+        const { data: updateRes, error: updateErr, count } = await supabase
+            .from('make_orders')
+            .update({ pdf_urls: remaining }, { count: 'exact' })
+            .eq('id', parsed.orderId)
+            .select('id');
+
+        if (updateErr) {
+            throw new Error(`Database error removing attachment: ${updateErr.message}`);
+        }
+        const affectedCount = Array.isArray(updateRes) ? updateRes.length : (updateRes ? 1 : (count ?? 0));
+        if (affectedCount === 0) {
+            throw new Error(`Order attachment deletion failed: 0 rows affected for order #${parsed.orderId}`);
+        }
+
+        // 9. Safe post-update cleanup of cloud copy if buffered in Supabase (preserving metadata on failure)
+        try {
+            const can = extractCanonicalSupabaseKey(parsed.storagePath);
+            if (can) {
+                const uploadService = DurableUploadService.getInstance();
+                await uploadService.pruneCloudCopy('make-order-files', can.fullKey, 0);
+            }
+        } catch (cleanupErr) {
+            console.warn('[make-delete-pdf] Background cloud cleanup deferred/failed:', cleanupErr);
+        }
+
         return { success: true };
     });
 
-    ipcMain.handle('make-delete-item-pdf', async (_e, { itemId, storagePath }: { itemId: number; storagePath: string }) => {
-        requireSession();
-        const { data: item } = await supabase.from('make_order_items').select('pdf_urls, technical_drawing_url').eq('id', itemId).maybeSingle();
-        const remaining = (item?.pdf_urls || []).filter((p: string) => p !== storagePath);
-        const newTechUrl = item?.technical_drawing_url === storagePath
-            ? (remaining.length > 0 ? remaining[0] : null)
-            : item?.technical_drawing_url;
+    // ── Delete Item PDF / Technical Drawing (Hardened Authorization Gate) ────
+    ipcMain.handle('make-delete-item-pdf', async (_e, rawPayload: any) => {
+        // 1. Session verification
+        const session = requireSession();
 
-        await supabase.from('make_order_items').update({
-            pdf_urls: remaining,
-            technical_drawing_url: newTechUrl
-        }).eq('id', itemId);
+        // 2. Authorization verification
+        if (!canModifyMakeOrder(session)) {
+            throw new Error('Forbidden: Session lacks MAKE order modification permissions');
+        }
+
+        // 3. Schema & payload validation
+        const parsed = DeleteItemPdfSchema.parse(rawPayload);
+
+        // 4. Strict attachment reference validation
+        if (!isAllowedAttachmentReference(parsed.storagePath)) {
+            throw new Error('Invalid or unsupported attachment reference');
+        }
+
+        // 5. Authoritative item database lookup
+        const { data: item, error: itemErr } = await supabase
+            .from('make_order_items')
+            .select('id, order_id, pdf_urls, technical_drawing_url')
+            .eq('id', parsed.itemId)
+            .maybeSingle();
+
+        if (itemErr) {
+            throw new Error(`Database error looking up item: ${itemErr.message}`);
+        }
+        if (!item) {
+            throw new Error(`Item with ID ${parsed.itemId} not found`);
+        }
+
+        // 6. Verify item relationship to parent order
+        if (!item.order_id) {
+            throw new Error(`Item #${parsed.itemId} has no associated parent order`);
+        }
+        if (parsed.orderId !== undefined && Number(item.order_id) !== Number(parsed.orderId)) {
+            throw new Error(`Item #${parsed.itemId} belongs to order #${item.order_id}, not order #${parsed.orderId}`);
+        }
+
+        // 7. Verify parent order exists and caller has permission to modify it
+        const { data: parentOrder, error: parentErr } = await supabase
+            .from('make_orders')
+            .select('id, status')
+            .eq('id', item.order_id)
+            .maybeSingle();
+
+        if (parentErr) {
+            throw new Error(`Database error verifying parent order: ${parentErr.message}`);
+        }
+        if (!parentOrder) {
+            throw new Error(`Parent order #${item.order_id} not found for item #${item.id}`);
+        }
+        if (!canModifyMakeOrder(session, parentOrder)) {
+            throw new Error(`Parent order #${item.order_id} is in "${parentOrder.status}". Only Administrators can modify this order.`);
+        }
+
+        // 8. Verify attachment ownership: must belong to this item
+        const currentPdfs: string[] = Array.isArray(item.pdf_urls) ? item.pdf_urls : [];
+        const pdfMatchIndex = currentPdfs.findIndex(p => isMatchingAttachment(p, parsed.storagePath));
+        const techMatch = item.technical_drawing_url && isMatchingAttachment(item.technical_drawing_url, parsed.storagePath);
+
+        if (pdfMatchIndex === -1 && !techMatch) {
+            throw new Error(`Attachment "${parsed.storagePath}" does not belong to item #${parsed.itemId}`);
+        }
+
+        // 9. Compute updated item values
+        const remaining = pdfMatchIndex !== -1
+            ? currentPdfs.filter((_, idx) => idx !== pdfMatchIndex)
+            : currentPdfs;
+
+        const newTechUrl = techMatch
+            ? (remaining.length > 0 ? remaining[0] : null)
+            : item.technical_drawing_url;
+
+        // 10. Execute update and assert affected rows > 0 (fail closed)
+        const { data: updateRes, error: updateErr, count } = await supabase
+            .from('make_order_items')
+            .update({
+                pdf_urls: remaining,
+                technical_drawing_url: newTechUrl
+            }, { count: 'exact' })
+            .eq('id', parsed.itemId)
+            .select('id');
+
+        if (updateErr) {
+            throw new Error(`Database error removing item attachment: ${updateErr.message}`);
+        }
+        const affectedCount = Array.isArray(updateRes) ? updateRes.length : (updateRes ? 1 : (count ?? 0));
+        if (affectedCount === 0) {
+            throw new Error(`Item attachment deletion failed: 0 rows affected for item #${parsed.itemId}`);
+        }
+
+        // 11. Safe post-update cleanup of cloud copy if buffered in Supabase
+        try {
+            const can = extractCanonicalSupabaseKey(parsed.storagePath);
+            if (can) {
+                const uploadService = DurableUploadService.getInstance();
+                await uploadService.pruneCloudCopy('make-order-files', can.fullKey, 0);
+            }
+        } catch (cleanupErr) {
+            console.warn('[make-delete-item-pdf] Background cloud cleanup deferred/failed:', cleanupErr);
+        }
 
         return { success: true };
     });
@@ -1712,7 +2014,7 @@ export function registerMakeHandlers(): void {
 
         if (categoryIds.length > 0) {
             resolvedCategoryId = categoryIds[0];
-            const { data: catRows } = await failoverEngine.executeRead(async client => 
+            const { data: catRows } = await failoverEngine.executeRead(async client =>
                 client.from('make_product_categories').select('id, name').in('id', categoryIds),
                 'resolve-category-ids'
             );
@@ -1720,7 +2022,7 @@ export function registerMakeHandlers(): void {
                 resolvedCategoryName = catRows.map((c: any) => c.name).join(', ');
             }
         } else if (product.category) {
-            const { data: catRow } = await failoverEngine.executeRead(async client => 
+            const { data: catRow } = await failoverEngine.executeRead(async client =>
                 client.from('make_product_categories').select('id, name').ilike('name', product.category!.trim()).maybeSingle(),
                 'resolve-category-name'
             );
@@ -2042,8 +2344,8 @@ export function registerMakeHandlers(): void {
                 .select(`
                     *,
                     order:make_orders(
-                        id, order_number, customer_name, customer_phone, delivery_address, 
-                        location_landmark, receiver_name, receiver_phone, status, 
+                        id, order_number, customer_name, customer_phone, delivery_address,
+                        location_landmark, receiver_name, receiver_phone, status,
                         approval_status, current_version, salesperson_name, designer_name,
                         created_at, delivery_date, cost_price, sale_price
                     )
@@ -2790,4 +3092,3 @@ export function registerMakeHandlers(): void {
         }
     });
 }
-
