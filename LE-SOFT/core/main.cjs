@@ -26269,6 +26269,7 @@ var init_DurableUploadService = __esm({
       workerTimer = null;
       isWorking = false;
       inFlightDispatches = /* @__PURE__ */ new Map();
+      pendingAssociations = /* @__PURE__ */ new Map();
       constructor() {
         const userData = import_electron7.app?.getPath ? import_electron7.app.getPath("userData") : import_path8.default.join(process.env.APPDATA || process.cwd(), "le-soft");
         this.stagingDir = import_path8.default.join(userData, "upload_staging");
@@ -26347,6 +26348,13 @@ var init_DurableUploadService = __esm({
         } else {
           buffer = source;
         }
+        let effectiveMeta = meta3;
+        if (!effectiveMeta?.entityId) {
+          const pending = this.pendingAssociations.get(uploadId) || this.pendingAssociations.get(sanitized) || this.pendingAssociations.get(fileName);
+          if (pending) {
+            effectiveMeta = pending;
+          }
+        }
         import_fs8.default.writeFileSync(targetPath, buffer);
         const hash2 = import_crypto7.default.createHash("sha256").update(buffer).digest("hex").toUpperCase();
         const sizeBytes = buffer.length;
@@ -26365,9 +26373,9 @@ var init_DurableUploadService = __esm({
           sizeBytes,
           hash2,
           subfolder,
-          meta3?.entityType || null,
-          meta3?.entityId ? String(meta3.entityId) : null,
-          meta3?.fieldName || null,
+          effectiveMeta?.entityType || null,
+          effectiveMeta?.entityId ? String(effectiveMeta.entityId) : null,
+          effectiveMeta?.fieldName || null,
           now,
           now
         );
@@ -26385,9 +26393,9 @@ var init_DurableUploadService = __esm({
           sizeBytes,
           sha256: hash2,
           subfolder,
-          entityType: meta3?.entityType || null,
-          entityId: meta3?.entityId ? String(meta3.entityId) : null,
-          fieldName: meta3?.fieldName || null,
+          entityType: effectiveMeta?.entityType || null,
+          entityId: effectiveMeta?.entityId ? String(effectiveMeta.entityId) : null,
+          fieldName: effectiveMeta?.fieldName || null,
           status: "staged_local",
           remoteUrlNas: null,
           remoteUrlSupabase: null,
@@ -26416,7 +26424,7 @@ var init_DurableUploadService = __esm({
         try {
           const rows = this.db.prepare(`
                 SELECT * FROM durable_uploads
-                WHERE status IN ('staged_local', 'buffered_supabase')
+                WHERE status IN ('staged_local', 'buffered_supabase', 'awaiting_association')
                 ORDER BY created_at ASC
                 LIMIT 5
             `).all();
@@ -26452,6 +26460,29 @@ var init_DurableUploadService = __esm({
         if (!row || !import_fs8.default.existsSync(row.local_path)) {
           return { success: false, status: "failed", error: "Upload record or local file not found" };
         }
+        if (row.status === "synced_nas") {
+          return {
+            success: true,
+            url: row.remote_url_nas,
+            activeUrl: row.remote_url_nas,
+            durableKey: row.remote_url_nas,
+            status: "synced_nas"
+          };
+        }
+        if (!row.entity_type || !row.entity_id || !row.field_name) {
+          const pending = this.pendingAssociations.get(uploadId) || this.pendingAssociations.get(row.file_name);
+          if (pending && pending.entityType && pending.entityId && pending.fieldName) {
+            this.associateUploadWithEntity(uploadId, {
+              entityType: pending.entityType,
+              entityId: pending.entityId,
+              fieldName: pending.fieldName
+            });
+            const reloaded = this.db.prepare(`SELECT * FROM durable_uploads WHERE id = ?`).get(uploadId);
+            if (reloaded) {
+              Object.assign(row, reloaded);
+            }
+          }
+        }
         const buffer = import_fs8.default.readFileSync(row.local_path);
         const candidates = getNasStorageCandidates();
         const cfHeaders = getCfAccessHeaders();
@@ -26476,44 +26507,73 @@ var init_DurableUploadService = __esm({
           }
         }
         if (nasSuccess && authoritativeUrl) {
-          const entityUpdated = await this.updateEntityRecord(
-            row.entity_type,
-            row.entity_id,
-            row.field_name,
-            authoritativeUrl,
-            row.remote_url_supabase || void 0,
-            uploadId
-          );
-          if (!entityUpdated) {
-            lastError = `Entity record update failed for ${row.entity_type} ${row.entity_id}. Staged copy preserved for retry.`;
+          const hasOwner = !!(row.entity_type && row.entity_id && row.field_name);
+          if (row.remote_url_supabase && !hasOwner) {
+            const deferMsg = `Upload persisted to NAS (${authoritativeUrl}) but awaiting owner association (${row.entity_type || "unlinked"}). Preserving cloud copy and quota until confirmed.`;
+            console.log(`[DurableUpload] ${deferMsg}`);
             this.db.prepare(`
                     UPDATE durable_uploads
-                    SET remote_url_nas = ?, last_error = ?, updated_at = ?
+                    SET status = 'awaiting_association', remote_url_nas = ?, last_error = ?, updated_at = ?
                     WHERE id = ?
-                `).run(authoritativeUrl, lastError, Date.now(), uploadId);
-          } else {
-            if (row.remote_url_supabase) {
-              const pruned = await this.pruneCloudCopy(row.subfolder, row.remote_url_supabase, row.size_bytes, uploadId);
-              if (!pruned) {
-                lastError = "Authoritative NAS persistence confirmed, but Supabase cloud copy cleanup or quota prune failed. Retaining for cleanup retry.";
-                this.db.prepare(`
-                            UPDATE durable_uploads
-                            SET remote_url_nas = ?, last_error = ?, updated_at = ?
-                            WHERE id = ?
-                        `).run(authoritativeUrl, lastError, Date.now(), uploadId);
-                this.broadcastUploadStatus();
-                return { success: false, url: authoritativeUrl, activeUrl: authoritativeUrl, durableKey: authoritativeUrl, status: row.status, error: lastError };
-              }
-            }
-            this.db.prepare(`
-                    UPDATE durable_uploads
-                    SET status = 'synced_nas', remote_url_nas = ?, last_error = NULL, updated_at = ?
-                    WHERE id = ?
-                `).run(authoritativeUrl, Date.now(), uploadId);
-            console.log(`[DurableUpload] Upload ${uploadId} successfully synchronized to authoritative NAS Storage: ${authoritativeUrl}`);
+                `).run(authoritativeUrl, deferMsg, Date.now(), uploadId);
             this.broadcastUploadStatus();
-            return { success: true, url: authoritativeUrl, activeUrl: authoritativeUrl, durableKey: authoritativeUrl, status: "synced_nas" };
+            return {
+              success: true,
+              url: authoritativeUrl,
+              activeUrl: authoritativeUrl,
+              durableKey: authoritativeUrl,
+              status: "awaiting_association",
+              error: deferMsg
+            };
           }
+          if (hasOwner) {
+            const entityUpdated = await this.updateEntityRecord(
+              row.entity_type,
+              row.entity_id,
+              row.field_name,
+              authoritativeUrl,
+              row.remote_url_supabase || void 0,
+              uploadId
+            );
+            if (!entityUpdated) {
+              lastError = `Entity record update failed for ${row.entity_type} ${row.entity_id}. Staged copy preserved for retry.`;
+              this.db.prepare(`
+                        UPDATE durable_uploads
+                        SET remote_url_nas = ?, last_error = ?, updated_at = ?
+                        WHERE id = ?
+                    `).run(authoritativeUrl, lastError, Date.now(), uploadId);
+              this.broadcastUploadStatus();
+              return {
+                success: false,
+                url: authoritativeUrl,
+                activeUrl: authoritativeUrl,
+                durableKey: authoritativeUrl,
+                status: row.status,
+                error: lastError
+              };
+            }
+          }
+          if (row.remote_url_supabase) {
+            const pruned = await this.pruneCloudCopy(row.subfolder, row.remote_url_supabase, row.size_bytes, uploadId);
+            if (!pruned) {
+              lastError = "Authoritative NAS persistence confirmed, but Supabase cloud copy cleanup or quota prune failed. Retaining for cleanup retry.";
+              this.db.prepare(`
+                        UPDATE durable_uploads
+                        SET remote_url_nas = ?, last_error = ?, updated_at = ?
+                        WHERE id = ?
+                    `).run(authoritativeUrl, lastError, Date.now(), uploadId);
+              this.broadcastUploadStatus();
+              return { success: false, url: authoritativeUrl, activeUrl: authoritativeUrl, durableKey: authoritativeUrl, status: row.status, error: lastError };
+            }
+          }
+          this.db.prepare(`
+                UPDATE durable_uploads
+                SET status = 'synced_nas', remote_url_nas = ?, remote_url_supabase = NULL, last_error = NULL, updated_at = ?
+                WHERE id = ?
+            `).run(authoritativeUrl, Date.now(), uploadId);
+          console.log(`[DurableUpload] Upload ${uploadId} successfully synchronized to authoritative NAS Storage: ${authoritativeUrl}`);
+          this.broadcastUploadStatus();
+          return { success: true, url: authoritativeUrl, activeUrl: authoritativeUrl, durableKey: authoritativeUrl, status: "synced_nas" };
         }
         if (!nasSuccess && row.status === "staged_local" && this.supabaseClient && !lastError?.startsWith("Checksum mismatch")) {
           const quotaMgr = SupabaseQuotaManager.getInstance();
@@ -26618,14 +26678,31 @@ var init_DurableUploadService = __esm({
                 SET entity_type = ?, entity_id = ?, field_name = ?, updated_at = ?
                 WHERE id = ? OR id = ? OR local_path LIKE ? OR remote_url_supabase LIKE ? OR remote_url_nas LIKE ?
             `).run(meta3.entityType, String(meta3.entityId), meta3.fieldName, Date.now(), uploadId, identifier, `%${uploadId}%`, `%${uploadId}%`, `%${uploadId}%`);
-          return res.changes > 0;
+          const associated = res.changes > 0;
+          if (associated) {
+            this.pendingAssociations.delete(uploadId);
+            this.pendingAssociations.delete(identifier);
+          } else {
+            console.warn(`[DurableUpload] associateUploadWithEntity found no matching upload for identifier "${identifier}". Queuing pending association.`);
+            this.pendingAssociations.set(uploadId, meta3);
+            if (uploadId !== identifier) {
+              this.pendingAssociations.set(identifier, meta3);
+            }
+          }
+          return associated;
         } catch (err) {
           console.warn("[DurableUpload] Failed to associate upload with entity:", err.message);
           return false;
         }
       }
+      getPendingAssociationsCount() {
+        return this.pendingAssociations.size;
+      }
       async updateEntityRecord(entityType, entityId, fieldName, newUrl, oldRef, uploadId) {
-        if (!entityType || !entityId || !fieldName) return true;
+        if (!entityType || !entityId || !fieldName) {
+          console.warn(`[DurableUpload] Cannot update entity record: missing owner metadata (entityType: ${entityType}, entityId: ${entityId}, fieldName: ${fieldName})`);
+          return false;
+        }
         const client = this.nasClient || this.supabaseClient;
         if (!client) {
           console.warn(`[DurableUpload] Cannot update entity record: No active client`);
@@ -116096,17 +116173,23 @@ var MakeOrderService = class {
         console.warn("[MakeOrderService] Notification error (non-fatal):", notifErr);
       }
     }
+    const failedAssociations = [];
     try {
       const durableUpload = DurableUploadService.getInstance();
       const invAttachments = orderHeaderPayload.invoice_attachment_urls;
       if (Array.isArray(invAttachments)) {
         for (const att of invAttachments) {
           if (typeof att === "string") {
-            durableUpload.associateUploadWithEntity(att, {
+            const meta3 = {
               entityType: "make_orders",
               entityId: orderId,
               fieldName: "invoice_attachment_urls"
-            });
+            };
+            const associated = durableUpload.associateUploadWithEntity(att, meta3);
+            if (!associated && (att.includes("upl_") || att.includes("make-order-files/"))) {
+              console.warn(`[MakeOrderService] Failed to associate invoice attachment "${att}" with order ${orderId}. Stored in pending retry queue.`);
+              failedAssociations.push({ ref: att, meta: meta3 });
+            }
           }
         }
       }
@@ -116120,15 +116203,23 @@ var MakeOrderService = class {
             for (const d of drawings) {
               const dRef = typeof d === "string" ? d : d?.url;
               if (dRef) {
-                durableUpload.associateUploadWithEntity(dRef, {
+                const meta3 = {
                   entityType: "make_order_items",
                   entityId: itemRecord.id,
                   fieldName: "technical_drawing_url"
-                });
+                };
+                const associated = durableUpload.associateUploadWithEntity(dRef, meta3);
+                if (!associated && (dRef.includes("upl_") || dRef.includes("make-order-files/"))) {
+                  console.warn(`[MakeOrderService] Failed to associate drawing "${dRef}" with item ${itemRecord.id}. Stored in pending retry queue.`);
+                  failedAssociations.push({ ref: dRef, meta: meta3 });
+                }
               }
             }
           }
         }
+      }
+      if (failedAssociations.length > 0) {
+        console.warn(`[MakeOrderService] Order ${orderNumber} created with ${failedAssociations.length} unassociated staged upload(s). Retained in durable queue for reconciliation.`);
       }
     } catch (assocErr) {
       console.warn("[MakeOrderService] Pre-staged upload association warning (non-fatal):", assocErr.message);
@@ -116137,7 +116228,8 @@ var MakeOrderService = class {
       success: true,
       id: orderId,
       order_number: orderNumber,
-      items: insertedItems || []
+      items: insertedItems || [],
+      unassociatedUploads: failedAssociations.length > 0 ? failedAssociations : void 0
     };
   }
   /**
@@ -117142,10 +117234,10 @@ var MakeCadService = class {
           uploadId: staged.id
         };
       }
-      if (result.status === "staged_local") {
+      if (result.status === "staged_local" || result.status === "awaiting_association") {
         return {
           success: !result.error,
-          status: "staged_local",
+          status: result.status,
           storagePath: staged.localPath,
           publicUrl: void 0,
           durableKey,
@@ -132573,7 +132665,7 @@ function registerMakeHandlers() {
                 `make-order-files/${parsed.orderId}/stages`,
                 { entityType: "make_orders", entityId: parsed.orderId, fieldName: "stage_photo_url" }
               );
-              if (uploadResult.success) {
+              if (uploadResult.success || uploadResult.isPendingUpload) {
                 finalPhotoUrl = uploadResult.durableKey || uploadResult.publicUrl || null;
               }
             }
@@ -132640,7 +132732,7 @@ function registerMakeHandlers() {
         subfolder,
         meta3
       );
-      if (!uploadResult.success) {
+      if (!uploadResult.success && !uploadResult.isPendingUpload) {
         return { success: false, error: uploadResult.error || "Failed to upload to storage" };
       }
       const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
@@ -132689,7 +132781,7 @@ function registerMakeHandlers() {
         `make-order-files/${orderId}/stages`,
         { entityType: "make_orders", entityId: orderId, fieldName: "stage_photo_url" }
       );
-      if (!uploadResult.success) {
+      if (!uploadResult.success && !uploadResult.isPendingUpload) {
         return { success: false, error: uploadResult.error || "Failed to upload photo" };
       }
       const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
@@ -132726,7 +132818,7 @@ function registerMakeHandlers() {
       subfolder,
       { entityType: "make_order_items", entityId: itemId, fieldName: "technical_drawing_url" }
     );
-    if (!uploadResult.success) {
+    if (!uploadResult.success && !uploadResult.isPendingUpload) {
       return { error: uploadResult.error || "Failed to upload drawing" };
     }
     const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
@@ -132767,7 +132859,7 @@ function registerMakeHandlers() {
       subfolder,
       { entityType: "make_orders", entityId: orderId, fieldName: "pdf_urls" }
     );
-    if (!uploadResult.success) {
+    if (!uploadResult.success && !uploadResult.isPendingUpload) {
       return { error: uploadResult.error || "Failed to upload drawing" };
     }
     const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
@@ -133676,7 +133768,7 @@ function registerMakeHandlers() {
         subfolder,
         orderId ? { entityType: "make_orders", entityId: orderId, fieldName: "invoice_attachment_urls" } : void 0
       );
-      if (!uploadResult.success) {
+      if (!uploadResult.success && !uploadResult.isPendingUpload) {
         return { success: false, error: uploadResult.error || "Failed to upload invoice image" };
       }
       const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
@@ -133730,7 +133822,7 @@ function registerMakeHandlers() {
         subfolder,
         meta3
       );
-      if (!uploadResult.success) {
+      if (!uploadResult.success && !uploadResult.isPendingUpload) {
         return { success: false, error: uploadResult.error || "Failed to upload attachment" };
       }
       const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;

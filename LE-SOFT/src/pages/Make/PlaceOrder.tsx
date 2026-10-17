@@ -285,7 +285,7 @@ const PlaceOrder: React.FC = () => {
   const productSearchSeqRef = React.useRef(0);
 
   // Invoice Attachments
-  const [invoiceAttachments, setInvoiceAttachments] = useState<{ name: string; url: string }[]>(() => Array.isArray(initialDraft.invoiceAttachments) ? initialDraft.invoiceAttachments : []);
+  const [invoiceAttachments, setInvoiceAttachments] = useState<{ name: string; url: string; isPending?: boolean }[]>(() => Array.isArray(initialDraft.invoiceAttachments) ? initialDraft.invoiceAttachments : []);
   const [uploadingInvoice, setUploadingInvoice] = useState(false);
 
   // Submission & Feedback
@@ -782,8 +782,12 @@ const PlaceOrder: React.FC = () => {
       if (window.electron?.makePickAndUploadInvoiceAttachment) {
         const res = await window.electron.makePickAndUploadInvoiceAttachment();
         const persistentUrl = res.publicUrl || res.durableKey;
-        if (res && res.success && persistentUrl) {
-          setInvoiceAttachments(prev => [...prev, { name: res.fileName || 'Invoice Image', url: persistentUrl }]);
+        if (res && (res.success || res.isPendingUpload) && persistentUrl) {
+          setInvoiceAttachments(prev => [...prev, {
+            name: res.fileName || 'Invoice Image',
+            url: persistentUrl,
+            isPending: Boolean(res.isPendingUpload)
+          }]);
         } else if (res && res.error) {
           alert('Upload failed: ' + res.error);
         }
@@ -815,8 +819,12 @@ const PlaceOrder: React.FC = () => {
             fileBase64: base64
           });
           const persistentUrl = res.publicUrl || res.durableKey;
-          if (res && res.success && persistentUrl) {
-            setInvoiceAttachments(prev => [...prev, { name: file.name, url: persistentUrl }]);
+          if (res && (res.success || res.isPendingUpload) && persistentUrl) {
+            setInvoiceAttachments(prev => [...prev, {
+              name: file.name,
+              url: persistentUrl,
+              isPending: Boolean(res.isPendingUpload)
+            }]);
           } else if (res && res.error) {
             alert('Upload failed: ' + res.error);
           }
@@ -992,8 +1000,12 @@ const PlaceOrder: React.FC = () => {
             fileBase64: base64
           });
           const persistentUrl = res.publicUrl || res.durableKey;
-          if (res && res.success && persistentUrl) {
-            setInvoiceAttachments(prev => [...prev, { name: file.name, url: persistentUrl }]);
+          if (res && (res.success || res.isPendingUpload) && persistentUrl) {
+            setInvoiceAttachments(prev => [...prev, {
+              name: file.name,
+              url: persistentUrl,
+              isPending: Boolean(res.isPendingUpload)
+            }]);
           } else if (res && res.error) {
             alert('Upload failed: ' + res.error);
           }
@@ -2380,6 +2392,11 @@ const PlaceOrder: React.FC = () => {
                     <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: '8px' }}>
                       <FileText size={15} color="var(--accent-color)" />
                       <span style={{ flex: 1, fontSize: '0.85rem', color: 'var(--text-primary)' }}>{att.name}</span>
+                      {att.isPending && (
+                        <span style={{ fontSize: '0.7rem', padding: '2px 6px', borderRadius: '4px', background: 'rgba(234, 179, 8, 0.15)', color: '#d97706', fontWeight: 600 }}>
+                          PENDING UPLOAD
+                        </span>
+                      )}
                       <button type="button" onClick={() => setInvoiceAttachments(prev => prev.filter((_, idx) => idx !== i))}
                         style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}>
                         <X size={14} />

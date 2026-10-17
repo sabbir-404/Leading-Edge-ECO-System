@@ -95,7 +95,7 @@ export interface PlaceOrderDraftData {
 
   // Cart & Attachments
   cartItems?: CartItemDraft[];
-  invoiceAttachments?: { name: string; url: string }[];
+  invoiceAttachments?: { name: string; url: string; isPending?: boolean }[];
 
   updatedAt?: number;
 }

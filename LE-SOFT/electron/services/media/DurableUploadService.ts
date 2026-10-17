@@ -27,6 +27,7 @@ import { getCfAccessHeaders, getNasStorageCandidates } from '../../supabase';
 export type UploadStatus = 
     | 'staged_local'
     | 'buffered_supabase'
+    | 'awaiting_association'
     | 'synced_nas'
     | 'failed'
     | 'aborted';
@@ -69,6 +70,7 @@ export class DurableUploadService {
     private isWorking = false;
 
     private inFlightDispatches = new Map<string, Promise<{ success: boolean; url?: string; activeUrl?: string; durableKey?: string; status: UploadStatus; error?: string }>>();
+    private pendingAssociations = new Map<string, UploadEntityMeta>();
 
     private constructor() {
         const userData = app?.getPath ? app.getPath('userData') : path.join(process.env.APPDATA || process.cwd(), 'le-soft');
@@ -167,6 +169,15 @@ export class DurableUploadService {
             buffer = source;
         }
 
+        // Check if there was a pre-queued pending association for this upload
+        let effectiveMeta = meta;
+        if (!effectiveMeta?.entityId) {
+            const pending = this.pendingAssociations.get(uploadId) || this.pendingAssociations.get(sanitized) || this.pendingAssociations.get(fileName);
+            if (pending) {
+                effectiveMeta = pending;
+            }
+        }
+
         // Write directly to staging directory
         fs.writeFileSync(targetPath, buffer);
         const hash = crypto.createHash('sha256').update(buffer).digest('hex').toUpperCase();
@@ -187,9 +198,9 @@ export class DurableUploadService {
             sizeBytes,
             hash,
             subfolder,
-            meta?.entityType || null,
-            meta?.entityId ? String(meta.entityId) : null,
-            meta?.fieldName || null,
+            effectiveMeta?.entityType || null,
+            effectiveMeta?.entityId ? String(effectiveMeta.entityId) : null,
+            effectiveMeta?.fieldName || null,
             now,
             now
         );
@@ -210,9 +221,9 @@ export class DurableUploadService {
             sizeBytes,
             sha256: hash,
             subfolder,
-            entityType: meta?.entityType || null,
-            entityId: meta?.entityId ? String(meta.entityId) : null,
-            fieldName: meta?.fieldName || null,
+            entityType: effectiveMeta?.entityType || null,
+            entityId: effectiveMeta?.entityId ? String(effectiveMeta.entityId) : null,
+            fieldName: effectiveMeta?.fieldName || null,
             status: 'staged_local',
             remoteUrlNas: null,
             remoteUrlSupabase: null,
@@ -243,10 +254,10 @@ export class DurableUploadService {
         this.isWorking = true;
 
         try {
-            // Find actionable uploads: staged_local (needs upload) or buffered_supabase (needs NAS reconciliation)
+            // Find actionable uploads: staged_local (needs upload), buffered_supabase (needs NAS reconciliation), or awaiting_association
             const rows = this.db.prepare(`
                 SELECT * FROM durable_uploads
-                WHERE status IN ('staged_local', 'buffered_supabase')
+                WHERE status IN ('staged_local', 'buffered_supabase', 'awaiting_association')
                 ORDER BY created_at ASC
                 LIMIT 5
             `).all() as any[];
@@ -288,6 +299,32 @@ export class DurableUploadService {
             return { success: false, status: 'failed', error: 'Upload record or local file not found' };
         }
 
+        if (row.status === 'synced_nas') {
+            return {
+                success: true,
+                url: row.remote_url_nas,
+                activeUrl: row.remote_url_nas,
+                durableKey: row.remote_url_nas,
+                status: 'synced_nas'
+            };
+        }
+
+        // If row is missing owner metadata, check if a pending association was queued
+        if (!row.entity_type || !row.entity_id || !row.field_name) {
+            const pending = this.pendingAssociations.get(uploadId) || this.pendingAssociations.get(row.file_name);
+            if (pending && pending.entityType && pending.entityId && pending.fieldName) {
+                this.associateUploadWithEntity(uploadId, {
+                    entityType: pending.entityType,
+                    entityId: pending.entityId,
+                    fieldName: pending.fieldName
+                });
+                const reloaded = this.db.prepare(`SELECT * FROM durable_uploads WHERE id = ?`).get(uploadId) as any;
+                if (reloaded) {
+                    Object.assign(row, reloaded);
+                }
+            }
+        }
+
         const buffer = fs.readFileSync(row.local_path);
         const candidates = getNasStorageCandidates();
         const cfHeaders = getCfAccessHeaders();
@@ -319,50 +356,84 @@ export class DurableUploadService {
 
         // 2. If NAS Storage Succeeded: Update Authoritative State & Metadata
         if (nasSuccess && authoritativeUrl) {
-            // Update associated database record if metadata exists
-            const entityUpdated = await this.updateEntityRecord(
-                row.entity_type,
-                row.entity_id,
-                row.field_name,
-                authoritativeUrl,
-                row.remote_url_supabase || undefined,
-                uploadId
-            );
-
-            if (!entityUpdated) {
-                lastError = `Entity record update failed for ${row.entity_type} ${row.entity_id}. Staged copy preserved for retry.`;
-                // Persist the confirmed remote URL so subsequent retries do NOT re-upload the file
+            // Check if upload has confirmed owner metadata
+            const hasOwner = !!(row.entity_type && row.entity_id && row.field_name);
+            if (row.remote_url_supabase && !hasOwner) {
+                // Upload has reached NAS, but owning order/item has not been associated yet.
+                // DEFER destructive cleanup and defer transition to synced_nas!
+                const deferMsg = `Upload persisted to NAS (${authoritativeUrl}) but awaiting owner association (${row.entity_type || 'unlinked'}). Preserving cloud copy and quota until confirmed.`;
+                console.log(`[DurableUpload] ${deferMsg}`);
                 this.db.prepare(`
                     UPDATE durable_uploads
-                    SET remote_url_nas = ?, last_error = ?, updated_at = ?
+                    SET status = 'awaiting_association', remote_url_nas = ?, last_error = ?, updated_at = ?
                     WHERE id = ?
-                `).run(authoritativeUrl, lastError, Date.now(), uploadId);
-            } else {
-                // If it was previously buffered in Supabase Cloud, safely prune the temporary cloud copy
-                if (row.remote_url_supabase) {
-                    const pruned = await this.pruneCloudCopy(row.subfolder, row.remote_url_supabase, row.size_bytes, uploadId);
-                    if (!pruned) {
-                        lastError = 'Authoritative NAS persistence confirmed, but Supabase cloud copy cleanup or quota prune failed. Retaining for cleanup retry.';
-                        this.db.prepare(`
-                            UPDATE durable_uploads
-                            SET remote_url_nas = ?, last_error = ?, updated_at = ?
-                            WHERE id = ?
-                        `).run(authoritativeUrl, lastError, Date.now(), uploadId);
-                        this.broadcastUploadStatus();
-                        return { success: false, url: authoritativeUrl, activeUrl: authoritativeUrl, durableKey: authoritativeUrl, status: row.status, error: lastError };
-                    }
-                }
-
-                this.db.prepare(`
-                    UPDATE durable_uploads
-                    SET status = 'synced_nas', remote_url_nas = ?, last_error = NULL, updated_at = ?
-                    WHERE id = ?
-                `).run(authoritativeUrl, Date.now(), uploadId);
-
-                console.log(`[DurableUpload] Upload ${uploadId} successfully synchronized to authoritative NAS Storage: ${authoritativeUrl}`);
+                `).run(authoritativeUrl, deferMsg, Date.now(), uploadId);
                 this.broadcastUploadStatus();
-                return { success: true, url: authoritativeUrl, activeUrl: authoritativeUrl, durableKey: authoritativeUrl, status: 'synced_nas' };
+                return {
+                    success: true,
+                    url: authoritativeUrl,
+                    activeUrl: authoritativeUrl,
+                    durableKey: authoritativeUrl,
+                    status: 'awaiting_association',
+                    error: deferMsg
+                };
             }
+
+            // If confirmed owner metadata exists, update entity record
+            if (hasOwner) {
+                const entityUpdated = await this.updateEntityRecord(
+                    row.entity_type,
+                    row.entity_id,
+                    row.field_name,
+                    authoritativeUrl,
+                    row.remote_url_supabase || undefined,
+                    uploadId
+                );
+
+                if (!entityUpdated) {
+                    lastError = `Entity record update failed for ${row.entity_type} ${row.entity_id}. Staged copy preserved for retry.`;
+                    // Persist the confirmed remote URL so subsequent retries do NOT re-upload the file
+                    this.db.prepare(`
+                        UPDATE durable_uploads
+                        SET remote_url_nas = ?, last_error = ?, updated_at = ?
+                        WHERE id = ?
+                    `).run(authoritativeUrl, lastError, Date.now(), uploadId);
+                    this.broadcastUploadStatus();
+                    return {
+                        success: false,
+                        url: authoritativeUrl,
+                        activeUrl: authoritativeUrl,
+                        durableKey: authoritativeUrl,
+                        status: row.status,
+                        error: lastError
+                    };
+                }
+            }
+
+            // If it was previously buffered in Supabase Cloud, safely prune the temporary cloud copy
+            if (row.remote_url_supabase) {
+                const pruned = await this.pruneCloudCopy(row.subfolder, row.remote_url_supabase, row.size_bytes, uploadId);
+                if (!pruned) {
+                    lastError = 'Authoritative NAS persistence confirmed, but Supabase cloud copy cleanup or quota prune failed. Retaining for cleanup retry.';
+                    this.db.prepare(`
+                        UPDATE durable_uploads
+                        SET remote_url_nas = ?, last_error = ?, updated_at = ?
+                        WHERE id = ?
+                    `).run(authoritativeUrl, lastError, Date.now(), uploadId);
+                    this.broadcastUploadStatus();
+                    return { success: false, url: authoritativeUrl, activeUrl: authoritativeUrl, durableKey: authoritativeUrl, status: row.status, error: lastError };
+                }
+            }
+
+            this.db.prepare(`
+                UPDATE durable_uploads
+                SET status = 'synced_nas', remote_url_nas = ?, remote_url_supabase = NULL, last_error = NULL, updated_at = ?
+                WHERE id = ?
+            `).run(authoritativeUrl, Date.now(), uploadId);
+
+            console.log(`[DurableUpload] Upload ${uploadId} successfully synchronized to authoritative NAS Storage: ${authoritativeUrl}`);
+            this.broadcastUploadStatus();
+            return { success: true, url: authoritativeUrl, activeUrl: authoritativeUrl, durableKey: authoritativeUrl, status: 'synced_nas' };
         }
 
         // 3. Secondary Attempt: Supabase Storage Fallback Buffer (if NAS failed and not yet buffered)
@@ -494,11 +565,27 @@ export class DurableUploadService {
                 WHERE id = ? OR id = ? OR local_path LIKE ? OR remote_url_supabase LIKE ? OR remote_url_nas LIKE ?
             `).run(meta.entityType, String(meta.entityId), meta.fieldName, Date.now(), uploadId, identifier, `%${uploadId}%`, `%${uploadId}%`, `%${uploadId}%`);
 
-            return res.changes > 0;
+            const associated = res.changes > 0;
+            if (associated) {
+                this.pendingAssociations.delete(uploadId);
+                this.pendingAssociations.delete(identifier);
+            } else {
+                console.warn(`[DurableUpload] associateUploadWithEntity found no matching upload for identifier "${identifier}". Queuing pending association.`);
+                this.pendingAssociations.set(uploadId, meta);
+                if (uploadId !== identifier) {
+                    this.pendingAssociations.set(identifier, meta);
+                }
+            }
+
+            return associated;
         } catch (err: any) {
             console.warn('[DurableUpload] Failed to associate upload with entity:', err.message);
             return false;
         }
+    }
+
+    public getPendingAssociationsCount(): number {
+        return this.pendingAssociations.size;
     }
 
     private async updateEntityRecord(
@@ -509,7 +596,10 @@ export class DurableUploadService {
         oldRef?: string,
         uploadId?: string
     ): Promise<boolean> {
-        if (!entityType || !entityId || !fieldName) return true;
+        if (!entityType || !entityId || !fieldName) {
+            console.warn(`[DurableUpload] Cannot update entity record: missing owner metadata (entityType: ${entityType}, entityId: ${entityId}, fieldName: ${fieldName})`);
+            return false;
+        }
         const client = this.nasClient || this.supabaseClient;
         if (!client) {
             console.warn(`[DurableUpload] Cannot update entity record: No active client`);

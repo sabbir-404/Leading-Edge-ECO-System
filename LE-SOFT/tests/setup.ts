@@ -205,6 +205,10 @@ vi.mock('better-sqlite3', async (importOriginal) => {
               r.status = 'synced_nas';
               r.remote_url_nas = args[0];
               r.last_error = null;
+            } else if (lower.includes("status = 'awaiting_association'")) {
+              r.status = 'awaiting_association';
+              r.remote_url_nas = args[0];
+              r.last_error = args[1] || null;
             } else if (lower.includes("status = 'buffered_supabase'")) {
               r.status = 'buffered_supabase';
               if (lower.includes('remote_url_supabase = ?')) {
@@ -252,7 +256,16 @@ vi.mock('better-sqlite3', async (importOriginal) => {
         return rows.find(r => r.op_id === args[0]);
       }
       if (args.length > 0) {
-        return rows.find(r => r.id === args[0] || r.op_id === args[0]);
+        const match = rows.find(r =>
+          args.some(arg => arg && typeof arg === 'string' && (
+            r.id === arg ||
+            r.op_id === arg ||
+            (r.local_path && r.local_path.includes(arg.replace(/%/g, ''))) ||
+            (r.remote_url_supabase && r.remote_url_supabase.includes(arg.replace(/%/g, ''))) ||
+            (r.remote_url_nas && r.remote_url_nas.includes(arg.replace(/%/g, '')))
+          ))
+        );
+        return match || rows.find(r => r.id === args[0] || r.op_id === args[0]);
       }
       return rows[0];
     }
@@ -264,8 +277,8 @@ vi.mock('better-sqlite3', async (importOriginal) => {
       if (lower.includes("status in ('pending', 'buffered_supabase'")) {
         return rows.filter(r => r.status === 'pending' || r.status === 'buffered_supabase' || r.status === 'cleanup_pending');
       }
-      if (lower.includes("status in ('staged_local', 'buffered_supabase')")) {
-        return rows.filter(r => r.status === 'staged_local' || r.status === 'buffered_supabase');
+      if (lower.includes("status in ('staged_local', 'buffered_supabase'")) {
+        return rows.filter(r => r.status === 'staged_local' || r.status === 'buffered_supabase' || r.status === 'awaiting_association');
       }
       if (lower.includes("status = 'dead_letter'")) {
         return rows.filter(r => r.status === 'dead_letter');

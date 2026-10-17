@@ -874,7 +874,7 @@ export function registerMakeHandlers(): void {
                                 `make-order-files/${parsed.orderId}/stages`,
                                 { entityType: 'make_orders', entityId: parsed.orderId, fieldName: 'stage_photo_url' }
                             );
-                            if (uploadResult.success) {
+                            if (uploadResult.success || uploadResult.isPendingUpload) {
                                 finalPhotoUrl = uploadResult.durableKey || uploadResult.publicUrl || null;
                             }
                         }
@@ -958,7 +958,7 @@ export function registerMakeHandlers(): void {
                 meta
             );
 
-            if (!uploadResult.success) {
+            if (!uploadResult.success && !uploadResult.isPendingUpload) {
                 return { success: false, error: uploadResult.error || 'Failed to upload to storage' };
             }
 
@@ -1015,7 +1015,7 @@ export function registerMakeHandlers(): void {
                 { entityType: 'make_orders', entityId: orderId, fieldName: 'stage_photo_url' }
             );
 
-            if (!uploadResult.success) {
+            if (!uploadResult.success && !uploadResult.isPendingUpload) {
                 return { success: false, error: uploadResult.error || 'Failed to upload photo' };
             }
 
@@ -1059,7 +1059,7 @@ export function registerMakeHandlers(): void {
             { entityType: 'make_order_items', entityId: itemId, fieldName: 'technical_drawing_url' }
         );
 
-        if (!uploadResult.success) {
+        if (!uploadResult.success && !uploadResult.isPendingUpload) {
             return { error: uploadResult.error || 'Failed to upload drawing' };
         }
 
@@ -1107,7 +1107,7 @@ export function registerMakeHandlers(): void {
             { entityType: 'make_orders', entityId: orderId, fieldName: 'pdf_urls' }
         );
 
-        if (!uploadResult.success) {
+        if (!uploadResult.success && !uploadResult.isPendingUpload) {
             return { error: uploadResult.error || 'Failed to upload drawing' };
         }
 
@@ -2181,7 +2181,7 @@ export function registerMakeHandlers(): void {
                 orderId ? { entityType: 'make_orders', entityId: orderId, fieldName: 'invoice_attachment_urls' } : undefined
             );
 
-            if (!uploadResult.success) {
+            if (!uploadResult.success && !uploadResult.isPendingUpload) {
                 return { success: false, error: uploadResult.error || 'Failed to upload invoice image' };
             }
 
@@ -2248,7 +2248,7 @@ export function registerMakeHandlers(): void {
                 meta
             );
 
-            if (!uploadResult.success) {
+            if (!uploadResult.success && !uploadResult.isPendingUpload) {
                 return { success: false, error: uploadResult.error || 'Failed to upload attachment' };
             }
 

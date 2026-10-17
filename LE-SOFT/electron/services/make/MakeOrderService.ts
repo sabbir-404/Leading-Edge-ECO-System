@@ -214,7 +214,7 @@ export class MakeOrderService {
     public static async createOrder(
         input: CreateMakeOrderInput,
         actorSession: { userId: number; username: string; fullName: string; role: string }
-    ): Promise<{ success: boolean; id?: number; order_number?: string; items?: any[]; error?: string }> {
+    ): Promise<{ success: boolean; id?: number; order_number?: string; items?: any[]; unassociatedUploads?: any[]; error?: string }> {
         // 0. Validate customer name (required) and customer phone (optional, but validated if provided)
         if (!input.customer_name || !input.customer_name.trim()) {
             return { success: false, error: 'Customer name is required' };
@@ -421,17 +421,23 @@ export class MakeOrderService {
         }
 
         // 6. Associate any pre-staged uploads with the newly created order and item records
+        const failedAssociations: Array<{ ref: string; meta: any }> = [];
         try {
             const durableUpload = DurableUploadService.getInstance();
             const invAttachments = orderHeaderPayload.invoice_attachment_urls;
             if (Array.isArray(invAttachments)) {
                 for (const att of invAttachments) {
                     if (typeof att === 'string') {
-                        durableUpload.associateUploadWithEntity(att, {
+                        const meta = {
                             entityType: 'make_orders',
                             entityId: orderId,
                             fieldName: 'invoice_attachment_urls'
-                        });
+                        };
+                        const associated = durableUpload.associateUploadWithEntity(att, meta);
+                        if (!associated && (att.includes('upl_') || att.includes('make-order-files/'))) {
+                            console.warn(`[MakeOrderService] Failed to associate invoice attachment "${att}" with order ${orderId}. Stored in pending retry queue.`);
+                            failedAssociations.push({ ref: att, meta });
+                        }
                     }
                 }
             }
@@ -447,15 +453,24 @@ export class MakeOrderService {
                         for (const d of drawings) {
                             const dRef = typeof d === 'string' ? d : d?.url;
                             if (dRef) {
-                                durableUpload.associateUploadWithEntity(dRef, {
+                                const meta = {
                                     entityType: 'make_order_items',
                                     entityId: itemRecord.id,
                                     fieldName: 'technical_drawing_url'
-                                });
+                                };
+                                const associated = durableUpload.associateUploadWithEntity(dRef, meta);
+                                if (!associated && (dRef.includes('upl_') || dRef.includes('make-order-files/'))) {
+                                    console.warn(`[MakeOrderService] Failed to associate drawing "${dRef}" with item ${itemRecord.id}. Stored in pending retry queue.`);
+                                    failedAssociations.push({ ref: dRef, meta });
+                                }
                             }
                         }
                     }
                 }
+            }
+
+            if (failedAssociations.length > 0) {
+                console.warn(`[MakeOrderService] Order ${orderNumber} created with ${failedAssociations.length} unassociated staged upload(s). Retained in durable queue for reconciliation.`);
             }
         } catch (assocErr: any) {
             console.warn('[MakeOrderService] Pre-staged upload association warning (non-fatal):', assocErr.message);
@@ -465,7 +480,8 @@ export class MakeOrderService {
             success: true,
             id: orderId,
             order_number: orderNumber,
-            items: insertedItems || []
+            items: insertedItems || [],
+            unassociatedUploads: failedAssociations.length > 0 ? failedAssociations : undefined
         };
     }
 

@@ -29,7 +29,7 @@ export interface FileValidationResult {
 
 export interface MakeUploadResult {
     success: boolean;
-    status: 'synced_nas' | 'buffered_supabase' | 'staged_local' | 'failed';
+    status: 'synced_nas' | 'buffered_supabase' | 'staged_local' | 'awaiting_association' | 'failed';
     storagePath: string;
     publicUrl?: string;
     durableKey?: string;
@@ -362,11 +362,11 @@ export class MakeCadService {
                 };
             }
 
-            if (result.status === 'staged_local') {
-                // Truthful contract: preserved in local staging during outage; NEVER guessed, NEVER file://
+            if (result.status === 'staged_local' || result.status === 'awaiting_association') {
+                // Truthful contract: durably accepted and staged; NEVER guessed remote URLs, NEVER file://
                 return {
                     success: !result.error,
-                    status: 'staged_local',
+                    status: result.status,
                     storagePath: staged.localPath,
                     publicUrl: undefined,
                     durableKey: durableKey,

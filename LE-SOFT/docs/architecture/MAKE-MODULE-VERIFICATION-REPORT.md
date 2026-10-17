@@ -12,7 +12,7 @@
 
 This report documents the architectural audit, upload-safety review, and comprehensive verification conducted on the **MAKE Module** of LE-SOFT v1.8.12. In accordance with project instructions, all work was restricted to the MAKE module, CAD and attachment upload dispatch safety, truthful URL resolution for private buckets, named order drafts, global specification image persistence (Migration 066 compatibility), resilient upload staging, failover recovery corrections, durable object key cleanup, and quota-managed cloud storage fallback. Unrelated Sales, Billing, inventory, and MySQL synchronization components were kept untouched.
 
-All 30 MAKE test suites (comprising **502 automated tests**) pass cleanly. In addition, real native SQLite Write-Ahead Logging (WAL) was validated under Electron's Node runtime (ABI 143), real PostgreSQL Migration 070 quota RPC functions were validated against the local PostgreSQL container, and both TypeScript compilation targets (`tsc --noEmit` and `tsc -p tsconfig.electron.json --noEmit`), ESLint (`npm run lint`), Vite production build, and Electron esbuild bundling passed with zero errors or warnings.
+All 30 MAKE test suites (comprising **504 automated tests**) pass cleanly. In addition, real native SQLite Write-Ahead Logging (WAL) was validated under Electron's Node runtime (ABI 143), real PostgreSQL Migration 070 quota RPC functions were validated against the local PostgreSQL container, and both TypeScript compilation targets (`tsc --noEmit` and `tsc -p tsconfig.electron.json --noEmit`), ESLint (`npm run lint`), Vite production build, and Electron esbuild bundling passed with zero errors or warnings.
 
 ---
 
@@ -75,19 +75,37 @@ All 30 MAKE test suites (comprising **502 automated tests**) pass cleanly. In ad
   3. Added `associateUploadWithEntity(identifier, meta)` to link pre-order staged attachments with the newly created order ID immediately upon order creation.
   4. Added `PENDING` badge to `TrackOrders.tsx` for pending uploads and disabled viewing/downloading until synced. Updated `PlaceOrder.tsx` to retain persistent local attachment keys during offline order placement.
 
+### Defect 7: Separation of Durable Acceptance from Remote Success & Cloud Cleanup Protection
+- **Location**: `electron/services/media/DurableUploadService.ts`, `electron/services/make/MakeCadService.ts`, `electron/services/make/MakeOrderService.ts`, `electron/ipc/handlers/make.ts`, `src/pages/Make/PlaceOrder.tsx`
+- **Root Cause**:
+  1. `MakeCadService.uploadValidatedBuffer()` reported `success: false` during TrueNAS outages even when files were safely staged locally, causing invoice attachment handlers (`make-pick-and-upload-invoice-attachment`, `make-upload-invoice-attachment-buffer`) and `PlaceOrder.tsx` to discard valid attachments.
+  2. `PlaceOrder.tsx` dropped offline attachments because it strictly checked `if (res && res.success)`.
+  3. `DurableUploadService.updateEntityRecord()` previously returned `true` when missing owner metadata (`!entityType || !entityId || !fieldName`), allowing unassociated temporary cloud copies to be prematurely deleted (`pruneCloudCopy`) before owning orders/items were created.
+  4. `MakeOrderService.createOrder()` did not check the boolean return value of `associateUploadWithEntity()`, risking silent association failures.
+  5. If an unassociated upload was reconciled by a background worker before order creation, the cloud copy could be pruned before the database reference was updated.
+- **Resolution**:
+  1. Defined distinct outcomes: remote success (`status: 'synced_nas'`), cloud-buffered success (`status: 'buffered_supabase'`), and locally staged/pending upload (`status: 'staged_local'`, `isPendingUpload: true`, `publicUrl: undefined`, `durableKey: ...`). Staged local attachments are never reported as remotely available.
+  2. Updated invoice and drawing IPC handlers and `PlaceOrder.tsx` to accept `isPendingUpload: true`, retaining persistent durable keys without discarding offline files.
+  3. Added `PENDING UPLOAD` badge in `PlaceOrder.tsx` invoice attachment list for immediate visual transparency.
+  4. Made `DurableUploadService.updateEntityRecord()` return `false` if owner metadata is missing. Missing owner metadata never counts as a confirmed database update.
+  5. Added durable state `'awaiting_association'` in `DurableUploadService`: if TrueNAS upload succeeds while an upload has a temporary cloud copy but no confirmed owner, destructive cleanup (`pruneCloudCopy`) is deferred, preserving the cloud copy and quota until confirmed.
+  6. In `MakeOrderService.createOrder()`, checked the boolean result of every `associateUploadWithEntity()` call, logged observable warnings for failures, queued pending associations, and returned `unassociatedUploads`.
+  7. Covered the background worker race condition: unassociated uploads remain in `'awaiting_association'` until the order-creation process associates them, at which point reconciliation updates the entity and prunes the cloud copy.
+  8. Made dispatch retry idempotent: already `synced_nas` records return early without redundant NAS transfers or quota calls, and `remote_url_supabase` is set to `NULL` upon verified cloud pruning.
+
 ---
 
 ## 3. End-to-End MAKE Architectural Audit
 
 | Step / Layer | Component | Verification & Safety Status | Evidence |
 | :--- | :--- | :--- | :--- |
-| **1. UI Form & Input** | `src/pages/Make/PlaceOrder.tsx` | Customer name required; phone format and dummy placeholder validation (`00000000`, `1234567890`, `none`). | Verified in `tests/make/make-module-stability.integration.test.ts` |
+| **1. UI Form & Input** | `src/pages/Make/PlaceOrder.tsx` | Customer name required; phone format and dummy placeholder validation (`00000000`, `1234567890`, `none`). Retains pending upload keys with `PENDING UPLOAD` badge. | Verified in `tests/make/make-module-stability.integration.test.ts` |
 | **2. Draft Storage** | `src/utils/placeOrderDraft.ts` | Autosave and named drafts stored in `localStorage` scoped per user. Ephemeral `blob:` and `data:` URLs stripped via `getPersistentAttachmentReference` to prevent browser quota exhaustion. Preserves durable object keys. | Verified in `tests/make/place-order-draft.test.ts` & `place-order-saved-drafts.test.ts` |
 | **3. Preload IPC Bridge** | `electron/preload.ts` | Safe context isolation; renderer never receives arbitrary filesystem paths; dialog returns validated buffers. | Verified in `tests/make/pdf-download-security.test.ts` |
-| **4. IPC Handlers** | `electron/ipc/handlers/make.ts` | 40+ handlers guarded with `requireSession()`, CASL abilities, and Zod schemas (`CreateMakeOrderSchema`, `CatalogSpecSchema`). Attachment read handlers resolve authorized signed URLs. | Verified in `tests/make/security.test.ts` & `tests/make/make-module-stability.integration.test.ts` |
-| **5. Order Service** | `electron/services/make/MakeOrderService.ts` | Canonical `MAKE-YYYY-XXXXXX` order numbers; server-side financial calculation; atomic order header rollback if item insertion fails. | Verified in `tests/make/make-module-stability.integration.test.ts` |
-| **6. CAD & Attachments** | `electron/services/make/MakeCadService.ts` | 50 MB limit for CAD/drawings, 15 MB for stage photos/invoices; binary magic-byte inspection rejects PE/MZ/ELF executables and shell scripts. Unicode/space filenames sanitized. Staged local state clearly distinguished from confirmed remote state. | Verified in `tests/make/invoice-attachments.test.ts` & `tests/make/make-module-stability.integration.test.ts` |
-| **7. Durable Staging** | `electron/services/media/DurableUploadService.ts` | Local staging to disk with SHA-256 computation before transfer; background retry queue with WAL SQLite journal; per-upload single-flight protection. | Verified in `tests/make/smart-failover-uploads-buffer.test.ts` |
+| **4. IPC Handlers** | `electron/ipc/handlers/make.ts` | 40+ handlers guarded with `requireSession()`, CASL abilities, and Zod schemas (`CreateMakeOrderSchema`, `CatalogSpecSchema`). Attachment read handlers resolve authorized signed URLs. Retains locally staged files (`isPendingUpload: true`). | Verified in `tests/make/security.test.ts` & `tests/make/make-module-stability.integration.test.ts` |
+| **5. Order Service** | `electron/services/make/MakeOrderService.ts` | Canonical `MAKE-YYYY-XXXXXX` order numbers; server-side financial calculation; atomic order header rollback if item insertion fails. Checks boolean association results and surfaces unassociated uploads. | Verified in `tests/make/make-module-stability.integration.test.ts` |
+| **6. CAD & Attachments** | `electron/services/make/MakeCadService.ts` | 50 MB limit for CAD/drawings, 15 MB for stage photos/invoices; binary magic-byte inspection rejects PE/MZ/ELF executables and shell scripts. Unicode/space filenames sanitized. Staged local state clearly distinguished from confirmed remote state (`isPendingUpload: true`). | Verified in `tests/make/invoice-attachments.test.ts` & `tests/make/make-module-stability.integration.test.ts` |
+| **7. Durable Staging** | `electron/services/media/DurableUploadService.ts` | Local staging to disk with SHA-256 computation before transfer; background retry queue with WAL SQLite journal; per-upload single-flight protection. Defers destructive cloud cleanup (`awaiting_association`) until owner association is confirmed. | Verified in `tests/make/smart-failover-uploads-buffer.test.ts` & `tests/make/make-module-stability.integration.test.ts` |
 | **8. Cloud Fallback & Quota** | `electron/services/quota/SupabaseQuotaManager.ts` | Strict 600 MB fallback quota ceiling with reservation and commitment transitions; zero writes to unmonitored buckets. | Verified in `tests/integration/supabase-quota-rpc.pg-integration.test.ts` |
 | **9. Database Schema** | Migration 052, 061, 063, 066, 067, 070 | Idempotent table definitions; `make_product_specifications.image_url` nullable; RLS policies for `make_orders`, `make_order_items`, `make-order-files`. | Verified via PostgreSQL 17 schema check |
 
@@ -98,11 +116,11 @@ All 30 MAKE test suites (comprising **502 automated tests**) pass cleanly. In ad
 ### 4.1 MAKE Automated Test Suite (Vitest)
 Ran `npx vitest run tests/make`:
 - **Test Files**: 30 passed (30 total)
-- **Individual Tests**: 502 passed (502 total, 0 failed, 0 skipped)
+- **Individual Tests**: 504 passed (504 total, 0 failed, 0 skipped)
 - **Exit Code**: `0`
-- **Duration**: ~15.7 seconds
+- **Duration**: ~15.8 seconds
 - **Covered Test Files**:
-  1. `tests/make/make-module-stability.integration.test.ts` (36/36 passed) **[EXPANDED with Upload-Safety & Failover Recovery Regressions]**
+  1. `tests/make/make-module-stability.integration.test.ts` (38/38 passed) **[EXPANDED with Complete Pre-Order Invoice Lifecycle & Cloud-Cleanup Protection Regressions]**
   2. `tests/make/attributes.test.ts` (19/19 passed)
   3. `tests/make/catalog-image-regression.test.ts` (11/11 passed)
   4. `tests/make/color-swatch-selector.test.ts` (8/8 passed)
@@ -126,7 +144,7 @@ Ran `npx vitest run tests/make`:
   22. `tests/make/responsive-layout.test.ts` (10/10 passed)
   23. `tests/make/security.test.ts` (18/18 passed)
   24. `tests/make/simplified-image-ui-and-nas-audit.test.ts` (12/12 passed)
-  25. `tests/make/smart-failover-uploads-buffer.test.ts` (16/16 passed)
+  25. `tests/make/smart-failover-uploads-buffer.test.ts` (39/39 passed)
   26. `tests/make/smart-nas-access.test.ts` (18/18 passed)
   27. `tests/make/stage-progression.test.ts` (8/8 passed)
   28. `tests/make/tutorial.test.ts` (10/10 passed)

@@ -894,6 +894,183 @@ describe('MAKE Module Stability & Verification Suite (LE-SOFT v1.8.12)', () => {
             expect(resolved.url).not.toContain('/public/');
             expect(resolved.isPending).toBe(true);
         });
+
+        it('complete pre-order invoice lifecycle: offline buffer -> order creation -> association -> TrueNAS recovery -> reference update -> cloud/quota cleanup', async () => {
+            const uploadService = DurableUploadService.getInstance();
+            (uploadService as any).supabaseClient = supabase;
+            const quotaMgr = SupabaseQuotaManager.getInstance();
+
+            // 1. Stage pre-order invoice while TrueNAS is offline
+            vi.spyOn(uploadService as any, 'uploadToNasStorage').mockResolvedValue({
+                success: false,
+                error: 'TrueNAS offline'
+            });
+
+            const buffer = Buffer.from('%PDF-1.7 full lifecycle invoice test');
+            const uploadRes = await MakeCadService.uploadValidatedBuffer(
+                buffer,
+                'client_invoice.pdf',
+                'application/pdf',
+                'make-order-files/invoices'
+            );
+
+            expect(uploadRes.status).toBe('staged_local');
+            expect(uploadRes.isPendingUpload).toBe(true);
+            expect(uploadRes.publicUrl).toBeUndefined();
+            expect(uploadRes.durableKey).toBeDefined();
+
+            // Simulate cloud fallback buffering during outage
+            const tempCloudUrl = `make-order-files/invoices/${uploadRes.uploadId}_client_invoice.pdf`;
+            (uploadService as any).db.prepare(`
+                UPDATE durable_uploads
+                SET status = 'buffered_supabase', remote_url_supabase = ?
+                WHERE id = ?
+            `).run(tempCloudUrl, uploadRes.uploadId);
+
+            // 2. Persist order referencing the pending attachment
+            const mockOrder = {
+                id: 501,
+                order_number: 'MAKE-2026-501',
+                invoice_attachment_urls: [uploadRes.durableKey]
+            };
+            h.state.responder = (table: string, op: string, body?: any) => {
+                if (table === 'make_orders') {
+                    if (op === 'update' && body) {
+                        Object.assign(mockOrder, body);
+                        return { data: mockOrder, error: null };
+                    }
+                    return { data: mockOrder, error: null };
+                }
+                return { data: null, error: null };
+            };
+
+            // 3. Associate upload with that order
+            const assocOk = uploadService.associateUploadWithEntity(uploadRes.uploadId!, {
+                entityType: 'make_orders',
+                entityId: 501,
+                fieldName: 'invoice_attachment_urls'
+            });
+            expect(assocOk).toBe(true);
+
+            const rowBefore = (uploadService as any).db.prepare('SELECT sha256 FROM durable_uploads WHERE id = ?').get(uploadRes.uploadId);
+            const nasAuthoritativeUrl = `https://storage.lenas.me/files/make-order-files/invoices/${uploadRes.uploadId}_client_invoice.pdf`;
+            vi.spyOn(uploadService as any, 'uploadToNasStorage').mockResolvedValue({
+                success: true,
+                url: nasAuthoritativeUrl,
+                sha256: rowBefore?.sha256
+            });
+
+            const mockStorage = (supabase.storage.from as any)('make-order-files');
+            const removeSpy = vi.spyOn(mockStorage, 'remove').mockResolvedValue({ data: [tempCloudUrl], error: null });
+            const quotaSpy = vi.spyOn(quotaMgr, 'pruneConfirmedStorage').mockResolvedValue(true);
+
+            // 5. Worker reconciles: updates order reference to authoritative remote URL
+            const syncRes = await uploadService.dispatchUpload(uploadRes.uploadId!);
+            expect(syncRes.status).toBe('synced_nas');
+            expect(syncRes.url).toBe(nasAuthoritativeUrl);
+
+            // 6. Verify order reference changed to authoritative URL
+            expect(mockOrder.invoice_attachment_urls).toContain(nasAuthoritativeUrl);
+            expect(mockOrder.invoice_attachment_urls).not.toContain(uploadRes.durableKey);
+
+            // 7. Cloud object removed and quota released
+            expect(removeSpy).toHaveBeenCalledTimes(1);
+            expect(quotaSpy).toHaveBeenCalledTimes(1);
+
+            // 8. Restart / retry safety: calling dispatchUpload again does not re-upload or re-prune
+            removeSpy.mockClear();
+            quotaSpy.mockClear();
+            const reSync = await uploadService.dispatchUpload(uploadRes.uploadId!);
+            expect(reSync.status).toBe('synced_nas');
+            expect(removeSpy).not.toHaveBeenCalled();
+            expect(quotaSpy).not.toHaveBeenCalled();
+        });
+
+        it('association failure or unlinked upload prevents premature cloud cleanup upon NAS sync', async () => {
+            const uploadService = DurableUploadService.getInstance();
+            (uploadService as any).supabaseClient = supabase;
+            const quotaMgr = SupabaseQuotaManager.getInstance();
+
+            const buffer = Buffer.from('%PDF-1.7 unlinked upload test');
+            const staged = await uploadService.stageFile(
+                buffer,
+                'unlinked_file.pdf',
+                'application/pdf',
+                'make-order-files/invoices',
+                undefined,
+                { autoDispatch: false }
+            );
+
+            // Staged upload has no owner association
+            expect(staged.entityType).toBeNull();
+            expect(staged.entityId).toBeNull();
+
+            // Set to buffered_supabase
+            const tempCloudUrl = `make-order-files/invoices/${staged.id}_unlinked_file.pdf`;
+            (uploadService as any).db.prepare(`
+                UPDATE durable_uploads
+                SET status = 'buffered_supabase', remote_url_supabase = ?
+                WHERE id = ?
+            `).run(tempCloudUrl, staged.id);
+
+            // TrueNAS comes back online
+            const nasUrl = `https://storage.lenas.me/files/make-order-files/invoices/${staged.id}_unlinked_file.pdf`;
+            vi.spyOn(uploadService as any, 'uploadToNasStorage').mockResolvedValue({
+                success: true,
+                url: nasUrl,
+                sha256: staged.sha256
+            });
+
+            const mockStorage = (supabase.storage.from as any)('make-order-files');
+            const removeSpy = vi.spyOn(mockStorage, 'remove');
+            const quotaSpy = vi.spyOn(quotaMgr, 'pruneConfirmedStorage');
+            removeSpy.mockClear();
+            quotaSpy.mockClear();
+
+            // Background worker or dispatch executes
+            const res = await uploadService.dispatchUpload(staged.id);
+
+            // Must transition to awaiting_association and NOT synced_nas
+            expect(res.status).toBe('awaiting_association');
+
+            // Destructive cleanup MUST be deferred
+            expect(removeSpy).not.toHaveBeenCalled();
+            expect(quotaSpy).not.toHaveBeenCalled();
+
+            const row = (uploadService as any).db.prepare(`SELECT * FROM durable_uploads WHERE id = ?`).get(staged.id);
+            expect(row.status).toBe('awaiting_association');
+            expect(row.remote_url_nas).toBe(nasUrl);
+            expect(row.remote_url_supabase).toBe(tempCloudUrl);
+
+            // Now associate with order
+            const mockOrder = { id: 777, invoice_attachment_urls: [tempCloudUrl] };
+            h.state.responder = (table: string, op: string, body?: any) => {
+                if (table === 'make_orders') {
+                    if (op === 'update' && body) {
+                        Object.assign(mockOrder, body);
+                        return { data: mockOrder, error: null };
+                    }
+                    return { data: mockOrder, error: null };
+                }
+                return { data: null, error: null };
+            };
+            vi.spyOn(mockStorage, 'remove').mockResolvedValue({ data: [tempCloudUrl], error: null });
+            vi.spyOn(quotaMgr, 'pruneConfirmedStorage').mockResolvedValue(true);
+
+            const assocSuccess = uploadService.associateUploadWithEntity(staged.id, {
+                entityType: 'make_orders',
+                entityId: 777,
+                fieldName: 'invoice_attachment_urls'
+            });
+            expect(assocSuccess).toBe(true);
+
+            // Reconcile now that association is confirmed
+            const finalRes = await uploadService.dispatchUpload(staged.id);
+            expect(finalRes.status).toBe('synced_nas');
+            expect(removeSpy).toHaveBeenCalledTimes(1);
+            expect(quotaSpy).toHaveBeenCalledTimes(1);
+            expect(mockOrder.invoice_attachment_urls).toContain(nasUrl);
+        });
     });
 
     // ─────────────────────────────────────────────────────────────────────────
