@@ -1561,14 +1561,14 @@ describe('MAKE Module Stability & Verification Suite (LE-SOFT v1.8.12)', () => {
             (uploadService as any).nasClient = supabase;
             const quotaMgr = SupabaseQuotaManager.getInstance();
 
-            // Stage and buffer an upload without initial entity association
+            // 1. Stage and buffer a real upload WITHOUT owner metadata
             const buffer = Buffer.from('%PDF-1.7 genuine process restart recovery test');
             const staged = await uploadService.stageFile(
                 buffer,
                 'process_restart_test.pdf',
                 'application/pdf',
                 'make-order-files/999',
-                undefined, // NO owner entity yet
+                undefined, // NO owner entity at staging time!
                 { autoDispatch: false }
             );
 
@@ -1579,9 +1579,36 @@ describe('MAKE Module Stability & Verification Suite (LE-SOFT v1.8.12)', () => {
                 WHERE id = ?
             `).run(cloudUrl, staged.id);
 
-            // Attempting to dispatch before entity association moves upload to awaiting_association
+            // 2. Persist a pending association for this exact upload identifier in SQLite
+            (uploadService as any).db.prepare(`
+                INSERT INTO pending_associations (identifier, entity_type, entity_id, field_name, retry_count, created_at, updated_at)
+                VALUES (?, ?, ?, ?, 0, ?, ?)
+            `).run(staged.id, 'make_orders', '999', 'invoice_attachment_urls', Date.now(), Date.now());
+
+            // CRITICAL: Ensure the real upload remains unassociated in durable_uploads BEFORE resetting the service
+            const rowBeforeRestart = (uploadService as any).db.prepare('SELECT * FROM durable_uploads WHERE id = ?').get(staged.id);
+            expect(rowBeforeRestart.entity_type).toBeNull();
+            expect(rowBeforeRestart.entity_id).toBeNull();
+
+            // 3. Reset and recreate the service against the same SQLite database while the upload is unassociated
+            DurableUploadService.resetInstanceForTesting();
+            const restartedService = DurableUploadService.getInstance();
+            (restartedService as any).supabaseClient = supabase;
+            (restartedService as any).nasClient = supabase;
+
+            // 4. Verify startup/worker reconciliation resolves that persisted association and links the upload to the intended owner
+            const linkedRow = (restartedService as any).db.prepare('SELECT * FROM durable_uploads WHERE id = ?').get(staged.id);
+            expect(linkedRow.entity_type).toBe('make_orders');
+            expect(linkedRow.entity_id).toBe('999');
+            expect(linkedRow.field_name).toBe('invoice_attachment_urls');
+
+            // Persisted association record was consumed and removed from pending_associations
+            const pendingAfterReconcile = (restartedService as any).db.prepare('SELECT * FROM pending_associations WHERE identifier = ?').get(staged.id);
+            expect(pendingAfterReconcile).toBeUndefined();
+
+            // 5. Verify failure retains cloud copy and accounting for retry
             const nasUrl = `https://storage.lenas.me/files/make-order-files/999/${staged.id}_process_restart_test.pdf`;
-            vi.spyOn(uploadService as any, 'uploadToNasStorage').mockResolvedValue({
+            vi.spyOn(restartedService as any, 'uploadToNasStorage').mockResolvedValue({
                 success: true,
                 url: nasUrl,
                 sha256: staged.sha256
@@ -1593,47 +1620,27 @@ describe('MAKE Module Stability & Verification Suite (LE-SOFT v1.8.12)', () => {
             removeSpy.mockClear();
             quotaSpy.mockClear();
 
-            const dispatchBeforeAssoc = await uploadService.dispatchUpload(staged.id);
-            expect(dispatchBeforeAssoc.status).toBe('awaiting_association');
+            // Simulate database entity update failure (e.g. order not found / 0 rows affected)
+            h.state.responder = (table: string, op: string) => {
+                if (table === 'make_orders') {
+                    if (op === 'select') return { data: null, error: null };
+                    if (op === 'update') return { data: [], error: null };
+                }
+                return { data: null, error: null };
+            };
+
+            const failedDispatch = await restartedService.dispatchUpload(staged.id);
+            expect(failedDispatch.success).toBe(false);
+
+            // Cloud removal and quota release MUST NOT occur on entity update failure
             expect(removeSpy).not.toHaveBeenCalled();
             expect(quotaSpy).not.toHaveBeenCalled();
 
-            // Verify awaiting_association is included in pending metrics
-            const pendingStats = uploadService.getPendingUploadStats();
-            expect(pendingStats.awaitingAssociationCount).toBeGreaterThanOrEqual(1);
-            expect(pendingStats.totalPendingBytes).toBeGreaterThanOrEqual(staged.sizeBytes);
+            const rowAfterFailure = (restartedService as any).db.prepare('SELECT * FROM durable_uploads WHERE id = ?').get(staged.id);
+            expect(rowAfterFailure.remote_url_supabase).toBe(cloudUrl);
+            expect(rowAfterFailure.status).toBe('buffered_supabase');
 
-            // Force association to fail / queue by using an unmatched identifier, verifying retry info is persisted in SQLite
-            const unmatchedId = `upl_delayed_${Date.now()}`;
-            const assocSuccess = uploadService.associateUploadWithEntity(unmatchedId, {
-                entityType: 'make_orders',
-                entityId: 999,
-                fieldName: 'invoice_attachment_urls'
-            });
-            expect(assocSuccess).toBe(false);
-
-            const persistedPending = (uploadService as any).db.prepare(`
-                SELECT * FROM pending_associations WHERE identifier = ?
-            `).get(unmatchedId);
-            expect(persistedPending).toBeDefined();
-            expect(persistedPending.entity_type).toBe('make_orders');
-            expect(persistedPending.entity_id).toBe('999');
-
-            // Now associate with the staged upload ID, verifying successful association cleans up or persists
-            uploadService.associateUploadWithEntity(staged.id, {
-                entityType: 'make_orders',
-                entityId: 999,
-                fieldName: 'invoice_attachment_urls'
-            });
-
-            // SIMULATE GENUINE PROCESS RESTART:
-            // Reset the singleton, stopping all workers and recreating the service against the same SQLite database
-            DurableUploadService.resetInstanceForTesting();
-            const restartedService = DurableUploadService.getInstance();
-            (restartedService as any).supabaseClient = supabase;
-            (restartedService as any).nasClient = supabase;
-
-            // Restore the owning order in the mock database responder
+            // 6. Restore the owning order record and assert database update precedes cloud removal and quota release
             const executionSequence: string[] = [];
             const mockOrder = { id: 999, invoice_attachment_urls: [cloudUrl] };
             h.state.responder = (table: string, op: string, body?: any) => {
@@ -1648,27 +1655,22 @@ describe('MAKE Module Stability & Verification Suite (LE-SOFT v1.8.12)', () => {
                 return { data: null, error: null };
             };
 
-            vi.spyOn(restartedService as any, 'uploadToNasStorage').mockResolvedValue({
-                success: true,
-                url: nasUrl,
-                sha256: staged.sha256
-            });
-            vi.spyOn(mockStorage, 'remove').mockImplementation(async () => {
+            removeSpy.mockImplementation(async () => {
                 executionSequence.push('cloud_storage_remove');
                 return { data: [cloudUrl], error: null };
             });
-            vi.spyOn(quotaMgr, 'pruneConfirmedStorage').mockImplementation(async () => {
+            quotaSpy.mockImplementation(async () => {
                 executionSequence.push('quota_prune_release');
                 return true;
             });
 
-            // Perform recovery under the restarted service
-            const recoveryRes = await restartedService.dispatchUpload(staged.id);
-            expect(recoveryRes.success).toBe(true);
-            expect(recoveryRes.status).toBe('synced_nas');
+            const successfulRecovery = await restartedService.dispatchUpload(staged.id);
+            expect(successfulRecovery.success).toBe(true);
+            expect(successfulRecovery.status).toBe('synced_nas');
 
             // Strictly verify:
-            // 1. Owning record is updated and confirmed before cloud removal and quota release
+            // (a) db_update_order_reference precedes cloud_storage_remove
+            // (b) cloud_storage_remove precedes quota_prune_release
             expect(executionSequence).toEqual([
                 'db_update_order_reference',
                 'cloud_storage_remove',
@@ -1677,7 +1679,7 @@ describe('MAKE Module Stability & Verification Suite (LE-SOFT v1.8.12)', () => {
             expect(mockOrder.invoice_attachment_urls).toContain(nasUrl);
             expect(mockOrder.invoice_attachment_urls).not.toContain(cloudUrl);
 
-            // 2. Persisted SQLite record confirms cleanup of cloud copy
+            // Persisted SQLite record confirms cleanup of cloud copy
             const recoveredRow = (restartedService as any).db.prepare('SELECT * FROM durable_uploads WHERE id = ?').get(staged.id);
             expect(recoveredRow.status).toBe('synced_nas');
             expect(recoveredRow.remote_url_supabase).toBeNull();
@@ -1806,6 +1808,106 @@ describe('MAKE Module Stability & Verification Suite (LE-SOFT v1.8.12)', () => {
             const unassociatedDownload = await downloadPdfHandler({} as any, { url: 'make-order-files/888/unassociated.pdf', fileName: 'unassociated.pdf' });
             expect(unassociatedDownload.success).toBe(false);
             expect(unassociatedDownload.error).toContain('Forbidden');
+        });
+
+        it('15. IPC security gate: existing upload ID combined with a different object path is rejected', async () => {
+            SessionManager.setSession({
+                id: 1,
+                username: 'designer',
+                full_name: 'Lead Designer',
+                role: 'furniture_designer',
+                permissions: {}
+            });
+            const handler = h.state.handlers['make-resolve-attachment-url'];
+
+            // Register an existing legitimate upload in SQLite for order 101
+            const uploadService = DurableUploadService.getInstance();
+            const legitKey = 'make-order-files/101/upl_legit_123_blueprint.pdf';
+            (uploadService as any).db.prepare(`
+                INSERT INTO durable_uploads (
+                    id, local_path, file_name, mime_type, size_bytes, sha256,
+                    subfolder, entity_type, entity_id, field_name, status,
+                    remote_url_supabase, retry_count, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'buffered_supabase', ?, 0, ?, ?)
+            `).run(
+                'upl_legit_123',
+                'C:/temp/blueprint.pdf',
+                'blueprint.pdf',
+                'application/pdf',
+                1024,
+                'ABCDEF123456',
+                'make-order-files/101',
+                'make_orders',
+                '101',
+                'pdf_urls',
+                legitKey,
+                Date.now(),
+                Date.now()
+            );
+
+            // Attacker supplies the valid upload ID embedded inside an unauthorized/different path
+            const spoofedKey = 'make-order-files/999/upl_legit_123_stolen.pdf';
+            h.state.responder = () => ({ data: null, error: null });
+
+            await expect(handler({} as any, spoofedKey))
+                .rejects.toThrow('Forbidden: Attachment is unassociated or access is unauthorized.');
+        });
+
+        it('16. IPC security gate: unassociated buffered upload cannot be signed', async () => {
+            SessionManager.setSession({
+                id: 1,
+                username: 'designer',
+                full_name: 'Lead Designer',
+                role: 'furniture_designer',
+                permissions: {}
+            });
+            const handler = h.state.handlers['make-resolve-attachment-url'];
+
+            // Register an upload that is buffered in Supabase but lacks owner metadata (unassociated)
+            const uploadService = DurableUploadService.getInstance();
+            const unassociatedKey = 'make-order-files/invoices/upl_unassociated_456_bill.pdf';
+            (uploadService as any).db.prepare(`
+                INSERT INTO durable_uploads (
+                    id, local_path, file_name, mime_type, size_bytes, sha256,
+                    subfolder, entity_type, entity_id, field_name, status,
+                    remote_url_supabase, retry_count, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, 'buffered_supabase', ?, 0, ?, ?)
+            `).run(
+                'upl_unassociated_456',
+                'C:/temp/bill.pdf',
+                'bill.pdf',
+                'application/pdf',
+                2048,
+                'SHA256_UNASSOC',
+                'make-order-files/invoices',
+                unassociatedKey,
+                Date.now(),
+                Date.now()
+            );
+
+            h.state.responder = () => ({ data: null, error: null });
+
+            // Unassociated buffered upload MUST NOT be signed
+            await expect(handler({} as any, unassociatedKey))
+                .rejects.toThrow('Forbidden: Attachment is unassociated or access is unauthorized.');
+        });
+
+        it('17. IPC security gate: exact hostname validation rejects lookalike NAS domain prefix bypass', async () => {
+            SessionManager.setSession({
+                id: 1,
+                username: 'designer',
+                full_name: 'Lead Designer',
+                role: 'furniture_designer',
+                permissions: {}
+            });
+            const handler = h.state.handlers['make-resolve-attachment-url'];
+
+            // An attacker-controlled lookalike domain starting with storage.lenas.me
+            const lookalikeUrl = 'https://storage.lenas.me.attacker.com/files/make-order-files/101/exploit.dwg';
+            h.state.responder = () => ({ data: null, error: null });
+
+            await expect(handler({} as any, lookalikeUrl))
+                .rejects.toThrow('Forbidden: Attachment is unassociated or access is unauthorized.');
         });
     });
 });

@@ -305,6 +305,17 @@ vi.mock('better-sqlite3', async (importOriginal) => {
         }
         return rows.find(r => r.op_id === args[0]);
       }
+      if (table === 'durable_uploads') {
+        if (lower.includes('remote_url_supabase = ?') && !lower.includes('id = ?')) {
+          return rows.find(r => r.remote_url_supabase === args[0] || (args[1] && r.remote_url_supabase === args[1]));
+        }
+        if (lower.includes('remote_url_nas = ?') && !lower.includes('id = ?')) {
+          return rows.find(r => r.remote_url_nas === args[0] || (args[1] && r.remote_url_nas === args[1]));
+        }
+        if (lower.includes('id = ?') && !lower.includes('remote_url')) {
+          return rows.find(r => r.id === args[0]);
+        }
+      }
       if (args.length > 0) {
         const match = rows.find(r =>
           args.some(arg => arg && typeof arg === 'string' && (

@@ -492,12 +492,13 @@ export async function downloadPdfFromNas(
     }
 
     // Check if this is a Supabase private bucket object or signed URL
-    const isSupabaseUrl = url.includes('.supabase.co/') || url.startsWith('make-order-files/') || url.startsWith('supabase://');
+    const canonicalSupabase = extractCanonicalSupabaseKey(url);
+    const isSupabaseUrl = url.includes('.supabase.co/') || url.startsWith('make-order-files/') || url.startsWith('supabase://') || !!canonicalSupabase;
     if (isSupabaseUrl) {
         try {
             let fetchUrl = url;
             if (!url.startsWith('http://') && !url.startsWith('https://')) {
-                const resolved = await resolveAttachmentUrl(url);
+                const resolved = await resolveAttachmentUrl(canonicalSupabase ? canonicalSupabase.objectPath : url);
                 if (!resolved.url) {
                     return { success: false, error: 'Could not resolve attachment for download' };
                 }
@@ -642,6 +643,68 @@ export async function downloadPdfFromNas(
 }
 
 /**
+ * Validates whether a raw URL string is an authorized, exact TrueNAS endpoint.
+ * Enforces exact hostnames and approved ports, preventing lookalike domain prefix bypasses.
+ */
+export function isTrustedNasUrl(rawUrl: string): boolean {
+    if (!rawUrl || typeof rawUrl !== 'string') return false;
+    try {
+        const parsed = new URL(rawUrl);
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+        if (hasPathTraversal(parsed.pathname) || hasPathTraversal(decodeURIComponent(parsed.pathname))) return false;
+
+        const lowerHost = parsed.hostname.toLowerCase();
+        if (lowerHost === 'storage.lenas.me') {
+            const port = parsed.port || '443';
+            return parsed.protocol === 'https:' && port === '443';
+        }
+        if (lowerHost === '100.88.85.6' || lowerHost === '192.168.1.14') {
+            const port = parsed.port || '80';
+            return parsed.protocol === 'http:' && (port === '8080' || port === '8081' || port === '80');
+        }
+        return isApprovedNasHost(parsed.hostname, parsed.port);
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Extracts and canonicalizes the storage path within 'make-order-files' bucket.
+ * Guarantees no directory traversal or null bytes, and strips query parameters.
+ */
+export function extractCanonicalSupabaseKey(ref: string): { fullKey: string; objectPath: string } | null {
+    if (!ref || typeof ref !== 'string') return null;
+    const trimmed = ref.trim();
+    if (!trimmed) return null;
+    if (trimmed.includes('..') || trimmed.includes('\0') || trimmed.includes('%00')) return null;
+
+    let subPath = '';
+    if (trimmed.includes('/storage/v1/object/sign/make-order-files/')) {
+        subPath = decodeURIComponent(trimmed.split('/storage/v1/object/sign/make-order-files/')[1] || '').split('?')[0];
+    } else if (trimmed.includes('/storage/v1/object/public/make-order-files/')) {
+        subPath = decodeURIComponent(trimmed.split('/storage/v1/object/public/make-order-files/')[1] || '').split('?')[0];
+    } else if (trimmed.startsWith('supabase://make-order-files/')) {
+        subPath = trimmed.replace(/^supabase:\/\/make-order-files\//, '').split('?')[0];
+    } else if (trimmed.startsWith('make-order-files/')) {
+        subPath = trimmed.replace(/^make-order-files\//, '').split('?')[0];
+    } else if (trimmed.startsWith('/make-order-files/')) {
+        subPath = trimmed.replace(/^\/make-order-files\//, '').split('?')[0];
+    } else if (!trimmed.includes('://') && !/^[a-zA-Z]:[\\/]/.test(trimmed)) {
+        subPath = trimmed.split('?')[0];
+    } else {
+        return null;
+    }
+
+    subPath = subPath.replace(/^\/+/, '').trim();
+    if (!subPath || subPath.includes('..') || subPath.includes('\0')) return null;
+
+    return {
+        fullKey: `make-order-files/${subPath}`,
+        objectPath: subPath
+    };
+}
+
+/**
  * Resolves a durable attachment reference (TrueNAS URL, Supabase private object key, or local pending file)
  * into a safe, authorized access URL for viewing/downloading.
  *
@@ -649,7 +712,7 @@ export async function downloadPdfFromNas(
  *  - Do NOT guess unconfirmed URLs.
  *  - Do NOT return file:// as a successful remote attachment.
  *  - Private bucket objects in 'make-order-files' are resolved on-demand via short-lived signed URLs (never persisted).
- *  - TrueNAS confirmed URLs (storage.lenas.me or 100.88.85.6) are passed through.
+ *  - TrueNAS confirmed URLs (storage.lenas.me or 100.88.85.6) are verified via exact hostname and port matching.
  *  - Legacy unauthenticated public URLs to private buckets are recognized and resolved via signed URLs.
  */
 export async function resolveAttachmentUrl(p: string): Promise<{ path: string; name: string; url: string; isPending?: boolean }> {
@@ -662,52 +725,27 @@ export async function resolveAttachmentUrl(p: string): Promise<{ path: string; n
         return { path: p, name, url: '', isPending: true };
     }
 
-    // 2. Confirmed TrueNAS Remote URL
-    if (p.startsWith('https://storage.lenas.me') || p.startsWith('http://100.88.85.6') || p.startsWith('http://192.168.1.14')) {
+    // 2. Confirmed TrueNAS Remote URL (exact hostname & port check, not string prefix)
+    if (isTrustedNasUrl(p)) {
         return { path: p, name, url: p, isPending: false };
     }
 
     // 3. Supabase Storage Object Key in private bucket 'make-order-files'
-    // Handles durable keys ('make-order-files/...'), expired signed URLs, public URLs, and supabase:// URIs
-    let storagePath = p;
-    if (p.includes('/storage/v1/object/sign/make-order-files/')) {
-        storagePath = decodeURIComponent(p.split('/storage/v1/object/sign/make-order-files/')[1] || '').split('?')[0];
-    } else if (p.includes('/storage/v1/object/public/make-order-files/')) {
-        storagePath = decodeURIComponent(p.split('/storage/v1/object/public/make-order-files/')[1] || '').split('?')[0];
-    } else if (p.startsWith('supabase://make-order-files/')) {
-        storagePath = p.replace(/^supabase:\/\/make-order-files\//, '').split('?')[0];
-    } else if (p.startsWith('make-order-files/')) {
-        storagePath = p.replace(/^make-order-files\//, '').split('?')[0];
-    }
-
-    storagePath = storagePath.replace(/^\/+/, '');
-
-    if (storagePath && (p.includes('make-order-files') || p.includes('supabase') || !p.startsWith('http'))) {
+    const canonical = extractCanonicalSupabaseKey(p);
+    if (canonical) {
+        const storagePath = canonical.objectPath;
         try {
             const { data, error } = await supabase.storage.from('make-order-files').createSignedUrl(storagePath, 3600);
             if (!error && data?.signedUrl) {
                 return { path: p, name, url: data.signedUrl, isPending: true };
-            }
-            if (storagePath.startsWith('make-order-files/')) {
-                const altPath = storagePath.replace(/^make-order-files\//, '');
-                const { data: altData, error: altErr } = await supabase.storage.from('make-order-files').createSignedUrl(altPath, 3600);
-                if (!altErr && altData?.signedUrl) {
-                    return { path: p, name, url: altData.signedUrl, isPending: true };
-                }
-            } else {
-                const altPath = `make-order-files/${storagePath}`;
-                const { data: altData, error: altErr } = await supabase.storage.from('make-order-files').createSignedUrl(altPath, 3600);
-                if (!altErr && altData?.signedUrl) {
-                    return { path: p, name, url: altData.signedUrl, isPending: true };
-                }
             }
         } catch (sErr: any) {
             console.warn('[resolveAttachmentUrl] Signed URL creation failed:', sErr.message);
         }
     }
 
-    // 4. Other HTTP/HTTPS URLs (external or non-make-order-files)
-    if (p.startsWith('http://') || p.startsWith('https://')) {
+    // 4. Other approved HTTP/HTTPS URLs (external or candidate hosts)
+    if (isTrustedNasUrl(p)) {
         return { path: p, name, url: p, isPending: false };
     }
 
@@ -828,93 +866,180 @@ export function registerMakeHandlers(): void {
      * Verifies that a given attachment reference or storage key belongs to an
      * order or item the current session is authorized to access.
      * Fails closed for unauthorized, malformed, or unassociated references.
+     * Guarantees that parsed upload IDs cannot bypass path authorization,
+     * unassociated buffered uploads cannot be signed, and NAS URLs require exact hostnames.
      */
-    async function isAuthorizedAttachment(rawRef: string, _session: UserSession): Promise<boolean> {
-        if (!rawRef || typeof rawRef !== 'string' || !rawRef.trim()) return false;
+    async function isAuthorizedAttachment(rawRef: string, _session: UserSession): Promise<{
+        authorized: boolean;
+        canonicalKey?: string;
+        isNas?: boolean;
+        isLocalPending?: boolean;
+        error?: string;
+    }> {
+        if (!rawRef || typeof rawRef !== 'string' || !rawRef.trim()) {
+            return { authorized: false, error: 'Empty or invalid attachment reference' };
+        }
         // Reject path traversal, control chars, null bytes
-        if (rawRef.includes('..') || rawRef.includes('\0') || rawRef.includes('%00')) return false;
+        if (hasPathTraversal(rawRef) || rawRef.includes('\0') || rawRef.includes('%00')) {
+            return { authorized: false, error: 'Path traversal or illegal characters detected' };
+        }
 
-        // Must belong to recognized MAKE order files storage namespace or contain an upload ID
-        const hasMakePrefix = rawRef.includes('make-order-files') || /upl_[0-9]+_[0-9a-f]+/i.test(rawRef);
-        if (!hasMakePrefix) return false;
-
-        const cleanKey = MakeOrderService.normalizeAttachmentReference(rawRef);
-        const uploadMatch = rawRef.match(/(upl_[0-9]+_[0-9a-f]+)/i);
-        const uploadId = uploadMatch ? uploadMatch[1] : null;
-
-        // 1. Check local DurableUploadService SQLite registry
         const uploadService = DurableUploadService.getInstance();
         const db = (uploadService as any).db;
+
+        // 1. Confirmed TrueNAS Remote URLs (Exact hostname & port check)
+        if (isTrustedNasUrl(rawRef)) {
+            if (db) {
+                try {
+                    const row = db.prepare(`
+                        SELECT id, entity_type, entity_id, status FROM durable_uploads
+                        WHERE remote_url_nas = ?
+                    `).get(rawRef) as any;
+                    if (row && (row.entity_type === 'make_orders' || row.entity_type === 'make_order_items') && row.entity_id) {
+                        return { authorized: true, canonicalKey: rawRef, isNas: true };
+                    }
+                } catch {}
+            }
+
+            try {
+                const { data: matchedOrders } = await supabase.from('make_orders').select('id, pdf_urls, invoice_attachment_urls');
+                if (Array.isArray(matchedOrders)) {
+                    const found = matchedOrders.some((o: any) => {
+                        const pdfs = Array.isArray(o.pdf_urls) ? o.pdf_urls : [];
+                        const invs = Array.isArray(o.invoice_attachment_urls) ? o.invoice_attachment_urls : [];
+                        return pdfs.includes(rawRef) || invs.includes(rawRef);
+                    });
+                    if (found) return { authorized: true, canonicalKey: rawRef, isNas: true };
+                }
+            } catch {}
+
+            try {
+                const { data: matchedItems } = await supabase.from('make_order_items').select('id, technical_drawing_url, pdf_urls');
+                if (Array.isArray(matchedItems)) {
+                    const found = matchedItems.some((it: any) => {
+                        const pdfs = Array.isArray(it.pdf_urls) ? it.pdf_urls : [];
+                        return it.technical_drawing_url === rawRef || pdfs.includes(rawRef);
+                    });
+                    if (found) return { authorized: true, canonicalKey: rawRef, isNas: true };
+                }
+            } catch {}
+
+            return { authorized: false, error: 'Unrecorded or unowned NAS attachment' };
+        }
+
+        // 2. Staged Local Files (Narrow explicit policy: local file on disk staged in SQLite)
+        if (rawRef.startsWith('file://') || /^[a-zA-Z]:[\\/]/.test(rawRef)) {
+            if (db) {
+                try {
+                    const rawClean = rawRef.replace(/^file:\/\/\/?/, '');
+                    const row = db.prepare(`
+                        SELECT id, local_path, status FROM durable_uploads
+                        WHERE local_path = ? OR local_path LIKE ?
+                    `).get(rawClean, `%${rawClean}%`) as any;
+                    if (row && row.status === 'staged_local' && fs.existsSync(row.local_path)) {
+                        return { authorized: true, canonicalKey: rawRef, isLocalPending: true };
+                    }
+                } catch {}
+            }
+            return { authorized: false, error: 'Unrecognized or missing local staged file' };
+        }
+
+        // 3. Supabase Storage Object Key in private bucket 'make-order-files'
+        const canonical = extractCanonicalSupabaseKey(rawRef);
+        if (!canonical) {
+            return { authorized: false, error: 'Reference does not map to a recognized make-order-files object key' };
+        }
+
+        const { fullKey, objectPath } = canonical;
+
+        // (a) Verify in local SQLite registry by exact recorded remote_url_supabase.
+        // DO NOT authorize merely because an upload ID is present in the path.
+        // Require valid owner metadata for normal access; unassociated buffered uploads cannot be signed.
         if (db) {
             try {
                 const row = db.prepare(`
-                    SELECT id, entity_type, entity_id, status FROM durable_uploads
-                    WHERE id = ? OR remote_url_nas = ? OR remote_url_supabase = ?
-                       OR local_path LIKE ? OR remote_url_nas LIKE ? OR remote_url_supabase LIKE ?
-                `).get(uploadId || cleanKey, rawRef, cleanKey, `%${uploadId || cleanKey}%`, `%${cleanKey}%`, `%${cleanKey}%`) as any;
+                    SELECT id, entity_type, entity_id, status, remote_url_supabase FROM durable_uploads
+                    WHERE remote_url_supabase = ? OR remote_url_supabase = ?
+                `).get(fullKey, objectPath) as any;
 
                 if (row) {
-                    if (row.status === 'staged_local' || row.status === 'buffered_supabase' || row.status === 'awaiting_association') {
-                        return true;
+                    const hasValidOwner = (row.entity_type === 'make_orders' || row.entity_type === 'make_order_items') && !!row.entity_id;
+                    if (hasValidOwner) {
+                        return { authorized: true, canonicalKey: objectPath };
                     }
-                    if (row.entity_type === 'make_orders' || row.entity_type === 'make_order_items') {
-                        return true;
-                    }
+                    // Unassociated buffered upload: cannot be signed
+                    return { authorized: false, error: 'Upload is unassociated with an owning order or item' };
                 }
             } catch {}
         }
 
-        // 2. Check remote database make_orders and make_order_items
+        // (b) Verify in remote database make_orders
         try {
-            // (a) If the storage path contains an explicit order ID, e.g. make-order-files/101/...
-            const orderPathMatch = rawRef.match(/make-order-files\/(\d+)\//);
-            if (orderPathMatch) {
-                const candidateOrderId = parseInt(orderPathMatch[1], 10);
-                const { data: order } = await supabase.from('make_orders').select('id, pdf_urls, invoice_attachment_urls').eq('id', candidateOrderId).maybeSingle();
+            const orderMatch = objectPath.match(/^(\d+)\//);
+            if (orderMatch) {
+                const candidateOrderId = parseInt(orderMatch[1], 10);
+                const { data: order } = await supabase.from('make_orders')
+                    .select('id, pdf_urls, invoice_attachment_urls')
+                    .eq('id', candidateOrderId)
+                    .maybeSingle();
+
                 if (order) {
-                    const pdfs: string[] = Array.isArray(order.pdf_urls) ? order.pdf_urls : [];
-                    const invs: string[] = Array.isArray(order.invoice_attachment_urls) ? order.invoice_attachment_urls : [];
-                    const all = [...pdfs, ...invs];
-                    if (all.some(u => u === rawRef || u === cleanKey || (uploadId && u.includes(uploadId)))) {
-                        return true;
+                    const pdfs = Array.isArray(order.pdf_urls) ? order.pdf_urls : [];
+                    const invs = Array.isArray(order.invoice_attachment_urls) ? order.invoice_attachment_urls : [];
+                    const allRefs = [...pdfs, ...invs].filter(Boolean);
+                    const matches = allRefs.some(r => {
+                        const can = extractCanonicalSupabaseKey(r);
+                        return r === rawRef || r === fullKey || r === objectPath || (can && can.objectPath === objectPath);
+                    });
+                    if (matches) {
+                        return { authorized: true, canonicalKey: objectPath };
                     }
                 }
             }
 
-            // (b) Query make_orders for matching invoice_attachment_urls or pdf_urls
-            const { data: matchedOrders } = await supabase
-                .from('make_orders')
-                .select('id, invoice_attachment_urls, pdf_urls');
+            const { data: matchedOrders } = await supabase.from('make_orders')
+                .select('id, pdf_urls, invoice_attachment_urls');
 
             if (Array.isArray(matchedOrders)) {
                 const found = matchedOrders.some((o: any) => {
-                    const pdfs: string[] = Array.isArray(o.pdf_urls) ? o.pdf_urls : [];
-                    const invs: string[] = Array.isArray(o.invoice_attachment_urls) ? o.invoice_attachment_urls : [];
-                    return [...pdfs, ...invs].some(u => u === rawRef || u === cleanKey || (uploadId && u.includes(uploadId)));
+                    const pdfs = Array.isArray(o.pdf_urls) ? o.pdf_urls : [];
+                    const invs = Array.isArray(o.invoice_attachment_urls) ? o.invoice_attachment_urls : [];
+                    return [...pdfs, ...invs].filter(Boolean).some((r: string) => {
+                        const can = extractCanonicalSupabaseKey(r);
+                        return r === rawRef || r === fullKey || r === objectPath || (can && can.objectPath === objectPath);
+                    });
                 });
-                if (found) return true;
+                if (found) {
+                    return { authorized: true, canonicalKey: objectPath };
+                }
             }
+        } catch (err: any) {
+            console.warn('[isAuthorizedAttachment] make_orders check error:', err.message);
+        }
 
-            // (c) Query make_order_items for matching technical_drawing_url or pdf_urls
-            const { data: matchedItems } = await supabase
-                .from('make_order_items')
-                .select('id, order_id, technical_drawing_url, pdf_urls');
+        // (c) Verify in remote database make_order_items
+        try {
+            const { data: matchedItems } = await supabase.from('make_order_items')
+                .select('id, technical_drawing_url, pdf_urls');
 
             if (Array.isArray(matchedItems)) {
                 const found = matchedItems.some((it: any) => {
-                    const pdfs: string[] = Array.isArray(it.pdf_urls) ? it.pdf_urls : [];
-                    return it.technical_drawing_url === cleanKey ||
-                           it.technical_drawing_url === rawRef ||
-                           (uploadId && it.technical_drawing_url?.includes(uploadId)) ||
-                           pdfs.some(u => u === rawRef || u === cleanKey || (uploadId && u.includes(uploadId)));
+                    const pdfs = Array.isArray(it.pdf_urls) ? it.pdf_urls : [];
+                    const itemRefs = [it.technical_drawing_url, ...pdfs].filter(Boolean);
+                    return itemRefs.some((r: string) => {
+                        const can = extractCanonicalSupabaseKey(r);
+                        return r === rawRef || r === fullKey || r === objectPath || (can && can.objectPath === objectPath);
+                    });
                 });
-                if (found) return true;
+                if (found) {
+                    return { authorized: true, canonicalKey: objectPath };
+                }
             }
         } catch (err: any) {
-            console.warn('[MAKE IPC] isAuthorizedAttachment query error:', err.message);
+            console.warn('[isAuthorizedAttachment] make_order_items check error:', err.message);
         }
 
-        return false;
+        return { authorized: false, error: 'Forbidden: Attachment is unassociated or access is unauthorized.' };
     }
 
     // ── 1. Create Make Order ──────────────────────────────────────────────────
@@ -1340,13 +1465,13 @@ export function registerMakeHandlers(): void {
             if (!url || typeof url !== 'string' || !url.trim()) {
                 throw new Error('Invalid or malformed attachment reference');
             }
-            const isAuthorized = await isAuthorizedAttachment(url, session);
-            if (!isAuthorized) {
+            const auth = await isAuthorizedAttachment(url, session);
+            if (!auth.authorized || !auth.canonicalKey) {
                 throw new Error('Forbidden: Attachment is unassociated or access is unauthorized.');
             }
             const { app, shell } = await import('electron');
             const tempDir = app.getPath('temp');
-            const res = await downloadPdfFromNas(url, fileName, tempDir);
+            const res = await downloadPdfFromNas(auth.canonicalKey, fileName, tempDir);
             if (res.success && res.path) {
                 await shell.openPath(res.path);
             }
@@ -1365,11 +1490,11 @@ export function registerMakeHandlers(): void {
         if (!rawUrl || typeof rawUrl !== 'string' || !rawUrl.trim()) {
             throw new Error('Invalid or malformed attachment reference');
         }
-        const isAuthorized = await isAuthorizedAttachment(rawUrl, session);
-        if (!isAuthorized) {
+        const auth = await isAuthorizedAttachment(rawUrl, session);
+        if (!auth.authorized || !auth.canonicalKey) {
             throw new Error('Forbidden: Attachment is unassociated or access is unauthorized.');
         }
-        return await resolveAttachmentUrl(rawUrl);
+        return await resolveAttachmentUrl(auth.canonicalKey);
     });
 
     // ── 11. Parts & Dimensions CRUD ──────────────────────────────────────────
