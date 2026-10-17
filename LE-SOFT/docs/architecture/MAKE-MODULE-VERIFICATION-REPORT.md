@@ -12,7 +12,7 @@
 
 This report documents the architectural audit, upload-safety review, and comprehensive verification conducted on the **MAKE Module** of LE-SOFT v1.8.12. In accordance with project instructions, all work was restricted to the MAKE module, CAD and attachment upload dispatch safety, truthful URL resolution for private buckets, named order drafts, global specification image persistence (Migration 066 compatibility), resilient upload staging, failover recovery corrections, durable object key cleanup, and quota-managed cloud storage fallback. Unrelated Sales, Billing, inventory, and MySQL synchronization components were kept untouched.
 
-All 30 MAKE test suites (comprising **525 automated tests**) pass cleanly. In addition, real native SQLite Write-Ahead Logging (WAL) and `DurableUploadService` pending-association recovery were validated under Electron's Node runtime (ABI 143), real PostgreSQL Migration 070 quota RPC functions were validated against the local PostgreSQL container, and both TypeScript compilation targets (`tsc --noEmit` and `tsc -p tsconfig.electron.json --noEmit`), ESLint (`npm run lint`), Vite production build, and Electron esbuild bundling passed with zero errors or warnings.
+All 30 MAKE test suites (comprising **553 automated tests**, 0 failed, 0 skipped) pass cleanly. In addition, real native SQLite Write-Ahead Logging (WAL) and `DurableUploadService` pending-association recovery were validated under Electron's Node runtime (ABI 143), real PostgreSQL Migration 070 quota RPC functions were validated against the local PostgreSQL container, and both TypeScript compilation targets (`tsc --noEmit` and `tsc -p tsconfig.electron.json --noEmit`), ESLint (`npm run lint`), Vite production build, and Electron esbuild bundling passed with zero errors or warnings.
 
 ---
 
@@ -153,7 +153,7 @@ All 30 MAKE test suites (comprising **525 automated tests**) pass cleanly. In ad
      - Test 20: Legitimately linked order attachment remains authorized and accessible via signed URL.
      - Test 21: Pending upload with no confirmed owner cannot be signed.
 
-### Defect 9: PDF Attachment Deletion Authorization Gap & Missing Ownership Verification
+### Defect 10: PDF Attachment Deletion Authorization Gap & Missing Ownership Verification
 - **Location**: `electron/ipc/handlers/make.ts` (`make-delete-pdf`, `make-delete-item-pdf`), `electron/ipc/schemas/make.schema.ts`
 - **Root Cause**: `make-delete-pdf` and `make-delete-item-pdf` previously checked `requireSession()` but omitted explicit MAKE order modification permission verification (`canModifyMakeOrder`). Consequently, read-only operators or unauthorized roles could request attachment deletion. Furthermore, the handlers lacked payload schema validation, accepted arbitrary input without rejecting directory traversal sequences or null bytes, did not authoritatively verify that the requested attachment actually belonged to the claimed order or item, did not verify item-parent order relationships, and falsely succeeded even when the order/item record was nonexistent or when zero rows were affected.
 - **Resolution**:
@@ -249,13 +249,14 @@ Ran against local Supabase stack (`127.0.0.1:54321` and `127.0.0.1:54322`):
 - **Result**: 1 passed, 6 skipped (in accordance with production isolation rules when `ALLOW_DISPOSABLE_STAGING_TESTS` is disabled)
 - **Exit Code**: `0`
 - **Duration**: 441 ms
+- **Note on Test Counts & Isolation**: The MAKE module test suite (`tests/make`) has exactly **0 skipped tests** (**553/553 passed** across 30 files). The 6 skipped tests in this section belong exclusively to the separate staging recovery test suite (`real-e2e-recovery-workflow.integration.test.ts`), which intentionally bypasses destructive/live staging operations when `ALLOW_DISPOSABLE_STAGING_TESTS` is unset to enforce strict local isolation.
 
 ### 4.5 Static Analysis, Types, and Build Gates
 1. **Frontend Type Check**: `npx tsc --noEmit` → **Passed (Exit code 0)**
 2. **Electron Type Check**: `npx tsc -p tsconfig.electron.json --noEmit` → **Passed (Exit code 0)**
 3. **Linter**: `npm run lint` → **Passed (Exit code 0, 0 warnings)**
-4. **Vite Production Bundle**: `npm run build` → **Passed (Exit code 0 in 8.56s)**
-5. **Electron Main & Preload Bundle**: `node build-electron.cjs` → **Passed (Exit code 0, core/main.cjs 5.9MB, core/preload.cjs 36.2KB)**
+4. **Vite Production Bundle**: `npm run build` → **Passed (Exit code 0 in 8.79s)**
+5. **Electron Main & Preload Bundle**: `node build-electron.cjs` → **Passed (Exit code 0, core/main.cjs 5.9MB, core/preload.cjs 36.3KB)**
 6. **License System Check**: `npm run license:check` → **Passed (Exit code 0, Ed25519 signature verified)**
 
 ---
@@ -285,7 +286,9 @@ While all programmatic layers (IPC, schema, services, local storage, quota manag
 
 - **Baseline Version**: Strictly preserved at `LE-SOFT v1.8.12` in `package.json`.
 - **Target Branch**: `feat/failover-uploads-buffer`.
+- **Latest Verified Commit**: `8901c92ce3fb79895f9fa63ccc03dc84a601d985`.
 - **PR #41**: **OPEN and UNMERGED** (No merge executed; awaiting explicit stakeholder approval).
+- **Remote CI Status**: Queried `gh pr checks 41` → Reported `no checks reported on the 'feat/failover-uploads-buffer' branch` (remote CI check runner is not configured on this branch).
 - **Production Isolation**: Zero writes directed to production TrueNAS (`100.88.85.6`), hosted production Supabase (`ildkkgjrolcjijwfokek`), or production MySQL.
 - **Credential Hygiene**: Zero credentials, passwords, or privileged service role keys committed to source, bundles, or reports.
 - **Failover Recovery Verification**:
@@ -298,3 +301,7 @@ While all programmatic layers (IPC, schema, services, local storage, quota manag
   7. Final Security & Restart-Safety Gate verified: main-process `requireSession()` and role checks enforced on all attachment read, download, and URL resolution endpoints; strict canonical object-key authorization via `isAuthorizedAttachment()` cross-checking exact recorded keys and requiring that claimed owner rows actually exist and contain the matching canonical key in their attachment field (unassociated buffered uploads cannot be signed, and spoofed object paths or unlisted keys are rejected); exact hostname/port validation on TrueNAS endpoints; real native SQLite pending-association recovery tested under Electron Node runtime with `better-sqlite3` in an isolated disposable directory, proving startup reconciliation links the upload, failure retains cloud copies and quota, and database update precedes cloud removal and quota release. Mocked service reinitialization is distinguished from real native SQLite testing, and testing limitations (no OS-level process relaunch and no remote CI assertion) are documented.
   8. Final Security & PDF Deletion Gate verified: main-process authentication and explicit MAKE modification authorization (`canModifyMakeOrder`) enforced on `make-delete-pdf` and `make-delete-item-pdf` as well as upload handlers; strict Zod payload validation (`DeleteOrderPdfSchema`, `DeleteItemPdfSchema`) rejecting path traversal, null bytes, unsupported protocols, and untrusted domains; authoritative ownership cross-checks (`isMatchingAttachment`) verifying attachment existence on owner records; item-parent order relationship validation; fail-closed update semantics (`affectedCount > 0`); and safe cloud pruning without deleting authoritative NAS files.
 - **Quality Gates**: All 6 gates passed (TSC frontend 0 errors, TSC electron 0 errors, ESLint 0 warnings, Vite build exit 0, Electron build exit 0, License verification exit 0).
+- **Explicit Limitations & Testing Boundaries**:
+  - *Full OS Process Relaunch*: Terminating the operating system process and spawning a new binary from the shell was not executed within the automated suite. Real native SQLite WAL journaling and restart reconciliation were verified on physical disk files using real `better-sqlite3` under Electron's Node runtime.
+  - *Remote CI Checks*: GitHub PR #41 has no active CI check workflows configured; all gates were executed locally with verified exit codes.
+  - *Human UI Testing Outstanding*: Operating-system native window interactions (OS file dialogs, PDF preview rendering, camera capture, physical print preview, and deletion confirmation dialogs) require manual spot-checking in the graphical runtime.
