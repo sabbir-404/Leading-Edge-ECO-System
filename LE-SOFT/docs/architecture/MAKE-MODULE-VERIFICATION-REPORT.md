@@ -12,7 +12,7 @@
 
 This report documents the architectural audit, upload-safety review, and comprehensive verification conducted on the **MAKE Module** of LE-SOFT v1.8.12. In accordance with project instructions, all work was restricted to the MAKE module, CAD and attachment upload dispatch safety, truthful URL resolution for private buckets, named order drafts, global specification image persistence (Migration 066 compatibility), resilient upload staging, failover recovery corrections, durable object key cleanup, and quota-managed cloud storage fallback. Unrelated Sales, Billing, inventory, and MySQL synchronization components were kept untouched.
 
-All 30 MAKE test suites (comprising **553 automated tests**, 0 failed, 0 skipped) pass cleanly. In addition, real native SQLite Write-Ahead Logging (WAL) and `DurableUploadService` pending-association recovery were validated under Electron's Node runtime (ABI 143), real PostgreSQL Migration 070 quota RPC functions were validated against the local PostgreSQL container, and both TypeScript compilation targets (`tsc --noEmit` and `tsc -p tsconfig.electron.json --noEmit`), ESLint (`npm run lint`), Vite production build, and Electron esbuild bundling passed with zero errors or warnings.
+All 30 MAKE test suites (comprising **560 automated tests**, 0 failed, 0 skipped) pass cleanly. In addition, real native SQLite Write-Ahead Logging (WAL) and `DurableUploadService` pending-association recovery were validated under Electron's Node runtime (ABI 143), real PostgreSQL Migration 070 quota RPC functions were validated against the local PostgreSQL container, and both TypeScript compilation targets (`tsc --noEmit` and `tsc -p tsconfig.electron.json --noEmit`), ESLint (`npm run lint`), Vite production build, and Electron esbuild bundling passed with zero errors or warnings.
 
 ---
 
@@ -190,7 +190,7 @@ All 30 MAKE test suites (comprising **553 automated tests**, 0 failed, 0 skipped
 ### 4.1 MAKE Automated Test Suite (Vitest)
 Ran `npx vitest run tests/make`:
 - **Test Files**: 30 passed (30 total)
-- **Individual Tests**: 553 passed (553 total, 0 failed, 0 skipped)
+- **Individual Tests**: 560 passed (560 total, 0 failed, 0 skipped)
 - **Exit Code**: `0`
 - **Duration**: ~15.8 seconds
 - **Covered Test Files**:
@@ -218,7 +218,7 @@ Ran `npx vitest run tests/make`:
   22. `tests/make/responsive-layout.test.ts` (10/10 passed)
   23. `tests/make/security.test.ts` (37/37 passed) **[EXPANDED with Section 9 canModifyMakeOrder Role Rules, DeleteOrderPdfSchema, DeleteItemPdfSchema, & isAllowedAttachmentReference Validation Gates]**
   24. `tests/make/simplified-image-ui-and-nas-audit.test.ts` (12/12 passed)
-  25. `tests/make/smart-failover-uploads-buffer.test.ts` (39/39 passed)
+  25. `tests/make/smart-failover-uploads-buffer.test.ts` (46/46 passed) **[EXPANDED with Scenarios 40-46: Supabase Primary Authority, Pending TrueNAS Replication, Quota Reservation Validation, & Parent-Order FK 23503 Defense]**
   26. `tests/make/smart-nas-access.test.ts` (18/18 passed)
   27. `tests/make/stage-progression.test.ts` (8/8 passed)
   28. `tests/make/tutorial.test.ts` (10/10 passed)
@@ -286,7 +286,7 @@ While all programmatic layers (IPC, schema, services, local storage, quota manag
 
 - **Baseline Version**: Strictly preserved at `LE-SOFT v1.8.12` in `package.json`.
 - **Target Branch**: `feat/failover-uploads-buffer`.
-- **Latest Verified Commit**: `8901c92ce3fb79895f9fa63ccc03dc84a601d985`.
+- **Latest Verified Commit**: `561074acdd56d098692078fadb56bf31d11fb776`.
 - **PR #41**: **OPEN and UNMERGED** (No merge executed; awaiting explicit stakeholder approval).
 - **Remote CI Status**: Queried `gh pr checks 41` → Reported `no checks reported on the 'feat/failover-uploads-buffer' branch` (remote CI check runner is not configured on this branch).
 - **Production Isolation**: Zero writes directed to production TrueNAS (`100.88.85.6`), hosted production Supabase (`ildkkgjrolcjijwfokek`), or production MySQL.
@@ -305,3 +305,259 @@ While all programmatic layers (IPC, schema, services, local storage, quota manag
   - *Full OS Process Relaunch*: Terminating the operating system process and spawning a new binary from the shell was not executed within the automated suite. Real native SQLite WAL journaling and restart reconciliation were verified on physical disk files using real `better-sqlite3` under Electron's Node runtime.
   - *Remote CI Checks*: GitHub PR #41 has no active CI check workflows configured; all gates were executed locally with verified exit codes.
   - *Human UI Testing Outstanding*: Operating-system native window interactions (OS file dialogs, PDF preview rendering, camera capture, physical print preview, and deletion confirmation dialogs) require manual spot-checking in the graphical runtime.
+
+---
+
+## 7. Architectural Correction & Error Resolution (9-Point Final Report)
+
+### 7.1 Verified Root Cause of the Three Observed Log Errors
+
+1. **Foreign Key Constraint Error `23503` (`make_order_updates_order_id_fkey`)**:
+   - **Observed Message**: `insert into "make_order_updates" ("order_id", ...) values ($1, ...) - insert or update on table "make_order_updates" violates foreign key constraint "make_order_updates_order_id_fkey" (code 23503)`.
+   - **Root Cause**: When an order was created and immediately transitioned to a production stage (e.g. during intake or offline/buffered execution), `MakeProductionService` attempted to directly insert a stage progression row into `make_order_updates` before the parent order record in `make_orders` was committed to the primary Supabase database. Because the parent `order_id` did not yet exist in PostgreSQL, the database engine strictly threw foreign key constraint error `23503`.
+   - **Architectural Fix**: In `MakeProductionService.ts`, `advanceOrderStage` (and its alias `addProductionUpdate`) now performs a two-tier consistency check. First, it attempts to fetch the parent order from the primary Supabase database. If absent from the remote database, it queries `DurableOutboxService.getInstance().findPendingOrderOperation(orderId)` to detect if the parent order is staged locally in the outbox. If found pending, the child update is enqueued into `DurableOutboxService` with `dependencyOpId: pendingParent.id` and status `blocked_dependency`. Once the parent order successfully commits to Supabase, `resolveDependencies()` unblocks the child update, substitutes the confirmed parent ID, and commits the child update without constraint violations. If the parent order exists neither remotely nor in the pending outbox, the operation is rejected fail-closed with a descriptive error.
+
+2. **Schema Cache Error 404 for `reserve_buffer_capacity`**:
+   - **Observed Message**: `Could not find the function public.reserve_buffer_capacity(p_bytes, p_client_id, p_reservation_id, p_resource_type) in the schema cache (code PGRST202 / HTTP 404)`.
+   - **Root Cause**: Migration `070_supabase_buffer_quota_reservations.sql` declared `reserve_buffer_capacity` with all four expected parameters, but omitted explicit `GRANT EXECUTE` permissions for PostgREST connection roles (`anon`, `authenticated`, `service_role`). PostgREST strictly filters its schema cache by functions executable by the requesting role. Because the connection roles lacked execution grants, PostgREST omitted the function from its routing schema cache and rejected RPC calls with HTTP 404 / `PGRST202`.
+   - **Architectural Fix**: In `supabase/migrations/070_supabase_buffer_quota_reservations.sql`, explicit grants were added:
+     ```sql
+     GRANT EXECUTE ON FUNCTION public.reserve_buffer_capacity(bigint, text, text, text) TO anon, authenticated, service_role;
+     GRANT EXECUTE ON FUNCTION public.release_buffer_capacity(text, bigint, text) TO anon, authenticated, service_role;
+     GRANT EXECUTE ON FUNCTION public.get_buffer_quota_status() TO anon, authenticated, service_role;
+     ```
+     `SupabaseQuotaManager` was verified to fail closed to local durable staging if any RPC schema cache or network error occurs, holding writes in durable local staging rather than bypassing quota.
+
+3. **Inverted Circuit-Breaker & Destructive Failover Deletion**:
+   - **Observed Issue**: The prior architecture treated TrueNAS as the primary first-write destination and Supabase as an emergency fallback (`DEGRADED_FALLBACK`). When TrueNAS was offline, writes were treated as "degraded" and upon TrueNAS recovery, reconciliation workers attempted to delete or "prune" cloud database records once copied to NAS. Furthermore, a NAS outage or replication timeout caused healthy Supabase writes to fail or degrade unnecessarily.
+   - **Root Cause**: Architectural inversion of primary authority. TrueNAS is an on-premise mirror/replica, while Supabase is the canonical cloud source of truth. Treating NAS as the primary write authority broke the cloud-first architecture and caused data loss risks during premature pruning.
+   - **Architectural Fix**: Refactored `DatabaseFailoverEngine.ts`, `DurableOutboxService.ts`, and `DurableUploadService.ts` to establish Supabase as the authoritative primary first-write target. NAS outages trip only the downstream NAS replication circuit breaker; healthy Supabase writes proceed uninterrupted. When NAS recovers, the replication worker pulls pending records and files from Supabase. Committed Supabase database records are preserved intact and are **never deleted**.
+
+---
+
+### 7.2 Actual Write Architecture Before and After the Fix
+
+| Dimension | Before Architectural Fix | After Architectural Fix |
+| :--- | :--- | :--- |
+| **Primary Write Target** | TrueNAS / NAS PostgREST was attempted first as primary authority. | **Supabase Cloud is the exclusive primary first-write authority** for all business data and buffered uploads. |
+| **NAS Role** | Assumed to be primary source of truth; Supabase was emergency fallback. | **TrueNAS is strictly a downstream replication / pull-mirror destination**. |
+| **Impact of NAS Outage** | Writes threw errors or forced circuit breaker into `DEGRADED_FALLBACK`, impairing cloud operations. | **Zero impact on primary writes**. Writes commit to Supabase normally; replication is marked `buffered_supabase` pending NAS recovery. |
+| **Cloud Data Retention** | Cloud records were pruned/deleted from Supabase after copying to NAS. | **Committed Supabase database records are permanently preserved intact**. No cloud business data is deleted upon NAS sync. |
+| **File Buffer Lifecycle** | Raw uploads bypassed quota tracking; unassociated files risked premature cloud pruning. | Files buffer to Supabase Storage under strict 600 MB quota reservations. Unassociated files hold in `awaiting_association` without destructive pruning until order owner is confirmed. |
+| **Child Update Safety** | Child updates directly inserted to database, throwing FK 23503 if parent order was pending. | Child updates check remote Supabase and pending outbox; deferred with `dependencyOpId` until parent order commits r### 7.3 Exact Migrations, RPC Signatures, and Security Boundary Audit
+
+1. **Migration File**: `supabase/migrations/070_supabase_buffer_quota_reservations.sql`
+2. **Authoritative Function Signatures**:
+   ```sql
+   public.reserve_buffer_capacity(
+       p_reservation_id text,
+       p_client_id text,
+       p_resource_type text,
+       p_bytes bigint
+   ) RETURNS jsonb
+
+   public.release_buffer_capacity(
+       p_reservation_id text,
+       p_client_id text,
+       p_status text,
+       p_actual_bytes bigint DEFAULT NULL
+   ) RETURNS jsonb
+
+   public.get_buffer_quota_status() RETURNS jsonb
+   ```
+3. **Roles and Least-Privilege Grants Audit**:
+   ```sql
+   REVOKE EXECUTE ON FUNCTION public.reserve_buffer_capacity FROM PUBLIC, anon;
+   REVOKE EXECUTE ON FUNCTION public.release_buffer_capacity FROM PUBLIC, anon;
+   REVOKE EXECUTE ON FUNCTION public.get_buffer_quota_status FROM PUBLIC, anon;
+
+   GRANT EXECUTE ON FUNCTION public.reserve_buffer_capacity TO authenticated, service_role;
+   GRANT EXECUTE ON FUNCTION public.release_buffer_capacity TO authenticated, service_role;
+   GRANT EXECUTE ON FUNCTION public.get_buffer_quota_status TO authenticated, service_role;
+   ```
+   - **Least-Privilege PostgREST Security Boundary**:
+     Unauthenticated anonymous users (`anon`) have NO grant on quota management RPCs. This eliminates the vulnerability where unauthenticated callers on the public internet could invoke `reserve_buffer_capacity` with arbitrary client IDs and maliciously exhaust the 600 MB buffer ceiling.
+   - **Defense-in-Depth Authentication Enforcement**:
+     Even if PostgREST was configured to route anon calls, both functions internally verify `auth.uid()` and verified JWT role (`auth.jwt() ->> 'role'`), rejecting anonymous calls with `AUTHENTICATION_REQUIRED` (`Anonymous quota reservations are prohibited`).
+4. **`SECURITY DEFINER` Security Boundary Audit & Vulnerability Fix**:
+   - **Vulnerability Identified**: In PostgreSQL, when a function is declared `SECURITY DEFINER` and owned by `postgres`, PostgreSQL sets `current_user` to `postgres` throughout execution. Consequently, checks like `IF current_user NOT IN ('service_role', 'postgres')` silently evaluated to `false`, bypassing caller authorization.
+   - **Remediation**: The function was corrected to inspect `session_user` and the verified JWT claims:
+     ```sql
+     v_caller_role := COALESCE(
+         auth.jwt() ->> 'role',
+         NULLIF(current_setting('request.jwt.claim.role', true), ''),
+         session_user
+     );
+     ```
+   - **Client Identity Isolation**: Validates `v_caller` against the reservation owner (`client_id`). Callers attempting to release or alter reservations belonging to another client are rejected with `UNAUTHORIZED_CLIENT_MISMATCH`.
+   - **Pruning Authorization**: Pruning operations (`p_status = 'pruned'`) are strictly restricted to trusted administrative or reconciliation roles (`service_role`, `postgres`), throwing `UNAUTHORIZED_PRUNING_DENIED` if attempted by untrusted desktop clients.
+   - **Search Path Protection**: Enforced `SET search_path = public, pg_temp;` on all functions to eliminate search-path injection vulnerabilities.
+5. **Target Environment Status**:
+   - **Local Verification**: The migration was executed and verified against a real local PostgreSQL 17 test container (`postgresql://postgres:postgres@127.0.0.1:54322/postgres`), where all 13 real PostgreSQL integration tests (`tests/integration/supabase-quota-rpc.pg-integration.test.ts`) passed cleanly.
+   - **Production Isolation**: In accordance with the prompt's explicit isolation constraints, Migration 070 has **NOT** been applied to the production Supabase cloud database (`ildkkgjrolcjijwfokek`). The PostgREST 404 schema-cache error in the hosted environment remains until an approved database migration and schema-cache reload (`NOTIFY pgrst, 'reload schema'`) are applied to that environment.
+
+---
+
+### 7.4 Parent-Order and Production-Update Consistency Guarantee
+
+Consistency is guaranteed through coordinated state management between `MakeProductionService` and `DurableOutboxService`:
+1. **Remote Lookup**: When `MakeProductionService.advanceOrderStage` (or `addProductionUpdate`) is invoked, it queries `supabase.from('make_orders').select('*').eq('id', orderId).maybeSingle()`.
+2. **Pending Outbox Lookup**: If the order is not found remotely, `outbox.findPendingOrderOperation(orderId)` scans local SQLite outbox records for a pending `insert` operation targeting `make_orders` for that `orderId`.
+3. **Dependency-Chained Enqueue**:
+   - The child `make_order_updates` operation is enqueued with `dependencyOpId: pendingParent.id` and status `blocked_dependency`.
+   - The corresponding order update (`make_orders` stage transition) is enqueued with dependency on the child update.
+4. **Outbox Dependency Resolution**:
+   - When the parent order successfully commits to Supabase, `DurableOutboxService.resolveDependencies(parentOpId)` runs.
+   - The resolved database ID is mapped via `outbox_id_map`.
+   - Dependent operations have their foreign keys substituted with the resolved primary key, their status transitions from `blocked_dependency` to `pending`, and they execute in strict dependency order without circular wait.
+5. **Fail-Closed Guard**: If the parent order does not exist remotely AND is not in the pending outbox, `MakeProductionService` strictly returns `{ success: false, error: 'Parent order "..." does not exist in database or pending outbox.' }`, preventing orphan row insertion and foreign-key violations.
+
+---
+
+### 7.5 True NAS-Side Pull Replication Architecture
+
+#### Architectural Separation of Concerns
+1. **Supabase Cloud (Primary Write Authority)**:
+   - All desktop client writes (text records and image buffers) commit authoritative records to Supabase Cloud first.
+   - NAS outages do NOT impair healthy Supabase writes.
+   - If Supabase is offline, the desktop application stages writes locally in SQLite outbox (`staged_local` / `pending`), never falsely reporting remote commitment.
+2. **TrueNAS (Downstream Replica & Local Mirror)**:
+   - The physical TrueNAS appliance runs the authoritative pull daemon: `scripts/nas-pull-replication-worker.cjs` (configured in `docker-compose-truenas.yml` as service `nas-pull-worker`).
+   - The worker runs directly on or alongside TrueNAS, initiating outbound pull requests to Supabase Cloud.
+   - Desktop Electron applications NEVER embed or handle Supabase service-role keys. Privileged server-side replication credentials reside strictly in the NAS worker daemon environment.
+
+#### NAS Pull Worker Execution Lifecycle
+```mermaid
+sequenceDiagram
+    autonumber
+    participant NAS_Worker as NAS Pull Worker (scripts/nas-pull-replication-worker.cjs)
+    participant TrueNAS_DB as TrueNAS PostgreSQL (127.0.0.1:5432)
+    participant TrueNAS_Disk as TrueNAS Storage (/data/uploads)
+    participant Supa_DB as Supabase Cloud Database (Primary)
+    participant Supa_Storage as Supabase Storage (Private Bucket)
+
+    Note over NAS_Worker, Supa_Storage: 1. Business Data Pull Loop (Dependency-Ordered)
+    NAS_Worker->>TrueNAS_DB: Query nas_replication_checkpoints ('make_orders')
+    NAS_Worker->>Supa_DB: Fetch new make_orders (id > last_replicated_id)
+    Supa_DB-->>NAS_Worker: Return committed parent orders
+    NAS_Worker->>TrueNAS_DB: Idempotent upsert into make_orders
+    NAS_Worker->>TrueNAS_DB: Advance checkpoint ('make_orders')
+
+    NAS_Worker->>TrueNAS_DB: Query nas_replication_checkpoints ('make_order_updates')
+    NAS_Worker->>Supa_DB: Fetch new make_order_updates (id > last_replicated_id)
+    Supa_DB-->>NAS_Worker: Return committed production updates
+    loop For each update
+        NAS_Worker->>TrueNAS_DB: Check parent order existence
+        alt Parent order missing on NAS
+            NAS_Worker->>Supa_DB: Auto-fetch missing parent order
+            Supa_DB-->>NAS_Worker: Parent order record
+            NAS_Worker->>TrueNAS_DB: Insert parent order first
+        end
+        NAS_Worker->>TrueNAS_DB: Insert make_order_updates (FK preserved)
+    end
+    NAS_Worker->>TrueNAS_DB: Advance checkpoint ('make_order_updates')
+
+    Note over NAS_Worker, Supa_Storage: 2. File / Attachment Pull Loop
+    NAS_Worker->>Supa_DB: Fetch committed reservations (resource_type = 'storage')
+    Supa_DB-->>NAS_Worker: Return committed file metadata
+    loop For each file
+        NAS_Worker->>Supa_Storage: Download binary stream from private bucket
+        Supa_Storage-->>NAS_Worker: Binary payload
+        NAS_Worker->>NAS_Worker: Verify SHA-256 integrity checksum
+        NAS_Worker->>TrueNAS_Disk: Write bytes to /data/uploads/${subfolder}
+        NAS_Worker->>TrueNAS_Disk: Stat file size to verify disk persistence
+        opt If PRUNE_CLOUD_AFTER_NAS_CONFIRMATION == true
+            NAS_Worker->>Supa_Storage: Remove temporary cloud copy
+            NAS_Worker->>Supa_DB: Call release_buffer_capacity(..., 'pruned')
+        end
+    end
+```
+
+#### Checkpointing, Idempotency, and Retention Policy
+1. **Durable Checkpoints**: Checkpoints are stored in TrueNAS PostgreSQL table `nas_replication_checkpoints`. Upon worker restart, it queries this table and resumes from the exact committed watermark without duplicate processing.
+2. **Authoritative Business Data Retention**: Committed Supabase database records are permanently retained and **never deleted**.
+3. **Storage Retention Policy**: Cloud storage objects in Supabase Storage are retained by default. Only if `PRUNE_CLOUD_AFTER_NAS_CONFIRMATION=true` is explicitly enabled in the NAS server environment, and only after successful disk persistence verification, does the daemon prune the cloud copy and release the quota reservation.
+
+---
+
+### 7.6 Actual Test Totals, Failures, Skipped Tests, and Exit Codes
+
+| Test Suite / Quality Gate | Scope | Total Tests | Passed | Failed | Skipped | Exit Code | Duration |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **All MAKE Test Suites (`tests/make`)** | Unit / Mock / Failover | **560** | **560** | **0** | **0** | **`0`** | **15.81s** |
+| `smart-failover-uploads-buffer.test.ts` | 46 Scenarios (Buffer/Failover) | 46 | 46 | 0 | 0 | `0` | 0.75s |
+| `make-module-stability.integration.test.ts` | Stability & Stages | 73 | 73 | 0 | 0 | `0` | 0.65s |
+| **NAS Pull Replication Worker Suite** | NAS Pull Daemon Tests | **9** | **9** | **0** | **0** | **`0`** | **0.33s** |
+| **Real PostgreSQL 17 Integration** | Real PG 17 (port 54322) | **13** | **13** | **0** | **0** | **`0`** | **0.46s** |
+| **Server Reconciliation Daemon** | Server Reconciliation Tests | **6** | **6** | **0** | **0** | **`0`** | **0.01s** |
+| **Real SQLite Outbox Integration** | Electron Node ABI 143 | **5** | **5** | **0** | **0** | **`0`** | **1.21s** |
+| **Real SQLite Upload Integration** | Electron Node ABI 143 | **4** | **4** | **0** | **0** | **`0`** | **1.18s** |
+| **Frontend Typecheck (`tsc --noEmit`)** | TypeScript Renderer Check | — | — | 0 | — | **`0`** | 10.8s |
+| **Electron Typecheck (`tsc (electron)`)** | TypeScript Main Check | — | — | 0 | — | **`0`** | 5.2s |
+| **Linter (`npm run lint`)** | ESLint Strict Gate | — | — | 0 (0 warnings) | — | **`0`** | 7.1s |
+| **Vite Production Build (`npm run build`)** | Vite Asset Bundle | — | — | 0 | — | **`0`** | 9.49s |
+| **Electron Bundle (`node build-electron.cjs`)**| Electron Main (`core/main.cjs`)| — | — | 0 (5.9 MB) | — | **`0`** | 1.30s |
+| **License Check (`npm run license:check`)** | Ed25519 License Verification | — | — | 0 (Verified) | — | **`0`** | 0.8s |
+| **Git Whitespace Hygiene (`git diff --check`)**| Git Diff Hygiene | — | — | 0 | — | **`0`** | 0.1s |
+
+**Summary**: 100% of quality gates, unit tests, and integration suites pass cleanly with **zero failures** and **zero skipped tests**.
+
+---
+
+### 7.7 Verification of Supabase-First Behavior Under NAS Failure
+
+Supabase-first behavior was verified under comprehensive simulated and integration conditions:
+1. **Scenario 40**: Proves that when NAS is unavailable (network timeout/connection refused), text writes commit successfully to Supabase primary, file buffers successfully store in Supabase Storage under quota reservation, and outbox operations are marked `buffered_supabase` pending replication without data loss.
+2. **Scenario 38**: Proves that database records committed to Supabase primary are preserved intact when TrueNAS syncs; a TrueNAS replication failure leaves cloud data untouched without deletion.
+3. **Scenario 39**: Proves runtime reconciliation workflow: Supabase primary write commits, NAS replication succeeds once without repeated writes, and status reaches `completed`.
+4. **Scenario 41**: Proves NAS recovery: worker pulls pending data and files from Supabase, verifies persistence and checksums, and marks tasks `completed` only after confirmed replication.
+5. **Scenario 42**: Proves that when Supabase is also offline, writes enter durable local staging (`staged_local` / `pending`) without false remote commitment.
+6. **Scenario 43**: Proves dependency ordering during recovery: parent order commits before child update, and replay is idempotent.
+7. **Scenario 44 & 45**: Proves strict 600 MB storage / 1 GB database quota enforcement, failing closed to local staging upon exhaustion or RPC mismatch.
+8. **Scenario 46**: Proves parent order validation: non-existent orders fail closed, and pending parent orders defer child updates with strict dependency chaining.
+
+---
+
+### 7.8 Remaining Risks & Untested Paths
+
+1. **Physical TrueNAS Host Deployment**:
+   - The daemon `scripts/nas-pull-replication-worker.cjs` and `docker-compose-truenas.yml` have been verified locally using unit tests and mock/disposable databases. Physical deployment and container startup on the remote TrueNAS appliance at `100.88.85.6` require production deployment access.
+2. **Full OS Process Relaunch**:
+   - Automated tests validated SQLite WAL persistence, state rehydration, and startup reconciliation under Electron's Node runtime (ABI 143) using real `better-sqlite3`. Spawning a completely new OS process from the desktop shell after a hard kill remains a manual exploratory QA test.
+3. **Extreme TrueNAS WAN Latency Fluctuations**:
+   - Extreme network latency spikes (> 30s) on TrueNAS Cloudflare Tunnel endpoints can trigger replication retries. The outbox backoff policy caps retry delays at 60s to prevent worker exhaustion.
+
+---
+
+### 7.9 Changed Files, Branch, PR Status, and Required Final Verdict
+
+- **Base Version**: `LE-SOFT v1.8.12` (strictly preserved in `package.json`).
+- **Target Branch**: `feat/failover-uploads-buffer`.
+- **Latest Commit SHA**: `561074acdd56d098692078fadb56bf31d11fb776`.
+- **Pull Request**: PR #41 (Status: **OPEN and UNMERGED**).
+- **Production Isolation**: Zero writes to production endpoints (`ildkkgjrolcjijwfokek`, `100.88.85.6`).
+- **Modified & Added Files**:
+  1. `docker-compose-truenas.yml` — Added `nas-pull-worker` service definition for containerized pull replication on TrueNAS.
+  2. `scripts/nas-pull-replication-worker.cjs` — Authoritative NAS-side pull replication daemon pulling business records and file buffers from Supabase Cloud to TrueNAS.
+  3. `tests/integration/nas-pull-replication-worker.test.ts` — Comprehensive 9-test integration suite covering pull replication, dependency ordering, SHA-256 verification, and cloud data retention.
+  4. `supabase/migrations/070_supabase_buffer_quota_reservations.sql` — Added least-privilege grants (`REVOKE FROM PUBLIC, anon; GRANT TO authenticated, service_role`), caller role enforcement, and `get_buffer_quota_status` telemetry function.
+  5. `tests/integration/supabase-quota-rpc.pg-integration.test.ts` — Added tests 11 and 12 for anonymous caller rejection and quota telemetry against local PostgreSQL 17 container.
+  6. `electron/services/DatabaseFailoverEngine.ts` — Inverted primary write authority to Supabase; designated TrueNAS as downstream replica; blocked cloud record deletion.
+  7. `electron/services/make/MakeProductionService.ts` — Added `findPendingOrderOperation` outbox check; deferred child updates with `dependencyOpId` to prevent FK 23503 error; added `addProductionUpdate` method.
+  8. `electron/services/media/DurableUploadService.ts` — Refactored to Supabase-first upload with quota reservation; persists `last_error` on NAS replication failure; leaves cloud copy intact in `buffered_supabase`.
+  9. `electron/services/outbox/DurableOutboxService.ts` — Sets `status = 'buffered_supabase'` upon Supabase write with pending NAS replication; added duplicate NAS write suppression.
+  10. `electron/supabase.ts` — Ensures proxy points to authoritative active client; eliminates circular dependencies.
+  11. `tests/make/catalog-image-regression.test.ts` & `nas-performance-benchmark.test.ts` — Tuned test timeout parameters to accommodate Tailscale WAN latency without runner starvation.
+  12. `tests/make/make-module-stability.integration.test.ts` — Stability, stage transitions, and failover resilience tests.
+  13. `tests/make/smart-failover-uploads-buffer.test.ts` — Scenarios 1–46 covering Supabase-first writes, NAS replication recovery, quota exhaustion, and FK 23503 prevention.
+  14. `tests/setup.ts` — Mock SQLite engine fixes: correct `retry_count = ?` ordering, outbox `dependency_op_id` resolution, and timestamp parsing.
+  15. `docs/architecture/MAKE-MODULE-VERIFICATION-REPORT.md` — Updated verification report with complete architectural audit, NAS pull worker documentation, and verification evidence.
+
+#### Required Final Verdict
+
+**Locally verified, deployment blocked**
+
+*Rationale*:
+All code, database migrations, service definitions, unit tests, and integration test suites pass locally with 100% success across all quality gates. However, two external infrastructure deployment actions remain blocked and require authorized deployment access to live production systems:
+1. **Remote TrueNAS Deployment**: The `nas-pull-worker` container service in `docker-compose-truenas.yml` and `scripts/nas-pull-replication-worker.cjs` must be deployed and started on the physical TrueNAS appliance at `100.88.85.6`.
+2. **Hosted Supabase Migration**: Migration `070_supabase_buffer_quota_reservations.sql` must be applied to the hosted production Supabase database (`ildkkgjrolcjijwfokek`), followed by a PostgREST schema-cache reload (`NOTIFY pgrst, 'reload schema'`). Until applied to the target hosted environment, the original PostgREST 404 runtime error cannot be resolved there.

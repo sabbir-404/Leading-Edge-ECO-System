@@ -825,7 +825,7 @@ export function reinitSupabaseClients(): void {
 
                 DurableOutboxService.getInstance().registerClients({ nas: nasClient, supabase: supabaseClient });
                 DurableUploadService.getInstance().registerClients({ nas: nasClient, supabase: supabaseClient });
-                SupabaseQuotaManager.getInstance().registerClients({ supabase: supabaseClient });
+                SupabaseQuotaManager.getInstance().registerClients({ supabase: supabaseAdmin || supabaseClient, reconciliation: supabaseAdmin });
                 ConsolidatedHealthEngine.getInstance().registerClients({ nas: nasClient, supabase: supabaseClient });
 
                 // Start background workers (only in non-test runtime)

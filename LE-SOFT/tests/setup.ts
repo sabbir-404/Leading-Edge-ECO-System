@@ -238,16 +238,33 @@ vi.mock('better-sqlite3', async (importOriginal) => {
               r.status = 'buffered_supabase';
               if (lower.includes('remote_url_supabase = ?')) {
                 r.remote_url_supabase = args[0];
+              }
+              if (lower.includes('last_error = null')) {
+                r.last_error = null;
+                if (args[1] !== undefined) r.updated_at = args[1];
+              } else if (lower.includes('last_error = ?')) {
                 r.last_error = args[1] || null;
+                if (args[2] !== undefined) r.updated_at = args[2];
               } else {
                 r.last_error = null;
               }
             } else if (lower.includes('remote_url_nas = ?')) {
               r.remote_url_nas = args[0];
-              r.last_error = args[1];
+              if (lower.includes('last_error = ?')) {
+                r.last_error = args[1];
+                if (args[2] !== undefined) r.updated_at = args[2];
+              }
             } else if (lower.includes('retry_count = ?')) {
               r.retry_count = args[0];
               r.last_error = args[1];
+              if (lower.includes('updated_at = ?') && args[2] !== undefined) {
+                r.updated_at = args[2];
+              }
+            } else if (lower.includes('last_error = ?')) {
+              r.last_error = args[0];
+              if (lower.includes('updated_at = ?') && args[1] !== undefined) {
+                r.updated_at = args[1];
+              }
             }
             return { changes: 1 };
           }
@@ -316,6 +333,14 @@ vi.mock('better-sqlite3', async (importOriginal) => {
           return rows.find(r => r.id === args[0]);
         }
       }
+      if (table === 'outbox_operations') {
+        if (lower.includes('dependency_op_id = ?')) {
+          return rows.find(r => r.dependency_op_id === args[0]);
+        }
+        if (lower.includes('id = ?')) {
+          return rows.find(r => r.id === args[0]);
+        }
+      }
       if (args.length > 0) {
         const match = rows.find(r =>
           args.some(arg => arg && typeof arg === 'string' && (
@@ -337,6 +362,9 @@ vi.mock('better-sqlite3', async (importOriginal) => {
       const lower = this.sql.toLowerCase();
       if (table === 'pending_associations') {
         return [...rows];
+      }
+      if (table === 'outbox_operations' && lower.includes('dependency_op_id = ?')) {
+        return rows.filter(r => r.dependency_op_id === args[0]);
       }
       if (lower.includes("status in ('pending', 'buffered_supabase'")) {
         return rows.filter(r => r.status === 'pending' || r.status === 'buffered_supabase' || r.status === 'cleanup_pending');

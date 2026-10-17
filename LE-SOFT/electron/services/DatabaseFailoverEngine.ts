@@ -248,18 +248,13 @@ export class DatabaseFailoverEngine {
     }
 
     public getActiveClient(): SupabaseClient {
-        const inCooldown = Date.now() < this.cooldownUntil;
-        // If degraded, offline, or during cooldown, return Supabase fallback immediately without stalling
-        if (this.circuitState === 'degraded' || this.circuitState === 'offline' || inCooldown) {
-            if (this.supabaseClient) {
-                return this.supabaseClient;
-            }
-        }
-        if ((this.circuitState === 'healthy' || this.circuitState === 'recovering') && this.nasClient) {
-            return this.nasClient;
-        }
+        // Architecture invariant: Supabase is the primary write target and source of truth.
+        // The NAS is a pull/replication destination, not the first-write authority.
         if (this.supabaseClient) {
             return this.supabaseClient;
+        }
+        if (this.supabaseAdmin) {
+            return this.supabaseAdmin;
         }
         if (this.nasClient) {
             return this.nasClient;

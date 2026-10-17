@@ -521,8 +521,8 @@ describe('MAKE Module Stability & Verification Suite (LE-SOFT v1.8.12)', () => {
 
         it('enforces 600 MB / 1 GB Supabase quota ceiling on upload', async () => {
             const quotaMgr = SupabaseQuotaManager.getInstance();
-            vi.spyOn(quotaMgr, 'canAcceptStorageUpload').mockReturnValue(false);
-            vi.spyOn(quotaMgr, 'reserveStorageQuota').mockResolvedValue(false);
+            const acceptSpy = vi.spyOn(quotaMgr, 'canAcceptStorageUpload').mockReturnValue(false);
+            const reserveSpy = vi.spyOn(quotaMgr, 'reserveStorageQuota').mockResolvedValue(false);
 
             const buffer = Buffer.from('%PDF-1.7');
             const uploadRes = await MakeCadService.uploadValidatedBuffer(
@@ -534,6 +534,9 @@ describe('MAKE Module Stability & Verification Suite (LE-SOFT v1.8.12)', () => {
 
             expect(uploadRes.success).toBe(false);
             expect(uploadRes.error).toContain('Supabase Storage quota limit reached');
+
+            acceptSpy.mockRestore();
+            reserveSpy.mockRestore();
         });
 
         it('single-flight protection: concurrent dispatchUpload calls on the same upload ID execute once and share result', async () => {

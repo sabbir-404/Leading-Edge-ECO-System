@@ -508,5 +508,91 @@ describe('Migration 070 Real PostgreSQL Staging Integration Suite', () => {
         expect(itemOver.rows[0].result.success).toBe(false);
         expect(itemOver.rows[0].result.reason).toBe('INVALID_BYTE_COUNT');
     });
+
+    it.runIf(isStagingAvailable)('11. Security Boundary: Anonymous unauthenticated callers are strictly prohibited from reserving or releasing quota', async () => {
+        const client = pgClient!;
+        const testResId = `test_anon_${Date.now()}`;
+
+        // Attempt reservation as anonymous / unauthenticated user
+        await client.query('BEGIN');
+        await client.query('SET LOCAL ROLE anon');
+        await client.query('SET LOCAL "request.jwt.claims" = \'{"role": "anon"}\'');
+
+        let anonReserveRejected = false;
+        try {
+            const res = await client.query(
+                "SELECT public.reserve_buffer_capacity($1, 'anon_client', 'storage', 1000000) AS result",
+                [testResId]
+            );
+            if (res.rows[0].result.success === false && res.rows[0].result.reason === 'AUTHENTICATION_REQUIRED') {
+                anonReserveRejected = true;
+            }
+        } catch (err: any) {
+            // Permission denied error at SQL level is also acceptable under least privilege
+            if (err.message.includes('permission denied') || err.code === '42501') {
+                anonReserveRejected = true;
+            }
+        }
+        await client.query('COMMIT');
+        expect(anonReserveRejected).toBe(true);
+
+        // Attempt release as anonymous user
+        await client.query('BEGIN');
+        await client.query('SET LOCAL ROLE anon');
+        await client.query('SET LOCAL "request.jwt.claims" = \'{"role": "anon"}\'');
+
+        let anonReleaseRejected = false;
+        try {
+            const res = await client.query(
+                "SELECT public.release_buffer_capacity($1, 'anon_client', 'released', 0) AS result",
+                [testResId]
+            );
+            if (res.rows[0].result.success === false && res.rows[0].result.reason === 'AUTHENTICATION_REQUIRED') {
+                anonReleaseRejected = true;
+            }
+        } catch (err: any) {
+            if (err.message.includes('permission denied') || err.code === '42501') {
+                anonReleaseRejected = true;
+            }
+        }
+        await client.query('COMMIT');
+        expect(anonReleaseRejected).toBe(true);
+    });
+
+    it.runIf(isStagingAvailable)('12. Quota Telemetry RPC: get_buffer_quota_status provides telemetry to authenticated roles and rejects anonymous callers', async () => {
+        const client = pgClient!;
+
+        // 1. Authenticated user can query telemetry
+        await client.query('BEGIN');
+        await client.query('SET LOCAL ROLE authenticated');
+        await client.query('SET LOCAL "request.jwt.claims" = \'{"role": "authenticated", "sub": "00000000-0000-0000-0000-000000000099"}\'');
+
+        const statusRes = await client.query("SELECT public.get_buffer_quota_status() AS result");
+        await client.query('COMMIT');
+
+        expect(statusRes.rows[0].result.success).toBe(true);
+        expect(Number(statusRes.rows[0].result.storage_ceiling_bytes)).toBe(600000000);
+        expect(Number(statusRes.rows[0].result.database_ceiling_bytes)).toBe(250000000);
+        expect(Number(statusRes.rows[0].result.hard_ceiling_bytes)).toBe(1000000000);
+
+        // 2. Anonymous user cannot query telemetry
+        await client.query('BEGIN');
+        await client.query('SET LOCAL ROLE anon');
+        await client.query('SET LOCAL "request.jwt.claims" = \'{"role": "anon"}\'');
+
+        let anonTelemetryRejected = false;
+        try {
+            const anonRes = await client.query("SELECT public.get_buffer_quota_status() AS result");
+            if (anonRes.rows[0].result.success === false && anonRes.rows[0].result.reason === 'AUTHENTICATION_REQUIRED') {
+                anonTelemetryRejected = true;
+            }
+        } catch (err: any) {
+            if (err.message.includes('permission denied') || err.code === '42501') {
+                anonTelemetryRejected = true;
+            }
+        }
+        await client.query('COMMIT');
+        expect(anonTelemetryRejected).toBe(true);
+    });
 });
 

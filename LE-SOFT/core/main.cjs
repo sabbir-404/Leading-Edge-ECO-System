@@ -23138,17 +23138,11 @@ var init_DatabaseFailoverEngine = __esm({
         }
       }
       getActiveClient() {
-        const inCooldown = Date.now() < this.cooldownUntil;
-        if (this.circuitState === "degraded" || this.circuitState === "offline" || inCooldown) {
-          if (this.supabaseClient) {
-            return this.supabaseClient;
-          }
-        }
-        if ((this.circuitState === "healthy" || this.circuitState === "recovering") && this.nasClient) {
-          return this.nasClient;
-        }
         if (this.supabaseClient) {
           return this.supabaseClient;
+        }
+        if (this.supabaseAdmin) {
+          return this.supabaseAdmin;
         }
         if (this.nasClient) {
           return this.nasClient;
@@ -25469,6 +25463,51 @@ var init_DurableOutboxService = __esm({
         const ids = this.enqueueBatch([op]);
         return ids[0];
       }
+      /**
+       * Finds an uncommitted/pending outbox operation for a given make_orders ID.
+       * Used by child workflows (e.g. stage updates) to detect when a parent order
+       * is staged locally in the outbox and not yet committed to Supabase Cloud.
+       */
+      findPendingOrderOperation(orderId) {
+        if (!this.db) return null;
+        try {
+          const rows = this.db.prepare(`
+                SELECT * FROM outbox_operations
+                WHERE entity_type = 'make_orders'
+                  AND status IN ('pending', 'blocked_dependency')
+                ORDER BY created_at ASC
+            `).all();
+          for (const r2 of rows) {
+            try {
+              const payload = JSON.parse(r2.payload_json || "{}");
+              if (payload.id == orderId || r2.primary_key_val == String(orderId)) {
+                return {
+                  id: r2.id,
+                  entityType: r2.entity_type,
+                  operation: r2.operation,
+                  payload,
+                  filter: r2.filter_json ? JSON.parse(r2.filter_json) : null,
+                  primaryKeyCol: r2.primary_key_col,
+                  primaryKeyVal: r2.primary_key_val,
+                  upsertConflict: r2.upsert_conflict,
+                  dependencyOpId: r2.dependency_op_id,
+                  metadata: r2.metadata_json ? JSON.parse(r2.metadata_json) : null,
+                  target: r2.target,
+                  status: r2.status,
+                  retryCount: r2.retry_count,
+                  maxRetries: r2.max_retries,
+                  lastError: r2.last_error,
+                  createdAt: r2.created_at,
+                  updatedAt: r2.updated_at
+                };
+              }
+            } catch {
+            }
+          }
+        } catch {
+        }
+        return null;
+      }
       // ── Drain & Synchronization Engine ──────────────────────────────────────────
       startWorker(intervalMs = 500) {
         if (this.drainTimer) return;
@@ -25593,50 +25632,10 @@ var init_DurableOutboxService = __esm({
             return;
           }
         }
-        const isNasTarget = target === "nas" || target === "both";
         const isSbTarget = target === "supabase" || target === "both";
-        let nasSuccess = status === "synced_nas" || status === "cleanup_pending" || this.hasTargetRecord(id, "nas");
-        let sbSuccess = status === "buffered_supabase" || this.hasTargetRecord(id, "supabase");
-        if (isNasTarget && !nasSuccess && this.nasClient) {
-          const nasPayload = record2.dependencyOpId ? this.resolveDependentPayload(record2.dependencyOpId, record2.payload, "nas") : record2.payload;
-          try {
-            const result = await this.executeOnClient(
-              this.nasClient,
-              entityType,
-              operation,
-              nasPayload,
-              record2.primaryKeyCol,
-              record2.filter,
-              record2.upsertConflict
-            );
-            if (result.success) {
-              nasSuccess = true;
-              if (result.resolvedId) {
-                this.recordResolvedId(id, "nas", result.resolvedId);
-              }
-            } else {
-              const classified = this.classifyError(result.error);
-              if (classified.code === "42703" || classified.message.includes("installation_charge") || classified.message.includes("installation_note")) {
-                this.markDeadLetter(id, `PostgreSQL schema error 42703: Column does not exist on TrueNAS database (${classified.message}). Original financial payload preserved intact. Requires Migration 069.`);
-                return;
-              }
-              if (classified.isPermanent) {
-                this.markDeadLetter(id, `NAS permanent error: ${classified.message}`);
-                return;
-              }
-            }
-          } catch (err) {
-            const classified = this.classifyError(err);
-            if (classified.code === "42703" || classified.message.includes("installation_charge") || classified.message.includes("installation_note")) {
-              this.markDeadLetter(id, `PostgreSQL schema error 42703: Column does not exist on TrueNAS database (${classified.message}). Original financial payload preserved intact. Requires Migration 069.`);
-              return;
-            }
-            if (classified.isPermanent) {
-              this.markDeadLetter(id, `NAS permanent exception: ${classified.message}`);
-              return;
-            }
-          }
-        }
+        const isNasTarget = target === "nas" || target === "both";
+        let sbSuccess = status === "synced_nas" || status === "completed" || this.hasTargetRecord(id, "supabase");
+        let nasSuccess = status === "completed" || this.hasTargetRecord(id, "nas");
         if (isSbTarget && !sbSuccess && this.supabaseClient) {
           const sbPayload = record2.dependencyOpId ? this.resolveDependentPayload(record2.dependencyOpId, record2.payload, "supabase") : record2.payload;
           const quotaMgr = SupabaseQuotaManager.getInstance();
@@ -25669,7 +25668,7 @@ var init_DurableOutboxService = __esm({
                 const classified = this.classifyError(result.error);
                 if (classified.isPermanent) {
                   if (classified.code === "23503" || classified.message.includes("foreign key")) {
-                    this.markStatus(id, "blocked_dependency", `Waiting for parent entity to mirror to Supabase: ${classified.message}`);
+                    this.markStatus(id, "blocked_dependency", `Waiting for parent entity to commit to Supabase: ${classified.message}`);
                     return;
                   }
                   this.markDeadLetter(id, `Supabase permanent error: ${classified.message}`);
@@ -25681,79 +25680,39 @@ var init_DurableOutboxService = __esm({
             }
           }
         }
-        const wasTemporaryBuffer = status === "buffered_supabase" || status === "cleanup_pending";
-        if (nasSuccess && wasTemporaryBuffer) {
-          let cloudCleanupSuccess = false;
-          let cloudCleanupError = null;
-          const quotaMgr = SupabaseQuotaManager.getInstance();
-          const estBytes = _DurableOutboxService.estimateDatabaseBytes(record2.payload, operation);
-          if (this.supabaseClient) {
-            try {
-              let deleteQuery = this.supabaseClient.from(entityType).delete();
-              const sbResolvedId = this.getResolvedId(id, "supabase");
-              const pkCol = record2.primaryKeyCol || "id";
-              if (sbResolvedId) {
-                deleteQuery = deleteQuery.eq(pkCol, sbResolvedId);
-              } else if (record2.primaryKeyVal) {
-                deleteQuery = deleteQuery.eq(pkCol, record2.primaryKeyVal);
-              } else if (record2.payload && !Array.isArray(record2.payload) && record2.payload[pkCol]) {
-                deleteQuery = deleteQuery.eq(pkCol, record2.payload[pkCol]);
-              } else if (record2.filter && Array.isArray(record2.filter)) {
-                for (const f3 of record2.filter) {
-                  deleteQuery = deleteQuery.eq(f3.column, f3.value);
-                }
-              } else if (record2.upsertConflict && record2.payload && !Array.isArray(record2.payload) && record2.payload[record2.upsertConflict]) {
-                deleteQuery = deleteQuery.eq(record2.upsertConflict, record2.payload[record2.upsertConflict]);
+        if (sbSuccess && isNasTarget && !nasSuccess && this.nasClient) {
+          const nasPayload = record2.dependencyOpId ? this.resolveDependentPayload(record2.dependencyOpId, record2.payload, "nas") : record2.payload;
+          try {
+            const result = await this.executeOnClient(
+              this.nasClient,
+              entityType,
+              operation,
+              nasPayload,
+              record2.primaryKeyCol,
+              record2.filter,
+              record2.upsertConflict
+            );
+            if (result.success) {
+              nasSuccess = true;
+              if (result.resolvedId) {
+                this.recordResolvedId(id, "nas", result.resolvedId);
               }
-              const { error: delError } = await deleteQuery;
-              if (delError) {
-                cloudCleanupError = `Supabase temporary copy removal failed: ${delError.message}`;
-              } else {
-                let verifyQuery = this.supabaseClient.from(entityType).select(pkCol);
-                if (sbResolvedId) {
-                  verifyQuery = verifyQuery.eq(pkCol, sbResolvedId);
-                } else if (record2.primaryKeyVal) {
-                  verifyQuery = verifyQuery.eq(pkCol, record2.primaryKeyVal);
-                } else if (record2.payload && !Array.isArray(record2.payload) && record2.payload[pkCol]) {
-                  verifyQuery = verifyQuery.eq(pkCol, record2.payload[pkCol]);
-                } else if (record2.upsertConflict && record2.payload && !Array.isArray(record2.payload) && record2.payload[record2.upsertConflict]) {
-                  verifyQuery = verifyQuery.eq(record2.upsertConflict, record2.payload[record2.upsertConflict]);
-                }
-                const { data: remainingRows, error: verifyErr } = await verifyQuery;
-                if (verifyErr) {
-                  cloudCleanupError = `Failed to verify Supabase temporary copy removal: ${verifyErr.message}`;
-                } else if (remainingRows && remainingRows.length > 0) {
-                  cloudCleanupError = "Supabase temporary copy still exists after delete; cannot prune quota until deletion is confirmed.";
-                } else {
-                  const pruned = await quotaMgr.pruneConfirmedDatabase(`db_${id}`, estBytes);
-                  if (pruned) {
-                    cloudCleanupSuccess = true;
-                    console.log(`[Outbox] Reconciled temporary database buffer op ${id}: NAS confirmed, Supabase copy verified removed, quota pruned.`);
-                  } else {
-                    cloudCleanupError = `Supabase temporary quota pruning rejected or failed for db_${id}.`;
-                  }
-                }
+            } else {
+              const classified = this.classifyError(result.error);
+              if (classified.code === "42703" || classified.message.includes("installation_charge") || classified.message.includes("installation_note")) {
+                console.warn(`[Outbox] NAS schema warning (column missing on TrueNAS replica): ${classified.message}`);
               }
-            } catch (err) {
-              cloudCleanupError = `Exception during temporary cloud cleanup: ${err.message}`;
             }
-          } else {
-            cloudCleanupError = "Supabase client unavailable for temporary buffer cleanup";
+          } catch (err) {
+            console.warn(`[Outbox] TrueNAS replication exception for op ${id}:`, err.message);
           }
-          if (!cloudCleanupSuccess) {
-            console.warn(`[Outbox] Cleanup pending for op ${id}: ${cloudCleanupError}`);
-            this.markStatus(id, "cleanup_pending", `Authoritative NAS persistence confirmed; temporary cloud copy cleanup or quota prune failed: ${cloudCleanupError}`);
-            return;
-          }
-          this.markCompleted(id);
-          return;
         }
-        if (nasSuccess && (!isSbTarget || sbSuccess)) {
+        if (sbSuccess && (!isNasTarget || nasSuccess)) {
           this.markCompleted(id);
-        } else if (nasSuccess && isSbTarget) {
-          this.markStatus(id, "synced_nas", null);
-        } else if (!nasSuccess && sbSuccess) {
-          this.markStatus(id, "buffered_supabase", "Buffered in Supabase Cloud fallback; awaiting TrueNAS reconciliation.");
+          this.invokeCallbacks(id, true, { completed: true });
+        } else if (sbSuccess && isNasTarget && !nasSuccess) {
+          this.markStatus(id, "buffered_supabase", "Committed to Supabase; TrueNAS replication pending.");
+          this.invokeCallbacks(id, true, { completed: true, replicationPending: true });
         } else {
           this.incrementRetry(id, record2.retryCount, record2.maxRetries);
         }
@@ -26501,7 +26460,7 @@ var init_DurableUploadService = __esm({
         if (!row || !import_fs8.default.existsSync(row.local_path)) {
           return { success: false, status: "failed", error: "Upload record or local file not found" };
         }
-        if (row.status === "synced_nas") {
+        if (row.status === "synced_nas" || row.remote_url_nas && !row.remote_url_supabase) {
           return {
             success: true,
             url: row.remote_url_nas,
@@ -26545,40 +26504,132 @@ var init_DurableUploadService = __esm({
         const cfHeaders = getCfAccessHeaders();
         const cleanFileName = (row.file_name || "file").replace(/[^a-zA-Z0-9._-]/g, "_");
         const finalStorageName = `${uploadId}_${cleanFileName}`;
-        let nasSuccess = false;
-        let authoritativeUrl = row.remote_url_nas || null;
+        const cloudPath = row.subfolder ? `${row.subfolder}/${finalStorageName}` : finalStorageName;
+        const cloudBucket = "make-order-files";
+        let cloudUrl = row.remote_url_supabase || null;
         let lastError = null;
-        if (authoritativeUrl) {
-          nasSuccess = true;
+        let activeSignedUrl = void 0;
+        if (cloudUrl) {
+          if (this.supabaseClient) {
+            try {
+              const { data: signedData } = await this.supabaseClient.storage.from(cloudBucket).createSignedUrl(cloudUrl, 3600);
+              activeSignedUrl = signedData?.signedUrl || void 0;
+            } catch {
+            }
+          }
+        } else if (this.supabaseClient) {
+          const quotaMgr = SupabaseQuotaManager.getInstance();
+          const canBuffer = await quotaMgr.reserveStorageQuota(uploadId, row.size_bytes);
+          if (!canBuffer) {
+            lastError = "Supabase Storage quota limit reached or reservation failed (600 MB / 1 GB ceiling). File held safely in local staging.";
+            const nextRetry = (row.retry_count || 0) + 1;
+            this.db.prepare(`
+                    UPDATE durable_uploads
+                    SET retry_count = ?, last_error = ?, updated_at = ?
+                    WHERE id = ?
+                `).run(nextRetry, lastError, Date.now(), uploadId);
+            this.broadcastUploadStatus();
+            return {
+              success: false,
+              status: "staged_local",
+              durableKey: cloudPath,
+              error: lastError
+            };
+          }
+          try {
+            const { error: sbErr } = await this.supabaseClient.storage.from(cloudBucket).upload(cloudPath, buffer, { contentType: row.mime_type, upsert: true });
+            if (!sbErr) {
+              try {
+                const { data: signedData } = await this.supabaseClient.storage.from(cloudBucket).createSignedUrl(cloudPath, 3600);
+                activeSignedUrl = signedData?.signedUrl || void 0;
+              } catch {
+              }
+              cloudUrl = cloudPath;
+              const committed = await quotaMgr.releaseStorageQuota(uploadId, row.size_bytes, "committed");
+              if (!committed) {
+                console.warn(`[DurableUpload] Storage quota commit rejected or ambiguous for upload ${uploadId}. Retaining local staging.`);
+                lastError = "Supabase quota commit transition failed or ambiguous; retained in local staging";
+                try {
+                  await this.supabaseClient.storage.from(cloudBucket).remove([cloudPath]);
+                } catch {
+                }
+                cloudUrl = null;
+              } else {
+                if (row.entity_type && row.entity_id && row.field_name) {
+                  await this.updateEntityRecord(
+                    row.entity_type,
+                    row.entity_id,
+                    row.field_name,
+                    cloudUrl,
+                    void 0,
+                    uploadId
+                  );
+                }
+                this.db.prepare(`
+                            UPDATE durable_uploads
+                            SET status = 'buffered_supabase', remote_url_supabase = ?, last_error = NULL, updated_at = ?
+                            WHERE id = ?
+                        `).run(cloudUrl, Date.now(), uploadId);
+                console.log(`[DurableUpload] Upload ${uploadId} confirmed in primary Supabase Storage (${(row.size_bytes / 1024).toFixed(1)} KB). Key: ${cloudUrl}`);
+              }
+            } else {
+              await quotaMgr.releaseStorageQuota(uploadId, 0, "released");
+              lastError = `Supabase storage error: ${sbErr.message}`;
+            }
+          } catch (sbEx) {
+            await quotaMgr.releaseStorageQuota(uploadId, 0, "released");
+            lastError = `Supabase storage exception: ${sbEx.message}`;
+          }
         } else {
+          lastError = "Supabase Storage client is not configured or offline. File retained in local staging.";
+        }
+        if (!cloudUrl && !row.remote_url_nas) {
+          const nextRetry = (row.retry_count || 0) + 1;
+          this.db.prepare(`
+                UPDATE durable_uploads
+                SET retry_count = ?, last_error = ?, updated_at = ?
+                WHERE id = ?
+            `).run(nextRetry, lastError, Date.now(), uploadId);
+          this.broadcastUploadStatus();
+          return {
+            success: false,
+            status: "staged_local",
+            durableKey: cloudPath,
+            error: lastError || "Primary Supabase upload unconfirmed"
+          };
+        }
+        let nasSuccess = !!row.remote_url_nas;
+        let nasUrl = row.remote_url_nas || null;
+        if (!nasSuccess) {
           const nasRes = await this.uploadToNasStorage(buffer, finalStorageName, row.mime_type, row.subfolder, row.sha256);
           if (nasRes.success && nasRes.url) {
             if (nasRes.sha256 && nasRes.sha256.toUpperCase() !== row.sha256.toUpperCase()) {
               lastError = `Checksum mismatch: expected ${row.sha256}, got ${nasRes.sha256}`;
+              console.warn(`[DurableUpload] NAS replica checksum mismatch for ${uploadId}: ${lastError}`);
             } else {
               nasSuccess = true;
-              authoritativeUrl = nasRes.url;
+              nasUrl = nasRes.url;
             }
           } else {
-            lastError = nasRes.error || "NAS storage failed";
+            lastError = nasRes.error || "NAS replica storage failed";
           }
         }
-        if (nasSuccess && authoritativeUrl) {
+        if (nasSuccess && nasUrl) {
           const hasOwner = !!(row.entity_type && row.entity_id && row.field_name);
           if (row.remote_url_supabase && !hasOwner) {
-            const deferMsg = `Upload persisted to NAS (${authoritativeUrl}) but awaiting owner association (${row.entity_type || "unlinked"}). Preserving cloud copy and quota until confirmed.`;
+            const deferMsg = `Upload persisted to NAS (${nasUrl}) but awaiting owner association (${row.entity_type || "unlinked"}). Preserving cloud copy and quota until confirmed.`;
             console.log(`[DurableUpload] ${deferMsg}`);
             this.db.prepare(`
                     UPDATE durable_uploads
                     SET status = 'awaiting_association', remote_url_nas = ?, last_error = ?, updated_at = ?
                     WHERE id = ?
-                `).run(authoritativeUrl, deferMsg, Date.now(), uploadId);
+                `).run(nasUrl, deferMsg, Date.now(), uploadId);
             this.broadcastUploadStatus();
             return {
               success: true,
-              url: authoritativeUrl,
-              activeUrl: authoritativeUrl,
-              durableKey: authoritativeUrl,
+              url: nasUrl,
+              activeUrl: nasUrl,
+              durableKey: nasUrl,
               status: "awaiting_association",
               error: deferMsg
             };
@@ -26588,7 +26639,7 @@ var init_DurableUploadService = __esm({
               row.entity_type,
               row.entity_id,
               row.field_name,
-              authoritativeUrl,
+              nasUrl,
               row.remote_url_supabase || void 0,
               uploadId
             );
@@ -26598,13 +26649,13 @@ var init_DurableUploadService = __esm({
                         UPDATE durable_uploads
                         SET remote_url_nas = ?, last_error = ?, updated_at = ?
                         WHERE id = ?
-                    `).run(authoritativeUrl, lastError, Date.now(), uploadId);
+                    `).run(nasUrl, lastError, Date.now(), uploadId);
               this.broadcastUploadStatus();
               return {
                 success: false,
-                url: authoritativeUrl,
-                activeUrl: authoritativeUrl,
-                durableKey: authoritativeUrl,
+                url: nasUrl,
+                activeUrl: nasUrl,
+                durableKey: nasUrl,
                 status: row.status,
                 error: lastError
               };
@@ -26618,104 +26669,48 @@ var init_DurableUploadService = __esm({
                         UPDATE durable_uploads
                         SET remote_url_nas = ?, last_error = ?, updated_at = ?
                         WHERE id = ?
-                    `).run(authoritativeUrl, lastError, Date.now(), uploadId);
+                    `).run(nasUrl, lastError, Date.now(), uploadId);
               this.broadcastUploadStatus();
-              return { success: false, url: authoritativeUrl, activeUrl: authoritativeUrl, durableKey: authoritativeUrl, status: row.status, error: lastError };
+              return {
+                success: false,
+                url: nasUrl,
+                activeUrl: nasUrl,
+                durableKey: nasUrl,
+                status: row.status,
+                error: lastError
+              };
             }
           }
           this.db.prepare(`
                 UPDATE durable_uploads
                 SET status = 'synced_nas', remote_url_nas = ?, remote_url_supabase = NULL, last_error = NULL, updated_at = ?
                 WHERE id = ?
-            `).run(authoritativeUrl, Date.now(), uploadId);
-          console.log(`[DurableUpload] Upload ${uploadId} successfully synchronized to authoritative NAS Storage: ${authoritativeUrl}`);
+            `).run(nasUrl, Date.now(), uploadId);
+          console.log(`[DurableUpload] Upload ${uploadId} successfully synchronized to authoritative NAS Storage: ${nasUrl}`);
           this.broadcastUploadStatus();
-          return { success: true, url: authoritativeUrl, activeUrl: authoritativeUrl, durableKey: authoritativeUrl, status: "synced_nas" };
+          return {
+            success: true,
+            url: nasUrl,
+            activeUrl: nasUrl,
+            durableKey: nasUrl,
+            status: "synced_nas"
+          };
         }
-        if (!nasSuccess && row.status === "staged_local" && this.supabaseClient && !lastError?.startsWith("Checksum mismatch")) {
-          const quotaMgr = SupabaseQuotaManager.getInstance();
-          let cloudUrl = row.remote_url_supabase || null;
-          if (cloudUrl) {
-            const entityUpdated = await this.updateEntityRecord(row.entity_type, row.entity_id, row.field_name, cloudUrl, void 0, uploadId);
-            let activeSignedUrl = void 0;
-            try {
-              const { data: signedData } = await this.supabaseClient.storage.from("make-order-files").createSignedUrl(cloudUrl, 3600);
-              activeSignedUrl = signedData?.signedUrl || void 0;
-            } catch {
-            }
-            if (entityUpdated) {
-              this.db.prepare(`
-                        UPDATE durable_uploads
-                        SET status = 'buffered_supabase', last_error = NULL, updated_at = ?
-                        WHERE id = ?
-                    `).run(Date.now(), uploadId);
-              return { success: true, url: cloudUrl, activeUrl: activeSignedUrl || cloudUrl, durableKey: cloudUrl, status: "buffered_supabase" };
-            }
-          } else {
-            const canBuffer = await quotaMgr.reserveStorageQuota(uploadId, row.size_bytes);
-            if (canBuffer) {
-              try {
-                const cloudPath = `${row.subfolder}/${finalStorageName}`;
-                const cloudBucket = "make-order-files";
-                const { error: sbErr } = await this.supabaseClient.storage.from(cloudBucket).upload(cloudPath, buffer, { contentType: row.mime_type, upsert: true });
-                if (!sbErr) {
-                  let activeSignedUrl = void 0;
-                  try {
-                    const { data: signedData } = await this.supabaseClient.storage.from(cloudBucket).createSignedUrl(cloudPath, 3600);
-                    activeSignedUrl = signedData?.signedUrl || void 0;
-                  } catch {
-                  }
-                  cloudUrl = cloudPath;
-                  const committed = await quotaMgr.releaseStorageQuota(uploadId, row.size_bytes, "committed");
-                  if (!committed) {
-                    console.warn(`[DurableUpload] Storage quota commit rejected or ambiguous for upload ${uploadId}. Retaining local staging.`);
-                    lastError = "Supabase quota commit transition failed or ambiguous; retained in local staging";
-                    try {
-                      await this.supabaseClient.storage.from(cloudBucket).remove([cloudPath]);
-                    } catch {
-                    }
-                  } else {
-                    const entityUpdated = await this.updateEntityRecord(row.entity_type, row.entity_id, row.field_name, cloudUrl, void 0, uploadId);
-                    this.db.prepare(`
-                                    UPDATE durable_uploads
-                                    SET status = 'buffered_supabase', remote_url_supabase = ?, last_error = ?, updated_at = ?
-                                    WHERE id = ?
-                                `).run(cloudUrl, entityUpdated ? null : "Entity update warning on cloud buffer", Date.now(), uploadId);
-                    console.log(`[DurableUpload] Upload ${uploadId} buffered in Supabase Cloud fallback (${(row.size_bytes / 1024).toFixed(1)} KB). Waiting for TrueNAS recovery.`);
-                    this.broadcastUploadStatus();
-                    return {
-                      success: true,
-                      url: cloudUrl,
-                      activeUrl: activeSignedUrl || cloudUrl,
-                      durableKey: cloudUrl,
-                      status: "buffered_supabase"
-                    };
-                  }
-                } else {
-                  await quotaMgr.releaseStorageQuota(uploadId, 0, "released");
-                  lastError = `Supabase storage error: ${sbErr.message}`;
-                }
-              } catch (sbEx) {
-                await quotaMgr.releaseStorageQuota(uploadId, 0, "released");
-                lastError = `Supabase storage exception: ${sbEx.message}`;
-              }
-            } else {
-              lastError = "Supabase Storage quota limit reached (600 MB / 1 GB ceiling). File held in local staging.";
-            }
-          }
+        if (lastError) {
+          this.db.prepare(`
+                UPDATE durable_uploads
+                SET last_error = ?, updated_at = ?
+                WHERE id = ?
+            `).run(lastError, Date.now(), uploadId);
         }
-        const nextRetry = (row.retry_count || 0) + 1;
-        this.db.prepare(`
-            UPDATE durable_uploads
-            SET retry_count = ?, last_error = ?, updated_at = ?
-            WHERE id = ?
-        `).run(nextRetry, lastError, Date.now(), uploadId);
         this.broadcastUploadStatus();
         return {
-          success: false,
-          status: row.status,
-          durableKey: `${row.subfolder}/${finalStorageName}`,
-          error: lastError || void 0
+          success: true,
+          url: cloudUrl || nasUrl || void 0,
+          activeUrl: activeSignedUrl || cloudUrl || nasUrl || void 0,
+          durableKey: cloudUrl || `${row.subfolder}/${finalStorageName}`,
+          status: "buffered_supabase",
+          error: lastError || "Primary Supabase write confirmed; TrueNAS replication pending."
         };
       }
       /**
@@ -27994,7 +27989,7 @@ function reinitSupabaseClients() {
         const { ConsolidatedHealthEngine: ConsolidatedHealthEngine2 } = await Promise.resolve().then(() => (init_ConsolidatedHealthEngine(), ConsolidatedHealthEngine_exports));
         DurableOutboxService2.getInstance().registerClients({ nas: nasClient, supabase: supabaseClient });
         DurableUploadService2.getInstance().registerClients({ nas: nasClient, supabase: supabaseClient });
-        SupabaseQuotaManager2.getInstance().registerClients({ supabase: supabaseClient });
+        SupabaseQuotaManager2.getInstance().registerClients({ supabase: supabaseAdmin || supabaseClient, reconciliation: supabaseAdmin });
         ConsolidatedHealthEngine2.getInstance().registerClients({ nas: nasClient, supabase: supabaseClient });
         if (process.env.NODE_ENV !== "test") {
           DurableOutboxService2.getInstance().startWorker(1e3);
@@ -116933,6 +116928,7 @@ var MakeOrderService = class _MakeOrderService {
 
 // electron/services/make/MakeProductionService.ts
 init_supabase();
+init_DurableOutboxService();
 var CANONICAL_PRODUCTION_STAGES = [
   "Work in process",
   "Production On Going",
@@ -117033,12 +117029,70 @@ var MakeProductionService = class {
   }
   /**
    * Executes the stage transition in the database and dispatches notifications.
+   * Aliased as addProductionUpdate for foreign-key validation and production workflow consumers.
    */
+  static async addProductionUpdate(params) {
+    return this.advanceOrderStage(params);
+  }
   static async advanceOrderStage(params) {
     const { orderId, targetStage, note, photoUrl, actorName, actorRole, actorUserId } = params;
-    const { data: order, error: fetchErr } = await supabase.from("make_orders").select("*").eq("id", orderId).maybeSingle();
-    if (fetchErr || !order) {
-      return { success: false, stage: targetStage, photo_url: null, error: "Order not found" };
+    let order = null;
+    const { data: remoteOrder, error: fetchErr } = await supabase.from("make_orders").select("*").eq("id", orderId).maybeSingle();
+    if (remoteOrder) {
+      order = remoteOrder;
+    } else {
+      const outbox = DurableOutboxService.getInstance();
+      const pendingParent = outbox.findPendingOrderOperation(orderId);
+      if (pendingParent) {
+        const roleLabel2 = actorRole || "Factory Manager";
+        const formattedActor2 = `${actorName} (${roleLabel2})`;
+        const finalPhotoUrl2 = photoUrl || pendingParent.payload?.current_stage_photo || null;
+        const deferredUpdateRow = {
+          order_id: orderId,
+          status: targetStage,
+          stage: targetStage,
+          note: note || "",
+          photo_url: finalPhotoUrl2,
+          photo_urls: finalPhotoUrl2 ? [finalPhotoUrl2] : [],
+          updated_by: formattedActor2
+        };
+        const deferredOrderUpdates = {
+          status: targetStage,
+          current_stage: targetStage,
+          updated_at: (/* @__PURE__ */ new Date()).toISOString(),
+          current_stage_photo: finalPhotoUrl2,
+          factory_manager_name: actorName,
+          factory_manager_id: actorUserId || null
+        };
+        const childUpdateOpId = outbox.enqueueSingle({
+          entityType: "make_order_updates",
+          operation: "insert",
+          payload: deferredUpdateRow,
+          dependencyOpId: pendingParent.id,
+          target: "supabase"
+        });
+        outbox.enqueueSingle({
+          entityType: "make_orders",
+          operation: "update",
+          payload: deferredOrderUpdates,
+          filter: [{ column: "id", value: orderId }],
+          dependencyOpId: childUpdateOpId,
+          target: "supabase"
+        });
+        console.warn(`[MakeProductionService] Parent order ${orderId} is pending in durable outbox. Deferred stage update "${targetStage}" with dependency op ${pendingParent.id}.`);
+        return {
+          success: true,
+          stage: targetStage,
+          photo_url: finalPhotoUrl2,
+          error: void 0
+        };
+      }
+      return {
+        success: false,
+        stage: targetStage,
+        photo_url: null,
+        error: `Parent order "${orderId}" does not exist in database or pending outbox.`
+      };
     }
     const validation = this.validateTransition(order.status, targetStage);
     if (!validation.allowed) {
@@ -117070,6 +117124,12 @@ var MakeProductionService = class {
     const { error: insErr } = await supabase.from("make_order_updates").insert(updateRow);
     if (insErr) {
       console.error("[MakeProductionService] Failed to insert update:", insErr);
+      return {
+        success: false,
+        stage: targetStage,
+        photo_url: finalPhotoUrl,
+        error: `Failed to insert production update: ${insErr.message}`
+      };
     }
     const orderUpdates = {
       status: targetStage,
@@ -117085,7 +117145,12 @@ var MakeProductionService = class {
     orderUpdates.factory_manager_name = actorName;
     const { error: updErr } = await supabase.from("make_orders").update(orderUpdates).eq("id", orderId);
     if (updErr) {
-      return { success: false, stage: targetStage, photo_url: finalPhotoUrl, error: updErr.message };
+      return {
+        success: false,
+        stage: targetStage,
+        photo_url: finalPhotoUrl,
+        error: `Failed to update order record: ${updErr.message}`
+      };
     }
     try {
       const furnitureTitle = order.furniture_name || `Order #${orderId}`;

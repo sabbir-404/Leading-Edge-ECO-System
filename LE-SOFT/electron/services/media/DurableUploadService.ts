@@ -343,7 +343,7 @@ export class DurableUploadService {
             return { success: false, status: 'failed', error: 'Upload record or local file not found' };
         }
 
-        if (row.status === 'synced_nas') {
+        if (row.status === 'synced_nas' || (row.remote_url_nas && !row.remote_url_supabase)) {
             return {
                 success: true,
                 url: row.remote_url_nas,
@@ -390,86 +390,194 @@ export class DurableUploadService {
         const cleanFileName = (row.file_name || 'file').replace(/[^a-zA-Z0-9._-]/g, '_');
         // Stable, deterministic object key derived from durable upload ID
         const finalStorageName = `${uploadId}_${cleanFileName}`;
+        const cloudPath = row.subfolder ? `${row.subfolder}/${finalStorageName}` : finalStorageName;
+        const cloudBucket = 'make-order-files';
 
-        let nasSuccess = false;
-        let authoritativeUrl: string | null = row.remote_url_nas || null;
+        let cloudUrl: string | null = row.remote_url_supabase || null;
         let lastError: string | null = null;
+        let activeSignedUrl: string | undefined = undefined;
 
-        // 1. Primary Attempt: TrueNAS Storage
-        // If upload already succeeded in a prior attempt but metadata update failed, reuse the established URL
-        if (authoritativeUrl) {
-            nasSuccess = true;
+        // 1. Primary Write Target: Supabase Storage
+        // Subject to quota reservation, validation, and confirmed durable object key persistence.
+        if (cloudUrl) {
+            // Already uploaded to Supabase Storage in prior attempt; generate active signed URL
+            if (this.supabaseClient) {
+                try {
+                    const { data: signedData } = await this.supabaseClient.storage
+                        .from(cloudBucket)
+                        .createSignedUrl(cloudUrl, 3600);
+                    activeSignedUrl = signedData?.signedUrl || undefined;
+                } catch {}
+            }
+        } else if (this.supabaseClient) {
+            const quotaMgr = SupabaseQuotaManager.getInstance();
+            const canBuffer = await quotaMgr.reserveStorageQuota(uploadId, row.size_bytes);
+
+            if (!canBuffer) {
+                lastError = 'Supabase Storage quota limit reached or reservation failed (600 MB / 1 GB ceiling). File held safely in local staging.';
+                const nextRetry = (row.retry_count || 0) + 1;
+                this.db.prepare(`
+                    UPDATE durable_uploads
+                    SET retry_count = ?, last_error = ?, updated_at = ?
+                    WHERE id = ?
+                `).run(nextRetry, lastError, Date.now(), uploadId);
+                this.broadcastUploadStatus();
+                return {
+                    success: false,
+                    status: 'staged_local',
+                    durableKey: cloudPath,
+                    error: lastError
+                };
+            }
+
+            try {
+                const { error: sbErr } = await this.supabaseClient.storage
+                    .from(cloudBucket)
+                    .upload(cloudPath, buffer, { contentType: row.mime_type, upsert: true });
+
+                if (!sbErr) {
+                    try {
+                        const { data: signedData } = await this.supabaseClient.storage
+                            .from(cloudBucket)
+                            .createSignedUrl(cloudPath, 3600);
+                        activeSignedUrl = signedData?.signedUrl || undefined;
+                    } catch {}
+
+                    cloudUrl = cloudPath;
+                    const committed = await quotaMgr.releaseStorageQuota(uploadId, row.size_bytes, 'committed');
+                    if (!committed) {
+                        console.warn(`[DurableUpload] Storage quota commit rejected or ambiguous for upload ${uploadId}. Retaining local staging.`);
+                        lastError = 'Supabase quota commit transition failed or ambiguous; retained in local staging';
+                        try {
+                            await this.supabaseClient.storage.from(cloudBucket).remove([cloudPath]);
+                        } catch {}
+                        cloudUrl = null;
+                    } else {
+                        // Update entity record with durable object key if owner metadata exists
+                        if (row.entity_type && row.entity_id && row.field_name) {
+                            await this.updateEntityRecord(
+                                row.entity_type,
+                                row.entity_id,
+                                row.field_name,
+                                cloudUrl,
+                                undefined,
+                                uploadId
+                            );
+                        }
+
+                        this.db.prepare(`
+                            UPDATE durable_uploads
+                            SET status = 'buffered_supabase', remote_url_supabase = ?, last_error = NULL, updated_at = ?
+                            WHERE id = ?
+                        `).run(cloudUrl, Date.now(), uploadId);
+
+                        console.log(`[DurableUpload] Upload ${uploadId} confirmed in primary Supabase Storage (${(row.size_bytes / 1024).toFixed(1)} KB). Key: ${cloudUrl}`);
+                    }
+                } else {
+                    await quotaMgr.releaseStorageQuota(uploadId, 0, 'released');
+                    lastError = `Supabase storage error: ${sbErr.message}`;
+                }
+            } catch (sbEx: any) {
+                await quotaMgr.releaseStorageQuota(uploadId, 0, 'released');
+                lastError = `Supabase storage exception: ${sbEx.message}`;
+            }
         } else {
+            lastError = 'Supabase Storage client is not configured or offline. File retained in local staging.';
+        }
+
+        // If primary Supabase upload failed or is not committed, check if NAS replica is already established
+        if (!cloudUrl && !row.remote_url_nas) {
+            const nextRetry = (row.retry_count || 0) + 1;
+            this.db.prepare(`
+                UPDATE durable_uploads
+                SET retry_count = ?, last_error = ?, updated_at = ?
+                WHERE id = ?
+            `).run(nextRetry, lastError, Date.now(), uploadId);
+            this.broadcastUploadStatus();
+            return {
+                success: false,
+                status: 'staged_local',
+                durableKey: cloudPath,
+                error: lastError || 'Primary Supabase upload unconfirmed'
+            };
+        }
+
+        // 2. Replication Target: TrueNAS Storage (Pull / Mirror Destination)
+        // Consumes confirmed Supabase objects. A NAS health failure must not cause healthy
+        // Supabase writes to fail, and NAS replication failure leaves Supabase copy intact!
+        let nasSuccess = !!row.remote_url_nas;
+        let nasUrl: string | null = row.remote_url_nas || null;
+
+        if (!nasSuccess) {
             const nasRes = await this.uploadToNasStorage(buffer, finalStorageName, row.mime_type, row.subfolder, row.sha256);
             if (nasRes.success && nasRes.url) {
                 if (nasRes.sha256 && nasRes.sha256.toUpperCase() !== row.sha256.toUpperCase()) {
                     lastError = `Checksum mismatch: expected ${row.sha256}, got ${nasRes.sha256}`;
+                    console.warn(`[DurableUpload] NAS replica checksum mismatch for ${uploadId}: ${lastError}`);
                 } else {
                     nasSuccess = true;
-                    authoritativeUrl = nasRes.url;
+                    nasUrl = nasRes.url;
                 }
             } else {
-                lastError = nasRes.error || 'NAS storage failed';
+                lastError = nasRes.error || 'NAS replica storage failed';
             }
         }
 
-        // 2. If NAS Storage Succeeded: Update Authoritative State & Metadata
-        if (nasSuccess && authoritativeUrl) {
+        if (nasSuccess && nasUrl) {
             // Check if upload has confirmed owner metadata
             const hasOwner = !!(row.entity_type && row.entity_id && row.field_name);
             if (row.remote_url_supabase && !hasOwner) {
                 // Upload has reached NAS, but owning order/item has not been associated yet.
                 // DEFER destructive cleanup and defer transition to synced_nas!
-                const deferMsg = `Upload persisted to NAS (${authoritativeUrl}) but awaiting owner association (${row.entity_type || 'unlinked'}). Preserving cloud copy and quota until confirmed.`;
+                const deferMsg = `Upload persisted to NAS (${nasUrl}) but awaiting owner association (${row.entity_type || 'unlinked'}). Preserving cloud copy and quota until confirmed.`;
                 console.log(`[DurableUpload] ${deferMsg}`);
                 this.db.prepare(`
                     UPDATE durable_uploads
                     SET status = 'awaiting_association', remote_url_nas = ?, last_error = ?, updated_at = ?
                     WHERE id = ?
-                `).run(authoritativeUrl, deferMsg, Date.now(), uploadId);
+                `).run(nasUrl, deferMsg, Date.now(), uploadId);
                 this.broadcastUploadStatus();
                 return {
                     success: true,
-                    url: authoritativeUrl,
-                    activeUrl: authoritativeUrl,
-                    durableKey: authoritativeUrl,
+                    url: nasUrl,
+                    activeUrl: nasUrl,
+                    durableKey: nasUrl,
                     status: 'awaiting_association',
                     error: deferMsg
                 };
             }
 
-            // If confirmed owner metadata exists, update entity record
             if (hasOwner) {
+                // Update entity record with authoritative URL
                 const entityUpdated = await this.updateEntityRecord(
                     row.entity_type,
                     row.entity_id,
                     row.field_name,
-                    authoritativeUrl,
+                    nasUrl,
                     row.remote_url_supabase || undefined,
                     uploadId
                 );
 
                 if (!entityUpdated) {
                     lastError = `Entity record update failed for ${row.entity_type} ${row.entity_id}. Staged copy preserved for retry.`;
-                    // Persist the confirmed remote URL so subsequent retries do NOT re-upload the file
                     this.db.prepare(`
                         UPDATE durable_uploads
                         SET remote_url_nas = ?, last_error = ?, updated_at = ?
                         WHERE id = ?
-                    `).run(authoritativeUrl, lastError, Date.now(), uploadId);
+                    `).run(nasUrl, lastError, Date.now(), uploadId);
                     this.broadcastUploadStatus();
                     return {
                         success: false,
-                        url: authoritativeUrl,
-                        activeUrl: authoritativeUrl,
-                        durableKey: authoritativeUrl,
+                        url: nasUrl,
+                        activeUrl: nasUrl,
+                        durableKey: nasUrl,
                         status: row.status,
                         error: lastError
                     };
                 }
             }
 
-            // If it was previously buffered in Supabase Cloud, safely prune the temporary cloud copy
+            // Safely prune cloud copy now that NAS is confirmed and entity updated
             if (row.remote_url_supabase) {
                 const pruned = await this.pruneCloudCopy(row.subfolder, row.remote_url_supabase, row.size_bytes, uploadId);
                 if (!pruned) {
@@ -478,9 +586,16 @@ export class DurableUploadService {
                         UPDATE durable_uploads
                         SET remote_url_nas = ?, last_error = ?, updated_at = ?
                         WHERE id = ?
-                    `).run(authoritativeUrl, lastError, Date.now(), uploadId);
+                    `).run(nasUrl, lastError, Date.now(), uploadId);
                     this.broadcastUploadStatus();
-                    return { success: false, url: authoritativeUrl, activeUrl: authoritativeUrl, durableKey: authoritativeUrl, status: row.status, error: lastError };
+                    return {
+                        success: false,
+                        url: nasUrl,
+                        activeUrl: nasUrl,
+                        durableKey: nasUrl,
+                        status: row.status,
+                        error: lastError
+                    };
                 }
             }
 
@@ -488,117 +603,36 @@ export class DurableUploadService {
                 UPDATE durable_uploads
                 SET status = 'synced_nas', remote_url_nas = ?, remote_url_supabase = NULL, last_error = NULL, updated_at = ?
                 WHERE id = ?
-            `).run(authoritativeUrl, Date.now(), uploadId);
+            `).run(nasUrl, Date.now(), uploadId);
 
-            console.log(`[DurableUpload] Upload ${uploadId} successfully synchronized to authoritative NAS Storage: ${authoritativeUrl}`);
+            console.log(`[DurableUpload] Upload ${uploadId} successfully synchronized to authoritative NAS Storage: ${nasUrl}`);
             this.broadcastUploadStatus();
-            return { success: true, url: authoritativeUrl, activeUrl: authoritativeUrl, durableKey: authoritativeUrl, status: 'synced_nas' };
+            return {
+                success: true,
+                url: nasUrl,
+                activeUrl: nasUrl,
+                durableKey: nasUrl,
+                status: 'synced_nas'
+            };
         }
 
-        // 3. Secondary Attempt: Supabase Storage Fallback Buffer (if NAS failed and not yet buffered)
-        if (!nasSuccess && row.status === 'staged_local' && this.supabaseClient && !lastError?.startsWith('Checksum mismatch')) {
-            const quotaMgr = SupabaseQuotaManager.getInstance();
-            let cloudUrl: string | null = row.remote_url_supabase || null;
-
-            if (cloudUrl) {
-                // Cloud copy already exists from prior attempt; retry entity update with durable key
-                const entityUpdated = await this.updateEntityRecord(row.entity_type, row.entity_id, row.field_name, cloudUrl, undefined, uploadId);
-                let activeSignedUrl: string | undefined = undefined;
-                try {
-                    const { data: signedData } = await this.supabaseClient.storage
-                        .from('make-order-files')
-                        .createSignedUrl(cloudUrl, 3600);
-                    activeSignedUrl = signedData?.signedUrl || undefined;
-                } catch {}
-
-                if (entityUpdated) {
-                    this.db.prepare(`
-                        UPDATE durable_uploads
-                        SET status = 'buffered_supabase', last_error = NULL, updated_at = ?
-                        WHERE id = ?
-                    `).run(Date.now(), uploadId);
-                    return { success: true, url: cloudUrl, activeUrl: activeSignedUrl || cloudUrl, durableKey: cloudUrl, status: 'buffered_supabase' };
-                }
-            } else {
-                const canBuffer = await quotaMgr.reserveStorageQuota(uploadId, row.size_bytes);
-
-                if (canBuffer) {
-                    try {
-                        const cloudPath = `${row.subfolder}/${finalStorageName}`;
-                        const cloudBucket = 'make-order-files'; // Dedicated fallback accounting bucket
-                        const { error: sbErr } = await this.supabaseClient.storage
-                            .from(cloudBucket)
-                            .upload(cloudPath, buffer, { contentType: row.mime_type, upsert: true });
-
-                        if (!sbErr) {
-                            // Do not rely on getPublicUrl() on private bucket!
-                            // Resolve authorized short-lived signed URL for active display
-                            let activeSignedUrl: string | undefined = undefined;
-                            try {
-                                const { data: signedData } = await this.supabaseClient.storage
-                                    .from(cloudBucket)
-                                    .createSignedUrl(cloudPath, 3600);
-                                activeSignedUrl = signedData?.signedUrl || undefined;
-                            } catch {}
-
-                            // Durable reference to store in DB / durable_uploads is the durable object key
-                            cloudUrl = cloudPath;
-
-                            const committed = await quotaMgr.releaseStorageQuota(uploadId, row.size_bytes, 'committed');
-                            if (!committed) {
-                                console.warn(`[DurableUpload] Storage quota commit rejected or ambiguous for upload ${uploadId}. Retaining local staging.`);
-                                lastError = 'Supabase quota commit transition failed or ambiguous; retained in local staging';
-                                try {
-                                    await this.supabaseClient.storage.from(cloudBucket).remove([cloudPath]);
-                                } catch {}
-                            } else {
-                                // Update entity record with durable object key (never an expiring signed URL)
-                                const entityUpdated = await this.updateEntityRecord(row.entity_type, row.entity_id, row.field_name, cloudUrl, undefined, uploadId);
-
-                                this.db.prepare(`
-                                    UPDATE durable_uploads
-                                    SET status = 'buffered_supabase', remote_url_supabase = ?, last_error = ?, updated_at = ?
-                                    WHERE id = ?
-                                `).run(cloudUrl, entityUpdated ? null : 'Entity update warning on cloud buffer', Date.now(), uploadId);
-
-                                console.log(`[DurableUpload] Upload ${uploadId} buffered in Supabase Cloud fallback (${(row.size_bytes / 1024).toFixed(1)} KB). Waiting for TrueNAS recovery.`);
-                                this.broadcastUploadStatus();
-                                return {
-                                    success: true,
-                                    url: cloudUrl,
-                                    activeUrl: activeSignedUrl || cloudUrl,
-                                    durableKey: cloudUrl,
-                                    status: 'buffered_supabase'
-                                };
-                            }
-                        } else {
-                            await quotaMgr.releaseStorageQuota(uploadId, 0, 'released');
-                            lastError = `Supabase storage error: ${sbErr.message}`;
-                        }
-                    } catch (sbEx: any) {
-                        await quotaMgr.releaseStorageQuota(uploadId, 0, 'released');
-                        lastError = `Supabase storage exception: ${sbEx.message}`;
-                    }
-                } else {
-                    lastError = 'Supabase Storage quota limit reached (600 MB / 1 GB ceiling). File held in local staging.';
-                }
-            }
+        // TrueNAS replication is pending/unavailable, but Supabase primary is confirmed!
+        // Invariant 1: NAS health failure must NOT cause healthy Supabase writes to fail.
+        if (lastError) {
+            this.db.prepare(`
+                UPDATE durable_uploads
+                SET last_error = ?, updated_at = ?
+                WHERE id = ?
+            `).run(lastError, Date.now(), uploadId);
         }
-
-        // 4. Offline Hold: Remains safely in 'staged_local' or 'buffered_supabase' with recorded retry/error
-        const nextRetry = (row.retry_count || 0) + 1;
-        this.db.prepare(`
-            UPDATE durable_uploads
-            SET retry_count = ?, last_error = ?, updated_at = ?
-            WHERE id = ?
-        `).run(nextRetry, lastError, Date.now(), uploadId);
-
         this.broadcastUploadStatus();
         return {
-            success: false,
-            status: row.status,
-            durableKey: `${row.subfolder}/${finalStorageName}`,
-            error: lastError || undefined
+            success: true,
+            url: cloudUrl || nasUrl || undefined,
+            activeUrl: activeSignedUrl || cloudUrl || nasUrl || undefined,
+            durableKey: cloudUrl || `${row.subfolder}/${finalStorageName}`,
+            status: 'buffered_supabase',
+            error: lastError || 'Primary Supabase write confirmed; TrueNAS replication pending.'
         };
     }
 

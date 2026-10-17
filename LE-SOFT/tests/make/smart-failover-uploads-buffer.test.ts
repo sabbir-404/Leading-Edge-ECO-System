@@ -33,6 +33,7 @@ import { DurableOutboxService } from '../../electron/services/outbox/DurableOutb
 import { DurableUploadService } from '../../electron/services/media/DurableUploadService';
 import { ConsolidatedHealthEngine } from '../../electron/services/health/ConsolidatedHealthEngine';
 import { encryptField, encryptObject, encryptRowsAsync, decryptField } from '../../electron/field-encryption';
+import { MakeProductionService } from '../../electron/services/make/MakeProductionService';
 
 describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer', () => {
     let tmpDir: string;
@@ -48,6 +49,26 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
         (engine as any).consecutiveNasStorageFailures = 0;
         (engine as any).currentState = 'NORMAL_NAS_AUTHORITATIVE';
         DurableOutboxService.getInstance().stopWorker();
+
+        // Reset Quota Manager state
+        const quotaMgr = SupabaseQuotaManager.getInstance();
+        quotaMgr.recordUsage('test', 0, 0);
+        quotaMgr.registerClients({ supabase: null, reconciliation: null });
+        (quotaMgr as any).activeStorageReservations.clear();
+        (quotaMgr as any).activeDatabaseReservations.clear();
+        (quotaMgr as any).blockedOperationsCount = 0;
+
+        // Register clean mock Supabase storage for upload service in tests
+        const uploadService = DurableUploadService.getInstance();
+        uploadService.stopWorker();
+        const mockStorage = {
+            from: vi.fn(() => ({
+                upload: vi.fn().mockResolvedValue({ data: { path: 'test/path' }, error: null }),
+                createSignedUrl: vi.fn().mockResolvedValue({ data: { signedUrl: 'https://storage.supabase.co/signed' }, error: null }),
+                remove: vi.fn().mockResolvedValue({ data: {}, error: null })
+            }))
+        };
+        uploadService.registerClients({ nas: null, supabase: { storage: mockStorage } as any });
     });
 
     afterEach(() => {
@@ -205,7 +226,16 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
     it('Scenario 6: Crash between transfer completion and acknowledgment preserves remote URL and checksum without synthesized URLs', async () => {
         const uploadService = DurableUploadService.getInstance();
         const buffer = Buffer.from('CRASH-RESILIENCE-TEST-IMAGE');
-        const staged = await uploadService.stageFile(buffer, 'crash_test.webp', 'image/webp', 'product-images');
+        const staged = await uploadService.stageFile(
+            buffer,
+            'crash_test.webp',
+            'image/webp',
+            'product-images',
+            { entityType: 'catalog', entityId: '1', fieldName: 'image_url' }
+        );
+
+        vi.spyOn(uploadService as any, 'updateEntityRecord').mockResolvedValue(true);
+        vi.spyOn(uploadService as any, 'pruneCloudCopy').mockResolvedValue(true);
 
         // Simulate successful remote transfer with verified digest
         const uploadSpy = vi.spyOn(uploadService, 'uploadToNasStorage').mockResolvedValue({
@@ -455,13 +485,14 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
         });
 
         const res = await uploadService.dispatchUpload(staged.id);
-        expect(res.success).toBe(false);
+        expect(res.status).toBe('buffered_supabase');
+        expect(res.status).not.toBe('synced_nas');
         expect(res.error).toContain('Checksum mismatch');
 
-        // Staged upload record should remain staged_local and record failure
+        // Upload record remains safely buffered in primary Supabase while recording NAS replication failure
         const uploads = uploadService.getStagedUploads();
         const stagedRecord = uploads.find(u => u.id === staged.id);
-        expect(stagedRecord?.status).toBe('staged_local');
+        expect(stagedRecord?.status).toBe('buffered_supabase');
         expect(stagedRecord?.lastError).toContain('Checksum mismatch');
 
         // Test verifyRemoteObject correctly validates matching digest
@@ -1528,14 +1559,13 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
         expect(mismatchReserve).toBe(false);
     });
 
-    // ── 38. Database buffer lifecycle & retryable cleanup_pending ────────────────
-    it('Scenario 38: Database buffer lifecycle reconciles temporary fallback copy after NAS success, verifies removal, and handles cleanup_pending', async () => {
+    // ── 38. Database buffer lifecycle & preservation of primary Supabase records ──
+    it('Scenario 38: Database records committed to Supabase primary are preserved when NAS syncs; NAS failure leaves replication pending without deleting cloud data', async () => {
         const outbox = DurableOutboxService.getInstance();
         const testInvoice = `INV_BUFFER_LIFECYCLE_${Date.now()}`;
         const opId = `bill_fallback_${testInvoice}`;
 
         let cloudRowExists = true;
-        let pruneCalled = false;
 
         const mockSupabase: any = {
             from: vi.fn(() => ({
@@ -1547,6 +1577,18 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
                 })),
                 select: vi.fn(() => ({
                     eq: vi.fn(() => Promise.resolve({ data: cloudRowExists ? [{ id: 1 }] : [], error: null }))
+                })),
+                upsert: vi.fn(() => ({
+                    select: vi.fn(() => ({
+                        maybeSingle: vi.fn(() => Promise.resolve({ data: { id: 777 }, error: null })),
+                        single: vi.fn(() => Promise.resolve({ data: { id: 777 }, error: null }))
+                    }))
+                })),
+                insert: vi.fn(() => ({
+                    select: vi.fn(() => ({
+                        maybeSingle: vi.fn(() => Promise.resolve({ data: { id: 777 }, error: null })),
+                        single: vi.fn(() => Promise.resolve({ data: { id: 777 }, error: null }))
+                    }))
                 }))
             }))
         };
@@ -1568,12 +1610,6 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
             }))
         };
 
-        const quotaMgr = SupabaseQuotaManager.getInstance();
-        const pruneSpy = vi.spyOn(quotaMgr, 'pruneConfirmedDatabase').mockImplementation(async () => {
-            pruneCalled = true;
-            return true;
-        });
-
         outbox.registerClients({
             nas: mockNasClient,
             supabase: mockSupabase
@@ -1587,7 +1623,7 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
             payload: { invoice_number: testInvoice, total: 1000 }
         }]);
 
-        // Mark as buffered_supabase (temporary cloud fallback)
+        // Mark as buffered_supabase
         (outbox as any).markStatus(opId, 'buffered_supabase');
         (outbox as any).recordResolvedId(opId, 'supabase', 'sb_row_888');
 
@@ -1615,14 +1651,13 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
         const opRecord = (outbox as any).db.prepare('SELECT * FROM outbox_operations WHERE id = ?').get(opId);
         await (outbox as any).processRecord(mapRowToRecord(opRecord));
 
-        // Verify: temporary copy removed from Supabase, prune invoked, status completed
-        expect(cloudRowExists).toBe(false);
-        expect(pruneCalled).toBe(true);
+        // Invariant: committed Supabase data is preserved intact; NAS receives replicated copy
+        expect(cloudRowExists).toBe(true);
         const finalOp = (outbox as any).db.prepare('SELECT status, last_error FROM outbox_operations WHERE id = ?').get(opId);
         expect(finalOp.status).toBe('completed');
         expect(finalOp.last_error).toBeNull();
 
-        // 3. Test failure path: when cloud delete fails, op moves to retryable cleanup_pending
+        // 3. Test failure path: when NAS replication fails, cloud copy is preserved and status stays buffered_supabase
         const opIdFail = `bill_fallback_fail_${testInvoice}`;
         outbox.enqueueBatch([{
             id: opIdFail,
@@ -1633,31 +1668,38 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
         (outbox as any).markStatus(opIdFail, 'buffered_supabase');
         (outbox as any).recordResolvedId(opIdFail, 'supabase', 'sb_row_999');
 
-        const failingSupabase: any = {
+        const failingNasClient: any = {
             from: vi.fn(() => ({
-                delete: vi.fn(() => ({
-                    eq: vi.fn(() => Promise.resolve({ error: new Error('Network timeout during cloud copy deletion') }))
+                upsert: vi.fn(() => ({
+                    select: vi.fn(() => ({
+                        maybeSingle: vi.fn(() => Promise.reject(new Error('NAS replication connection timeout'))),
+                        single: vi.fn(() => Promise.reject(new Error('NAS replication connection timeout')))
+                    }))
                 })),
-                select: vi.fn(() => ({
-                    eq: vi.fn(() => Promise.resolve({ data: [{ id: 1 }], error: null }))
+                insert: vi.fn(() => ({
+                    select: vi.fn(() => ({
+                        maybeSingle: vi.fn(() => Promise.reject(new Error('NAS replication connection timeout'))),
+                        single: vi.fn(() => Promise.reject(new Error('NAS replication connection timeout')))
+                    }))
                 }))
             }))
         };
 
         outbox.registerClients({
-            nas: mockNasClient,
-            supabase: failingSupabase
+            nas: failingNasClient,
+            supabase: mockSupabase
         });
 
         const failRecord = (outbox as any).db.prepare('SELECT * FROM outbox_operations WHERE id = ?').get(opIdFail);
         await (outbox as any).processRecord(mapRowToRecord(failRecord));
 
-        const pendingCleanupOp = (outbox as any).db.prepare('SELECT status, last_error FROM outbox_operations WHERE id = ?').get(opIdFail);
-        expect(pendingCleanupOp.status).toBe('cleanup_pending');
-        expect(pendingCleanupOp.lastError || pendingCleanupOp.last_error).toContain('Network timeout');
+        // Supabase record remains intact, status marks buffered_supabase pending replication
+        expect(cloudRowExists).toBe(true);
+        const pendingOp = (outbox as any).db.prepare('SELECT status, last_error FROM outbox_operations WHERE id = ?').get(opIdFail);
+        expect(pendingOp.status).toBe('buffered_supabase');
+        expect(pendingOp.last_error).toContain('TrueNAS replication pending');
 
-        // 4. Test persistent mirror preservation:
-        // Persistent mirror writes (status === 'pending', target === 'both') must NOT delete their Supabase mirror
+        // 4. Test persistent mirror preservation
         let mirrorDeleted = false;
         const mirrorSupabase: any = {
             rpc: vi.fn().mockResolvedValue({ data: { success: true }, error: null }),
@@ -1685,7 +1727,6 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
             nas: mockNasClient,
             supabase: mirrorSupabase
         });
-        quotaMgr.registerClients({ supabase: mirrorSupabase });
 
         const mirrorOpId = `bill_mirror_${testInvoice}`;
         outbox.enqueueBatch([{
@@ -1701,19 +1742,15 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
         expect(mirrorDeleted).toBe(false);
         const finalMirrorOp = (outbox as any).db.prepare('SELECT status FROM outbox_operations WHERE id = ?').get(mirrorOpId);
         expect(finalMirrorOp.status).toBe('completed');
-
-        pruneSpy.mockRestore();
     });
 
     // ── 39. Full Runtime Reconciliation Workflow with Quota Manager ─────────────
-    it('Scenario 39: Runtime reconciliation workflow: unprivileged client fails pruning to cleanup_pending, retry avoids repeated NAS write, and trusted operator prunes quota to completed', async () => {
+    it('Scenario 39: Runtime reconciliation workflow: Supabase primary write commits, NAS replication succeeds once without repeated NAS writes, and status reaches completed', async () => {
         const outbox = DurableOutboxService.getInstance();
-        const quotaMgr = SupabaseQuotaManager.getInstance();
-
         const testInvoice = `INV-RECON-PHASE4-${Date.now()}`;
         const opId = `bill_recon_${testInvoice}`;
 
-        // 1. Initial State: record buffered in Supabase fallback with committed quota
+        // 1. Initial State: record buffered in Supabase
         outbox.enqueueBatch([{
             id: opId,
             entityType: 'bills',
@@ -1749,22 +1786,9 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
             }))
         };
 
-        // Unprivileged Supabase client: allows delete, but pruning RPC fails with UNAUTHORIZED_PRUNING_DENIED
         let cloudRowExists = true;
-        const unprivilegedSupabase: any = {
-            rpc: vi.fn(async (fnName: string, args: any) => {
-                if (fnName === 'release_buffer_capacity' && args.p_status === 'pruned') {
-                    return {
-                        data: {
-                            success: false,
-                            reason: 'UNAUTHORIZED_PRUNING_DENIED',
-                            detail: 'Clients cannot mark committed quota as pruned. Trusted reconciliation verification required.'
-                        },
-                        error: null
-                    };
-                }
-                return { data: { success: true }, error: null };
-            }),
+        const mockSupabase: any = {
+            rpc: vi.fn().mockResolvedValue({ data: { success: true }, error: null }),
             from: vi.fn(() => ({
                 delete: vi.fn(() => {
                     cloudRowExists = false;
@@ -1779,13 +1803,9 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
             }))
         };
 
-        // Unprivileged client in QuotaManager
-        quotaMgr.registerClients({ supabase: unprivilegedSupabase });
-        quotaMgr.registerReconciliationClient(null); // Ensure unprivileged
-
         outbox.registerClients({
             nas: mockNasClient,
-            supabase: unprivilegedSupabase
+            supabase: mockSupabase
         });
 
         const mapRowToRecord = (r: any) => ({
@@ -1808,50 +1828,404 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
             updatedAt: r.updated_at
         });
 
-        // 2. Step 1: Unprivileged desktop client executes processRecord
-        // - NAS write succeeds (count = 1)
-        // - Cloud delete & verify succeeds
-        // - BUT quota prune fails due to lack of privileged reconciliation role
+        // 2. Step 1: Execute processRecord
+        // - Supabase record is preserved intact (cloudRowExists === true)
+        // - NAS write succeeds (nasWriteCallCount === 1)
+        // - Operation reaches completed status
         const recordStep1 = (outbox as any).db.prepare('SELECT * FROM outbox_operations WHERE id = ?').get(opId);
         await (outbox as any).processRecord(mapRowToRecord(recordStep1));
 
         expect(nasWriteCallCount).toBe(1);
+        expect(cloudRowExists).toBe(true);
         const opStep1 = (outbox as any).db.prepare('SELECT status, last_error FROM outbox_operations WHERE id = ?').get(opId);
-        expect(opStep1.status).toBe('cleanup_pending');
-        expect(opStep1.last_error).toContain('Supabase temporary quota pruning rejected or failed');
+        expect(opStep1.status).toBe('completed');
+        expect(opStep1.last_error).toBeNull();
 
-        // 3. Step 2: Retry without repeating completed NAS write
-        // Register trusted reconciliation identity (simulating reconciliation operator or daemon login)
-        const trustedReconciliationClient: any = {
-            rpc: vi.fn(async (fnName: string, args: any) => {
-                if (fnName === 'release_buffer_capacity' && args.p_status === 'pruned') {
-                    return {
-                        data: {
-                            success: true,
-                            status: 'pruned',
-                            allocated_bytes: 0
-                        },
-                        error: null
-                    };
-                }
-                return { data: { success: true }, error: null };
-            })
-        };
-
-        quotaMgr.registerReconciliationClient(trustedReconciliationClient);
-
-        // Run next retry for the cleanup_pending record
+        // 3. Step 2: Retry/re-process avoids repeated NAS write
         const recordStep2 = (outbox as any).db.prepare('SELECT * FROM outbox_operations WHERE id = ?').get(opId);
         await (outbox as any).processRecord(mapRowToRecord(recordStep2));
 
         // CRITICAL ASSERTION: NAS write must NOT have been called again!
         expect(nasWriteCallCount).toBe(1);
+        expect(cloudRowExists).toBe(true);
 
-        // Operation must now be cleanly completed
         const opStep2 = (outbox as any).db.prepare('SELECT status, last_error FROM outbox_operations WHERE id = ?').get(opId);
         expect(opStep2.status).toBe('completed');
         expect(opStep2.last_error).toBeNull();
     });
+
+    // ── 40. (Section 5.1 & 5.2) Supabase Healthy, NAS Offline: First-Write to Supabase ─
+    it('Scenario 40: Supabase is healthy and NAS is unavailable: text writes commit to Supabase primary, file buffers to Supabase Storage, and NAS replication remains pending in buffered_supabase without data loss', async () => {
+        const outbox = DurableOutboxService.getInstance();
+        const uploadService = DurableUploadService.getInstance();
+
+        // 1. Text/Business write when NAS is offline
+        const mockSupabaseDb: any = {
+            from: vi.fn(() => ({
+                insert: vi.fn(() => ({
+                    select: vi.fn(() => ({
+                        maybeSingle: vi.fn(() => Promise.resolve({ data: { id: 101, furniture_name: 'Executive Chair' }, error: null })),
+                        single: vi.fn(() => Promise.resolve({ data: { id: 101, furniture_name: 'Executive Chair' }, error: null }))
+                    }))
+                }))
+            }))
+        };
+        const mockFailingNasDb: any = {
+            from: vi.fn(() => ({
+                insert: vi.fn(() => ({
+                    select: vi.fn(() => ({
+                        maybeSingle: vi.fn(() => Promise.reject(new Error('NAS network timeout (100.88.85.6:3001 unreachable)'))),
+                        single: vi.fn(() => Promise.reject(new Error('NAS network timeout (100.88.85.6:3001 unreachable)')))
+                    }))
+                }))
+            }))
+        };
+
+        outbox.registerClients({ nas: mockFailingNasDb, supabase: mockSupabaseDb });
+
+        const opId = `make_order_sb_first_${Date.now()}`;
+        outbox.enqueueSingle({
+            id: opId,
+            entityType: 'make_orders',
+            operation: 'insert',
+            payload: { furniture_name: 'Executive Chair', total_price: 1500 }
+        });
+
+        const opRecord = (outbox as any).db.prepare('SELECT * FROM outbox_operations WHERE id = ?').get(opId);
+        const mapRow = (r: any) => ({
+            id: r.id, entityType: r.entity_type, operation: r.operation,
+            payload: JSON.parse(r.payload_json), filter: null, primaryKeyCol: 'id',
+            primaryKeyVal: null, upsertConflict: null, dependencyOpId: null,
+            metadata: null, target: r.target, status: r.status, retryCount: 0,
+            maxRetries: 10, lastError: null, createdAt: r.created_at, updatedAt: r.updated_at
+        });
+
+        await (outbox as any).processRecord(mapRow(opRecord));
+
+        // Primary Supabase commit succeeded; NAS replication marked pending
+        const recordAfter = (outbox as any).db.prepare('SELECT status, last_error FROM outbox_operations WHERE id = ?').get(opId);
+        expect(recordAfter.status).toBe('buffered_supabase');
+        expect(recordAfter.last_error).toContain('TrueNAS replication pending');
+
+        // 2. File write when NAS is offline
+        const buffer = Buffer.from('TEST-CAD-DRAWING-BINARY-DATA');
+        const staged = await uploadService.stageFile(
+            buffer,
+            'desk_cad_v1.pdf',
+            'application/pdf',
+            'make-order-files',
+            { entityType: 'make_orders', entityId: '101', fieldName: 'technical_drawing_url' }
+        );
+
+        // Supabase upload succeeds, NAS upload fails
+        vi.spyOn(uploadService, 'uploadToNasStorage').mockResolvedValue({
+            success: false,
+            error: 'NAS storage daemon offline'
+        });
+
+        const uploadRes = await uploadService.dispatchUpload(staged.id);
+        expect(uploadRes.success).toBe(true);
+        expect(uploadRes.status).toBe('buffered_supabase');
+        expect(uploadRes.durableKey).toContain('desk_cad_v1.pdf');
+
+        const stagedInDb = (uploadService as any).db.prepare('SELECT status, remote_url_supabase, remote_url_nas FROM durable_uploads WHERE id = ?').get(staged.id);
+        expect(stagedInDb.status).toBe('buffered_supabase');
+        expect(stagedInDb.remote_url_supabase).toBeTruthy();
+        expect(stagedInDb.remote_url_nas).toBeNull();
+    });
+
+    // ── 41. (Section 5.3) NAS Recovery: Pull Replication & Confirmation ─────────
+    it('Scenario 41: NAS recovers: replication worker synchronizes pending data and files from Supabase, verifies persistence, and marks tasks completed only after confirmation', async () => {
+        const outbox = DurableOutboxService.getInstance();
+        const uploadService = DurableUploadService.getInstance();
+
+        // 1. Text replication recovery
+        const opId = `recon_text_${Date.now()}`;
+        outbox.enqueueSingle({
+            id: opId,
+            entityType: 'make_orders',
+            operation: 'insert',
+            payload: { furniture_name: 'Reconciled Table' }
+        });
+        (outbox as any).markStatus(opId, 'buffered_supabase');
+        (outbox as any).recordResolvedId(opId, 'supabase', 'sb_ord_555');
+
+        let nasInserted = false;
+        const mockRecoveredNasDb: any = {
+            from: vi.fn(() => ({
+                insert: vi.fn(() => {
+                    nasInserted = true;
+                    return {
+                        select: vi.fn(() => ({
+                            maybeSingle: vi.fn(() => Promise.resolve({ data: { id: 555 }, error: null })),
+                            single: vi.fn(() => Promise.resolve({ data: { id: 555 }, error: null }))
+                        }))
+                    };
+                })
+            }))
+        };
+        const mockSbDb: any = {
+            from: vi.fn(() => ({
+                select: vi.fn(() => ({ eq: vi.fn(() => Promise.resolve({ data: [{ id: 'sb_ord_555' }], error: null })) }))
+            }))
+        };
+
+        outbox.registerClients({ nas: mockRecoveredNasDb, supabase: mockSbDb });
+
+        const row = (outbox as any).db.prepare('SELECT * FROM outbox_operations WHERE id = ?').get(opId);
+        const mapRow = (r: any) => ({
+            id: r.id, entityType: r.entity_type, operation: r.operation,
+            payload: JSON.parse(r.payload_json), filter: null, primaryKeyCol: 'id',
+            primaryKeyVal: null, upsertConflict: null, dependencyOpId: null,
+            metadata: null, target: r.target, status: r.status, retryCount: 0,
+            maxRetries: 10, lastError: null, createdAt: r.created_at, updatedAt: r.updated_at
+        });
+
+        await (outbox as any).processRecord(mapRow(row));
+        expect(nasInserted).toBe(true);
+
+        const opFinal = (outbox as any).db.prepare('SELECT status, last_error FROM outbox_operations WHERE id = ?').get(opId);
+        expect(opFinal.status).toBe('completed');
+        expect(opFinal.last_error).toBeNull();
+
+        // 2. File replication recovery
+        const buffer = Buffer.from('RECON-PHOTO-DATA');
+        const staged = await uploadService.stageFile(
+            buffer,
+            'recon_photo.webp',
+            'image/webp',
+            'product-images',
+            { entityType: 'make_orders', entityId: '555', fieldName: 'photo_url' }
+        );
+        (uploadService as any).db.prepare("UPDATE durable_uploads SET status = 'buffered_supabase', remote_url_supabase = ? WHERE id = ?").run('product-images/photo_key.webp', staged.id);
+
+        vi.spyOn(uploadService as any, 'uploadToNasStorage').mockResolvedValue({
+            success: true,
+            url: 'https://storage.lenas.me/files/product-images/recon_photo.webp',
+            sha256: staged.sha256
+        });
+        vi.spyOn(uploadService as any, 'updateEntityRecord').mockResolvedValue(true);
+        vi.spyOn(uploadService as any, 'pruneCloudCopy').mockResolvedValue(true);
+
+        const reconUploadRes = await uploadService.dispatchUpload(staged.id);
+        expect(reconUploadRes.success).toBe(true);
+        expect(reconUploadRes.status).toBe('synced_nas');
+        expect(reconUploadRes.url).toBe('https://storage.lenas.me/files/product-images/recon_photo.webp');
+    });
+
+    // ── 42. (Section 5.4) Supabase Unavailable: Durable Local Staging ───────────
+    it('Scenario 42: Supabase is unavailable: files and business writes enter durable local staging without false remote commitment', async () => {
+        const outbox = DurableOutboxService.getInstance();
+        const uploadService = DurableUploadService.getInstance();
+
+        // 1. Database write when Supabase is completely down
+        outbox.registerClients({
+            nas: null,
+            supabase: null // Offline
+        });
+
+        const opId = `local_staged_${Date.now()}`;
+        outbox.enqueueSingle({
+            id: opId,
+            entityType: 'make_orders',
+            operation: 'insert',
+            payload: { furniture_name: 'Offline Desk' }
+        });
+
+        const pendingRow = (outbox as any).db.prepare('SELECT status FROM outbox_operations WHERE id = ?').get(opId);
+        expect(pendingRow.status).toBe('pending'); // Kept safely locally
+
+        // 2. File upload when Supabase Storage client is offline
+        uploadService.registerClients({ nas: null, supabase: null });
+
+        const buffer = Buffer.from('OFFLINE-BINARY');
+        const staged = await uploadService.stageFile(buffer, 'offline_doc.pdf', 'application/pdf', 'make-order-files');
+        expect(staged.status).toBe('staged_local');
+
+        const uploadRes = await uploadService.dispatchUpload(staged.id);
+        expect(uploadRes.success).toBe(false);
+        expect(uploadRes.status).toBe('staged_local');
+        expect(uploadRes.error).toContain('Supabase Storage client is not configured or offline');
+    });
+
+    // ── 43. (Section 5.5) Supabase Recovery & Dependency Ordering ────────────────
+    it('Scenario 43: Supabase recovers: pending outbox writes are replayed in dependency order, parent order precedes child updates, and duplicate processing does not produce duplicates', async () => {
+        const outbox = DurableOutboxService.getInstance();
+        const parentOpId = `op_parent_recov_${Date.now()}`;
+        const childOpId = `op_child_recov_${Date.now()}`;
+
+        let ordersInserted = 0;
+        let updatesInserted = 0;
+
+        const mockSupabase: any = {
+            from: vi.fn((table: string) => ({
+                insert: vi.fn((payload: any) => {
+                    if (table === 'make_orders') {
+                        ordersInserted++;
+                        return {
+                            select: vi.fn(() => ({
+                                maybeSingle: vi.fn(() => Promise.resolve({ data: { id: 701, order_number: 'MAKE-2026-000701' }, error: null })),
+                                single: vi.fn(() => Promise.resolve({ data: { id: 701, order_number: 'MAKE-2026-000701' }, error: null }))
+                            }))
+                        };
+                    }
+                    if (table === 'make_order_updates') {
+                        updatesInserted++;
+                        return {
+                            select: vi.fn(() => ({
+                                maybeSingle: vi.fn(() => Promise.resolve({ data: { id: 901 }, error: null })),
+                                single: vi.fn(() => Promise.resolve({ data: { id: 901 }, error: null }))
+                            }))
+                        };
+                    }
+                    return { select: vi.fn(() => ({ maybeSingle: vi.fn(() => Promise.resolve({ data: { id: 1 }, error: null })) })) };
+                })
+            }))
+        };
+
+        outbox.registerClients({ nas: null, supabase: mockSupabase });
+
+        // Enqueue parent and dependent child
+        outbox.enqueueSingle({
+            id: parentOpId,
+            entityType: 'make_orders',
+            operation: 'insert',
+            payload: { furniture_name: 'Dependent Order' }
+        });
+        outbox.enqueueSingle({
+            id: childOpId,
+            entityType: 'make_order_updates',
+            operation: 'insert',
+            payload: { stage: 'Work in process', order_id: null },
+            dependencyOpId: parentOpId
+        });
+
+        // Process in queue order
+        const mapRow = (r: any) => ({
+            id: r.id, entityType: r.entity_type, operation: r.operation,
+            payload: JSON.parse(r.payload_json), filter: null, primaryKeyCol: 'id',
+            primaryKeyVal: null, upsertConflict: null, dependencyOpId: r.dependency_op_id,
+            metadata: null, target: r.target, status: r.status, retryCount: 0,
+            maxRetries: 10, lastError: null, createdAt: r.created_at, updatedAt: r.updated_at
+        });
+
+        const pRow = (outbox as any).db.prepare('SELECT * FROM outbox_operations WHERE id = ?').get(parentOpId);
+        await (outbox as any).processRecord(mapRow(pRow));
+
+        const cRow = (outbox as any).db.prepare('SELECT * FROM outbox_operations WHERE id = ?').get(childOpId);
+        await (outbox as any).processRecord(mapRow(cRow));
+
+        expect(ordersInserted).toBe(1);
+        expect(updatesInserted).toBe(1);
+
+        // Verify child resolved parent ID (701)
+        const parentResolved = (outbox as any).db.prepare('SELECT resolved_id FROM outbox_id_map WHERE op_id = ?').get(parentOpId);
+        expect(parentResolved.resolved_id).toBe('701');
+
+        // Replay attempt is idempotent
+        expect(() => {
+            outbox.enqueueSingle({
+                id: parentOpId,
+                entityType: 'make_orders',
+                operation: 'insert',
+                payload: { furniture_name: 'Dependent Order' }
+            });
+        }).toThrow(/UNIQUE constraint failed/);
+    });
+
+    // ── 44. (Section 5.6) Quota Reservation Exhaustion ──────────────────────────
+    it('Scenario 44: Quota reservation exhaustion: 600 MB storage / 1 GB database ceiling rejects prospective writes, retains files safely locally for retry without accounting loss', async () => {
+        const quotaMgr = SupabaseQuotaManager.getInstance();
+        const uploadService = DurableUploadService.getInstance();
+
+        // Register mock storage for uploadService
+        const mockStorage = {
+            from: vi.fn(() => ({
+                upload: vi.fn().mockResolvedValue({ data: { path: 'test' }, error: null }),
+                createSignedUrl: vi.fn().mockResolvedValue({ data: { signedUrl: 'https://storage/signed' }, error: null })
+            }))
+        };
+        uploadService.registerClients({ nas: null, supabase: { storage: mockStorage } as any });
+
+        // Simulate usage at 600 MB ceiling
+        quotaMgr.recordUsage('client-quota-test', 600 * 1024 * 1024, 100 * 1024 * 1024);
+
+        const buffer = Buffer.from('QUOTA-EXHAUSTION-TEST-PAYLOAD');
+        const staged = await uploadService.stageFile(buffer, 'huge_cad.dwg', 'application/acad', 'make-order-files');
+
+        // Dispatch must be rejected by quota limit and retained locally
+        const res = await uploadService.dispatchUpload(staged.id);
+        expect(res.success).toBe(false);
+        expect(res.status).toBe('staged_local');
+        expect(res.error).toContain('600 MB / 1 GB ceiling');
+
+        const dbRecord = (uploadService as any).db.prepare('SELECT status, last_error FROM durable_uploads WHERE id = ?').get(staged.id);
+        expect(dbRecord.status).toBe('staged_local');
+        expect(dbRecord.last_error).toContain('600 MB / 1 GB ceiling');
+    });
+
+    // ── 45. (Section 5.7) Quota RPC Failure / Mismatch Fail-Safety ──────────────
+    it('Scenario 45: Missing or mismatched RPC fails visibly and safely to local outbox rather than silently violating the Supabase-first contract', async () => {
+        const quotaMgr = SupabaseQuotaManager.getInstance();
+
+        // Simulate PostgREST schema cache 404 (function not found)
+        const mockClientWithRpcError: any = {
+            rpc: vi.fn().mockResolvedValue({
+                data: null,
+                error: {
+                    code: 'PGRST202',
+                    message: 'Could not find the function public.reserve_buffer_capacity in the schema cache'
+                }
+            })
+        };
+
+        quotaMgr.registerClients({ supabase: mockClientWithRpcError });
+
+        const canReserve = await quotaMgr.reserveStorageQuota('res_rpc_fail_test', 5000);
+        expect(canReserve).toBe(false); // Strictly fails closed!
+        expect((quotaMgr as any).blockedOperationsCount).toBeGreaterThan(0);
+    });
+
+    // ── 46. (Section 5.8) MakeProductionService Foreign Key Defenses ─────────────
+    it('Scenario 46: MakeProductionService foreign key validation: production update for non-existent parent order is rejected fail-closed, or deferred in outbox if parent order is pending', async () => {
+        const outbox = DurableOutboxService.getInstance();
+        const nonExistentId = 999999;
+
+        // Case 1: Order does not exist in DB or outbox
+        const resNonExistent = await MakeProductionService.addProductionUpdate({
+            orderId: nonExistentId,
+            targetStage: 'Work in process',
+            actorName: 'Floor Manager',
+            actorRole: 'Factory Manager'
+        });
+
+        expect(resNonExistent.success).toBe(false);
+        expect(resNonExistent.error).toContain(`Parent order "${nonExistentId}" does not exist in database or pending outbox.`);
+
+        // Case 2: Parent order is currently pending in durable outbox
+        const pendingParentOpId = `make_order_pending_${Date.now()}`;
+        outbox.enqueueSingle({
+            id: pendingParentOpId,
+            entityType: 'make_orders',
+            operation: 'insert',
+            payload: { id: 88888, furniture_name: 'Staged Chair' }
+        });
+
+        const resDeferred = await MakeProductionService.addProductionUpdate({
+            orderId: 88888,
+            targetStage: 'Work in process',
+            note: 'Starting framework assembly',
+            actorName: 'Floor Manager',
+            actorRole: 'Factory Manager'
+        });
+
+        expect(resDeferred.success).toBe(true);
+        expect(resDeferred.stage).toBe('Work in process');
+
+        // Verify dependent child was deferred in outbox rather than failing with FK 23503
+        const deferredChild = (outbox as any).db.prepare('SELECT * FROM outbox_operations WHERE dependency_op_id = ?').get(pendingParentOpId);
+        expect(deferredChild).toBeDefined();
+        expect(deferredChild.entity_type).toBe('make_order_updates');
+        expect(deferredChild.payload_json).toContain('Starting framework assembly');
+    });
 });
-
-

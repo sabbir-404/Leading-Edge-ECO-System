@@ -22,7 +22,7 @@ describe('NAS Performance Benchmarking & Latency Verification', () => {
             clearTimeout(tid);
             console.warn('[BENCHMARK] Direct Tailscale query failed or unreachable:', e.message);
         }
-    });
+    }, 10000);
 
     it('Benchmark 2: NAS timeout handling aborts within 2000ms and safely fails over', async () => {
         const t0 = performance.now();
@@ -42,12 +42,12 @@ describe('NAS Performance Benchmarking & Latency Verification', () => {
             console.log(`[BENCHMARK] Bounded timeout caught after: ${elapsed}ms`);
             expect(elapsed).toBeLessThanOrEqual(2500); // 2000ms + 500ms margin
         }
-    });
+    }, 10000);
 
     it('Benchmark 3: Image fetch through candidate endpoints (Tailscale :8081)', async () => {
         const t0 = performance.now();
         const controller = new AbortController();
-        const tid = setTimeout(() => controller.abort(), 3000);
+        const tid = setTimeout(() => controller.abort(), 1500);
         try {
             const testUrl = 'http://100.88.85.6:8081/files/product-images/4791-d-scaled_1788937154524.webp';
             const res = await fetch(testUrl, { signal: controller.signal });
@@ -63,7 +63,7 @@ describe('NAS Performance Benchmarking & Latency Verification', () => {
             clearTimeout(tid);
             console.warn('[BENCHMARK] Image fetch unreachable:', e.message);
         }
-    });
+    }, 15000);
 
     it('Benchmark 4: Catalog resolution for 10+ products with images completes in < 5ms', () => {
         const mockProducts = Array.from({ length: 25 }).map((_, i) => ({

@@ -257,6 +257,51 @@ export class DurableOutboxService {
         return ids[0];
     }
 
+    /**
+     * Finds an uncommitted/pending outbox operation for a given make_orders ID.
+     * Used by child workflows (e.g. stage updates) to detect when a parent order
+     * is staged locally in the outbox and not yet committed to Supabase Cloud.
+     */
+    public findPendingOrderOperation(orderId: number | string): OutboxRecord | null {
+        if (!this.db) return null;
+        try {
+            const rows = this.db.prepare(`
+                SELECT * FROM outbox_operations
+                WHERE entity_type = 'make_orders'
+                  AND status IN ('pending', 'blocked_dependency')
+                ORDER BY created_at ASC
+            `).all() as any[];
+
+            for (const r of rows) {
+                try {
+                    const payload = JSON.parse(r.payload_json || '{}');
+                    if (payload.id == orderId || r.primary_key_val == String(orderId)) {
+                        return {
+                            id: r.id,
+                            entityType: r.entity_type,
+                            operation: r.operation,
+                            payload,
+                            filter: r.filter_json ? JSON.parse(r.filter_json) : null,
+                            primaryKeyCol: r.primary_key_col,
+                            primaryKeyVal: r.primary_key_val,
+                            upsertConflict: r.upsert_conflict,
+                            dependencyOpId: r.dependency_op_id,
+                            metadata: r.metadata_json ? JSON.parse(r.metadata_json) : null,
+                            target: r.target,
+                            status: r.status,
+                            retryCount: r.retry_count,
+                            maxRetries: r.max_retries,
+                            lastError: r.last_error,
+                            createdAt: r.created_at,
+                            updatedAt: r.updated_at
+                        };
+                    }
+                } catch {}
+            }
+        } catch {}
+        return null;
+    }
+
     // ── Drain & Synchronization Engine ──────────────────────────────────────────
 
     public startWorker(intervalMs = 500): void {
@@ -400,62 +445,13 @@ export class DurableOutboxService {
             }
         }
 
-        const isNasTarget = target === 'nas' || target === 'both';
         const isSbTarget = target === 'supabase' || target === 'both';
+        const isNasTarget = target === 'nas' || target === 'both';
 
-        let nasSuccess = status === 'synced_nas' || status === 'cleanup_pending' || this.hasTargetRecord(id, 'nas');
-        let sbSuccess = status === 'buffered_supabase' || this.hasTargetRecord(id, 'supabase');
+        let sbSuccess = status === 'synced_nas' || status === 'completed' || this.hasTargetRecord(id, 'supabase');
+        let nasSuccess = status === 'completed' || this.hasTargetRecord(id, 'nas');
 
-        // 1. Primary Attempt: TrueNAS PostgREST
-        if (isNasTarget && !nasSuccess && this.nasClient) {
-            // Resolve parent IDs specifically for TrueNAS destination
-            const nasPayload = record.dependencyOpId
-                ? this.resolveDependentPayload(record.dependencyOpId, record.payload, 'nas')
-                : record.payload;
-
-            try {
-                const result = await this.executeOnClient(
-                    this.nasClient,
-                    entityType,
-                    operation,
-                    nasPayload,
-                    record.primaryKeyCol,
-                    record.filter,
-                    record.upsertConflict
-                );
-                if (result.success) {
-                    nasSuccess = true;
-                    if (result.resolvedId) {
-                        this.recordResolvedId(id, 'nas', result.resolvedId);
-                    }
-                } else {
-                    const classified = this.classifyError(result.error);
-                    // PRESERVE BILLING DATA: Never discard required financial fields!
-                    if (classified.code === '42703' || classified.message.includes('installation_charge') || classified.message.includes('installation_note')) {
-                        this.markDeadLetter(id, `PostgreSQL schema error 42703: Column does not exist on TrueNAS database (${classified.message}). Original financial payload preserved intact. Requires Migration 069.`);
-                        return;
-                    }
-                    if (classified.isPermanent) {
-                        this.markDeadLetter(id, `NAS permanent error: ${classified.message}`);
-                        return;
-                    }
-                }
-            } catch (err: any) {
-                const classified = this.classifyError(err);
-                if (classified.code === '42703' || classified.message.includes('installation_charge') || classified.message.includes('installation_note')) {
-                    this.markDeadLetter(id, `PostgreSQL schema error 42703: Column does not exist on TrueNAS database (${classified.message}). Original financial payload preserved intact. Requires Migration 069.`);
-                    return;
-                }
-                if (classified.isPermanent) {
-                    this.markDeadLetter(id, `NAS permanent exception: ${classified.message}`);
-                    return;
-                }
-            }
-        }
-
-        // 2. Secondary / Fallback Attempt: Supabase Cloud
-        // If NAS succeeded, mirror to Supabase Cloud if targeted.
-        // If NAS failed due to transient network error, buffer to Supabase Cloud within quota.
+        // 1. Primary Attempt: Supabase Cloud PostgreSQL
         if (isSbTarget && !sbSuccess && this.supabaseClient) {
             // Resolve parent IDs specifically for Supabase Cloud destination
             const sbPayload = record.dependencyOpId
@@ -493,10 +489,10 @@ export class DurableOutboxService {
                         await quotaMgr.releaseDatabaseQuota(`db_${id}`, 0, 'released');
                         const classified = this.classifyError(result.error);
                         if (classified.isPermanent) {
-                            // If it's a foreign key error on Supabase because parent customer hasn't mirrored yet,
+                            // If it's a foreign key error on Supabase because parent hasn't committed yet,
                             // mark as blocked_dependency rather than failing permanently
                             if (classified.code === '23503' || classified.message.includes('foreign key')) {
-                                this.markStatus(id, 'blocked_dependency', `Waiting for parent entity to mirror to Supabase: ${classified.message}`);
+                                this.markStatus(id, 'blocked_dependency', `Waiting for parent entity to commit to Supabase: ${classified.message}`);
                                 return;
                             }
                             this.markDeadLetter(id, `Supabase permanent error: ${classified.message}`);
@@ -509,93 +505,52 @@ export class DurableOutboxService {
             }
         }
 
-        // 3. Reconciliation of Temporary Database Fallback Buffer
-        const wasTemporaryBuffer = status === 'buffered_supabase' || status === 'cleanup_pending';
-        if (nasSuccess && wasTemporaryBuffer) {
-            let cloudCleanupSuccess = false;
-            let cloudCleanupError: string | null = null;
-            const quotaMgr = SupabaseQuotaManager.getInstance();
-            const estBytes = DurableOutboxService.estimateDatabaseBytes(record.payload, operation);
+        // 2. Replication Attempt: TrueNAS PostgREST
+        // Consumes confirmed, committed changes in dependency order.
+        // NAS health failure must not cause healthy Supabase writes to fail or be discarded.
+        if (sbSuccess && isNasTarget && !nasSuccess && this.nasClient) {
+            const nasPayload = record.dependencyOpId
+                ? this.resolveDependentPayload(record.dependencyOpId, record.payload, 'nas')
+                : record.payload;
 
-            if (this.supabaseClient) {
-                try {
-                    let deleteQuery = this.supabaseClient.from(entityType).delete();
-                    const sbResolvedId = this.getResolvedId(id, 'supabase');
-                    const pkCol = record.primaryKeyCol || 'id';
-
-                    if (sbResolvedId) {
-                        deleteQuery = deleteQuery.eq(pkCol, sbResolvedId);
-                    } else if (record.primaryKeyVal) {
-                        deleteQuery = deleteQuery.eq(pkCol, record.primaryKeyVal);
-                    } else if (record.payload && !Array.isArray(record.payload) && record.payload[pkCol]) {
-                        deleteQuery = deleteQuery.eq(pkCol, record.payload[pkCol]);
-                    } else if (record.filter && Array.isArray(record.filter)) {
-                        for (const f of record.filter) {
-                            deleteQuery = deleteQuery.eq(f.column, f.value);
-                        }
-                    } else if (record.upsertConflict && record.payload && !Array.isArray(record.payload) && record.payload[record.upsertConflict]) {
-                        deleteQuery = deleteQuery.eq(record.upsertConflict, record.payload[record.upsertConflict]);
+            try {
+                const result = await this.executeOnClient(
+                    this.nasClient,
+                    entityType,
+                    operation,
+                    nasPayload,
+                    record.primaryKeyCol,
+                    record.filter,
+                    record.upsertConflict
+                );
+                if (result.success) {
+                    nasSuccess = true;
+                    if (result.resolvedId) {
+                        this.recordResolvedId(id, 'nas', result.resolvedId);
                     }
-
-                    const { error: delError } = await deleteQuery;
-                    if (delError) {
-                        cloudCleanupError = `Supabase temporary copy removal failed: ${delError.message}`;
-                    } else {
-                        // Actively verify cloud copy removal before invoking trusted pruning
-                        let verifyQuery = this.supabaseClient.from(entityType).select(pkCol);
-                        if (sbResolvedId) {
-                            verifyQuery = verifyQuery.eq(pkCol, sbResolvedId);
-                        } else if (record.primaryKeyVal) {
-                            verifyQuery = verifyQuery.eq(pkCol, record.primaryKeyVal);
-                        } else if (record.payload && !Array.isArray(record.payload) && record.payload[pkCol]) {
-                            verifyQuery = verifyQuery.eq(pkCol, record.payload[pkCol]);
-                        } else if (record.upsertConflict && record.payload && !Array.isArray(record.payload) && record.payload[record.upsertConflict]) {
-                            verifyQuery = verifyQuery.eq(record.upsertConflict, record.payload[record.upsertConflict]);
-                        }
-
-                        const { data: remainingRows, error: verifyErr } = await verifyQuery;
-                        if (verifyErr) {
-                            cloudCleanupError = `Failed to verify Supabase temporary copy removal: ${verifyErr.message}`;
-                        } else if (remainingRows && remainingRows.length > 0) {
-                            cloudCleanupError = 'Supabase temporary copy still exists after delete; cannot prune quota until deletion is confirmed.';
-                        } else {
-                            // Deletion verified! Now invoke trusted reservation-pruning path
-                            const pruned = await quotaMgr.pruneConfirmedDatabase(`db_${id}`, estBytes);
-                            if (pruned) {
-                                cloudCleanupSuccess = true;
-                                console.log(`[Outbox] Reconciled temporary database buffer op ${id}: NAS confirmed, Supabase copy verified removed, quota pruned.`);
-                            } else {
-                                cloudCleanupError = `Supabase temporary quota pruning rejected or failed for db_${id}.`;
-                            }
-                        }
+                } else {
+                    const classified = this.classifyError(result.error);
+                    if (classified.code === '42703' || classified.message.includes('installation_charge') || classified.message.includes('installation_note')) {
+                        console.warn(`[Outbox] NAS schema warning (column missing on TrueNAS replica): ${classified.message}`);
                     }
-                } catch (err: any) {
-                    cloudCleanupError = `Exception during temporary cloud cleanup: ${err.message}`;
                 }
-            } else {
-                cloudCleanupError = 'Supabase client unavailable for temporary buffer cleanup';
+            } catch (err: any) {
+                console.warn(`[Outbox] TrueNAS replication exception for op ${id}:`, err.message);
             }
-
-            if (!cloudCleanupSuccess) {
-                // Keep reconciliation and quota cleanup failures retryable and observable
-                console.warn(`[Outbox] Cleanup pending for op ${id}: ${cloudCleanupError}`);
-                this.markStatus(id, 'cleanup_pending', `Authoritative NAS persistence confirmed; temporary cloud copy cleanup or quota prune failed: ${cloudCleanupError}`);
-                return;
-            }
-
-            this.markCompleted(id);
-            return;
         }
 
-        // Update outbox state based on outcomes
-        if (nasSuccess && (!isSbTarget || sbSuccess)) {
+        // 3. Status Determination:
+        // Supabase is the primary source of truth; NAS is replication destination.
+        // We NEVER delete or prune confirmed Supabase business records when NAS syncs!
+        if (sbSuccess && (!isNasTarget || nasSuccess)) {
             this.markCompleted(id);
-        } else if (nasSuccess && isSbTarget) {
-            this.markStatus(id, 'synced_nas', null);
-        } else if (!nasSuccess && sbSuccess) {
-            this.markStatus(id, 'buffered_supabase', 'Buffered in Supabase Cloud fallback; awaiting TrueNAS reconciliation.');
+            this.invokeCallbacks(id, true, { completed: true });
+        } else if (sbSuccess && isNasTarget && !nasSuccess) {
+            // Committed to Supabase primary; TrueNAS replication is pending/retryable
+            this.markStatus(id, 'buffered_supabase', 'Committed to Supabase; TrueNAS replication pending.');
+            this.invokeCallbacks(id, true, { completed: true, replicationPending: true });
         } else {
-            // Transient failure on both: increment retry with backoff
+            // Supabase primary write failed or offline: retry with backoff
             this.incrementRetry(id, record.retryCount, record.maxRetries);
         }
     }
