@@ -487,19 +487,18 @@ sequenceDiagram
 
 | Test Suite / Quality Gate | Scope | Total Tests | Passed | Failed | Skipped | Exit Code | Duration |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **All MAKE Test Suites (`tests/make`)** | Unit / Mock / Failover | **560** | **560** | **0** | **0** | **`0`** | **15.97s** |
+| **All MAKE Test Suites (`tests/make`)** | Unit / Mock / Failover | **560** | **560** | **0** | **0** | **`0`** | **15.89s** |
 | `smart-failover-uploads-buffer.test.ts` | 46 Scenarios (Buffer/Failover) | 46 | 46 | 0 | 0 | `0` | 0.63s |
-| `make-module-stability.integration.test.ts` | Stability & Stages | 73 | 73 | 0 | 0 | `0` | 0.65s |
-| **NAS Pull Replication Worker Suite** | NAS Pull Daemon & Regression Tests | **15** | **15** | **0** | **0** | **`0`** | **0.06s** |
-| **Real PostgreSQL 17 Integration** | Real PG 17 (port 54322) | **13** | **13** | **0** | **0** | **`0`** | **0.22s** |
-| **Server Reconciliation Daemon** | Server Reconciliation Tests | **6** | **6** | **0** | **0** | **`0`** | **0.01s** |
-| **Real SQLite Outbox Integration** | Electron Node ABI 143 | **5** | **5** | **0** | **0** | **`0`** | **1.21s** |
-| **Real SQLite Upload Integration** | Electron Node ABI 143 | **4** | **4** | **0** | **0** | **`0`** | **1.18s** |
-| **Frontend Typecheck (`tsc --noEmit`)** | TypeScript Renderer Check | — | — | 0 | — | **`0`** | 10.0s |
-| **Electron Typecheck (`tsc (electron)`)** | TypeScript Main Check | — | — | 0 | — | **`0`** | 5.0s |
-| **Linter (`npm run lint`)** | ESLint Strict Gate | — | — | 0 (0 warnings) | — | **`0`** | 5.0s |
-| **Vite Production Build (`npm run build`)** | Vite Asset Bundle | — | — | 0 | — | **`0`** | 10.76s |
-| **Electron Bundle (`node build-electron.cjs`)**| Electron Main (`core/main.cjs`)| — | — | 0 (5.9 MB) | — | **`0`** | 1.23s |
+| `make-module-stability.integration.test.ts` | Stability & Stages | 73 | 73 | 0 | 0 | `0` | 0.70s |
+| **NAS Pull Replication Worker Suite** | NAS Pull Daemon & Regression Tests | **16** | **16** | **0** | **0** | **`0`** | **0.35s** |
+| **Real PostgreSQL 17 Integration** | Real PG 17 (port 54322) | **13** | **13** | **0** | **0** | **`0`** | **0.52s** |
+| **Real SQLite Outbox Integration** | Electron Node ABI 143 (`real-sqlite-outbox`) | **8** | **8** | **0** | **0** | **`0`** | **0.51s** |
+| **Real SQLite Upload Integration** | Electron Node ABI 143 (`durable-upload-real-sqlite`) | **1** | **1** | **0** | **0** | **`0`** | **0.65s** |
+| **Frontend Typecheck (`tsc --noEmit`)** | TypeScript Renderer Check | — | — | 0 | — | **`0`** | 9.5s |
+| **Electron Typecheck (`tsc (electron)`)** | TypeScript Main Check | — | — | 0 | — | **`0`** | 4.8s |
+| **Linter (`npm run lint`)** | ESLint Strict Gate | — | — | 0 (0 warnings) | — | **`0`** | 5.2s |
+| **Vite Production Build (`npm run build`)** | Vite Asset Bundle | — | — | 0 | — | **`0`** | 8.35s |
+| **Electron Bundle (`node build-electron.cjs`)**| Electron Main (`core/main.cjs`)| — | — | 0 (5.9 MB) | — | **`0`** | 1.15s |
 | **License Check (`npm run license:check`)** | Ed25519 License Verification | — | — | 0 (Verified) | — | **`0`** | 0.8s |
 | **Git Whitespace Hygiene (`git diff --check`)**| Git Diff Hygiene | — | — | 0 | — | **`0`** | 0.1s |
 
@@ -568,8 +567,9 @@ Targeting the physical TrueNAS node `le-nas-server` over Tailscale (`100.88.85.6
 - **Pull Request**: PR #41 (Status: **OPEN and UNMERGED**).
 - **Modified Repository Files**:
   1. `docker-compose-truenas.yml` — Configured `extra_hosts: ["host.docker.internal:host-gateway"]`, defaulted `TRUENAS_PG_HOST` to `host.docker.internal`, `TRUENAS_PG_USER` to `admin`, added `--experimental-websocket`, and mounted real TrueNAS storage dataset `/mnt/data_pool/lesoft/lesoft-storage/uploads`.
-  2. `scripts/nas-pull-replication-worker.cjs` — Added resilient self-healing DDL for `total_price`/`sale_price` and column defaults, normalized `last_replicated_at` timestamps to ISO 8601 strings for PostgREST, added schema-resilient attachment discovery, and disabled unnecessary realtime client initialization.
-  3. `docs/architecture/MAKE-MODULE-VERIFICATION-REPORT.md` — Updated verification report with complete audit of credential remediation, test cleanup reconciliation, Migration 070 authorization analysis, and updated operational readiness verdict.
+  2. `scripts/nas-pull-replication-worker.cjs` — Added resilient self-healing DDL for `make_product_specifications.image_url` and `make_product_colors.image_url`, normalized timestamps for PostgREST, added business data replication for specifications and colors, and added Source C attachment discovery for spec/color swatch images.
+  3. `tests/integration/nas-pull-replication-worker.test.ts` — Added mock state and Test 16 covering specification and color replication and image download with SHA-256 verification and null-safety.
+  4. `docs/architecture/MAKE-MODULE-VERIFICATION-REPORT.md` — Updated verification report with complete audit of credential remediation, test cleanup reconciliation, Migration 070 authorization analysis, and updated operational readiness verdict.
 
 #### Required Final Verdict
 
@@ -577,10 +577,10 @@ Targeting the physical TrueNAS node `le-nas-server` over Tailscale (`100.88.85.6
 
 *Rationale*:
 All local tests, integration suites, build pipelines, and architecture contracts are complete and 100% passing:
-1. Local quality gates: 560/560 MAKE tests pass, 15/15 NAS Pull Worker integration tests pass, 13/13 Migration 070 quota RPC integration tests pass, TypeScript compiler has 0 errors, ESLint has 0 errors, and Electron bundle contains 0 exposed secrets.
-2. Architecture & Infrastructure: TrueNAS container networking, ZFS storage dataset mounts, and database schema self-healing have been reconciled and verified.
+1. Local quality gates: 560/560 MAKE tests pass, 16/16 NAS Pull Worker integration tests pass, 13/13 Migration 070 quota RPC integration tests pass, 8/8 Real SQLite outbox tests pass, 1/1 Real SQLite upload tests pass, TypeScript compiler has 0 errors, ESLint has 0 errors, and Electron bundle contains 0 exposed secrets.
+2. Architecture & Infrastructure: TrueNAS container networking, ZFS storage dataset mounts, and database schema self-healing have been reconciled and verified. Verified that `make_product_specifications.image_url` and `make_product_colors.image_url` exist on both Supabase Cloud and TrueNAS PostgreSQL.
 3. Cleanup Audit: Verified that real TrueNAS order 20 was untouched and that all disposable test records, files, and tracking rows have been completely removed from both cloud and NAS systems.
-4. Pending Operational Action: Full production sign-off requires rotating the Supabase service-role key in the Supabase Dashboard, updating the worker environment on TrueNAS, and executing a clean post-rotation replication run with the replacement credential.
+4. Pending Operational Action: Full production sign-off requires unlocking or configuring SSH access for TrueNAS, rotating the Supabase service-role key in the Supabase Dashboard, provisioning `SUPABASE_REPLICATION_KEY` in `/mnt/data_pool/lesoft/nas-pull-worker.env`, and executing a clean post-rotation replication run with the replacement credential.
 
 ---
 

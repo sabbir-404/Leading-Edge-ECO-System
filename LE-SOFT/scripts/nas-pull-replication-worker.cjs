@@ -86,6 +86,8 @@ async function initCheckpoints(pgClient) {
             ALTER TABLE make_order_updates ADD COLUMN IF NOT EXISTS actor_role TEXT;
             ALTER TABLE make_order_updates ADD COLUMN IF NOT EXISTS photo_url TEXT;
             ALTER TABLE make_order_updates ADD COLUMN IF NOT EXISTS photo_urls TEXT[] DEFAULT '{}'::text[];
+            ALTER TABLE make_product_specifications ADD COLUMN IF NOT EXISTS image_url TEXT;
+            ALTER TABLE make_product_colors ADD COLUMN IF NOT EXISTS image_url TEXT;
         `);
     } catch {}
 }
@@ -382,6 +384,104 @@ async function pullBusinessData(supabaseClient, pgClient, options = {}) {
         logger.log(`[NAS-Pull-Worker] Successfully pulled and applied ${newUpdates.length} dependent production updates.`);
     }
 
+    // ── 4. Pull Product Specifications (make_product_specifications) ──────────
+    try {
+        const specCp = await getCheckpoint(pgClient, 'make_product_specifications');
+        let specQuery = supabaseClient
+            .from('make_product_specifications')
+            .select('*')
+            .order('id', { ascending: true })
+            .limit(options.batchSize || 100);
+
+        if (specCp.last_replicated_id) {
+            specQuery = specQuery.gt('id', specCp.last_replicated_id);
+        }
+
+        const { data: newSpecs, error: specErr } = await specQuery;
+        if (!specErr && newSpecs && newSpecs.length > 0) {
+            for (const sp of newSpecs) {
+                const spId = String(sp.id);
+                const upsertSpecSql = `
+                    INSERT INTO make_product_specifications (
+                        id, product_id, spec_code, spec_name, spec_details, is_active, image_url, created_at
+                    )
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                    ON CONFLICT (id) DO UPDATE SET
+                        product_id = EXCLUDED.product_id,
+                        spec_code = EXCLUDED.spec_code,
+                        spec_name = EXCLUDED.spec_name,
+                        spec_details = EXCLUDED.spec_details,
+                        is_active = EXCLUDED.is_active,
+                        image_url = EXCLUDED.image_url;
+                `;
+                await pgClient.query(upsertSpecSql, [
+                    sp.id,
+                    sp.product_id || null,
+                    sp.spec_code || null,
+                    sp.spec_name || '',
+                    sp.spec_details || null,
+                    sp.is_active !== undefined ? sp.is_active : true,
+                    sp.image_url || null,
+                    sp.created_at || new Date().toISOString()
+                ]);
+                await updateCheckpoint(pgClient, 'make_product_specifications', spId, sp.created_at || new Date().toISOString(), 1, null);
+                totalReplicated++;
+            }
+            logger.log(`[NAS-Pull-Worker] Successfully pulled and applied ${newSpecs.length} product specifications.`);
+        }
+    } catch (e) {
+        logger.warn('[NAS-Pull-Worker] Specification replication note:', e.message);
+    }
+
+    // ── 5. Pull Product Colors (make_product_colors) ───────────────────────────
+    try {
+        const colorCp = await getCheckpoint(pgClient, 'make_product_colors');
+        let colorQuery = supabaseClient
+            .from('make_product_colors')
+            .select('*')
+            .order('id', { ascending: true })
+            .limit(options.batchSize || 100);
+
+        if (colorCp.last_replicated_id) {
+            colorQuery = colorQuery.gt('id', colorCp.last_replicated_id);
+        }
+
+        const { data: newColors, error: colorErr } = await colorQuery;
+        if (!colorErr && newColors && newColors.length > 0) {
+            for (const cl of newColors) {
+                const clId = String(cl.id);
+                const upsertColorSql = `
+                    INSERT INTO make_product_colors (
+                        id, product_id, spec_id, color_name, color_code, is_active, image_url, created_at
+                    )
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                    ON CONFLICT (id) DO UPDATE SET
+                        product_id = EXCLUDED.product_id,
+                        spec_id = EXCLUDED.spec_id,
+                        color_name = EXCLUDED.color_name,
+                        color_code = EXCLUDED.color_code,
+                        is_active = EXCLUDED.is_active,
+                        image_url = EXCLUDED.image_url;
+                `;
+                await pgClient.query(upsertColorSql, [
+                    cl.id,
+                    cl.product_id || null,
+                    cl.spec_id || null,
+                    cl.color_name || '',
+                    cl.color_code || null,
+                    cl.is_active !== undefined ? cl.is_active : true,
+                    cl.image_url || null,
+                    cl.created_at || new Date().toISOString()
+                ]);
+                await updateCheckpoint(pgClient, 'make_product_colors', clId, cl.created_at || new Date().toISOString(), 1, null);
+                totalReplicated++;
+            }
+            logger.log(`[NAS-Pull-Worker] Successfully pulled and applied ${newColors.length} product colors.`);
+        }
+    } catch (e) {
+        logger.warn('[NAS-Pull-Worker] Color replication note:', e.message);
+    }
+
     return { success: true, totalReplicated };
 }
 
@@ -538,6 +638,59 @@ async function pullAttachments(supabaseClient, storageBasePath, pgClient, option
                                 entityId: res.id
                             });
                         }
+                    }
+                }
+            }
+        }
+    } catch {}
+
+    // ── Source C: Discover specification and color swatch images ───────────────
+    try {
+        const { data: specsWithImages } = await supabaseClient
+            .from('make_product_specifications')
+            .select('id, image_url')
+            .not('image_url', 'is', null)
+            .limit(options.batchSize || 50);
+
+        if (specsWithImages && specsWithImages.length > 0) {
+            for (const sp of specsWithImages) {
+                if (sp.image_url) {
+                    const cleanKey = normalizeStorageObjectKey(sp.image_url);
+                    if (cleanKey && !fileTasks.has(cleanKey)) {
+                        const sub = cleanKey.includes('/') ? path.dirname(cleanKey) : 'specs';
+                        const name = path.basename(cleanKey);
+                        fileTasks.set(cleanKey, {
+                            subfolder: sub,
+                            name,
+                            entityType: 'make_product_specifications',
+                            entityId: String(sp.id)
+                        });
+                    }
+                }
+            }
+        }
+    } catch {}
+
+    try {
+        const { data: colorsWithImages } = await supabaseClient
+            .from('make_product_colors')
+            .select('id, image_url')
+            .not('image_url', 'is', null)
+            .limit(options.batchSize || 50);
+
+        if (colorsWithImages && colorsWithImages.length > 0) {
+            for (const cl of colorsWithImages) {
+                if (cl.image_url) {
+                    const cleanKey = normalizeStorageObjectKey(cl.image_url);
+                    if (cleanKey && !fileTasks.has(cleanKey)) {
+                        const sub = cleanKey.includes('/') ? path.dirname(cleanKey) : 'colors';
+                        const name = path.basename(cleanKey);
+                        fileTasks.set(cleanKey, {
+                            subfolder: sub,
+                            name,
+                            entityType: 'make_product_colors',
+                            entityId: String(cl.id)
+                        });
                     }
                 }
             }

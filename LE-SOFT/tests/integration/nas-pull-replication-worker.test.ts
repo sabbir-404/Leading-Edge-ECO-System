@@ -39,8 +39,12 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
     let mockTrueNasUpdates: Map<number, any>;
     let mockSupabaseOrders: any[];
     let mockSupabaseUpdates: any[];
+    let mockSupabaseSpecs: any[];
+    let mockSupabaseColors: any[];
     let mockSupabaseReservations: any[];
     let mockSupabaseTombstones: any[];
+    let mockTrueNasSpecs: Map<number, any>;
+    let mockTrueNasColors: Map<number, any>;
     let mockSupabaseStorageFiles: Map<string, { buffer: Buffer; sha256: string }>;
     let tempStorageDir: string;
 
@@ -48,8 +52,12 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
         mockCheckpoints = new Map();
         mockTrueNasOrders = new Map();
         mockTrueNasUpdates = new Map();
+        mockTrueNasSpecs = new Map();
+        mockTrueNasColors = new Map();
         mockSupabaseOrders = [];
         mockSupabaseUpdates = [];
+        mockSupabaseSpecs = [];
+        mockSupabaseColors = [];
         mockSupabaseReservations = [];
         mockSupabaseTombstones = [];
         mockSupabaseStorageFiles = new Map();
@@ -134,6 +142,38 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
                     return { rows: [updateRecord] };
                 }
 
+                if (normalized.includes('INSERT INTO make_product_specifications')) {
+                    const id = Number(params[0]);
+                    const specRecord = {
+                        id,
+                        product_id: params[1],
+                        spec_code: params[2],
+                        spec_name: params[3],
+                        spec_details: params[4],
+                        is_active: params[5],
+                        image_url: params[6],
+                        created_at: params[7]
+                    };
+                    mockTrueNasSpecs.set(id, specRecord);
+                    return { rows: [specRecord] };
+                }
+
+                if (normalized.includes('INSERT INTO make_product_colors')) {
+                    const id = Number(params[0]);
+                    const colorRecord = {
+                        id,
+                        product_id: params[1],
+                        spec_id: params[2],
+                        color_name: params[3],
+                        color_code: params[4],
+                        is_active: params[5],
+                        image_url: params[6],
+                        created_at: params[7]
+                    };
+                    mockTrueNasColors.set(id, colorRecord);
+                    return { rows: [colorRecord] };
+                }
+
                 if (normalized.includes('SELECT 1 FROM nas_replicated_files WHERE object_key = $1')) {
                     return { rows: [] };
                 }
@@ -154,6 +194,8 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
                         let data: any[] = [];
                         if (table === 'make_orders') data = [...mockSupabaseOrders];
                         if (table === 'make_order_updates') data = [...mockSupabaseUpdates];
+                        if (table === 'make_product_specifications') data = [...mockSupabaseSpecs];
+                        if (table === 'make_product_colors') data = [...mockSupabaseColors];
                         if (table === 'supabase_buffer_reservations') data = [...mockSupabaseReservations];
                         if (table === 'replication_tombstones') data = [...mockSupabaseTombstones];
 
@@ -229,6 +271,12 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
                                         return hasUrls || hasPhoto;
                                     });
                                     return chain;
+                                }
+                                return chain;
+                            }),
+                            not: vi.fn((col: string, op: string, val: any) => {
+                                if (op === 'is' && val === null) {
+                                    chain.data = chain.data.filter((item: any) => item[col] !== null && item[col] !== undefined);
                                 }
                                 return chain;
                             }),
@@ -783,5 +831,98 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
 
         // Step 7: Supabase Storage copy is retained in cloud storage
         expect(mockSupabaseStorageFiles.has(cloudPath)).toBe(true);
+    });
+
+    it('16. Specification and color images: replicates specifications and colors, pulling images to TrueNAS when image_url is present and ignoring nulls', async () => {
+        // Setup specification with image_url and one without
+        const specImgPath = 'specs/spec_marble_drawing.pdf';
+        const specImgBuffer = Buffer.from('DISPOSABLE_SPEC_DRAWING_BYTES_123');
+        const specSha = crypto.createHash('sha256').update(specImgBuffer).digest('hex').toUpperCase();
+        mockSupabaseStorageFiles.set(specImgPath, { buffer: specImgBuffer, sha256: specSha });
+
+        mockSupabaseSpecs.push(
+            {
+                id: 101,
+                product_id: 10,
+                spec_code: 'SPEC-001',
+                spec_name: 'Premium Marble Slab',
+                spec_details: 'White Italian Marble',
+                is_active: true,
+                image_url: `make-order-files/${specImgPath}`,
+                created_at: '2026-10-18T07:00:00.000Z'
+            },
+            {
+                id: 102,
+                product_id: 10,
+                spec_code: 'SPEC-002',
+                spec_name: 'Standard Oak Wood',
+                spec_details: 'Natural finished oak',
+                is_active: true,
+                image_url: null, // Spec without image
+                created_at: '2026-10-18T07:01:00.000Z'
+            }
+        );
+
+        // Setup color swatch with image_url and one without
+        const colorImgPath = 'colors/swatch_matte_black.png';
+        const colorImgBuffer = Buffer.from('DISPOSABLE_COLOR_SWATCH_BYTES_456');
+        const colorSha = crypto.createHash('sha256').update(colorImgBuffer).digest('hex').toUpperCase();
+        mockSupabaseStorageFiles.set(colorImgPath, { buffer: colorImgBuffer, sha256: colorSha });
+
+        mockSupabaseColors.push(
+            {
+                id: 201,
+                product_id: 10,
+                spec_id: 101,
+                color_name: 'Matte Black Metal',
+                color_code: '#111111',
+                is_active: true,
+                image_url: `make-order-files/${colorImgPath}`,
+                created_at: '2026-10-18T07:02:00.000Z'
+            },
+            {
+                id: 202,
+                product_id: 10,
+                spec_id: 102,
+                color_name: 'Natural Honey',
+                color_code: '#E5A65D',
+                is_active: true,
+                image_url: null, // Color without image
+                created_at: '2026-10-18T07:03:00.000Z'
+            }
+        );
+
+        // Run replication cycle
+        const cycleRes = await runReplicationCycle({
+            supabaseClient: mockSupabase,
+            pgClient: mockPg,
+            storagePath: tempStorageDir,
+            pruneCloud: false
+        });
+
+        expect(cycleRes.success).toBe(true);
+        // Both specs and both colors replicated to TrueNAS PostgreSQL
+        expect(mockTrueNasSpecs.size).toBe(2);
+        expect(mockTrueNasSpecs.get(101)?.spec_name).toBe('Premium Marble Slab');
+        expect(mockTrueNasSpecs.get(102)?.image_url).toBeNull();
+        expect(mockTrueNasColors.size).toBe(2);
+        expect(mockTrueNasColors.get(201)?.color_name).toBe('Matte Black Metal');
+
+        // Both images pulled to TrueNAS local storage with SHA-256 integrity
+        const specDiskPath = path.join(tempStorageDir, 'specs', 'spec_marble_drawing.pdf');
+        expect(fs.existsSync(specDiskPath)).toBe(true);
+        const actualSpecHash = crypto.createHash('sha256').update(fs.readFileSync(specDiskPath)).digest('hex').toUpperCase();
+        expect(actualSpecHash).toBe(specSha);
+
+        const colorDiskPath = path.join(tempStorageDir, 'colors', 'swatch_matte_black.png');
+        expect(fs.existsSync(colorDiskPath)).toBe(true);
+        const actualColorHash = crypto.createHash('sha256').update(fs.readFileSync(colorDiskPath)).digest('hex').toUpperCase();
+        expect(actualColorHash).toBe(colorSha);
+
+        // Checkpoints advanced
+        const specCp = await getCheckpoint(mockPg, 'make_product_specifications');
+        expect(specCp.items_replicated).toBe(2);
+        const colorCp = await getCheckpoint(mockPg, 'make_product_colors');
+        expect(colorCp.items_replicated).toBe(2);
     });
 });
