@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { X, Plus, Upload, RotateCcw } from 'lucide-react';
-import { canManageGlobalProductAttributes } from '../../../utils/permissions';
+import { X, Plus, Upload, RotateCcw, Check, RefreshCw, AlertCircle } from 'lucide-react';
+import { canManageGlobalProductAttributes, getUserPricingPermissions } from '../../../utils/permissions';
 import { clearProductFormDraft, hasMeaningfulDraftContent, saveProductCatalogDraft } from '../../../utils/productCatalogDraft';
 import { resolveImageSrc, handleImageLoadError } from '../../../utils/imageSrc';
 import { formatSizeDisplay } from '../../../utils/formatSize';
@@ -39,6 +39,7 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
 
   // Permissions
   const canManageGlobal = canManageGlobalProductAttributes();
+  const pricingPerms = getUserPricingPermissions();
 
   // Form State
   const [formData, setFormData] = useState<any>({
@@ -48,7 +49,11 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
     category_id: null,
     category: null,
     main_image: '',
-    is_active: true
+    is_active: true,
+    cost_price: '',
+    sale_price: '',
+    max_discount_type: 'percent',
+    max_discount_value: ''
   });
 
   const [selectedCategoryIds, setSelectedCategoryIds] = useState<(number | string)[]>([]);
@@ -63,6 +68,7 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
 
   const [saving, setSaving] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [uploadState, setUploadState] = useState<{ status: 'idle' | 'uploading' | 'success' | 'error'; error?: string | null }>({ status: 'idle' });
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Fetch global attributes if not provided or empty
@@ -121,7 +127,11 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
           category_id: initialProduct.category_id || null,
           category: initialProduct.category || null,
           main_image: initialProduct.main_image || '',
-          is_active: initialProduct.is_active !== undefined ? initialProduct.is_active : true
+          is_active: initialProduct.is_active !== undefined ? initialProduct.is_active : true,
+          cost_price: pricingPerms.canViewCostPrice ? (initialProduct.cost_price !== undefined && initialProduct.cost_price !== null ? initialProduct.cost_price : '') : '',
+          sale_price: initialProduct.sale_price !== undefined && initialProduct.sale_price !== null ? initialProduct.sale_price : '',
+          max_discount_type: initialProduct.max_discount_type || 'percent',
+          max_discount_value: initialProduct.max_discount_value !== undefined && initialProduct.max_discount_value !== null ? initialProduct.max_discount_value : ''
         });
         const catIds = Array.isArray(initialProduct.category_ids) && initialProduct.category_ids.length > 0
           ? initialProduct.category_ids
@@ -138,17 +148,22 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
           category_id: null,
           category: null,
           main_image: '',
-          is_active: true
+          is_active: true,
+          cost_price: '',
+          sale_price: '',
+          max_discount_type: 'percent',
+          max_discount_value: ''
         });
         setSelectedCategoryIds([]);
         setSelectedSpecIds([]);
         setSelectedSizeIds([]);
         setSelectedColorIds([]);
       }
+      setUploadState({ status: 'idle', error: null });
       setErrorMessage(null);
       setInlineNewAttrType(null);
     }
-  }, [isOpen, initialProduct?.id]);
+  }, [isOpen, initialProduct?.id, pricingPerms.canViewCostPrice]);
 
   // Notify parent of draft updates (only when drafting a new product)
   const notifyDraftUpdate = (updatedForm: any, catIds: any[], specIds: any[], sizeIds: any[], colorIds: any[]) => {
@@ -181,6 +196,8 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
   }, [formData, selectedCategoryIds, selectedSpecIds, selectedSizeIds, selectedColorIds, isOpen, initialProduct?.id, isDraftManaged]);
 
   const handlePickAndUploadImage = async () => {
+    if (uploadState.status === 'uploading') return;
+    setUploadState({ status: 'uploading', error: null });
     setUploadingImage(true);
     setErrorMessage(null);
     try {
@@ -188,10 +205,18 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
       const url = await window.electron.pickImage();
       if (url) {
         handleFieldChange('main_image', url);
+        setUploadState({ status: 'success', error: null });
+        setTimeout(() => {
+          setUploadState(prev => prev.status === 'success' ? { status: 'idle', error: null } : prev);
+        }, 2500);
+      } else {
+        // User cancelled picker dialog
+        setUploadState({ status: 'idle', error: null });
       }
     } catch (e: any) {
       console.error(e);
-      setErrorMessage('Failed to upload image. Please try again.');
+      const errText = e?.message || 'Failed to upload image. Please try again.';
+      setUploadState({ status: 'error', error: errText });
     } finally {
       setUploadingImage(false);
     }
@@ -299,12 +324,17 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
       category_id: null,
       category: null,
       main_image: '',
-      is_active: true
+      is_active: true,
+      cost_price: '',
+      sale_price: '',
+      max_discount_type: 'percent',
+      max_discount_value: ''
     });
     setSelectedCategoryIds([]);
     setSelectedSpecIds([]);
     setSelectedSizeIds([]);
     setSelectedColorIds([]);
+    setUploadState({ status: 'idle', error: null });
     setErrorMessage(null);
     if (onClearDraft) onClearDraft();
   };
@@ -321,6 +351,38 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
       return;
     }
 
+    const costVal = formData.cost_price !== undefined && formData.cost_price !== null && formData.cost_price !== ''
+      ? parseFloat(String(formData.cost_price))
+      : 0;
+    const saleVal = formData.sale_price !== undefined && formData.sale_price !== null && formData.sale_price !== ''
+      ? parseFloat(String(formData.sale_price))
+      : 0;
+    const maxDiscVal = formData.max_discount_value !== undefined && formData.max_discount_value !== null && formData.max_discount_value !== ''
+      ? parseFloat(String(formData.max_discount_value))
+      : 0;
+    const maxDiscType: 'percent' | 'amount' = formData.max_discount_type === 'amount' ? 'amount' : 'percent';
+
+    if (isNaN(costVal) || costVal < 0) {
+      setErrorMessage('Cost price cannot be negative.');
+      return;
+    }
+    if (isNaN(saleVal) || saleVal < 0) {
+      setErrorMessage('Sale price cannot be negative.');
+      return;
+    }
+    if (isNaN(maxDiscVal) || maxDiscVal < 0) {
+      setErrorMessage('Maximum discount cannot be negative.');
+      return;
+    }
+    if (maxDiscType === 'percent' && maxDiscVal > 100) {
+      setErrorMessage('Maximum discount percentage cannot exceed 100%.');
+      return;
+    }
+    if (maxDiscType === 'amount' && maxDiscVal > saleVal) {
+      setErrorMessage(`Fixed maximum discount (৳${maxDiscVal.toLocaleString()}) cannot exceed the sale price (৳${saleVal.toLocaleString()}).`);
+      return;
+    }
+
     setSaving(true);
     try {
       const primaryCatId = selectedCategoryIds.length > 0 ? Number(selectedCategoryIds[0]) : null;
@@ -333,6 +395,10 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
         category_id: primaryCatId,
         category: primaryCat ? primaryCat.name : (formData.category || null),
         category_ids: selectedCategoryIds.map(Number),
+        cost_price: pricingPerms.canEditCostPrice ? costVal : (formData.id ? undefined : 0),
+        sale_price: saleVal,
+        max_discount_type: maxDiscType,
+        max_discount_value: maxDiscVal,
         specIds: selectedSpecIds,
         sizeIds: selectedSizeIds,
         colorIds: selectedColorIds
@@ -482,29 +548,194 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
             </div>
           </div>
 
+          {/* Pricing & Maximum Discount Section */}
+          <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '1rem', display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+            <div style={{ fontSize: '0.82rem', fontWeight: 800, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+              Product Pricing &amp; Maximum Discount
+            </div>
+
+            <div className={pricingPerms.canViewCostPrice ? "make-responsive-grid-2" : ""} style={{ gap: '1rem' }}>
+              {/* Cost Price: Strictly visible to authorized roles */}
+              {pricingPerms.canViewCostPrice && (
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                    COST PRICE (৳) {pricingPerms.canEditCostPrice ? '' : '(READ-ONLY)'}
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    placeholder="e.g. 15000"
+                    value={formData.cost_price ?? ''}
+                    onChange={(e) => handleFieldChange('cost_price', e.target.value)}
+                    disabled={!pricingPerms.canEditCostPrice}
+                    readOnly={!pricingPerms.canEditCostPrice}
+                    style={{ width: '100%', padding: '9px 12px', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', boxSizing: 'border-box', opacity: !pricingPerms.canEditCostPrice ? 0.7 : 1 }}
+                  />
+                  <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '2px', display: 'block' }}>
+                    {pricingPerms.canEditCostPrice ? 'Internal manufacturing cost' : '🔒 Confidential / Read-only'}
+                  </span>
+                </div>
+              )}
+
+              {/* Sale Price */}
+              <div>
+                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                  SALE PRICE (৳) *
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  placeholder="e.g. 22000"
+                  value={formData.sale_price ?? ''}
+                  onChange={(e) => handleFieldChange('sale_price', e.target.value)}
+                  style={{ width: '100%', padding: '9px 12px', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', boxSizing: 'border-box' }}
+                />
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '2px', display: 'block' }}>
+                  Standard catalog selling price
+                </span>
+              </div>
+            </div>
+
+            {/* Maximum Discount */}
+            <div>
+              <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                MAXIMUM ALLOWED DISCOUNT
+              </label>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <select
+                  value={formData.max_discount_type || 'percent'}
+                  onChange={(e) => handleFieldChange('max_discount_type', e.target.value as 'percent' | 'amount')}
+                  style={{ padding: '9px 12px', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', fontSize: '0.82rem', fontWeight: 600, minWidth: '150px' }}
+                >
+                  <option value="percent">Percentage (%)</option>
+                  <option value="amount">Fixed Amount (৳)</option>
+                </select>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  placeholder={formData.max_discount_type === 'amount' ? "e.g. 2000" : "e.g. 15"}
+                  value={formData.max_discount_value ?? ''}
+                  onChange={(e) => handleFieldChange('max_discount_value', e.target.value)}
+                  style={{ flex: 1, padding: '9px 12px', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', boxSizing: 'border-box' }}
+                />
+              </div>
+
+              {/* Helpful Lowest Permitted Price Feedback */}
+              {(() => {
+                const saleNum = parseFloat(String(formData.sale_price || 0));
+                const discVal = parseFloat(String(formData.max_discount_value || 0));
+                const discType = formData.max_discount_type || 'percent';
+
+                if (saleNum > 0) {
+                  let lowestPrice = saleNum;
+                  let discAmt = 0;
+                  let isExceeded = false;
+
+                  if (discType === 'percent') {
+                    if (discVal > 100) isExceeded = true;
+                    discAmt = (saleNum * Math.min(100, Math.max(0, discVal))) / 100;
+                    lowestPrice = Math.max(0, saleNum - discAmt);
+                  } else {
+                    if (discVal > saleNum) isExceeded = true;
+                    discAmt = Math.min(saleNum, Math.max(0, discVal));
+                    lowestPrice = Math.max(0, saleNum - discAmt);
+                  }
+
+                  if (isExceeded) {
+                    return (
+                      <div style={{ marginTop: '6px', fontSize: '0.75rem', color: '#ef4444', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        ⚠️ {discType === 'percent' ? 'Discount cannot exceed 100%' : 'Maximum discount cannot exceed the sale price'}
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div style={{ marginTop: '6px', fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                      <span>Lowest permitted sale price:</span>
+                      <strong style={{ color: '#10b981', fontSize: '0.82rem' }}>৳{Math.round(lowestPrice).toLocaleString()}</strong>
+                      {discVal > 0 && (
+                        <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', background: 'var(--bg-secondary)', padding: '2px 6px', borderRadius: '4px' }}>
+                          (Max reduction: {discType === 'percent' ? `${discVal}% (৳${Math.round(discAmt).toLocaleString()})` : `৳${Math.round(discAmt).toLocaleString()}`})
+                        </span>
+                      )}
+                    </div>
+                  );
+                }
+                return null;
+              })()}
+            </div>
+          </div>
+
           <div>
             <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '4px' }}>
               PRODUCT IMAGE
             </label>
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
               <button
                 type="button"
-                disabled={uploadingImage}
+                id="product-image-upload-button"
+                disabled={uploadingImage || uploadState.status === 'uploading'}
                 onClick={handlePickAndUploadImage}
-                style={{ padding: '9px 14px', background: '#3b82f6', border: 'none', borderRadius: '8px', color: '#fff', cursor: uploadingImage ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', fontWeight: 600, whiteSpace: 'nowrap' }}
+                style={{
+                  padding: '9px 14px',
+                  background: uploadState.status === 'success' ? '#10b981' : (uploadState.status === 'error' ? '#ef4444' : '#3b82f6'),
+                  border: 'none',
+                  borderRadius: '8px',
+                  color: '#fff',
+                  cursor: (uploadingImage || uploadState.status === 'uploading') ? 'not-allowed' : 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  fontSize: '0.82rem',
+                  fontWeight: 600,
+                  whiteSpace: 'nowrap',
+                  transition: 'background-color 0.2s ease'
+                }}
               >
-                <Upload size={14} /> {uploadingImage ? 'Uploading...' : 'Upload Image'}
+                {(uploadingImage || uploadState.status === 'uploading') && (
+                  <>
+                    <RefreshCw size={14} className="upload-spinner" />
+                    <span>Uploading...</span>
+                  </>
+                )}
+                {uploadState.status === 'success' && !uploadingImage && (
+                  <>
+                    <Check size={14} />
+                    <span>Uploaded!</span>
+                  </>
+                )}
+                {uploadState.status === 'error' && !uploadingImage && (
+                  <>
+                    <AlertCircle size={14} />
+                    <span>Retry Upload</span>
+                  </>
+                )}
+                {uploadState.status === 'idle' && !uploadingImage && (
+                  <>
+                    <Upload size={14} />
+                    <span>{formData.main_image ? 'Change Image' : 'Upload Image'}</span>
+                  </>
+                )}
               </button>
               {formData.main_image && (
                 <button
                   type="button"
-                  onClick={() => handleFieldChange('main_image', '')}
+                  onClick={() => { handleFieldChange('main_image', ''); setUploadState({ status: 'idle', error: null }); }}
                   style={{ padding: '9px 12px', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.82rem' }}
                 >
                   Remove
                 </button>
               )}
             </div>
+            {uploadState.error && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: '#ef4444', marginTop: '4px', fontWeight: 500 }}>
+                <AlertCircle size={13} />
+                <span>{uploadState.error}</span>
+              </div>
+            )}
             {formData.main_image && (
               <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <img src={resolveImageSrc(formData.main_image)} alt="Preview" onError={e => handleImageLoadError(e, formData.main_image)} style={{ width: '50px', height: '50px', objectFit: 'cover', borderRadius: '6px', border: '1px solid var(--border-color)' }} />

@@ -4214,9 +4214,9 @@ export function registerHandlers() {
         const filePath = result.filePaths[0];
         try {
             return await uploadOptimizedImage(fs.readFileSync(filePath), path.basename(filePath, path.extname(filePath)) || 'product');
-        } catch (e) {
+        } catch (e: any) {
             console.error('[IPC] Product image upload failed:', e);
-            return null;
+            throw new Error(`Upload failed: ${e?.message || 'Storage upload error'}`);
         }
     });
 

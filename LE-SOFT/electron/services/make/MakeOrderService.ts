@@ -36,6 +36,10 @@ export interface CreateMakeOrderInput {
     special_instructions?: string | null;
     cost_price?: number | string | null;
     sale_price?: number | string | null;
+    discount_type?: 'percent' | 'amount' | null;
+    discount_value?: number | string | null;
+    discount_amount?: number | string | null;
+    final_price?: number | string | null;
     customer_id?: number | null;
     invoice_attachment_urls?: string[];
     invoice_attachments?: string[];
@@ -55,6 +59,8 @@ export interface CreateMakeOrderInput {
         quantity: number;
         item_cost_price?: number | string | null;
         item_sale_price?: number | string | null;
+        max_discount_type?: 'percent' | 'amount' | null;
+        max_discount_value?: number | string | null;
         is_customized?: boolean;
         is_custom?: boolean;
         custom_dimensions?: string | null;
@@ -275,8 +281,40 @@ export class MakeOrderService {
             }
         }
 
-        // 1. Validate items and compute authoritative pricing totals
-        const pricing = MakePricingService.calculateAndValidateTotals(input.items);
+        // Pre-fetch product catalog pricing & discount limits if items have product_id
+        const productIds = (input.items || []).map(it => it.product_id).filter(Boolean) as number[];
+        let productsMap: Record<number, any> = {};
+        if (productIds.length > 0) {
+            try {
+                const { data: dbProds } = await supabase
+                    .from('make_products')
+                    .select('id, cost_price, sale_price, max_discount_type, max_discount_value')
+                    .in('id', productIds);
+                if (dbProds && dbProds.length > 0) {
+                    productsMap = Object.fromEntries(dbProds.map((p: any) => [p.id, p]));
+                }
+            } catch (err) {
+                console.warn('[MakeOrderService] Could not prefetch product discount rules:', err);
+            }
+        }
+
+        // Enrich items with product rules if not already present on the item
+        const enrichedItems = input.items.map(it => {
+            const dbProd = it.product_id ? productsMap[it.product_id] : null;
+            return {
+                ...it,
+                max_discount_type: it.max_discount_type || dbProd?.max_discount_type || null,
+                max_discount_value: it.max_discount_value !== undefined && it.max_discount_value !== null && it.max_discount_value !== ''
+                    ? it.max_discount_value
+                    : (dbProd?.max_discount_value ?? null)
+            };
+        });
+
+        // 1. Validate items and compute authoritative pricing totals and discounts
+        const pricing = MakePricingService.calculateAndValidateTotals(enrichedItems, {
+            discount_type: input.discount_type,
+            discount_value: input.discount_value
+        });
         if (!pricing.isValid) {
             return { success: false, error: pricing.error };
         }
@@ -301,6 +339,15 @@ export class MakeOrderService {
         const initialStatus = input.salesman_id ? 'Pending Approval' : 'Placed';
         const isApproved = !input.salesman_id;
         const initialApprovalStatus = isApproved ? 'sales_approved' : 'awaiting_designer';
+
+        // Storing discount breakdown and subtotal in custom_details ensures resilience across all DB schemas
+        const customDetails: Record<string, any> = {
+            subtotal: pricing.subtotal,
+            discount_type: pricing.discountType,
+            discount_value: pricing.discountValue,
+            discount_amount: pricing.discountAmount,
+            final_price: pricing.finalPrice
+        };
 
         // 2. Insert order header
         const orderHeaderPayload: Record<string, any> = {
@@ -331,6 +378,11 @@ export class MakeOrderService {
             receiver_phone: input.receiver_phone?.trim() || null,
             cost_price: pricing.totalCostPrice,
             sale_price: pricing.totalSalePrice,
+            discount_type: pricing.discountType,
+            discount_value: pricing.discountValue,
+            discount_amount: pricing.discountAmount,
+            final_price: pricing.finalPrice,
+            custom_details: customDetails,
             approval_status: initialApprovalStatus,
             current_version: 1,
             created_at: new Date().toISOString()
@@ -346,17 +398,26 @@ export class MakeOrderService {
             .select('id, order_number')
             .single();
 
-        // If insert failed due to reference_bill_no not existing on fallback schema, retry without it
-        if (orderErr && orderErr.message && orderErr.message.includes('reference_bill_no')) {
-            const fallbackPayload = { ...orderHeaderPayload };
-            delete fallbackPayload.reference_bill_no;
-            const retryRes = await supabase
-                .from('make_orders')
-                .insert(fallbackPayload)
-                .select('id, order_number')
-                .single();
-            createdOrder = retryRes.data;
-            orderErr = retryRes.error;
+        // If insert failed due to missing columns on unmigrated schema, strip them and retry
+        if (orderErr && orderErr.message) {
+            const optionalCols = ['discount_type', 'discount_value', 'discount_amount', 'final_price', 'reference_bill_no'];
+            const hasOptionalMissing = optionalCols.some(c => orderErr.message.includes(c));
+            if (hasOptionalMissing) {
+                console.warn('[MakeOrderService] Detected missing optional column on make_orders, retrying with fallback payload...');
+                const fallbackPayload = { ...orderHeaderPayload };
+                for (const c of optionalCols) {
+                    if (orderErr.message.includes(c)) {
+                        delete fallbackPayload[c];
+                    }
+                }
+                const retryRes = await supabase
+                    .from('make_orders')
+                    .insert(fallbackPayload)
+                    .select('id, order_number')
+                    .single();
+                createdOrder = retryRes.data;
+                orderErr = retryRes.error;
+            }
         }
 
         if (orderErr || !createdOrder) {
@@ -398,6 +459,8 @@ export class MakeOrderService {
                     ? Math.max(0, Number(item.item_sale_price))
                     : null,
                 is_customized: !!(item.is_customized || (item as any).is_custom),
+                max_discount_type: item.max_discount_type || null,
+                max_discount_value: item.max_discount_value !== undefined && item.max_discount_value !== null && item.max_discount_value !== '' ? Number(item.max_discount_value) : null,
                 designer_notes: item.designer_notes || (item as any).custom_notes || null
             };
         });
@@ -424,6 +487,8 @@ export class MakeOrderService {
                     delete sanitized.designer_notes;
                     delete sanitized.technical_drawing_url;
                     delete sanitized.pdf_urls;
+                    delete sanitized.max_discount_type;
+                    delete sanitized.max_discount_value;
                 }
                 return sanitized;
             });

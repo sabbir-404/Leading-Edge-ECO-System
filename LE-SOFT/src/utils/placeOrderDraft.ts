@@ -27,6 +27,8 @@ export interface CartItemDraft {
   quantity: number;
   item_cost_price?: number | string;
   item_sale_price?: number | string | null;
+  max_discount_type?: 'percent' | 'amount' | null;
+  max_discount_value?: number | null;
   notes?: string;
   attachedFile?: {
     name: string;
@@ -96,6 +98,10 @@ export interface PlaceOrderDraftData {
   // Cart & Attachments
   cartItems?: CartItemDraft[];
   invoiceAttachments?: { name: string; url: string; isPending?: boolean }[];
+
+  // Order Discount
+  discountType?: 'percent' | 'amount';
+  discountValue?: number | string;
 
   updatedAt?: number;
 }
@@ -374,5 +380,6 @@ export function hasMeaningfulPlaceOrderDraft(draft?: PlaceOrderDraftData): boole
   if (Array.isArray(d.invoiceAttachments) && d.invoiceAttachments.length > 0) return true;
   if (d.selectedProduct || d.customItemName) return true;
   if (d.targetDeliveryDate && d.targetDeliveryDate.trim().length > 0) return true;
+  if (d.discountValue !== undefined && d.discountValue !== null && String(d.discountValue).trim().length > 0) return true;
   return false;
 }

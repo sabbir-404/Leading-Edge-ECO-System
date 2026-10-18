@@ -935,6 +935,46 @@ export function registerMakeHandlers(): void {
     }
 
     /**
+     * Verifies if the session user has permissions to view cost prices of products.
+     * Allowed for Superadmin, Admin, Furniture Designer, and Factory Manager.
+     * Salespersons are strictly forbidden.
+     */
+    function canViewCostPriceSession(session: UserSession): boolean {
+        const role = (session.role || '').toLowerCase();
+        if (role === 'salesperson' || role === 'salesman' || role === 'sales') return false;
+        if (role === 'admin' || role === 'superadmin' || role === 'manager') return true;
+        if (
+            role === 'furniture_designer' ||
+            role === 'furniture designer' ||
+            role === 'designer' ||
+            role === 'make_designer' ||
+            role === 'factory_manager' ||
+            role === 'factory manager' ||
+            role === 'factory'
+        ) return true;
+        return !!(session.permissions && (session.permissions['view_cost_price'] || session.permissions['set_make_cost_price']));
+    }
+
+    /**
+     * Verifies if the session user has permissions to edit/set product cost prices.
+     * Strictly Superadmin, Admin, and Furniture Designer.
+     * Factory Manager and Salespersons cannot set or edit cost prices.
+     */
+    function canEditCostPriceSession(session: UserSession): boolean {
+        const role = (session.role || '').toLowerCase();
+        if (role === 'salesperson' || role === 'salesman' || role === 'sales') return false;
+        if (role === 'factory_manager' || role === 'factory manager' || role === 'factory') return false;
+        if (role === 'admin' || role === 'superadmin' || role === 'manager') return true;
+        if (
+            role === 'furniture_designer' ||
+            role === 'furniture designer' ||
+            role === 'designer' ||
+            role === 'make_designer'
+        ) return true;
+        return !!(session.permissions && session.permissions['set_make_cost_price']);
+    }
+
+    /**
      * Verifies if the session user has permissions to approve MAKE orders.
      */
     function canApproveOrder(session: UserSession): boolean {
@@ -1994,6 +2034,15 @@ export function registerMakeHandlers(): void {
             }
         }
 
+        // Enforce cost price visibility permissions
+        const session = SessionManager.getSession();
+        const canViewCost = session ? canViewCostPriceSession(session) : false;
+        if (!canViewCost) {
+            for (const p of products) {
+                delete p.cost_price;
+            }
+        }
+
         return products;
     });
 
@@ -2004,6 +2053,24 @@ export function registerMakeHandlers(): void {
         }
 
         const product = CatalogProductSchema.parse(rawProduct);
+
+        // Authoritatively validate catalog pricing and discount ranges
+        const validPricing = MakePricingService.validateCatalogProductPricing(product);
+        if (!validPricing.isValid) {
+            throw new Error(validPricing.error);
+        }
+
+        const isUpdate = Boolean(product.id);
+        const canEditCost = canEditCostPriceSession(session);
+        // Cost price permissions enforcement: if unauthorized to edit cost, preserve or zero
+        let costPriceToWrite: number | undefined = validPricing.costPrice;
+        if (!canEditCost) {
+            if (isUpdate) {
+                costPriceToWrite = undefined;
+            } else {
+                costPriceToWrite = 0;
+            }
+        }
 
         // Extract multi-category IDs
         const rawCatIds = (product.category_ids || product.categoryIds || (product.category_id ? [product.category_id] : [])) as any[];
@@ -2035,8 +2102,7 @@ export function registerMakeHandlers(): void {
             }
         }
 
-        const isUpdate = Boolean(product.id);
-        const writePayload = isUpdate ? {
+        const writePayload: any = isUpdate ? {
             product_code: product.product_code,
             product_name: product.product_name,
             description: product.description || null,
@@ -2044,6 +2110,9 @@ export function registerMakeHandlers(): void {
             category: resolvedCategoryName,
             main_image: product.main_image || null,
             is_active: product.is_active !== undefined ? product.is_active : true,
+            sale_price: validPricing.salePrice,
+            max_discount_type: validPricing.maxDiscountType,
+            max_discount_value: validPricing.maxDiscountValue,
             updated_at: new Date().toISOString()
         } : {
             product_code: product.product_code,
@@ -2053,10 +2122,16 @@ export function registerMakeHandlers(): void {
             category: resolvedCategoryName,
             main_image: product.main_image || null,
             is_active: product.is_active !== undefined ? product.is_active : true,
+            sale_price: validPricing.salePrice,
+            max_discount_type: validPricing.maxDiscountType,
+            max_discount_value: validPricing.maxDiscountValue,
             created_by: session.fullName || session.username
         };
+        if (costPriceToWrite !== undefined) {
+            writePayload.cost_price = costPriceToWrite;
+        }
 
-        const writeResult = await failoverEngine.executeWrite(
+        let writeResult = await failoverEngine.executeWrite(
             async (client) => {
                 if (isUpdate) {
                     return await (client.from('make_products') as any).update(writePayload).eq('id', product.id).select().single();
@@ -2072,6 +2147,35 @@ export function registerMakeHandlers(): void {
             },
             isUpdate ? 'update-product' : 'insert-product'
         );
+
+        // Fallback: If DB schema does not yet have pricing columns, retry without them
+        if (writeResult.error) {
+            const msg = writeResult.error.message || '';
+            if (/cost_price|sale_price|max_discount/i.test(msg)) {
+                console.warn('[make-save-catalog-product] Fallback: DB schema missing pricing/discount columns, retrying without them.');
+                const fallbackPayload = { ...writePayload };
+                delete fallbackPayload.cost_price;
+                delete fallbackPayload.sale_price;
+                delete fallbackPayload.max_discount_type;
+                delete fallbackPayload.max_discount_value;
+                writeResult = await failoverEngine.executeWrite(
+                    async (client) => {
+                        if (isUpdate) {
+                            return await (client.from('make_products') as any).update(fallbackPayload).eq('id', product.id).select().single();
+                        } else {
+                            return await (client.from('make_products') as any).insert(fallbackPayload).select().single();
+                        }
+                    },
+                    {
+                        table: 'make_products',
+                        operation: isUpdate ? 'update' : 'insert',
+                        primaryKey: isUpdate ? { name: 'id', value: product.id } : undefined,
+                        data: fallbackPayload
+                    },
+                    isUpdate ? 'update-product-fallback' : 'insert-product-fallback'
+                );
+            }
+        }
 
         if (writeResult.error) throw writeResult.error;
         const savedData = writeResult.data as any;

@@ -55,6 +55,8 @@ interface CartItem {
   quantity: number;
   item_cost_price?: number | string;
   item_sale_price?: number | string | null;
+  max_discount_type?: 'percent' | 'amount' | null;
+  max_discount_value?: number | null;
   notes?: string;
   attachedFile?: {
     name: string;
@@ -87,6 +89,10 @@ const PlaceOrder: React.FC = () => {
       return {};
     }
   }, []);
+
+  // Order Discount state
+  const [discountType, setDiscountType] = useState<'percent' | 'amount'>(() => initialDraft.discountType || 'percent');
+  const [discountValue, setDiscountValue] = useState<string>(() => initialDraft.discountValue !== undefined && initialDraft.discountValue !== null ? String(initialDraft.discountValue) : '');
 
   // Order Header state
   const [priority, setPriority] = useState(() => initialDraft.priority || 'Normal');
@@ -231,6 +237,9 @@ const PlaceOrder: React.FC = () => {
       if (dup.receiver_phone) setReceiverPhone(dup.receiver_phone);
       if (dup.special_instructions) setSpecialInstructions(dup.special_instructions);
 
+      if (dup.discount_type) setDiscountType(dup.discount_type);
+      if (dup.discount_value !== undefined && dup.discount_value !== null) setDiscountValue(String(dup.discount_value));
+
       if (Array.isArray(dup.items) && dup.items.length > 0) {
         const mapped = dup.items.map((it: any) => ({
           _id: String(Date.now() + Math.random()),
@@ -250,6 +259,8 @@ const PlaceOrder: React.FC = () => {
           quantity: it.quantity > 0 ? it.quantity : 1,
           item_cost_price: pricingPerms.canViewCostPrice ? (it.item_cost_price || it.unit_cost_price || 0) : 0,
           item_sale_price: pricingPerms.canViewSalePrice ? (it.item_sale_price || it.unit_sale_price || null) : null,
+          max_discount_type: it.max_discount_type || undefined,
+          max_discount_value: it.max_discount_value !== undefined && it.max_discount_value !== null ? Number(it.max_discount_value) : undefined,
           notes: it.designer_notes || it.notes || '',
           attachedFile: (it.technical_drawing_url || it.drawing_url) ? {
             name: 'Drawing Blueprint',
@@ -278,6 +289,108 @@ const PlaceOrder: React.FC = () => {
 
   // Multi-item Cart
   const [cartItems, setCartItems] = useState<CartItem[]>(() => (Array.isArray(initialDraft.cartItems) ? initialDraft.cartItems : []) as any);
+
+  // Authoritative real-time totals & discount recalculation
+  const pricingSummary = React.useMemo(() => {
+    const totalQty = cartItems.reduce((acc, i) => acc + i.quantity, 0);
+    const totalCostPrice = pricingPerms.canViewCostPrice
+      ? Math.round((cartItems.reduce((acc, i) => acc + (Number(i.item_cost_price) || 0) * i.quantity, 0) + Number.EPSILON) * 100) / 100
+      : 0;
+    const hasAnySalePrice = cartItems.some(i => i.item_sale_price !== null && i.item_sale_price !== undefined && i.item_sale_price !== '');
+    const subtotal = hasAnySalePrice
+      ? Math.round((cartItems.reduce((acc, i) => acc + (Number(i.item_sale_price) || 0) * i.quantity, 0) + Number.EPSILON) * 100) / 100
+      : null;
+
+    // Calculate maximum permitted discount across cart items
+    let totalAllowedDiscountAmount = 0;
+    let hasAnyConfiguredLimit = false;
+
+    if (subtotal !== null && subtotal > 0) {
+      for (const item of cartItems) {
+        const itemSale = item.item_sale_price !== null && item.item_sale_price !== undefined && item.item_sale_price !== ''
+          ? Number(item.item_sale_price)
+          : null;
+        if (itemSale !== null) {
+          const itemSub = itemSale * item.quantity;
+          if (item.max_discount_value !== undefined && item.max_discount_value !== null && !isNaN(Number(item.max_discount_value))) {
+            hasAnyConfiguredLimit = true;
+            const maxVal = Number(item.max_discount_value);
+            if (item.max_discount_type === 'amount') {
+              totalAllowedDiscountAmount += Math.min(itemSub, maxVal * item.quantity);
+            } else {
+              const pct = Math.min(100, Math.max(0, maxVal));
+              totalAllowedDiscountAmount += itemSub * (pct / 100);
+            }
+          } else {
+            // Backward-compatible default: no limit configured imposes no restriction
+            totalAllowedDiscountAmount += itemSub;
+          }
+        }
+      }
+    }
+
+    totalAllowedDiscountAmount = Math.round((totalAllowedDiscountAmount + Number.EPSILON) * 100) / 100;
+    const totalAllowedDiscountPercent = subtotal && subtotal > 0
+      ? Math.round(((totalAllowedDiscountAmount / subtotal) * 100 + Number.EPSILON) * 100) / 100
+      : 0;
+
+    let discountAmount = 0;
+    let discountValNum = 0;
+    let discountValidationError: string | null = null;
+
+    if (discountValue !== '' && discountValue !== undefined && discountValue !== null) {
+      const parsed = Number(discountValue);
+      if (isNaN(parsed) || parsed < 0) {
+        discountValidationError = 'Discount cannot be negative.';
+      } else {
+        discountValNum = Math.round((parsed + Number.EPSILON) * 100) / 100;
+        if (subtotal === null && discountValNum > 0) {
+          discountValidationError = 'Cannot apply discount when items do not have sale prices.';
+        } else if (discountType === 'percent') {
+          if (discountValNum > 100) {
+            discountValidationError = 'Discount percentage cannot exceed 100%.';
+          } else if (hasAnyConfiguredLimit && discountValNum > totalAllowedDiscountPercent + 0.001) {
+            discountValidationError = `Discount (${discountValNum}%) exceeds the maximum permitted discount limit (${totalAllowedDiscountPercent}%).`;
+          } else if (subtotal !== null) {
+            discountAmount = Math.round((subtotal * (discountValNum / 100) + Number.EPSILON) * 100) / 100;
+          }
+        } else {
+          // fixed amount mode
+          if (subtotal !== null && discountValNum > subtotal) {
+            discountValidationError = `Fixed discount (৳${discountValNum.toLocaleString()}) cannot exceed the subtotal (৳${subtotal.toLocaleString()}).`;
+          } else if (hasAnyConfiguredLimit && discountValNum > totalAllowedDiscountAmount + 0.001) {
+            discountValidationError = `Fixed discount (৳${discountValNum.toLocaleString()}) exceeds the maximum permitted limit (৳${totalAllowedDiscountAmount.toLocaleString()}).`;
+          } else {
+            discountAmount = discountValNum;
+          }
+        }
+      }
+    }
+
+    const finalSalePrice = subtotal !== null
+      ? Math.max(0, Math.round((subtotal - discountAmount + Number.EPSILON) * 100) / 100)
+      : null;
+
+    const marginAmount = finalSalePrice !== null && pricingPerms.canViewCostPrice
+      ? Math.round((finalSalePrice - totalCostPrice + Number.EPSILON) * 100) / 100
+      : null;
+
+    return {
+      totalQty,
+      totalCostPrice,
+      subtotal,
+      hasAnySalePrice,
+      hasAnyConfiguredLimit,
+      totalAllowedDiscountAmount,
+      totalAllowedDiscountPercent,
+      discountType,
+      discountValNum,
+      discountAmount,
+      discountValidationError,
+      finalSalePrice,
+      marginAmount
+    };
+  }, [cartItems, discountType, discountValue, pricingPerms.canViewCostPrice]);
 
   // Search state
   const [productSearch, setProductSearch] = useState('');
@@ -340,7 +453,9 @@ const PlaceOrder: React.FC = () => {
     customItemSize,
     customItemSpec,
     cartItems: cartItems as any,
-    invoiceAttachments
+    invoiceAttachments,
+    discountType,
+    discountValue
   });
 
   const handleLoadSavedDraft = (savedDraft: SavedPlaceOrderDraft) => {
@@ -397,6 +512,8 @@ const PlaceOrder: React.FC = () => {
     setCustomItemSpec(d.customItemSpec || '');
     setCartItems(Array.isArray(d.cartItems) ? d.cartItems as any : []);
     setInvoiceAttachments(Array.isArray(d.invoiceAttachments) ? d.invoiceAttachments : []);
+    setDiscountType(d.discountType || 'percent');
+    setDiscountValue(d.discountValue !== undefined && d.discountValue !== null ? String(d.discountValue) : '');
     setShowColorOptions(false);
     setCustomerSearchQuery('');
     setCustomerSuggestions([]);
@@ -621,7 +738,9 @@ const PlaceOrder: React.FC = () => {
         customItemSize,
         customItemSpec,
         cartItems: cartItems as any,
-        invoiceAttachments
+        invoiceAttachments,
+        discountType,
+        discountValue
       });
     }, 250);
     return () => clearTimeout(timer);
@@ -633,7 +752,8 @@ const PlaceOrder: React.FC = () => {
     selectedSize, selectedColor, itemQuantity, itemCostPrice, itemSalePrice, itemRemarks,
     isCustomSize, customShape, customLength, customWidth, customHeight, customDiameter,
     customUnit, isCustomSpec, customSpecName, isCustomColor, customColorName,
-    isCustomItemMode, customItemName, customItemSize, customItemSpec, cartItems, invoiceAttachments
+    isCustomItemMode, customItemName, customItemSize, customItemSpec, cartItems, invoiceAttachments,
+    discountType, discountValue
   ]);
 
   const handleClearDraft = () => {
@@ -659,6 +779,8 @@ const PlaceOrder: React.FC = () => {
 
     clearPlaceOrderDraft();
     setActiveSavedDraftId(null);
+    setDiscountType('percent');
+    setDiscountValue('');
     setShowColorOptions(false);
     setSelectedCustomerId(null);
     setSelectedCustomerInfo(null);
@@ -857,8 +979,8 @@ const PlaceOrder: React.FC = () => {
     setCustomHeight('');
     setCustomDiameter('');
     if (prod) {
-      setItemCostPrice(pricingPerms.canViewCostPrice ? (prod.purchase_price || '') : '');
-      setItemSalePrice(prod.selling_price || prod.mrp || '');
+      setItemCostPrice(pricingPerms.canViewCostPrice ? (prod.cost_price ?? prod.purchase_price ?? '') : '');
+      setItemSalePrice(prod.sale_price ?? prod.selling_price ?? prod.mrp ?? '');
     } else {
       setItemCostPrice('');
       setItemSalePrice('');
@@ -954,6 +1076,8 @@ const PlaceOrder: React.FC = () => {
         quantity: itemQuantity > 0 ? itemQuantity : 1,
         item_cost_price: costP,
         item_sale_price: saleP,
+        max_discount_type: selectedProduct.max_discount_type || null,
+        max_discount_value: selectedProduct.max_discount_value !== undefined && selectedProduct.max_discount_value !== null ? Number(selectedProduct.max_discount_value) : null,
         notes: itemRemarks,
         attachedFile: attachedFile ? { ...attachedFile } : null
       };
@@ -1043,14 +1167,14 @@ const PlaceOrder: React.FC = () => {
     setError('');
 
     try {
-      const totalQty = cartItems.reduce((acc, i) => acc + i.quantity, 0);
-      const totalCostPrice = pricingPerms.canViewCostPrice 
-        ? cartItems.reduce((acc, i) => acc + (Number(i.item_cost_price) || 0) * i.quantity, 0)
-        : 0;
-      const hasAnySalePrice = cartItems.some(i => i.item_sale_price !== null && i.item_sale_price !== undefined && i.item_sale_price !== '');
-      const totalSalePrice = hasAnySalePrice 
-        ? cartItems.reduce((acc, i) => acc + (Number(i.item_sale_price) || 0) * i.quantity, 0)
-        : null;
+      if (pricingSummary.discountValidationError) {
+        alert(`Invalid discount: ${pricingSummary.discountValidationError}`);
+        return;
+      }
+
+      const totalQty = pricingSummary.totalQty;
+      const totalCostPrice = pricingSummary.totalCostPrice;
+      const totalSalePrice = pricingSummary.finalSalePrice ?? pricingSummary.subtotal;
 
       const mainTitle = cartItems.length === 1 
         ? cartItems[0].product_name 
@@ -1078,6 +1202,10 @@ const PlaceOrder: React.FC = () => {
         special_instructions: specialInstructions.trim(),
         cost_price: totalCostPrice,
         sale_price: totalSalePrice,
+        discount_type: pricingSummary.discountValNum > 0 ? pricingSummary.discountType : null,
+        discount_value: pricingSummary.discountValNum > 0 ? pricingSummary.discountValNum : null,
+        discount_amount: pricingSummary.discountAmount,
+        final_price: pricingSummary.finalSalePrice,
         invoice_attachments: invoiceAttachments.map(a => a.url),
         items: cartItems.map(i => ({
           product_id: i.product_id || null,
@@ -1092,6 +1220,8 @@ const PlaceOrder: React.FC = () => {
           quantity: i.quantity,
           item_cost_price: pricingPerms.canViewCostPrice ? (Number(i.item_cost_price) || 0) : 0,
           item_sale_price: i.item_sale_price !== null && i.item_sale_price !== undefined && i.item_sale_price !== '' ? Number(i.item_sale_price) : null,
+          max_discount_type: i.max_discount_type || null,
+          max_discount_value: i.max_discount_value !== undefined && i.max_discount_value !== null ? Number(i.max_discount_value) : null,
           is_customized: !!i.is_customized,
           custom_dimensions: i.custom_dimensions || (i.is_customized ? i.dimensions_text : null),
           designer_notes: i.notes || null
@@ -2313,6 +2443,177 @@ const PlaceOrder: React.FC = () => {
                         ))}
                       </tbody>
                     </table>
+                  </div>
+
+                  {/* Order Discount & Financial Summary Card */}
+                  <div style={{
+                    marginTop: '1.25rem',
+                    padding: '1.25rem',
+                    borderRadius: '12px',
+                    background: 'var(--card-bg)',
+                    border: '1px solid var(--border-color)',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.04)'
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '8px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Tag size={18} color="var(--accent-color)" />
+                        <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                          Order Discount &amp; Pricing Summary
+                        </h4>
+                      </div>
+                      {pricingSummary.hasAnyConfiguredLimit && (
+                        <span style={{
+                          fontSize: '0.75rem',
+                          fontWeight: 600,
+                          padding: '3px 8px',
+                          borderRadius: '6px',
+                          background: 'rgba(16, 185, 129, 0.1)',
+                          color: '#059669',
+                          border: '1px solid rgba(16, 185, 129, 0.25)'
+                        }}>
+                          Max Allowed Discount: {pricingSummary.totalAllowedDiscountPercent}% (৳{pricingSummary.totalAllowedDiscountAmount.toLocaleString()})
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="make-responsive-grid-2" style={{ gap: '1.5rem', alignItems: 'start' }}>
+                      {/* Left Column: Discount Configuration */}
+                      <div style={{ background: 'var(--bg-secondary)', padding: '1rem', borderRadius: '10px', border: '1px solid var(--border-color)' }}>
+                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '8px' }}>
+                          APPLY ORDER DISCOUNT
+                        </label>
+                        <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                          <select
+                            value={discountType}
+                            onChange={e => setDiscountType(e.target.value as 'percent' | 'amount')}
+                            style={{
+                              width: '140px',
+                              padding: '8px 10px',
+                              background: 'var(--input-bg)',
+                              border: '1px solid var(--border-color)',
+                              borderRadius: '8px',
+                              color: 'var(--text-primary)',
+                              fontSize: '0.85rem',
+                              fontWeight: 600
+                            }}
+                          >
+                            <option value="percent">Percentage (%)</option>
+                            <option value="amount">Fixed (৳)</option>
+                          </select>
+                          <input
+                            type="number"
+                            min="0"
+                            step={discountType === 'percent' ? '0.1' : '1'}
+                            max={discountType === 'percent' ? '100' : undefined}
+                            placeholder={discountType === 'percent' ? 'e.g. 10' : 'e.g. 5000'}
+                            value={discountValue}
+                            onChange={e => setDiscountValue(e.target.value)}
+                            style={{
+                              flex: 1,
+                              padding: '8px 12px',
+                              background: 'var(--input-bg)',
+                              border: `1px solid ${pricingSummary.discountValidationError ? '#ef4444' : 'var(--border-color)'}`,
+                              borderRadius: '8px',
+                              color: 'var(--text-primary)',
+                              fontSize: '0.85rem',
+                              fontWeight: 600
+                            }}
+                          />
+                        </div>
+
+                        {/* Helpful validation feedback */}
+                        {pricingSummary.discountValidationError ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#ef4444', fontSize: '0.78rem', fontWeight: 600, marginTop: '6px' }}>
+                            <AlertCircle size={14} />
+                            <span>{pricingSummary.discountValidationError}</span>
+                          </div>
+                        ) : discountValue && Number(discountValue) > 0 ? (
+                          <div style={{ fontSize: '0.75rem', color: '#10b981', fontWeight: 600, marginTop: '4px' }}>
+                            ✓ Valid discount: reduces total by ৳{pricingSummary.discountAmount.toLocaleString()}
+                          </div>
+                        ) : (
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                            Enter an optional order discount (up to permitted product catalog limits).
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Right Column: Financial Totals Breakdown */}
+                      <div style={{ background: 'var(--bg-secondary)', padding: '1rem', borderRadius: '10px', border: '1px solid var(--border-color)' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.85rem' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-secondary)' }}>
+                            <span>Total Items / Qty:</span>
+                            <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{cartItems.length} lines ({pricingSummary.totalQty} units)</span>
+                          </div>
+
+                          {pricingPerms.canViewSalePrice && (
+                            <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-secondary)' }}>
+                              <span>Subtotal (Catalog Sale Price):</span>
+                              <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                                {pricingSummary.subtotal !== null ? `৳${pricingSummary.subtotal.toLocaleString()}` : 'Pending designer'}
+                              </span>
+                            </div>
+                          )}
+
+                          {pricingSummary.discountAmount > 0 && pricingPerms.canViewSalePrice && (
+                            <div style={{ display: 'flex', justifyContent: 'space-between', color: '#ef4444' }}>
+                              <span>Discount Applied ({discountType === 'percent' ? `${discountValue}%` : 'Fixed'}):</span>
+                              <span style={{ fontWeight: 700 }}>-৳{pricingSummary.discountAmount.toLocaleString()}</span>
+                            </div>
+                          )}
+
+                          <div style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            paddingTop: '8px',
+                            borderTop: '1px dashed var(--border-color)',
+                            fontSize: '1rem',
+                            fontWeight: 800,
+                            color: 'var(--text-primary)'
+                          }}>
+                            <span>Final Total Sale Price:</span>
+                            <span style={{ color: 'var(--accent-color)' }}>
+                              {pricingSummary.finalSalePrice !== null ? `৳${pricingSummary.finalSalePrice.toLocaleString()}` : (pricingSummary.subtotal !== null ? `৳${pricingSummary.subtotal.toLocaleString()}` : 'Pending Designer')}
+                            </span>
+                          </div>
+
+                          {/* Internal Cost Breakdown - Strictly guarded */}
+                          {pricingPerms.canViewCostPrice && (
+                            <div style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              paddingTop: '6px',
+                              borderTop: '1px solid var(--border-color)',
+                              fontSize: '0.78rem',
+                              color: 'var(--text-secondary)'
+                            }}>
+                              <span>Total Estimated Cost:</span>
+                              <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                                ৳{pricingSummary.totalCostPrice.toLocaleString()}
+                              </span>
+                            </div>
+                          )}
+
+                          {pricingPerms.canViewCostPrice && pricingSummary.marginAmount !== null && (
+                            <div style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              fontSize: '0.78rem',
+                              fontWeight: 600,
+                              color: pricingSummary.marginAmount >= 0 ? '#10b981' : '#ef4444'
+                            }}>
+                              <span>Estimated Margin:</span>
+                              <span>
+                                {pricingSummary.marginAmount >= 0 ? '+' : ''}৳{pricingSummary.marginAmount.toLocaleString()}
+                                {pricingSummary.finalSalePrice && pricingSummary.finalSalePrice > 0
+                                  ? ` (${((pricingSummary.marginAmount / pricingSummary.finalSalePrice) * 100).toFixed(1)}%)`
+                                  : ''}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}

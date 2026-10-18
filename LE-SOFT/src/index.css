@@ -207,3 +207,19 @@ button:focus-visible {
     background: rgba(239, 68, 68, 0.15);
     color: #ef4444;
 }
+
+/* ━━━ Image Upload Animated Feedback ━━━ */
+@keyframes uploadSpin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.upload-spinner {
+    animation: uploadSpin 0.85s linear infinite;
+    display: inline-block;
+    flex-shrink: 0;
+}

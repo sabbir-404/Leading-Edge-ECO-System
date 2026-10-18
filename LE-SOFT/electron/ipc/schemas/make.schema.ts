@@ -19,6 +19,8 @@ export const MakeOrderItemInputSchema = z.object({
     quantity: z.number().positive('Quantity must be greater than zero').default(1),
     item_cost_price: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
     item_sale_price: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
+    max_discount_type: z.enum(['percent', 'amount']).nullable().optional(),
+    max_discount_value: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
     is_customized: z.boolean().default(false),
     custom_dimensions: z.string().nullable().optional(),
     designer_notes: z.string().nullable().optional()
@@ -53,6 +55,10 @@ export const CreateMakeOrderSchema = z.object({
     special_instructions: z.string().nullable().optional(),
     cost_price: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
     sale_price: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
+    discount_type: z.enum(['percent', 'amount']).nullable().optional(),
+    discount_value: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
+    discount_amount: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
+    final_price: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
     reference_bill_no: z.string().nullable().optional(),
     invoice_attachments: z.array(z.string()).optional(),
     items: z.array(MakeOrderItemInputSchema).min(1, 'At least one product item must be included in the order.')
@@ -149,6 +155,10 @@ export const CatalogProductSchema = z.object({
     categoryIds: z.array(z.union([z.number(), z.string()])).optional(),
     main_image: z.string().nullable().optional(),
     is_active: z.boolean().default(true),
+    cost_price: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
+    sale_price: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
+    max_discount_type: z.enum(['percent', 'amount']).nullable().optional(),
+    max_discount_value: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
     specIds: z.array(z.union([z.number(), z.string()])).optional(),
     sizeIds: z.array(z.union([z.number(), z.string()])).optional(),
     colorIds: z.array(z.union([z.number(), z.string()])).optional()

@@ -6,7 +6,7 @@ import {
   ShoppingCart, History as HistoryIcon, RotateCcw
 } from 'lucide-react';
 import DashboardLayout from '../../components/DashboardLayout';
-import { canManageGlobalProductAttributes } from '../../utils/permissions';
+import { canManageGlobalProductAttributes, getUserPricingPermissions } from '../../utils/permissions';
 import { 
   loadProductCatalogDraft, 
   saveProductCatalogDraft, 
@@ -58,6 +58,10 @@ interface Product {
   category?: string | null;
   description?: string;
   main_image?: string;
+  cost_price?: number | null;
+  sale_price?: number | null;
+  max_discount_type?: 'percent' | 'amount' | null;
+  max_discount_value?: number | null;
   is_active: boolean;
   purchased_count?: number;
   specifications?: Spec[];
@@ -153,24 +157,52 @@ const MakeProductCatalog: React.FC = () => {
   const [showColorModal, setShowColorModal] = useState(false);
   const [editingColor, setEditingColor] = useState<Partial<Color>>({ is_active: true });
 
+  const pricingPerms = getUserPricingPermissions();
   const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const [uploadingImage, setUploadingImage] = useState(false);
 
-  const handlePickAndUploadImage = async (onSuccess: (url: string) => void) => {
-    setUploadingImage(true);
+  // Independent upload control states for Spec and Color modals
+  const [specUploadState, setSpecUploadState] = useState<{ status: 'idle' | 'uploading' | 'success' | 'error'; error?: string | null }>({ status: 'idle' });
+  const [colorUploadState, setColorUploadState] = useState<{ status: 'idle' | 'uploading' | 'success' | 'error'; error?: string | null }>({ status: 'idle' });
+
+  const handlePickAndUploadSpecImage = async () => {
+    if (specUploadState.status === 'uploading') return;
+    setSpecUploadState({ status: 'uploading' });
     try {
       // @ts-ignore
       const url = await window.electron.pickImage();
       if (url) {
-        onSuccess(url);
-        setMsg({ type: 'success', text: 'Image uploaded successfully!' });
-        setTimeout(() => setMsg(null), 4000);
+        setEditingSpec(prev => ({ ...prev, image_url: url }));
+        setSpecUploadState({ status: 'success' });
+        setTimeout(() => {
+          setSpecUploadState(prev => (prev.status === 'success' ? { status: 'idle' } : prev));
+        }, 2500);
+      } else {
+        setSpecUploadState({ status: 'idle' });
       }
     } catch (e: any) {
-      console.error(e);
-      setMsg({ type: 'error', text: 'Failed to upload image. Please try again.' });
-    } finally {
-      setUploadingImage(false);
+      console.error('[SpecUpload] Error:', e);
+      setSpecUploadState({ status: 'error', error: e?.message || 'Failed to upload image. Please try again.' });
+    }
+  };
+
+  const handlePickAndUploadColorImage = async () => {
+    if (colorUploadState.status === 'uploading') return;
+    setColorUploadState({ status: 'uploading' });
+    try {
+      // @ts-ignore
+      const url = await window.electron.pickImage();
+      if (url) {
+        setEditingColor(prev => ({ ...prev, image_url: url }));
+        setColorUploadState({ status: 'success' });
+        setTimeout(() => {
+          setColorUploadState(prev => (prev.status === 'success' ? { status: 'idle' } : prev));
+        }, 2500);
+      } else {
+        setColorUploadState({ status: 'idle' });
+      }
+    } catch (e: any) {
+      console.error('[ColorUpload] Error:', e);
+      setColorUploadState({ status: 'error', error: e?.message || 'Failed to upload image. Please try again.' });
     }
   };
 
@@ -940,6 +972,85 @@ const MakeProductCatalog: React.FC = () => {
                         <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.85rem', maxWidth: '650px', wordBreak: 'break-word' }}>
                           {selectedProduct.description || 'No description provided.'}
                         </p>
+
+                        {/* Catalog Pricing & Maximum Discount Badge Bar */}
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '8px', alignItems: 'center' }}>
+                          {/* Sale Price */}
+                          <div style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            padding: '4px 10px',
+                            borderRadius: '8px',
+                            background: 'rgba(59, 130, 246, 0.1)',
+                            border: '1px solid rgba(59, 130, 246, 0.25)',
+                            color: '#2563eb',
+                            fontSize: '0.8rem',
+                            fontWeight: 700
+                          }}>
+                            <span>Sale Price:</span>
+                            <span style={{ fontSize: '0.88rem', color: 'var(--text-primary)' }}>
+                              {selectedProduct.sale_price !== null && selectedProduct.sale_price !== undefined
+                                ? `৳ ${Number(selectedProduct.sale_price).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                : 'Not set'}
+                            </span>
+                          </div>
+
+                          {/* Cost Price - strictly guarded by canViewCostPrice */}
+                          {pricingPerms.canViewCostPrice && (
+                            <div style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                              padding: '4px 10px',
+                              borderRadius: '8px',
+                              background: 'rgba(107, 114, 128, 0.1)',
+                              border: '1px solid rgba(107, 114, 128, 0.25)',
+                              color: 'var(--text-secondary)',
+                              fontSize: '0.8rem',
+                              fontWeight: 700
+                            }}>
+                              <span>Cost Price:</span>
+                              <span style={{ fontSize: '0.88rem', color: 'var(--text-primary)' }}>
+                                {selectedProduct.cost_price !== null && selectedProduct.cost_price !== undefined
+                                  ? `৳ ${Number(selectedProduct.cost_price).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                  : 'Not set'}
+                              </span>
+                            </div>
+                          )}
+
+                          {/* Max Discount & Lowest Permitted Price */}
+                          <div style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            padding: '4px 10px',
+                            borderRadius: '8px',
+                            background: selectedProduct.max_discount_value ? 'rgba(16, 185, 129, 0.1)' : 'rgba(107, 114, 128, 0.08)',
+                            border: selectedProduct.max_discount_value ? '1px solid rgba(16, 185, 129, 0.25)' : '1px solid var(--border-color)',
+                            color: selectedProduct.max_discount_value ? '#059669' : 'var(--text-secondary)',
+                            fontSize: '0.8rem',
+                            fontWeight: 600
+                          }}>
+                            <span>Max Discount:</span>
+                            <span style={{ fontWeight: 700 }}>
+                              {selectedProduct.max_discount_value !== null && selectedProduct.max_discount_value !== undefined
+                                ? selectedProduct.max_discount_type === 'amount'
+                                  ? `৳ ${Number(selectedProduct.max_discount_value).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                  : `${selectedProduct.max_discount_value}%`
+                                : 'None (Standard)'}
+                            </span>
+                            {selectedProduct.sale_price && selectedProduct.max_discount_value ? (
+                              <span style={{ fontSize: '0.75rem', opacity: 0.85, marginLeft: '4px' }}>
+                                (Floor: ৳ {(
+                                  selectedProduct.max_discount_type === 'amount'
+                                    ? Math.max(0, Number(selectedProduct.sale_price) - Number(selectedProduct.max_discount_value))
+                                    : Math.max(0, Number(selectedProduct.sale_price) * (1 - Number(selectedProduct.max_discount_value) / 100))
+                                ).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
                       </div>
                     </div>
 
@@ -1663,17 +1774,66 @@ const MakeProductCatalog: React.FC = () => {
                 <div>
                   <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '4px' }}>DRAWING / SPEC IMAGE</label>
                   <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                    <button type="button" disabled={uploadingImage} onClick={() => handlePickAndUploadImage(url => setEditingSpec(prev => ({ ...prev, image_url: url })))}
-                      style={{ padding: '9px 14px', background: '#8b5cf6', border: 'none', borderRadius: '8px', color: '#fff', cursor: uploadingImage ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', fontWeight: 600, whiteSpace: 'nowrap' }}>
-                      <Upload size={14} /> {uploadingImage ? 'Uploading...' : 'Upload Image'}
+                    <button
+                      type="button"
+                      disabled={specUploadState.status === 'uploading'}
+                      onClick={handlePickAndUploadSpecImage}
+                      style={{
+                        padding: '9px 14px',
+                        background: specUploadState.status === 'error' ? '#ef4444' : specUploadState.status === 'success' ? '#10b981' : '#8b5cf6',
+                        border: 'none',
+                        borderRadius: '8px',
+                        color: '#fff',
+                        cursor: specUploadState.status === 'uploading' ? 'not-allowed' : 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        fontSize: '0.82rem',
+                        fontWeight: 600,
+                        whiteSpace: 'nowrap',
+                        transition: 'all 0.2s ease'
+                      }}
+                    >
+                      {specUploadState.status === 'uploading' ? (
+                        <>
+                          <div className="upload-spinner" style={{ width: 14, height: 14, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%' }} />
+                          <span>Uploading...</span>
+                        </>
+                      ) : specUploadState.status === 'success' ? (
+                        <>
+                          <CheckCircle size={14} />
+                          <span>Uploaded!</span>
+                        </>
+                      ) : specUploadState.status === 'error' ? (
+                        <>
+                          <AlertCircle size={14} />
+                          <span>Retry Upload</span>
+                        </>
+                      ) : (
+                        <>
+                          <Upload size={14} />
+                          <span>Upload Image</span>
+                        </>
+                      )}
                     </button>
                     {editingSpec.image_url && (
-                      <button type="button" onClick={() => setEditingSpec(prev => ({ ...prev, image_url: '' }))}
-                        style={{ padding: '9px 12px', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.82rem' }}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingSpec(prev => ({ ...prev, image_url: '' }));
+                          setSpecUploadState({ status: 'idle' });
+                        }}
+                        style={{ padding: '9px 12px', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.82rem' }}
+                      >
                         Remove
                       </button>
                     )}
                   </div>
+                  {specUploadState.status === 'error' && (
+                    <div style={{ fontSize: '0.75rem', color: '#ef4444', marginTop: '4px' }}>
+                      {specUploadState.error}
+                    </div>
+                  )}
                   {editingSpec.image_url && (
                     <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '10px' }}>
                       <img src={resolveImageSrc(editingSpec.image_url)} alt="Spec Preview" onError={e => handleImageLoadError(e, editingSpec.image_url)} style={{ width: '50px', height: '50px', objectFit: 'cover', borderRadius: '6px', border: '1px solid var(--border-color)' }} />
@@ -1777,17 +1937,66 @@ const MakeProductCatalog: React.FC = () => {
                 <div>
                   <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '4px' }}>TEXTURE / FINISH SAMPLE IMAGE</label>
                   <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                    <button type="button" disabled={uploadingImage} onClick={() => handlePickAndUploadImage(url => setEditingColor(prev => ({ ...prev, image_url: url })))}
-                      style={{ padding: '9px 14px', background: '#f59e0b', border: 'none', borderRadius: '8px', color: '#fff', cursor: uploadingImage ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', fontWeight: 600, whiteSpace: 'nowrap' }}>
-                      <Upload size={14} /> {uploadingImage ? 'Uploading...' : 'Upload Image'}
+                    <button
+                      type="button"
+                      disabled={colorUploadState.status === 'uploading'}
+                      onClick={handlePickAndUploadColorImage}
+                      style={{
+                        padding: '9px 14px',
+                        background: colorUploadState.status === 'error' ? '#ef4444' : colorUploadState.status === 'success' ? '#10b981' : '#f59e0b',
+                        border: 'none',
+                        borderRadius: '8px',
+                        color: '#fff',
+                        cursor: colorUploadState.status === 'uploading' ? 'not-allowed' : 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        fontSize: '0.82rem',
+                        fontWeight: 600,
+                        whiteSpace: 'nowrap',
+                        transition: 'all 0.2s ease'
+                      }}
+                    >
+                      {colorUploadState.status === 'uploading' ? (
+                        <>
+                          <div className="upload-spinner" style={{ width: 14, height: 14, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%' }} />
+                          <span>Uploading...</span>
+                        </>
+                      ) : colorUploadState.status === 'success' ? (
+                        <>
+                          <CheckCircle size={14} />
+                          <span>Uploaded!</span>
+                        </>
+                      ) : colorUploadState.status === 'error' ? (
+                        <>
+                          <AlertCircle size={14} />
+                          <span>Retry Upload</span>
+                        </>
+                      ) : (
+                        <>
+                          <Upload size={14} />
+                          <span>Upload Image</span>
+                        </>
+                      )}
                     </button>
                     {editingColor.image_url && (
-                      <button type="button" onClick={() => setEditingColor(prev => ({ ...prev, image_url: '' }))}
-                        style={{ padding: '9px 12px', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.82rem' }}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingColor(prev => ({ ...prev, image_url: '' }));
+                          setColorUploadState({ status: 'idle' });
+                        }}
+                        style={{ padding: '9px 12px', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.82rem' }}
+                      >
                         Remove
                       </button>
                     )}
                   </div>
+                  {colorUploadState.status === 'error' && (
+                    <div style={{ fontSize: '0.75rem', color: '#ef4444', marginTop: '4px' }}>
+                      {colorUploadState.error}
+                    </div>
+                  )}
                   {editingColor.image_url && (
                     <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '10px' }}>
                       <img src={resolveImageSrc(editingColor.image_url)} alt="Color Swatch Preview" onError={e => handleImageLoadError(e, editingColor.image_url)} style={{ width: '50px', height: '50px', objectFit: 'cover', borderRadius: '6px', border: '1px solid var(--border-color)' }} />
