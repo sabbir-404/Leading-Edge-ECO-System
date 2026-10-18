@@ -197,7 +197,8 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
                     return { rows: [] };
                 }
 
-                if (normalized.includes('SELECT object_key, sha256, size_bytes, replicated_at FROM nas_replicated_files WHERE object_key = $1') ||
+                if (normalized.includes('SELECT object_key, sha256, size_bytes, replicated_at, source_updated_at FROM nas_replicated_files WHERE object_key = $1') ||
+                    normalized.includes('SELECT object_key, sha256, size_bytes, source_updated_at, replicated_at FROM nas_replicated_files WHERE object_key = $1') ||
                     normalized.includes('SELECT 1 FROM nas_replicated_files WHERE object_key = $1')) {
                     const row = mockTrueNasReplicatedFiles.get(params[0]);
                     return { rows: row ? [row] : [] };
@@ -210,6 +211,7 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
                         size_bytes: Number(params[2]),
                         entity_type: params[3] || null,
                         entity_id: params[4] || null,
+                        source_updated_at: params[5] || null,
                         replicated_at: new Date().toISOString()
                     };
                     mockTrueNasReplicatedFiles.set(params[0], rec);
@@ -1765,6 +1767,10 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
         const evilUrl = 'https://attacker.evil.com/storage/v1/object/public/make-order-files/invoices/fake.pdf';
         expect(normalizeStorageObjectKey(evilUrl, bucket, opts)).toBeNull();
 
+        // A different Supabase tenant is also untrusted when a project origin is configured.
+        const otherTenantUrl = 'https://attacker.supabase.co/storage/v1/object/public/make-order-files/invoices/fake.pdf';
+        expect(normalizeStorageObjectKey(otherTenantUrl, bucket, opts)).toBeNull();
+
         // 6. Directory traversal attempts
         expect(normalizeStorageObjectKey('../../../etc/passwd', bucket, opts)).toBeNull();
         expect(normalizeStorageObjectKey('make-order-files/../../etc/passwd', bucket, opts)).toBeNull();
@@ -1912,6 +1918,12 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
 
         // The forged tombstone must NOT delete the TrueNAS record!
         expect(mockTrueNasOrders.has(orderId)).toBe(true);
+
+        // The invalid tombstone is quarantined by advancing its cursor, so it cannot
+        // block later legitimate deletion events forever.
+        const tombstoneCp = await getCheckpoint(mockPg, 'replication_tombstones');
+        expect(tombstoneCp.last_replicated_id).toBe('9001');
+        expect(tombstoneCp.last_error).toContain('FORGED_TOMBSTONE_REJECTED');
     });
 
     it('32. Schema initialization error handling: DDL failures halt cycle and return truthful error', async () => {
@@ -1936,5 +1948,62 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
 
         // Restore mockPg
         mockPg.query = origQuery;
+    });
+
+    it('33. Tombstone source-validation query failure fails closed and preserves the NAS record/checkpoint', async () => {
+        const orderId = 98989;
+        mockTrueNasOrders.set(orderId, {
+            id: orderId,
+            order_number: 'ORD-SOURCE-VERIFY-FAIL',
+            furniture_name: 'Keep until cloud validation succeeds'
+        });
+        mockSupabaseTombstones.push({
+            id: 99002,
+            table_name: 'make_orders',
+            record_id: orderId,
+            deleted_at: '2026-10-18T11:30:00.000Z'
+        });
+
+        // Inject a transient Supabase error only into the authoritative id lookup
+        // used by tombstone validation. Normal table scans remain functional.
+        const originalFrom = mockSupabase.from;
+        mockSupabase.from = vi.fn((table: string) => {
+            const tableQuery = originalFrom(table);
+            if (table !== 'make_orders') return tableQuery;
+            const originalSelect = tableQuery.select;
+            tableQuery.select = vi.fn((cols: string = '*') => {
+                const chain = originalSelect(cols);
+                if (cols === 'id') {
+                    chain.maybeSingle = vi.fn(async () => ({
+                        data: null,
+                        error: { code: 'FETCH_ERROR', message: 'simulated transient source lookup failure' }
+                    }));
+                }
+                return chain;
+            });
+            return tableQuery;
+        });
+
+        try {
+            const logger = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
+            const result = await pullBusinessData(mockSupabase, mockPg, {
+                logger,
+                batchSize: 10,
+                throwOnError: false
+            });
+
+            expect(result.success).toBe(false);
+            expect(mockTrueNasOrders.has(orderId)).toBe(true);
+
+            const cp = await getCheckpoint(mockPg, 'replication_tombstones');
+            expect(cp.last_replicated_id).not.toBe('99002');
+            expect(cp.last_error).toContain('Unable to validate tombstone');
+            expect(logger.error).toHaveBeenCalledWith(
+                expect.stringContaining('Error processing tombstone 99002:'),
+                expect.stringContaining('Unable to validate tombstone')
+            );
+        } finally {
+            mockSupabase.from = originalFrom;
+        }
     });
 });
