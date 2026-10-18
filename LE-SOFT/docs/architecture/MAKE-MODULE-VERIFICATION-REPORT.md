@@ -522,58 +522,42 @@ Supabase-first behavior was verified under comprehensive simulated and integrati
 
 ---
 
-### 7.8 Operational Deployment & Live TrueNAS Verification Results
+### 7.8 Operational Deployment, Credential Remediation & Cleanup Audit
 
-During the operational deployment targeting the physical TrueNAS node `le-nas-server` over Tailscale (`100.88.85.6`):
+Targeting the physical TrueNAS node `le-nas-server` over Tailscale (`100.88.85.6`):
 
-1. **Tailscale Connectivity & Node Access**:
-   - Node `le-nas-server` (`100.88.85.6`) was verified online via Tailscale DERP (latency ~115–125ms) with zero public port exposure.
-   - Account `truenas_admin` successfully authenticated and confirmed administrative permissions via `sudo`.
-   - System confirmed: `Linux truenas 6.12.105-production+truenas` with Docker Engine 28.3.1.
+1. **Credential Exposure Incident & Remediation Status**:
+   - **Compromised Credentials**: The temporary TrueNAS password and Supabase service-role key were exposed in conversation prompts and scratch execution scripts.
+   - **Local Artifact Scrubbing**: All temporary scratch scripts and inspection scripts containing hardcoded credentials in the artifact directory were permanently purged from disk.
+   - **Git Repository Audit**: Current branch `feat/failover-uploads-buffer` diff against `origin/main-windows` introduces zero secrets. Past repository history (commits `315a3b6571` and `20c0437073` from May 2026) previously tracked `.manuscript-profile` and `.user-guide-light-profile` configs before removal in `d0145f66df`; shared Git history is preserved without rewriting.
+   - **TrueNAS Account Status**: Temporary account `truenas_admin` has been locked via `sudo passwd -l truenas_admin`. Live probe confirms authentication is blocked (`All configured authentication methods failed`). Future management should transition to dedicated SSH keys and least-privilege accounts.
+   - **Supabase Key Rotation**: The exposed service-role key must be rotated through the Supabase Dashboard (`Settings -> API -> JWT Settings -> Roll keys`). Updating the TrueNAS worker secret in `/mnt/data_pool/lesoft/nas-pull-worker.env` is pending this user-authorized rotation.
 
-2. **Hosted Supabase Migration 070 State**:
-   - Live HTTP/PostgREST verification against hosted production Supabase (`https://ildkkgjrolcjijwfokek.supabase.co`) confirmed that **Migration 070 is deployed and active**:
-     - `POST /rest/v1/rpc/get_buffer_quota_status` $\rightarrow$ `HTTP 401 {"code":"42501","message":"permission denied for function get_buffer_quota_status"}`
-     - `POST /rest/v1/rpc/reserve_buffer_capacity` $\rightarrow$ `HTTP 401 {"code":"42501","message":"permission denied for function reserve_buffer_capacity"}`
-     - `GET /rest/v1/supabase_buffer_reservations` $\rightarrow$ `HTTP 401 {"code":"42501","message":"permission denied for table supabase_buffer_reservations"}`
-     - Service-role authentication successfully queried `get_buffer_quota_status`:
-       `{"success":true,"total_bytes_used":0,"hard_ceiling_bytes":1000000000,"storage_bytes_used":0,"database_bytes_used":0,"storage_ceiling_bytes":600000000,"database_ceiling_bytes":250000000}`.
-   - Private storage bucket `make-order-files` confirmed initialized with `public: false`.
+2. **Audit & Reconciliation of Disposable Test Cleanup**:
+   - **Reconciliation of Order 20 vs Orders 21–23**:
+     - During the initial test attempt, an order created in Supabase Cloud received cloud ID 20, failed on a missing field, and was removed from Supabase Cloud.
+     - On TrueNAS PostgreSQL, ID 20 is a **pre-existing real customer order**: `LE-ORD-MU2K2KJ2` ("50-4790 (2 Person Workstation)", `Placed`). Live audit via `http://100.88.85.6:3001` confirmed that real order 20 is **100% intact and untouched**.
+     - Subsequent test orders (ID 21 `TEST-DISP-1792297837013`, ID 22 `TEST-DISP-1792297921726`, ID 23 `TEST-DISP-1792298158791`) and updates (IDs 19, 20, 21) were replicated during cycle testing and then purged.
+   - **Cloud Business Data Audit**:
+     - `make_orders`: Live query confirms exactly 3 pre-existing records (IDs 4, 5, 15). Zero test orders remain.
+     - `make_order_updates`: Live query confirms exactly 4 pre-existing records (IDs 13, 14, 15, 16). Zero test updates remain.
+     - `make-order-files` Storage Bucket: Listing `cad/`, `products/`, and root confirmed `[]` (0 files). All test attachments were purged.
+   - **TrueNAS Replica & Storage Audit**:
+     - `make_orders`: Querying `order_number=like.TEST*` returned `[]` (0 test orders).
+     - `make_order_updates`: Querying `note=like.*disposable*` returned `[]` (0 test updates).
+     - Physical Storage: `http://100.88.85.6:8081/cad/disposable_test_1792298158791.pdf` returned `404 Not Found`.
+     - Checkpoint Table `nas_replicated_files`: Contained one residual metadata record for `cad/disposable_test_1792298158791.pdf`. A targeted delete was executed via PostgREST; query now confirms `[]` (0 rows).
+   - **Cloud Storage Retention Policy**: Cloud file pruning remains strictly disabled (`PRUNE_CLOUD_AFTER_NAS_CONFIRMATION: false`).
 
-3. **TrueNAS Database & Storage Architecture Reconciliation**:
-   - **Database**: Verified `lesoft-postgres` (PostgreSQL 16.15) container running on Alpine with database `lesoft`, owned by `admin`.
-   - **Database Credentials**: Reconciled verified working credentials directly from the container environment without performing a disruptive password reset, preserving dependent services (`lesoft-db-api` / PostgREST).
-   - **Checkpoint Tables**: Applied `nas_replication_checkpoints` and `nas_replicated_files` DDL; added resilient schema self-healing for `total_price`, `sale_price`, and default constraints on `make_orders` and `make_order_updates`.
-   - **Storage Mount**: Reconciled storage path to real ZFS dataset at `/mnt/data_pool/lesoft/lesoft-storage/uploads` (1.4 TB free space).
+3. **Hosted Supabase Migration 070 Validation**:
+   - **Authorization Model**: Migration 070 strictly revokes all access from `PUBLIC` and `anon`. RPC execution is granted exclusively to `authenticated` and `service_role`.
+   - **Observed Cloud Behavior**: Unauthenticated calls to `get_buffer_quota_status`, `reserve_buffer_capacity`, and `supabase_buffer_reservations` return `HTTP 401 {"code":"42501","message":"permission denied..."}`. This proves object existence and least-privilege boundary enforcement in production, but does not substitute for authenticated lifecycle execution.
+   - **Full Quota Lifecycle Verification**: Verified against local PostgreSQL 17 container (13/13 passing in `supabase-quota-rpc.pg-integration.test.ts`), covering atomic reservations, commit transitions, release transitions, service-role-only pruning, client isolation, partition limits (600 MB / 250 MB / 850 MB), and auto-expiration. Full lifecycle execution on hosted Supabase is scheduled post-rotation.
 
-4. **Container Networking Resolution**:
-   - Reconciled `docker-compose-truenas.yml` with `extra_hosts: ["host.docker.internal:host-gateway"]` and `TRUENAS_PG_HOST: host.docker.internal`.
-   - Added `--experimental-websocket` flag to Node 20 runtime command to eliminate WebSocket factory errors when connecting to `@supabase/supabase-js`.
-   - Staged configuration securely at `/mnt/data_pool/lesoft/nas-pull-worker.env` (`chmod 600`) with zero secrets in Git or command arguments.
-
-5. **Live End-to-End Replication Demonstration**:
-   - Created disposable test payload: Size 109 B, SHA-256 `2c5bb630db86fc268143346c70ac199dc97122669d161902493c1ee5f611b9b6`.
-   - Uploaded attachment to Supabase Storage: `make-order-files/cad/disposable_test_1792298158791.pdf`.
-   - Inserted disposable parent order into Supabase Cloud: ID 23 (`TEST-DISP-1792298158791`).
-   - Inserted disposable child update into Supabase Cloud: ID 21.
-   - Triggered pull worker cycle on TrueNAS:
-     - Worker pulled and applied parent order 23 and child update 21 to TrueNAS PostgreSQL (`lesoft-postgres`).
-     - Worker pulled attachment `disposable_test_1792298158791.pdf` to TrueNAS disk `/mnt/data_pool/lesoft/lesoft-storage/uploads/cad/disposable_test_1792298158791.pdf`.
-     - **SHA-256 Verification on TrueNAS Disk**:
-       `Expected: 2c5bb630db86fc268143346c70ac199dc97122669d161902493c1ee5f611b9b6`
-       `Actual:   2c5bb630db86fc268143346c70ac199dc97122669d161902493c1ee5f611b9b6`
-       **PERFECT MATCH**.
-   - Checkpoint advancement confirmed in `nas_replication_checkpoints`:
-     - `make_orders`: `last_replicated_id: 23`, `items_replicated: 6`, `last_error: NULL`
-     - `make_order_updates`: `last_replicated_id: 21`, `items_replicated: 7`, `last_error: NULL`
-     - `storage_files`: `items_replicated: 1`, `last_error: NULL`
-   - **Idempotent Replay Verified**: Second worker run completed with `recordsReplicated: 0, filesPulled: 0` (zero duplicate records, zero constraint errors).
-   - Disposable test records safely cleaned up from Supabase Cloud and TrueNAS.
-
-6. **Daemon Deployment**:
-   - Deployed `lesoft-nas-pull-worker` container running in persistent daemon mode with `--restart always`.
-   - Verified active container status: `Up (healthy)`, polling every 15s.
-   - All 16 existing TrueNAS containers confirmed running undisturbed.
+4. **TrueNAS Worker Daemon Infrastructure**:
+   - Reconciled `docker-compose-truenas.yml` with `extra_hosts: ["host.docker.internal:host-gateway"]`, `TRUENAS_PG_HOST: host.docker.internal`, and `--experimental-websocket` for Node 20.
+   - Staged worker script at `/mnt/data_pool/lesoft/nas-pull-replication-worker.cjs` and volume mount to `/mnt/data_pool/lesoft/lesoft-storage/uploads`.
+   - Container `lesoft-nas-pull-worker` is deployed with `--restart always`. All 16 existing TrueNAS containers remain running undisturbed.
 
 ---
 
@@ -585,18 +569,18 @@ During the operational deployment targeting the physical TrueNAS node `le-nas-se
 - **Modified Repository Files**:
   1. `docker-compose-truenas.yml` — Configured `extra_hosts: ["host.docker.internal:host-gateway"]`, defaulted `TRUENAS_PG_HOST` to `host.docker.internal`, `TRUENAS_PG_USER` to `admin`, added `--experimental-websocket`, and mounted real TrueNAS storage dataset `/mnt/data_pool/lesoft/lesoft-storage/uploads`.
   2. `scripts/nas-pull-replication-worker.cjs` — Added resilient self-healing DDL for `total_price`/`sale_price` and column defaults, normalized `last_replicated_at` timestamps to ISO 8601 strings for PostgREST, added schema-resilient attachment discovery, and disabled unnecessary realtime client initialization.
-  3. `docs/architecture/MAKE-MODULE-VERIFICATION-REPORT.md` — Updated verification report with complete live TrueNAS replication verification evidence, container networking resolution, environment variable contract confirmation, and final operational readiness verdict.
+  3. `docs/architecture/MAKE-MODULE-VERIFICATION-REPORT.md` — Updated verification report with complete audit of credential remediation, test cleanup reconciliation, Migration 070 authorization analysis, and updated operational readiness verdict.
 
 #### Required Final Verdict
 
-**Fully Verified and Production Ready**
+**Locally and architecturally verified; production readiness pending credential rotation and post-rotation revalidation**
 
 *Rationale*:
-All local tests, integration suites, build pipelines, hosted Supabase checks, and physical TrueNAS deployments are complete and 100% passing:
-1. Local quality gates: 560/560 MAKE tests pass, 15/15 NAS Pull Worker integration tests pass, TypeScript compiler has 0 errors, ESLint has 0 errors, and Electron bundle contains 0 exposed secrets.
-2. Hosted Supabase: Migration 070 is active, RPCs are enforced under least-privilege role boundaries, and bucket `make-order-files` is provisioned.
-3. TrueNAS deployment: Pull worker is running in container `lesoft-nas-pull-worker` (`restart: always`), connected to `lesoft-postgres` and real ZFS storage dataset.
-4. End-to-end verification: Live replication of parent orders, child updates, and binary CAD attachments verified with exact SHA-256 matching, checkpoint progression, and idempotent replay.
+All local tests, integration suites, build pipelines, and architecture contracts are complete and 100% passing:
+1. Local quality gates: 560/560 MAKE tests pass, 15/15 NAS Pull Worker integration tests pass, 13/13 Migration 070 quota RPC integration tests pass, TypeScript compiler has 0 errors, ESLint has 0 errors, and Electron bundle contains 0 exposed secrets.
+2. Architecture & Infrastructure: TrueNAS container networking, ZFS storage dataset mounts, and database schema self-healing have been reconciled and verified.
+3. Cleanup Audit: Verified that real TrueNAS order 20 was untouched and that all disposable test records, files, and tracking rows have been completely removed from both cloud and NAS systems.
+4. Pending Operational Action: Full production sign-off requires rotating the Supabase service-role key in the Supabase Dashboard, updating the worker environment on TrueNAS, and executing a clean post-rotation replication run with the replacement credential.
 
 ---
 
@@ -625,15 +609,16 @@ Reconciled directly from `scripts/nas-pull-replication-worker.cjs` and `docker-c
    - 13/13 Migration 070 PostgreSQL integration tests passed against real PostgreSQL 17 container.
    - 0 errors across TypeScript compiler (`renderer` and `electron`), ESLint, and license check.
    - Full Vite frontend and Electron esbuild bundles built cleanly without exposed secrets.
-2. **Hosted Supabase Tests (VERIFIED DEPLOYED & ACTIVE)**:
+2. **Hosted Supabase Tests (PARTIALLY VERIFIED)**:
    - Probed live `https://ildkkgjrolcjijwfokek.supabase.co`.
-   - Confirmed `get_buffer_quota_status`, `reserve_buffer_capacity`, and `supabase_buffer_reservations` exist in PostgREST schema cache and correctly enforce least-privilege role boundaries.
-   - Verified service-role access and initialized private storage bucket `make-order-files`.
-3. **Live NAS Pull Replication (DEPLOYED & 100% VERIFIED)**:
+   - Confirmed `get_buffer_quota_status`, `reserve_buffer_capacity`, and `supabase_buffer_reservations` exist in PostgREST schema cache and correctly enforce least-privilege role boundaries (HTTP 401 for anonymous access).
+   - Authenticated quota lifecycle and bucket verification pending replacement credential post-rotation.
+3. **Live NAS Pull Replication (DEPLOYED & OBSERVED; PENDING POST-ROTATION RUN)**:
    - Tailscale connectivity to `100.88.85.6` is healthy.
-   - TrueNAS worker daemon deployed in container `lesoft-nas-pull-worker` with `restart: always`.
-   - End-to-end pull replication of orders, updates, and attachments verified live with exact SHA-256 checksum matching and durable checkpoint progression.
-   - Idempotent replay verified with zero duplicate records and zero constraint errors.
+   - Pull worker deployed in container `lesoft-nas-pull-worker` with `restart: always`.
+   - Initial end-to-end pull replication cycle executed and verified with exact SHA-256 checksum match.
+   - Test data and metadata tracking rows audited and purged from both systems.
+   - Final revalidation requires post-rotation run with the newly issued service-role secret.
 
 #### C. Remaining Manual UI Acceptance Checklist (Post-Deployment)
 Now that live replication is active in production, perform the following end-to-end visual tests in the desktop application:
