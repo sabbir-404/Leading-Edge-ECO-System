@@ -224,13 +224,14 @@ describe('Final Read-Only Database Reconciliation', () => {
         expect(custErr).toBeNull();
         console.log('  ✓ Customer ledger read: PASS (retrieved ' + customers?.length + ' customers)');
 
-        // Migration 012 defines customer_payments; there is no customer_ledger table.
-        // Use columns from the migration contract so this read-only probe checks the actual ledger table.
-        const { data: ledger, error: ledgErr } = await supabaseClient
+        // Customer payment rows are private. Validate only the ledger schema here
+        // using a HEAD request, so this anonymous probe never fetches financial data.
+        const { error: ledgErr } = await supabaseClient
             .from('customer_payments')
-            .select('id, customer_id, amount, payment_mode, created_at')
-            .limit(5);
-        console.log('  ✓ Customer ledger transactions: ' + (!ledgErr ? `PASS (retrieved ${ledger?.length} entries)` : 'FAIL (' + ledgErr?.message + ')'));
+            .select('id, payment_type, payment_method', { head: true })
+            .limit(1);
+        expect(ledgErr).toBeNull();
+        console.log('  ✓ Customer ledger schema: PASS (required columns verified without fetching rows)');
 
         // 5.5 Production stage read
         const { data: stages, error: stageErr } = await supabaseClient
