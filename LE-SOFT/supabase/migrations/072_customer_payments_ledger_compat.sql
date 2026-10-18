@@ -52,8 +52,7 @@ $backfill$;
 -- Legacy customer_payments represented receipts/credits. Current UI defaults
 -- new entries to CREDIT; retain any existing non-empty type values.
 UPDATE public.customer_payments
-   SET payment_type = 'CREDIT'
- WHERE payment_type IS NULL OR BTRIM(payment_type) = '';
+   SET payment_type = COALESCE(NULLIF(UPPER(BTRIM(payment_type)), ''), 'CREDIT');
 
 UPDATE public.customer_payments
    SET payment_method = 'CASH'
