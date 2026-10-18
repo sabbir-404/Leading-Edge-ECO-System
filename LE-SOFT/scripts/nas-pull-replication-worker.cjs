@@ -955,12 +955,32 @@ async function pullBusinessData(supabaseClient, pgClient, options = {}) {
 }
 
 /**
+ * Returns true only for errors indicating that a referenced column is absent from
+ * the source schema/schema cache. Authentication, network, RLS, and other failures
+ * must not be hidden by falling back to a weaker query.
+ */
+function isMissingColumnError(error) {
+    if (!error) return false;
+    const code = String(error.code || '');
+    const message = String(error.message || '').toLowerCase();
+    return code === '42703' ||
+        code === 'PGRST204' ||
+        (message.includes('column') &&
+            /(does not exist|not found|could not find|schema cache)/.test(message));
+}
+
+/**
  * Discovers and paginates image/file references from a database table.
  * Supports durable resumable pagination cursor (discovery_<table_name>) and handles
- * page caps truthfully without permanent starvation.
+ * page caps truthfully without permanent starvation. Query variants allow compatibility
+ * with hosted schemas that have not yet received every optional attachment column.
  */
 async function discoverFromTable(client, config, fileTasks, logger, bucketName, pgClient) {
-    const { table, select, filterFn, batchSize = 50, extractUrls, maxPages } = config;
+    const { table, select, filterFn, queryVariants: configuredQueryVariants, batchSize = 50, extractUrls, maxPages } = config;
+    const queryVariants = Array.isArray(configuredQueryVariants) && configuredQueryVariants.length > 0
+        ? configuredQueryVariants
+        : [{ select, filterFn }];
+    let queryVariantIndex = 0;
     let lastId = 0;
     const checkpointKey = `discovery_${table}`;
 
@@ -984,16 +1004,39 @@ async function discoverFromTable(client, config, fileTasks, logger, bucketName, 
 
     while (hasMore && pages < effectiveMaxPages) {
         pages++;
-        let q = client.from(table).select(select);
-        if (filterFn) {
-            q = filterFn(q);
-        }
-        if (lastId > 0) {
-            q = q.gt('id', lastId);
-        }
-        q = q.order('id', { ascending: true }).limit(batchSize);
+        let queryResult = null;
 
-        const { data, error } = await q;
+        // Retry only schema-column errors with an explicit compatible projection.
+        // Do not turn network/auth/RLS failures into apparent empty results.
+        while (queryVariantIndex < queryVariants.length) {
+            const variant = queryVariants[queryVariantIndex];
+            let q = client.from(table).select(variant.select || select);
+            const variantFilterFn = Object.prototype.hasOwnProperty.call(variant, 'filterFn')
+                ? variant.filterFn
+                : filterFn;
+            if (variantFilterFn) {
+                q = variantFilterFn(q);
+            }
+            if (lastId > 0) {
+                q = q.gt('id', lastId);
+            }
+            q = q.order('id', { ascending: true }).limit(batchSize);
+
+            queryResult = await q;
+            if (queryResult.error &&
+                isMissingColumnError(queryResult.error) &&
+                queryVariantIndex < queryVariants.length - 1) {
+                logger.warn(
+                    `[NAS-Pull-Worker] Source schema mismatch on ${table} using "${variant.select || select}": ${queryResult.error.message}. Retrying with a compatible column set.`
+                );
+                queryVariantIndex++;
+                continue;
+            }
+            break;
+        }
+
+        const data = queryResult?.data;
+        const error = queryResult?.error;
         if (error) {
             logger.error(`[NAS-Pull-Worker] Attachment discovery query failed on ${table}:`, error.message);
             return { success: false, error: error.message };
@@ -1096,8 +1139,24 @@ async function pullAttachments(supabaseClient, storageBasePath, pgClient, option
             supabaseClient,
             {
                 table: 'make_orders',
-                select: 'id, invoice_attachment_urls, current_stage_photo, updated_at',
-                filterFn: q => q.or('invoice_attachment_urls.neq.{},current_stage_photo.not.is.null'),
+                queryVariants: [
+                    {
+                        select: 'id, invoice_attachment_urls, current_stage_photo, updated_at',
+                        filterFn: q => q.or('invoice_attachment_urls.neq.{},current_stage_photo.not.is.null')
+                    },
+                    {
+                        select: 'id, invoice_attachment_urls, updated_at',
+                        filterFn: q => q.neq('invoice_attachment_urls', '{}')
+                    },
+                    {
+                        select: 'id, invoice_attachment_urls, current_stage_photo, created_at',
+                        filterFn: q => q.or('invoice_attachment_urls.neq.{},current_stage_photo.not.is.null')
+                    },
+                    {
+                        select: 'id, invoice_attachment_urls, created_at',
+                        filterFn: q => q.neq('invoice_attachment_urls', '{}')
+                    }
+                ],
                 batchSize,
                 maxPages: options.maxDiscoveryPages,
                 extractUrls: (ord, tasks, bucket) => {
@@ -1148,7 +1207,10 @@ async function pullAttachments(supabaseClient, storageBasePath, pgClient, option
             supabaseClient,
             {
                 table: 'make_order_updates',
-                select: 'id, photo_url, photo_urls, updated_at, created_at',
+                queryVariants: [
+                    { select: 'id, photo_url, photo_urls, updated_at, created_at' },
+                    { select: 'id, photo_url, photo_urls, created_at' }
+                ],
                 batchSize,
                 maxPages: options.maxDiscoveryPages,
                 extractUrls: (upd, tasks, bucket) => {
