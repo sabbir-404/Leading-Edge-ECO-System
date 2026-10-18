@@ -754,3 +754,17 @@ A follow-up source review after commit `79edcfc` identified and corrected additi
 7. **Regression coverage authored**: tests now cover a different Supabase tenant hostname and transient errors during authoritative tombstone validation; the forged-tombstone test also verifies that the invalid row does not pin the checkpoint.
 
 **Verification status for this addendum:** These source and test changes were made after the test results associated with commit `79edcfc`. They have been committed for local reproduction, but the earlier test table must not be treated as evidence that the new addendum itself has passed. Re-run the NAS worker suite and all applicable quality gates on the current branch head. Do not sign off on authenticated production replication until that run is clean and migration 071 has been applied and verified against the intended hosted Supabase project, followed by the separately controlled credential-rotation and live-pull steps.
+
+
+### 7.14 Buffer Reservation Object-Ownership Hardening (October 18, 2026)
+
+A follow-up review found that the NAS worker could previously associate every object listed in a common Storage folder with each committed storage reservation. The reservation table does not contain an authoritative object-key column, so folder membership alone cannot prove ownership. With optional cloud pruning enabled, that could cause an unrelated cloud object to be removed and the wrong quota reservation to be released.
+
+**Corrective changes committed after the earlier test evidence:**
+
+1. **Bounded object association:** a Storage object is associated with a reservation only when its filename is exactly the reservation ID or starts with the ID followed by `_` or `.`, or its Storage metadata explicitly identifies that reservation.
+2. **Unique-match pruning gate:** pruning is eligible only when exactly one object matches and every relevant folder listing succeeded. Zero matches do not create a task; ambiguous matches or incomplete listings remain pull-only and retain their cloud copies.
+3. **Authoritative entity association:** if order/catalog discovery already registered an object task, reservation discovery does not overwrite that entity classification.
+4. **Regression coverage:** test 34 creates two objects that share a reservation prefix plus an unrelated object in the same folder. It verifies that all cloud objects remain, the unrelated object is not claimed by the reservation, and the ambiguous reservation remains committed. The legacy URL-normalization case was also updated to pass the expected project origin explicitly and reject a different Supabase tenant.
+
+**Verification status for this addendum:** the worker source passes a JavaScript syntax parse, and the test file now contains 34 authored cases. The updated worker test suite, full repository tests, TypeScript checks, lint, and build have **not yet been executed against this head**. Earlier test results must not be represented as validation of these changes. Do not merge or deploy; keep cloud pruning disabled by default and do not claim authenticated production replication until the required current-head tests and controlled production-readiness steps are completed.
