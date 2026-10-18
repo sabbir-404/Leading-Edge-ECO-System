@@ -173,6 +173,8 @@ const MakeProductCatalog: React.FC = () => {
       if (url) {
         setEditingSpec(prev => ({ ...prev, image_url: url }));
         setSpecUploadState({ status: 'success' });
+        setMsg({ type: 'success', text: 'Image uploaded successfully!' });
+        setTimeout(() => setMsg(null), 4000);
         setTimeout(() => {
           setSpecUploadState(prev => (prev.status === 'success' ? { status: 'idle' } : prev));
         }, 2500);
@@ -194,6 +196,8 @@ const MakeProductCatalog: React.FC = () => {
       if (url) {
         setEditingColor(prev => ({ ...prev, image_url: url }));
         setColorUploadState({ status: 'success' });
+        setMsg({ type: 'success', text: 'Image uploaded successfully!' });
+        setTimeout(() => setMsg(null), 4000);
         setTimeout(() => {
           setColorUploadState(prev => (prev.status === 'success' ? { status: 'idle' } : prev));
         }, 2500);
