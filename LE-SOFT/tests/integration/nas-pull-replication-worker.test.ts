@@ -316,6 +316,16 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
                                 }
                                 return chain;
                             }),
+                            neq: vi.fn((col: string, val: any) => {
+                                chain.data = chain.data.filter((item: any) => {
+                                    const actual = item[col];
+                                    if (Array.isArray(actual) && (val === '{}' || val === '[]')) {
+                                        return actual.length > 0;
+                                    }
+                                    return actual !== val;
+                                });
+                                return chain;
+                            }),
                             maybeSingle: vi.fn(async () => {
                                 return { data: chain.data[0] || null, error: null };
                             }),
@@ -2061,6 +2071,130 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
         expect(mockSupabaseStorageFiles.has(secondPath)).toBe(true);
         expect(mockSupabaseStorageFiles.has(unrelatedPath)).toBe(true);
         expect(mockSupabaseReservations.find(r => r.id === reservationId)?.status).toBe('committed');
+    });
+
+    it('35. Attachment discovery falls back when optional columns are absent in hosted Supabase schema', async () => {
+        const orderPath = 'cad/schema_fallback_order.pdf';
+        const updatePath = 'products/schema_fallback_photo.webp';
+        const orderBytes = Buffer.from('ORDER_ATTACHMENT_SCHEMA_FALLBACK');
+        const updateBytes = Buffer.from('UPDATE_PHOTO_SCHEMA_FALLBACK');
+        mockSupabaseStorageFiles.set(orderPath, {
+            buffer: orderBytes,
+            sha256: crypto.createHash('sha256').update(orderBytes).digest('hex').toUpperCase()
+        });
+        mockSupabaseStorageFiles.set(updatePath, {
+            buffer: updateBytes,
+            sha256: crypto.createHash('sha256').update(updateBytes).digest('hex').toUpperCase()
+        });
+        mockSupabaseOrders.push({
+            id: 84001,
+            order_number: 'ORD-SCHEMA-FALLBACK',
+            invoice_attachment_urls: [`make-order-files/${orderPath}`],
+            created_at: '2026-10-18T12:00:00.000Z'
+        });
+        mockSupabaseUpdates.push({
+            id: 84002,
+            order_id: 84001,
+            photo_url: `make-order-files/${updatePath}`,
+            created_at: '2026-10-18T12:01:00.000Z'
+        });
+
+        const originalFrom = mockSupabase.from;
+        const attemptedSelects: Record<string, string[]> = {
+            make_orders: [],
+            make_order_updates: []
+        };
+        mockSupabase.from = vi.fn((table: string) => {
+            const tableQuery = originalFrom(table);
+            if (!Object.prototype.hasOwnProperty.call(attemptedSelects, table)) return tableQuery;
+            const originalSelect = tableQuery.select;
+            tableQuery.select = vi.fn((cols: string = '*') => {
+                attemptedSelects[table].push(cols);
+                const chain = originalSelect(cols);
+                const missingColumn =
+                    table === 'make_orders' && cols.split(',').map((c: string) => c.trim()).includes('current_stage_photo')
+                        ? 'current_stage_photo'
+                        : table === 'make_order_updates' && cols.split(',').map((c: string) => c.trim()).includes('updated_at')
+                            ? 'updated_at'
+                            : null;
+                if (missingColumn) {
+                    chain.then = (resolve: any) => resolve({
+                        data: null,
+                        error: {
+                            code: '42703',
+                            message: `column ${table}.${missingColumn} does not exist`
+                        }
+                    });
+                }
+                return chain;
+            });
+            return tableQuery;
+        });
+
+        try {
+            const result = await pullAttachments(mockSupabase, tempStorageDir, mockPg, {
+                batchSize: 10,
+                logger: { log: vi.fn(), warn: vi.fn(), error: vi.fn() }
+            });
+
+            expect(result.success).toBe(true);
+            expect(result.filesPulled).toBe(2);
+            expect(fs.readFileSync(path.join(tempStorageDir, orderPath))).toEqual(orderBytes);
+            expect(fs.readFileSync(path.join(tempStorageDir, updatePath))).toEqual(updateBytes);
+            expect(mockTrueNasReplicatedFiles.has(orderPath)).toBe(true);
+            expect(mockTrueNasReplicatedFiles.has(updatePath)).toBe(true);
+            expect(attemptedSelects.make_orders).toContain('id, invoice_attachment_urls, current_stage_photo, updated_at');
+            expect(attemptedSelects.make_orders).toContain('id, invoice_attachment_urls, updated_at');
+            expect(attemptedSelects.make_order_updates).toContain('id, photo_url, photo_urls, updated_at, created_at');
+            expect(attemptedSelects.make_order_updates).toContain('id, photo_url, photo_urls, created_at');
+        } finally {
+            mockSupabase.from = originalFrom;
+        }
+    });
+
+    it('36. Attachment discovery does not hide auth or transport failures with schema fallbacks', async () => {
+        mockSupabaseOrders.push({
+            id: 84101,
+            order_number: 'ORD-ATTACHMENT-AUTH-ERROR',
+            invoice_attachment_urls: ['make-order-files/cad/should-not-pull.pdf'],
+            created_at: '2026-10-18T12:10:00.000Z'
+        });
+
+        const originalFrom = mockSupabase.from;
+        const attemptedOrderSelects: string[] = [];
+        mockSupabase.from = vi.fn((table: string) => {
+            const tableQuery = originalFrom(table);
+            if (table !== 'make_orders') return tableQuery;
+            const originalSelect = tableQuery.select;
+            tableQuery.select = vi.fn((cols: string = '*') => {
+                attemptedOrderSelects.push(cols);
+                const chain = originalSelect(cols);
+                chain.then = (resolve: any) => resolve({
+                    data: null,
+                    error: { code: '42501', message: 'permission denied for table make_orders' }
+                });
+                return chain;
+            });
+            return tableQuery;
+        });
+
+        try {
+            const result = await pullAttachments(mockSupabase, tempStorageDir, mockPg, {
+                batchSize: 10,
+                logger: { log: vi.fn(), warn: vi.fn(), error: vi.fn() }
+            });
+
+            expect(result.success).toBe(false);
+            expect(result.errors).toEqual(expect.arrayContaining([
+                expect.objectContaining({
+                    source: 'make_orders',
+                    error: 'permission denied for table make_orders'
+                })
+            ]));
+            expect(attemptedOrderSelects).toEqual(['id, invoice_attachment_urls, current_stage_photo, updated_at']);
+        } finally {
+            mockSupabase.from = originalFrom;
+        }
     });
 
 });
