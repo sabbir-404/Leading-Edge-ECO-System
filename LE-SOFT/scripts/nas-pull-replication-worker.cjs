@@ -72,9 +72,18 @@ async function initCheckpoints(pgClient) {
     // Self-healing: ensure TrueNAS PostgreSQL tables have all replicated columns
     try {
         await pgClient.query(`
+            ALTER TABLE make_orders ADD COLUMN IF NOT EXISTS total_price NUMERIC DEFAULT 0;
+            ALTER TABLE make_orders ADD COLUMN IF NOT EXISTS sale_price NUMERIC DEFAULT 0;
+            ALTER TABLE make_orders ALTER COLUMN designer_name DROP NOT NULL;
+            ALTER TABLE make_orders ALTER COLUMN designer_name SET DEFAULT 'System';
             ALTER TABLE make_orders ADD COLUMN IF NOT EXISTS invoice_attachment_urls TEXT[] DEFAULT '{}'::text[];
             ALTER TABLE make_orders ADD COLUMN IF NOT EXISTS current_stage_photo TEXT;
             ALTER TABLE make_orders ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'Placed';
+            ALTER TABLE make_order_updates ADD COLUMN IF NOT EXISTS stage TEXT DEFAULT 'In Progress';
+            ALTER TABLE make_order_updates ALTER COLUMN status SET DEFAULT 'In Progress';
+            ALTER TABLE make_order_updates ALTER COLUMN updated_by SET DEFAULT 'System';
+            ALTER TABLE make_order_updates ADD COLUMN IF NOT EXISTS actor_name TEXT;
+            ALTER TABLE make_order_updates ADD COLUMN IF NOT EXISTS actor_role TEXT;
             ALTER TABLE make_order_updates ADD COLUMN IF NOT EXISTS photo_url TEXT;
             ALTER TABLE make_order_updates ADD COLUMN IF NOT EXISTS photo_urls TEXT[] DEFAULT '{}'::text[];
         `);
@@ -90,7 +99,15 @@ async function getCheckpoint(pgClient, tableName) {
         [tableName]
     );
     if (res.rows && res.rows.length > 0) {
-        return res.rows[0];
+        const row = res.rows[0];
+        if (row.last_replicated_at instanceof Date) {
+            row.last_replicated_at = row.last_replicated_at.toISOString();
+        } else if (row.last_replicated_at) {
+            try {
+                row.last_replicated_at = new Date(row.last_replicated_at).toISOString();
+            } catch {}
+        }
+        return row;
     }
     return {
         table_name: tableName,
@@ -234,7 +251,7 @@ async function pullBusinessData(supabaseClient, pgClient, options = {}) {
                     ord.id,
                     ord.order_number || `ORD-${ord.id}`,
                     ord.furniture_name || '',
-                    ord.total_price || 0,
+                    ord.total_price || ord.sale_price || 0,
                     ord.current_stage || ord.stage || 'Draft',
                     ord.status || 'Placed',
                     ord.invoice_attachment_urls || [],
@@ -324,7 +341,7 @@ async function pullBusinessData(supabaseClient, pgClient, options = {}) {
                         parentData.id,
                         parentData.order_number || `ORD-${parentData.id}`,
                         parentData.furniture_name || '',
-                        parentData.total_price || 0,
+                        parentData.total_price || parentData.sale_price || 0,
                         parentData.current_stage || 'Draft',
                         parentData.status || 'Placed',
                         parentData.invoice_attachment_urls || [],
@@ -387,13 +404,13 @@ async function pullAttachments(supabaseClient, storageBasePath, pgClient, option
 
     // ── Source A: Discover files from committed orders with attachments ───────
     try {
-        const { data: ordersWithFiles } = await supabaseClient
+        const { data: ordersWithFiles, error: ordFilesErr } = await supabaseClient
             .from('make_orders')
             .select('id, invoice_attachment_urls, current_stage_photo')
             .or('invoice_attachment_urls.neq.{},current_stage_photo.not.is.null')
             .limit(options.batchSize || 50);
 
-        if (ordersWithFiles && ordersWithFiles.length > 0) {
+        if (!ordFilesErr && ordersWithFiles && ordersWithFiles.length > 0) {
             for (const ord of ordersWithFiles) {
                 if (Array.isArray(ord.invoice_attachment_urls)) {
                     for (const rawUrl of ord.invoice_attachment_urls) {
@@ -421,6 +438,71 @@ async function pullAttachments(supabaseClient, storageBasePath, pgClient, option
                             entityType: 'make_orders',
                             entityId: String(ord.id)
                         });
+                    }
+                }
+            }
+        } else if (ordFilesErr && ordFilesErr.message && ordFilesErr.message.includes('current_stage_photo')) {
+            // Fallback for environments where current_stage_photo is not in make_orders
+            const { data: fallbackOrders } = await supabaseClient
+                .from('make_orders')
+                .select('id, invoice_attachment_urls')
+                .or('invoice_attachment_urls.neq.{}')
+                .limit(options.batchSize || 50);
+
+            if (fallbackOrders && fallbackOrders.length > 0) {
+                for (const ord of fallbackOrders) {
+                    if (Array.isArray(ord.invoice_attachment_urls)) {
+                        for (const rawUrl of ord.invoice_attachment_urls) {
+                            const cleanKey = normalizeStorageObjectKey(rawUrl);
+                            if (cleanKey && !fileTasks.has(cleanKey)) {
+                                const sub = cleanKey.includes('/') ? path.dirname(cleanKey) : 'cad';
+                                const name = path.basename(cleanKey);
+                                fileTasks.set(cleanKey, {
+                                    subfolder: sub,
+                                    name,
+                                    entityType: 'make_orders',
+                                    entityId: String(ord.id)
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } catch (e) {
+        logger.warn('[NAS-Pull-Worker] Discovery from make_orders attachments failed:', e.message);
+    }
+
+    try {
+        const { data: updatesWithFiles } = await supabaseClient
+            .from('make_order_updates')
+            .select('id, photo_url, photo_urls')
+            .limit(options.batchSize || 50);
+
+        if (updatesWithFiles && updatesWithFiles.length > 0) {
+            for (const upd of updatesWithFiles) {
+                if (upd.photo_url) {
+                    const cleanKey = normalizeStorageObjectKey(upd.photo_url);
+                    if (cleanKey && !fileTasks.has(cleanKey)) {
+                        fileTasks.set(cleanKey, {
+                            subfolder: cleanKey.includes('/') ? path.dirname(cleanKey) : 'products',
+                            name: path.basename(cleanKey),
+                            entityType: 'make_order_updates',
+                            entityId: String(upd.id)
+                        });
+                    }
+                }
+                if (Array.isArray(upd.photo_urls)) {
+                    for (const rawUrl of upd.photo_urls) {
+                        const cleanKey = normalizeStorageObjectKey(rawUrl);
+                        if (cleanKey && !fileTasks.has(cleanKey)) {
+                            fileTasks.set(cleanKey, {
+                                subfolder: cleanKey.includes('/') ? path.dirname(cleanKey) : 'products',
+                                name: path.basename(cleanKey),
+                                entityType: 'make_order_updates',
+                                entityId: String(upd.id)
+                            });
+                        }
                     }
                 }
             }
@@ -633,7 +715,8 @@ if (require.main === module) {
     }
 
     const supabaseAdmin = createClient(supabaseUrl, serviceKey, {
-        auth: { persistSession: false, autoRefreshToken: false }
+        auth: { persistSession: false, autoRefreshToken: false },
+        realtime: false
     });
 
     const isDaemon = process.argv.includes('--daemon');

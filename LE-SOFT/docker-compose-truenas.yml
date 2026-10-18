@@ -63,9 +63,9 @@ services:
     container_name: lesoft-nas-pull-worker
     working_dir: /app
     volumes:
-      - ./scripts/nas-pull-replication-worker.cjs:/app/nas-pull-replication-worker.cjs:ro
+      - ${TRUENAS_WORKER_SCRIPT:-./scripts/nas-pull-replication-worker.cjs}:/app/nas-pull-replication-worker.cjs:ro
       - ${TRUENAS_STORAGE_MOUNT:-/mnt/data_pool/lesoft/lesoft-storage/uploads}:/data/uploads
-    command: sh -c "npm install -g pg @supabase/supabase-js && NODE_PATH=$$(npm root -g) node /app/nas-pull-replication-worker.cjs --daemon"
+    command: sh -c "npm install -g pg @supabase/supabase-js && NODE_PATH=$$(npm root -g) node --experimental-websocket /app/nas-pull-replication-worker.cjs --daemon"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
