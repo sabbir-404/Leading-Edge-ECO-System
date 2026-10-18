@@ -738,3 +738,19 @@ This section details the critical security boundaries, file verification repairs
 - Hard-delete propagation is reconciled across parent and child tables in strict foreign-key order:
   - Deletions: `make_order_updates` before `make_orders`, and `make_product_colors` before `make_product_specifications`.
 - Under no circumstances is a Supabase Cloud source record deleted as a side-effect of TrueNAS replication; Supabase Cloud remains the permanent primary write authority.
+
+---
+
+### 7.13 Post-Commit Source Review Addendum (October 18, 2026)
+
+A follow-up source review after commit `79edcfc` identified and corrected additional edge cases in the worker:
+
+1. **Fail-closed tombstone validation**: a Supabase source lookup error is now treated as a verification failure, never as proof that the authoritative row is absent. The NAS record is not deleted and the tombstone checkpoint does not advance past that unverifiable row.
+2. **Forged tombstone progress**: when the source lookup succeeds and confirms that the authoritative row still exists, the worker ignores the invalid tombstone and advances its cursor past that specific row. This records a cycle error without allowing a forged row to permanently block subsequent valid tombstones.
+3. **Exact Supabase URL origin**: signed/public/authenticated storage URLs must match the configured Supabase origin exactly. Another tenant's `*.supabase.co` hostname is no longer accepted merely because it uses the Supabase domain suffix.
+4. **Source timestamp provenance**: the NAS file registry now stores `source_updated_at` separately from NAS-side `replicated_at`. Same-key replacement checks compare cloud-source timestamps to the previous cloud-source timestamp rather than comparing clocks from different systems.
+5. **Checkpoint reset visibility**: failure to reset an exhausted discovery cursor returns an explicit error instead of silently claiming successful discovery.
+6. **Retention guardrails**: an explicit `pruneCloud: false` option overrides an environment flag; optional cloud pruning is limited to committed buffer-reservation objects, not referenced MAKE order attachments or catalog images.
+7. **Regression coverage authored**: tests now cover a different Supabase tenant hostname and transient errors during authoritative tombstone validation; the forged-tombstone test also verifies that the invalid row does not pin the checkpoint.
+
+**Verification status for this addendum:** These source and test changes were made after the test results associated with commit `79edcfc`. They have been committed for local reproduction, but the earlier test table must not be treated as evidence that the new addendum itself has passed. Re-run the NAS worker suite and all applicable quality gates on the current branch head. Do not sign off on authenticated production replication until that run is clean and migration 071 has been applied and verified against the intended hosted Supabase project, followed by the separately controlled credential-rotation and live-pull steps.
