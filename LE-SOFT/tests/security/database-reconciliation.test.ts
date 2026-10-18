@@ -206,7 +206,8 @@ describe('Final Read-Only Database Reconciliation', () => {
             .from('make_product_categories')
             .select('id, name')
             .limit(10);
-        console.log('  ✓ Category read: ' + (!catErr ? `PASS (retrieved ${categories?.length} categories; unauthenticated read governed by RLS)` : 'FAIL (' + catErr?.message + ')'));
+        expect(catErr).toBeNull();
+        console.log('  ✓ Category read: PASS (retrieved ' + categories?.length + ' categories; unauthenticated read governed by RLS)');
 
         // 5.3 Whole-catalog search
         const { data: searchResults, error: searchErr } = await supabaseClient
@@ -233,28 +234,28 @@ describe('Final Read-Only Database Reconciliation', () => {
             .limit(1);
         expect(baseTableErr).toBeNull();
 
+        // Migration 072 introduces payment_type and payment_method while preserving legacy payment_mode
         const { error: ledgErr } = await supabaseClient
             .from('customer_payments')
-            .select('id, payment_type, payment_method', { head: true })
+            .select('id, payment_type, payment_method, payment_mode', { head: true })
             .limit(1);
-        if (!ledgErr) {
-            console.log('  ✓ Customer ledger schema: PASS (required columns payment_type, payment_method verified without fetching rows)');
-        } else {
-            console.log('  ⚠ Customer ledger schema: Migration 072 required on Supabase Cloud (columns payment_type, payment_method pending application)');
-        }
+        expect(ledgErr).toBeNull();
+        console.log('  ✓ Customer ledger schema: PASS (verified payment_type, payment_method, and legacy payment_mode without fetching rows)');
 
         // 5.5 Production stage read
         const { data: stages, error: stageErr } = await supabaseClient
             .from('make_orders')
             .select('id, order_number, current_stage')
             .limit(5);
-        console.log('  ✓ Production stage read: ' + (!stageErr ? `PASS (retrieved ${stages?.length} orders)` : 'FAIL (' + stageErr.message + ')'));
+        expect(stageErr).toBeNull();
+        console.log('  ✓ Production stage read: PASS (retrieved ' + stages?.length + ' orders)');
 
         // 5.6 Invoice attachment metadata read
         const { data: invoices, error: invErr } = await supabaseClient
             .from('make_orders')
             .select('id, invoice_attachment_urls')
             .limit(5);
-        console.log('  ✓ Invoice attachment metadata read: ' + (!invErr ? `PASS (retrieved ${invoices?.length} orders)` : 'FAIL (' + invErr.message + ')'));
+        expect(invErr).toBeNull();
+        console.log('  ✓ Invoice attachment metadata read: PASS (retrieved ' + invoices?.length + ' orders)');
     });
 });
