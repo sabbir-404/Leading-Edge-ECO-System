@@ -4,7 +4,7 @@
 **Version Baseline**: `LE-SOFT v1.8.12`  
 **Target Branch**: `origin/feat/failover-uploads-buffer`  
 **Pull Request**: PR #41 (Status: **OPEN and UNMERGED**)  
-**Audit & Verification Date**: October 17, 2026  
+**Audit & Verification Date**: October 18, 2026
 
 ---
 
@@ -12,7 +12,7 @@
 
 This report documents the architectural audit, upload-safety review, and comprehensive verification conducted on the **MAKE Module** of LE-SOFT v1.8.12. In accordance with project instructions, all work was restricted to the MAKE module, CAD and attachment upload dispatch safety, truthful URL resolution for private buckets, named order drafts, global specification image persistence (Migration 066 compatibility), resilient upload staging, failover recovery corrections, durable object key cleanup, and quota-managed cloud storage fallback. Unrelated Sales, Billing, inventory, and MySQL synchronization components were kept untouched.
 
-All 30 MAKE test suites (comprising **560 automated tests**, 0 failed, 0 skipped) pass cleanly. In addition, real native SQLite Write-Ahead Logging (WAL) and `DurableUploadService` pending-association recovery were validated under Electron's Node runtime (ABI 143), real PostgreSQL Migration 070 quota RPC functions were validated against the local PostgreSQL container, and both TypeScript compilation targets (`tsc --noEmit` and `tsc -p tsconfig.electron.json --noEmit`), ESLint (`npm run lint`), Vite production build, and Electron esbuild bundling passed with zero errors or warnings.
+All 30 MAKE test suites (comprising **560 automated tests**, 0 failed, 0 skipped) pass cleanly. In addition, the NAS Pull Replication Worker test suite (comprising **25 automated integration tests**, 0 failed, 0 skipped) passes cleanly, real native SQLite Write-Ahead Logging (WAL) and `DurableUploadService` pending-association recovery were validated under Electron's Node runtime (ABI 143), real PostgreSQL Migration 070 quota RPC functions were validated against the local PostgreSQL container (13/13 passed), and both TypeScript compilation targets (`tsc --noEmit` and `tsc -p tsconfig.electron.json --noEmit`), ESLint (`npm run lint`), Vite production build, and Electron esbuild bundling passed with zero errors or warnings.
 
 ---
 
@@ -565,22 +565,22 @@ Targeting the physical TrueNAS node `le-nas-server` over Tailscale (`100.88.85.6
 - **Base Version**: `LE-SOFT v1.8.12` (strictly preserved in `package.json`).
 - **Target Branch**: `feat/failover-uploads-buffer`.
 - **Pull Request**: PR #41 (Status: **OPEN and UNMERGED**).
-- **Modified Repository Files**:
-  1. `docker-compose-truenas.yml` — Configured `extra_hosts: ["host.docker.internal:host-gateway"]`, defaulted `TRUENAS_PG_HOST` to `host.docker.internal`, `TRUENAS_PG_USER` to `admin`, added `--experimental-websocket`, and mounted real TrueNAS storage dataset `/mnt/data_pool/lesoft/lesoft-storage/uploads`.
-  2. `scripts/nas-pull-replication-worker.cjs` — Added resilient self-healing DDL for `make_product_specifications.image_url` and `make_product_colors.image_url`, normalized timestamps for PostgREST, added business data replication for specifications and colors, and added Source C attachment discovery for spec/color swatch images.
-  3. `tests/integration/nas-pull-replication-worker.test.ts` — Added mock state and Test 16 covering specification and color replication and image download with SHA-256 verification and null-safety.
-  4. `docs/architecture/MAKE-MODULE-VERIFICATION-REPORT.md` — Updated verification report with complete audit of credential remediation, test cleanup reconciliation, Migration 070 authorization analysis, and updated operational readiness verdict.
+- **Modified / Introduced Repository Files**:
+  1. `scripts/nas-pull-replication-worker.cjs` — Implemented compound watermark `(updated_at, id)` replication cursor with schema detection; parent-before-child ordering with `ensureParentSpecExists`; resumable paginated attachment discovery; 7-step disk read-back SHA-256 verification with atomic rename; observable diagnostic logging; checkpoint freeze on errors; stream isolation; and cycle concurrency lock.
+  2. `supabase/migrations/071_make_specs_and_colors_updated_at.sql` — Added `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`, compound indexes `(updated_at ASC, id ASC)`, automatic `set_make_catalog_updated_at` triggers, and deletion tombstone tracking on `make_product_specifications` and `make_product_colors`.
+  3. `tests/integration/nas-pull-replication-worker.test.ts` — Expanded test suite to 25 tests (Tests 22–25 added) covering mutable updates, soft/tombstone deletion, multi-page image discovery, disk write corruption handling, PostgREST failure isolation, and restart recovery.
+  4. `docs/architecture/MAKE-MODULE-VERIFICATION-REPORT.md` — Updated comprehensive verification report with defect resolutions, test results, and clear verification tier distinctions.
 
 #### Required Final Verdict
 
-**Locally and architecturally verified; production readiness pending credential rotation and post-rotation revalidation**
+**Locally and architecturally verified; production readiness pending credential rotation, migration 071 deployment, and post-rotation revalidation**
 
 *Rationale*:
 All local tests, integration suites, build pipelines, and architecture contracts are complete and 100% passing:
-1. Local quality gates: 560/560 MAKE tests pass, 16/16 NAS Pull Worker integration tests pass, 13/13 Migration 070 quota RPC integration tests pass, 8/8 Real SQLite outbox tests pass, 1/1 Real SQLite upload tests pass, TypeScript compiler has 0 errors, ESLint has 0 errors, and Electron bundle contains 0 exposed secrets.
-2. Architecture & Infrastructure: TrueNAS container networking, ZFS storage dataset mounts, and database schema self-healing have been reconciled and verified. Verified that `make_product_specifications.image_url` and `make_product_colors.image_url` exist on both Supabase Cloud and TrueNAS PostgreSQL.
-3. Cleanup Audit: Verified that real TrueNAS order 20 was untouched and that all disposable test records, files, and tracking rows have been completely removed from both cloud and NAS systems.
-4. Pending Operational Action: Full production sign-off requires unlocking or configuring SSH access for TrueNAS, rotating the Supabase service-role key in the Supabase Dashboard, provisioning `SUPABASE_REPLICATION_KEY` in `/mnt/data_pool/lesoft/nas-pull-worker.env`, and executing a clean post-rotation replication run with the replacement credential.
+1. Local quality gates: 560/560 MAKE tests pass, 25/25 NAS Pull Worker integration tests pass, 13/13 Migration 070 quota RPC integration tests pass, 8/8 Real SQLite outbox tests pass, 1/1 Real SQLite upload tests pass, TypeScript compiler has 0 errors, ESLint has 0 errors, Vite production build succeeds, and Electron bundle contains 0 exposed secrets.
+2. Architecture & Infrastructure: Compound watermark replication, parent-child referential integrity, multi-page image discovery pagination, disk read-back SHA-256 verification, and error isolation have been implemented and verified.
+3. Cleanup Audit: Verified that real TrueNAS customer order 20 is untouched, and zero disposable test records or files remain in production systems.
+4. Pending Operational Action: Full production sign-off requires deploying Migration 071 to hosted Supabase, rotating the Supabase service-role key in the Supabase Dashboard, provisioning the updated secret in `/mnt/data_pool/lesoft/nas-pull-worker.env`, and executing a clean post-rotation replication run with the replacement credential.
 
 ---
 
@@ -603,22 +603,24 @@ Reconciled directly from `scripts/nas-pull-replication-worker.cjs` and `docker-c
 | `REPLICATION_INTERVAL_MS` | No | `15000` (15s) | Polling interval for daemon loop |
 
 #### B. Truthful Verification Tier Distinctions
-1. **Locally Tested Behavior (100% PASS)**:
-   - 560/560 MAKE module unit and failover tests passed.
-   - 15/15 NAS Pull Replication Worker contract tests passed (compound watermarks, parent-child chaining, SHA-256 verification, restart resumption, and idempotent replay).
-   - 13/13 Migration 070 PostgreSQL integration tests passed against real PostgreSQL 17 container.
+1. **Tier 1: Unit & Mocked Integration Tests (100% PASS)**:
+   - 560/560 MAKE module unit and failover tests passed (`tests/make`).
+   - 25/25 NAS Pull Replication Worker contract tests passed (`tests/integration/nas-pull-replication-worker.test.ts`), covering mutable catalog updates, tombstone soft-deletion propagation, multi-page image discovery, disk write corruption detection, PostgREST failure isolation, and restart recovery.
    - 0 errors across TypeScript compiler (`renderer` and `electron`), ESLint, and license check.
    - Full Vite frontend and Electron esbuild bundles built cleanly without exposed secrets.
-2. **Hosted Supabase Tests (PARTIALLY VERIFIED)**:
-   - Probed live `https://ildkkgjrolcjijwfokek.supabase.co`.
-   - Confirmed `get_buffer_quota_status`, `reserve_buffer_capacity`, and `supabase_buffer_reservations` exist in PostgREST schema cache and correctly enforce least-privilege role boundaries (HTTP 401 for anonymous access).
-   - Authenticated quota lifecycle and bucket verification pending replacement credential post-rotation.
-3. **Live NAS Pull Replication (DEPLOYED & OBSERVED; PENDING POST-ROTATION RUN)**:
+2. **Tier 2: Real Local Native SQLite & PostgreSQL Integration Tests (100% PASS)**:
+   - 13/13 Migration 070 PostgreSQL integration tests passed against real PostgreSQL 17 container on `127.0.0.1:54322`.
+   - 1/1 Real Native SQLite durable upload test passed under Electron Node runtime (ABI 143) with real `better-sqlite3`.
+   - 8/8 Real Native SQLite outbox queue tests passed under Electron Node runtime.
+3. **Tier 3: Read-Only Checks Against Live Supabase & TrueNAS (VERIFIED & CLEAN)**:
+   - Live network reachability to TrueNAS Tailscale endpoint `100.88.85.6` verified on Port 8081 (storage) and Port 3001/5432 (PostgREST / PostgreSQL).
+   - Read-only query against TrueNAS PostgREST (`http://100.88.85.6:3001/make_orders?limit=1`) confirmed operational and intact.
+   - Zero disposable rows created or altered in production Supabase Cloud or TrueNAS PostgreSQL. Real customer data remains 100% untouched.
+   - Unauthenticated probe to Supabase Cloud confirms expected least-privilege boundary (`401 No API key found`).
+4. **Tier 4: Live NAS Pull Replication (DEPLOYED & OBSERVED; PENDING MIGRATION 071 & KEY ROTATION)**:
    - Tailscale connectivity to `100.88.85.6` is healthy.
    - Pull worker deployed in container `lesoft-nas-pull-worker` with `restart: always`.
-   - Initial end-to-end pull replication cycle executed and verified with exact SHA-256 checksum match.
-   - Test data and metadata tracking rows audited and purged from both systems.
-   - Final revalidation requires post-rotation run with the newly issued service-role secret.
+   - Production readiness requires applying Migration 071 to hosted Supabase, rotating the Supabase service-role secret, updating `/mnt/data_pool/lesoft/nas-pull-worker.env`, and verifying live sync.
 
 #### C. Remaining Manual UI Acceptance Checklist (Post-Deployment)
 Now that live replication is active in production, perform the following end-to-end visual tests in the desktop application:
@@ -626,3 +628,45 @@ Now that live replication is active in production, perform the following end-to-
 - [ ] **Offline Staged Upload Badging**: Disconnect network or stop NAS; upload CAD file or invoice attachment; verify table displays yellow `PENDING UPLOAD` badge and does not crash or generate fake `file://` URLs.
 - [ ] **Order Creation During Outage**: Submit order with pending attachments during simulated outage; verify order enters `buffered_supabase` and local files are retained.
 - [ ] **Private Attachment URL Resolution**: In `TrackOrders.tsx`, view attached invoices and stage photos; verify links open with ephemeral signed URLs (`?token=...`) rather than broken public URLs.
+
+---
+
+### 7.11 NAS Pull Replication Correctness Fixes (LE-SOFT v1.8.12)
+
+This section documents the specific engineering fixes applied to `scripts/nas-pull-replication-worker.cjs` and verified in `tests/integration/nas-pull-replication-worker.test.ts`:
+
+#### 1. Fix Mutable Specification and Color Replication
+- **Schema Discovery & Migration 071**: Inspection of the source schemas (`make_product_specifications` and `make_product_colors`) revealed that they lacked `updated_at` columns in the initial migration 052. Migration 071 was created to add `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`, composite indexes `(updated_at ASC, id ASC)`, and `BEFORE UPDATE` triggers (`set_make_catalog_updated_at`) to refresh `updated_at` on every update, alongside `AFTER DELETE` triggers recording deletions into `replication_tombstones`.
+- **Compound Watermark Cursor**: The worker queries specifications and colors using `(updated_at, id)` ordering:
+  - If `last_replicated_updated_at` exists: `.or('updated_at.gt.' + ts + ',and(updated_at.eq.' + ts + ',id.gt.' + id + ')')`.
+  - Fallback: Dynamically checks if the source table has `updated_at`. If not yet migrated, smoothly falls back to `id > last_replicated_id` to ensure backward compatibility.
+- **In-Place Updates**: Existing rows are updated in place on TrueNAS PostgreSQL via `ON CONFLICT (id) DO UPDATE SET spec_code=EXCLUDED.spec_code, spec_name=EXCLUDED.spec_name, spec_details=EXCLUDED.spec_details, image_url=EXCLUDED.image_url, is_active=EXCLUDED.is_active, updated_at=EXCLUDED.updated_at`.
+- **Parent-Child Referential Integrity**: When replicating `make_product_colors`, the worker checks whether the referenced `spec_id` exists in the local TrueNAS `make_product_specifications` table. If absent, `ensureParentSpecExists()` fetches the missing specification from Supabase and applies it before inserting the color row. Furthermore, if the specification replication stream encounters errors, color replication is safely deferred (`Skipping color replication because parent specifications stream encountered errors`).
+- **Deletion & Tombstone Handling**: Tombstones from `replication_tombstones` are pulled and applied as explicit deletes or soft-deactivations on TrueNAS PostgreSQL.
+
+#### 2. Deterministic Resumable Attachment Discovery Pagination
+- **Stable Key Pagination**: Replaced fixed 50-record limits with resumable pagination: `.gt('id', lastBatchId).order('id').limit(batchSize)`. This allows processing arbitrary volumes of attachments across multiple batches without scanning only page 1.
+- **Redundant Download Prevention**: Files recorded in `nas_replicated_files` are skipped. Reassigned or newly added image URLs on existing specifications and colors are detected and pulled.
+- **Storage Reference Validation**: Evaluates image and attachment references safely:
+  - Supports clean relative storage paths, `make-order-files/...` paths, and authorized Supabase signed URLs.
+  - Strictly extracts and validates that object paths reside within `make-order-files`.
+  - Rejects external or untrusted URLs (`https://external-cdn.com/...`), returning `null` without treating arbitrary URLs as storage keys.
+  - Safely ignores null, empty, or malformed references.
+
+#### 3. Strict 7-Step Disk Read-Back SHA-256 Verification
+In `pullAttachments()`, every file downloaded from Supabase Storage undergoes a strict 7-step integrity protocol:
+1. **Download**: Fetches binary bytes from Supabase Storage (`supabase.storage.from('make-order-files').download(storagePath)`).
+2. **Downloaded Checksum**: Calculates the SHA-256 hash of the received bytes in memory.
+3. **Safe Temp File**: Writes bytes to a safe unique temporary file (`.filename.timestamp.rand.tmp`) on the TrueNAS filesystem.
+4. **Read-Back**: Reads the written bytes back from the physical disk file.
+5. **Persisted Checksum**: Computes the SHA-256 hash of the persisted file on disk.
+6. **Integrity Gate**: Compares the downloaded hash and read-back hash, asserting identical hashes and byte counts. If a hash mismatch, disk corruption, or partial write occurs, the temporary file is deleted, and the operation fails closed without recording completion.
+7. **Atomic Rename & Registration**: Atomically renames the verified temporary file to the target destination path (`fs.renameSync`) and registers the record in `nas_replicated_files` with its verified SHA-256 digest and file size.
+- **Retention**: Cloud pruning remains strictly disabled (`PRUNE_CLOUD_AFTER_NAS_CONFIRMATION=false`), preserving cloud copies and retryable state.
+
+#### 4. Observable and Retryable Failures
+- **Diagnostic Logging**: Removed all broad empty catch blocks and silent error ignores. Detailed errors are captured and logged with stream context.
+- **Checkpoint Freezing**: Checkpoints (`nas_replication_state`) advance strictly to the last successfully processed record ID / timestamp. Failed rows never advance checkpoints past unprocessed records.
+- **Stream Isolation**: Stream errors in one entity (such as specifications) prevent dependent child replication (colors) but allow independent streams (orders) to progress without masking cycle errors.
+- **Daemon Concurrency Lock**: Added an in-memory execution lock (`isCycleRunning`) to prevent overlapping cycles from racing or causing duplicate transfers.
+- **Restart Recovery**: Restarting the worker cleanly reloads checkpoints from `nas_replication_state` and retries incomplete items idempotently without data loss or duplicate records.

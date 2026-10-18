@@ -26,6 +26,7 @@ const {
     initCheckpoints,
     getCheckpoint,
     updateCheckpoint,
+    normalizeStorageObjectKey,
     pullBusinessData,
     pullAttachments,
     runReplicationCycle
@@ -46,6 +47,7 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
     let mockTrueNasSpecs: Map<number, any>;
     let mockTrueNasColors: Map<number, any>;
     let mockSupabaseStorageFiles: Map<string, { buffer: Buffer; sha256: string }>;
+    let mockTrueNasReplicatedFiles: Set<string>;
     let tempStorageDir: string;
 
     beforeEach(() => {
@@ -54,6 +56,7 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
         mockTrueNasUpdates = new Map();
         mockTrueNasSpecs = new Map();
         mockTrueNasColors = new Map();
+        mockTrueNasReplicatedFiles = new Set();
         mockSupabaseOrders = [];
         mockSupabaseUpdates = [];
         mockSupabaseSpecs = [];
@@ -86,8 +89,8 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
                     const existing = mockCheckpoints.get(tableName) || { items_replicated: 0 };
                     const updated = {
                         table_name: tableName,
-                        last_replicated_id: params[1] || existing.last_replicated_id,
-                        last_replicated_at: params[2] || existing.last_replicated_at,
+                        last_replicated_id: params[1] || existing.last_replicated_id || null,
+                        last_replicated_at: params[2] || existing.last_replicated_at || null,
                         items_replicated: Number(existing.items_replicated) + Number(params[3] || 0),
                         last_error: params[4] || null,
                         updated_at: new Date().toISOString()
@@ -152,10 +155,22 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
                         spec_details: params[4],
                         is_active: params[5],
                         image_url: params[6],
-                        created_at: params[7]
+                        created_at: params[7],
+                        updated_at: params[8] || params[7] || new Date().toISOString()
                     };
                     mockTrueNasSpecs.set(id, specRecord);
                     return { rows: [specRecord] };
+                }
+
+                if (normalized.includes('SELECT 1 FROM make_product_specifications WHERE id = $1')) {
+                    const id = Number(params[0]);
+                    return { rows: mockTrueNasSpecs.has(id) ? [{ 1: 1 }] : [] };
+                }
+
+                if (normalized.includes('DELETE FROM make_product_specifications WHERE id = $1')) {
+                    const id = Number(params[0]);
+                    mockTrueNasSpecs.delete(id);
+                    return { rows: [] };
                 }
 
                 if (normalized.includes('INSERT INTO make_product_colors')) {
@@ -168,17 +183,25 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
                         color_code: params[4],
                         is_active: params[5],
                         image_url: params[6],
-                        created_at: params[7]
+                        created_at: params[7],
+                        updated_at: params[8] || params[7] || new Date().toISOString()
                     };
                     mockTrueNasColors.set(id, colorRecord);
                     return { rows: [colorRecord] };
                 }
 
-                if (normalized.includes('SELECT 1 FROM nas_replicated_files WHERE object_key = $1')) {
+                if (normalized.includes('DELETE FROM make_product_colors WHERE id = $1')) {
+                    const id = Number(params[0]);
+                    mockTrueNasColors.delete(id);
                     return { rows: [] };
                 }
 
+                if (normalized.includes('SELECT 1 FROM nas_replicated_files WHERE object_key = $1')) {
+                    return { rows: mockTrueNasReplicatedFiles.has(params[0]) ? [{ 1: 1 }] : [] };
+                }
+
                 if (normalized.includes('INSERT INTO nas_replicated_files')) {
+                    mockTrueNasReplicatedFiles.add(params[0]);
                     return { rows: [] };
                 }
 
@@ -924,5 +947,629 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
         expect(specCp.items_replicated).toBe(2);
         const colorCp = await getCheckpoint(mockPg, 'make_product_colors');
         expect(colorCp.items_replicated).toBe(2);
+    });
+
+    it('17. Partial failure diagnostics: records diagnostic errors for a failed stream while independent streams continue safely and child streams halt safely', async () => {
+        // Order in make_orders stream
+        mockSupabaseOrders.push({
+            id: 1001,
+            order_number: 'ORD-PARTIAL-001',
+            furniture_name: 'Executive Walnut Desk',
+            total_price: 3200,
+            current_stage: 'production',
+            status: 'in_progress',
+            created_at: '2026-10-18T08:00:00.000Z',
+            updated_at: '2026-10-18T08:00:00.000Z'
+        });
+
+        // Spec in make_product_specifications stream
+        mockSupabaseSpecs.push({
+            id: 501,
+            product_id: 20,
+            spec_code: 'SPEC-FAIL-01',
+            spec_name: 'Walnut Finish',
+            is_active: true,
+            created_at: '2026-10-18T08:01:00.000Z'
+        });
+
+        // Color in child stream
+        mockSupabaseColors.push({
+            id: 601,
+            product_id: 20,
+            spec_id: 501,
+            color_name: 'Dark Walnut',
+            is_active: true,
+            created_at: '2026-10-18T08:02:00.000Z'
+        });
+
+        // Simulate database write failure specifically for make_product_specifications
+        const originalQuery = mockPg.query;
+        mockPg.query = vi.fn(async (sql: string, params: any[] = []) => {
+            if (sql.includes('INSERT INTO make_product_specifications')) {
+                throw new Error('relation "make_product_specifications" is locked by concurrent maintenance transaction');
+            }
+            return originalQuery(sql, params);
+        });
+
+        const cycleRes = await runReplicationCycle({
+            supabaseClient: mockSupabase,
+            pgClient: mockPg,
+            storagePath: tempStorageDir,
+            pruneCloud: false
+        });
+
+        // Overall cycle reports failure because a stream encountered an error
+        expect(cycleRes.success).toBe(false);
+        expect(cycleRes.errors.businessData.make_product_specifications).toContain('locked by concurrent maintenance transaction');
+
+        // Independent stream (make_orders) succeeded completely
+        expect(mockTrueNasOrders.has(1001)).toBe(true);
+        const orderCp = await getCheckpoint(mockPg, 'make_orders');
+        expect(orderCp.items_replicated).toBe(1);
+
+        // Dependent child stream (make_product_colors) safely halted to prevent foreign key errors
+        expect(mockTrueNasColors.size).toBe(0);
+        const colorCp = await getCheckpoint(mockPg, 'make_product_colors');
+        expect(colorCp.items_replicated).toBe(0);
+
+        // Spec checkpoint preserved with diagnostic error and did not advance
+        const specCp = await getCheckpoint(mockPg, 'make_product_specifications');
+        expect(specCp.items_replicated).toBe(0);
+        expect(specCp.last_error).toContain('locked by concurrent maintenance transaction');
+    });
+
+    it('18. Idempotent retry: failed row or query recovers on subsequent cycle without advancing checkpoint prematurely or duplicating data', async () => {
+        mockSupabaseOrders.push(
+            {
+                id: 1101,
+                order_number: 'ORD-RETRY-001',
+                furniture_name: 'Acoustic Wall Panel',
+                total_price: 1500,
+                current_stage: 'design',
+                status: 'in_progress',
+                created_at: '2026-10-18T08:10:00.000Z',
+                updated_at: '2026-10-18T08:10:00.000Z'
+            },
+            {
+                id: 1102,
+                order_number: 'ORD-RETRY-002',
+                furniture_name: 'Standing Desk Frame',
+                total_price: 1800,
+                current_stage: 'design',
+                status: 'in_progress',
+                created_at: '2026-10-18T08:11:00.000Z',
+                updated_at: '2026-10-18T08:11:00.000Z'
+            }
+        );
+
+        // First attempt: fail on order 1102
+        let failOrder1102 = true;
+        const originalQuery = mockPg.query;
+        mockPg.query = vi.fn(async (sql: string, params: any[] = []) => {
+            if (failOrder1102 && sql.includes('INSERT INTO make_orders') && params[0] === 1102) {
+                throw new Error('Transient connection reset during order 1102');
+            }
+            return originalQuery(sql, params);
+        });
+
+        const cycle1 = await runReplicationCycle({
+            supabaseClient: mockSupabase,
+            pgClient: mockPg,
+            storagePath: tempStorageDir,
+            pruneCloud: false
+        });
+
+        expect(cycle1.success).toBe(false);
+        // Order 1101 was saved, but order 1102 failed
+        expect(mockTrueNasOrders.has(1101)).toBe(true);
+        expect(mockTrueNasOrders.has(1102)).toBe(false);
+
+        // Checkpoint advanced to 1101, but NOT 1102
+        const cp1 = await getCheckpoint(mockPg, 'make_orders');
+        expect(cp1.last_replicated_id).toBe('1101');
+        expect(cp1.items_replicated).toBe(1);
+
+        // Second attempt: transient failure is resolved
+        failOrder1102 = false;
+        const cycle2 = await runReplicationCycle({
+            supabaseClient: mockSupabase,
+            pgClient: mockPg,
+            storagePath: tempStorageDir,
+            pruneCloud: false
+        });
+
+        expect(cycle2.success).toBe(true);
+        // Both orders now present in replica
+        expect(mockTrueNasOrders.has(1101)).toBe(true);
+        expect(mockTrueNasOrders.has(1102)).toBe(true);
+        expect(mockTrueNasOrders.size).toBe(2);
+
+        // Checkpoint now cleanly advanced to 1102 with zero duplicate records
+        const cp2 = await getCheckpoint(mockPg, 'make_orders');
+        expect(cp2.last_replicated_id).toBe('1102');
+        expect(cp2.items_replicated).toBe(2);
+    });
+
+    it('19. File integrity verification: downloaded-byte SHA-256 vs persisted-file SHA-256 mismatch rejection, temporary-file cleanup, cloud object preservation, and retry recovery', async () => {
+        const cloudPath = 'cad/corrupted_blueprint_test.pdf';
+        const validBuffer = Buffer.from('VALID_BLUEPRINT_CAD_BINARY_STREAM_CONTENT_999');
+        const validSha = crypto.createHash('sha256').update(validBuffer).digest('hex').toUpperCase();
+
+        // Register order with this attachment
+        mockSupabaseOrders.push({
+            id: 1201,
+            order_number: 'ORD-SHA-001',
+            furniture_name: 'Reception Counter',
+            total_price: 4500,
+            current_stage: 'cad',
+            status: 'in_progress',
+            invoice_attachment_urls: [`make-order-files/${cloudPath}`],
+            created_at: '2026-10-18T08:20:00.000Z',
+            updated_at: '2026-10-18T08:20:00.000Z'
+        });
+
+        // Mock disk write corruption on first attempt to trigger downloaded vs persisted SHA mismatch
+        let corruptDiskWrite = true;
+        const originalWrite = fs.writeFileSync;
+        const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation((target: any, content: any, opts: any) => {
+            if (corruptDiskWrite && typeof target === 'string' && target.includes('corrupted_blueprint_test')) {
+                return originalWrite(target, Buffer.from('CORRUPTED_INCOMPLETE_DISK_BYTES'), opts);
+            }
+            return originalWrite(target, content, opts);
+        });
+
+        mockSupabase.storage = {
+            from: vi.fn(() => ({
+                download: vi.fn(async (p: string) => {
+                    return { data: validBuffer, error: null };
+                }),
+                remove: vi.fn(async (paths: string[]) => {
+                    for (const p of paths) mockSupabaseStorageFiles.delete(p);
+                    return { data: paths, error: null };
+                })
+            }))
+        };
+        mockSupabaseStorageFiles.set(cloudPath, { buffer: validBuffer, sha256: validSha });
+
+        // First attempt with corrupt disk write: run pullAttachments
+        const pullRes1 = await pullAttachments({
+            supabaseClient: mockSupabase,
+            pgClient: mockPg,
+            storagePath: tempStorageDir,
+            pruneCloud: true // Even with pruneCloud=true, cloud file must NOT be pruned on failure!
+        });
+
+        expect(pullRes1.success).toBe(false);
+
+        // Verified failed
+        const destFile = path.join(tempStorageDir, 'cad', 'corrupted_blueprint_test.pdf');
+        expect(fs.existsSync(destFile)).toBe(false);
+
+        // Verify temporary .tmp file was unlinked and cleaned up
+        const cadDir = path.join(tempStorageDir, 'cad');
+        if (fs.existsSync(cadDir)) {
+            const tempFiles = fs.readdirSync(cadDir).filter(f => f.endsWith('.tmp'));
+            expect(tempFiles.length).toBe(0);
+        }
+
+        // Verify nas_replicated_files does NOT contain the key
+        expect(mockTrueNasReplicatedFiles.has(cloudPath)).toBe(false);
+
+        // Verify cloud object was PRESERVED for retry (not pruned)
+        expect(mockSupabaseStorageFiles.has(cloudPath)).toBe(true);
+
+        // Second attempt: disk corruption resolved
+        corruptDiskWrite = false;
+        const pullRes2 = await pullAttachments({
+            supabaseClient: mockSupabase,
+            pgClient: mockPg,
+            storagePath: tempStorageDir,
+            pruneCloud: false
+        });
+
+        expect(pullRes2.success).toBe(true);
+
+        // Successfully persisted with exact SHA-256 match
+        expect(fs.existsSync(destFile)).toBe(true);
+        const diskHash = crypto.createHash('sha256').update(fs.readFileSync(destFile)).digest('hex').toUpperCase();
+        expect(diskHash).toBe(validSha);
+
+        // Tracked in nas_replicated_files
+        expect(mockTrueNasReplicatedFiles.has(cloudPath)).toBe(true);
+
+        writeSpy.mockRestore();
+    });
+
+    it('20. Deterministic pagination beyond the first batch when many records/files exist', async () => {
+        // Create 5 orders across multiple pages (batchSize = 2 -> 3 pages: 2, 2, 1)
+        for (let i = 1; i <= 5; i++) {
+            const relPath = `orders/page_doc_${i}.pdf`;
+            const buf = Buffer.from(`PAGINATION_TEST_BUFFER_CONTENT_${i}`);
+            const sha = crypto.createHash('sha256').update(buf).digest('hex').toUpperCase();
+            mockSupabaseStorageFiles.set(relPath, { buffer: buf, sha256: sha });
+
+            mockSupabaseOrders.push({
+                id: 2000 + i,
+                order_number: `ORD-PAGE-${String(i).padStart(3, '0')}`,
+                furniture_name: `Product Item ${i}`,
+                total_price: 1000 * i,
+                current_stage: 'production',
+                status: 'in_progress',
+                invoice_attachment_urls: [`make-order-files/${relPath}`],
+                created_at: `2026-10-18T08:${String(30 + i).padStart(2, '0')}:00.000Z`,
+                updated_at: `2026-10-18T08:${String(30 + i).padStart(2, '0')}:00.000Z`
+            });
+        }
+
+        // Run pullBusinessData with batchSize: 2
+        const dataResult = await pullBusinessData({
+            supabaseClient: mockSupabase,
+            pgClient: mockPg,
+            batchSize: 2
+        });
+
+        expect(dataResult.ordersReplicated).toBe(5);
+        expect(mockTrueNasOrders.size).toBe(5);
+
+        // Checkpoint accurately reflects all 5 items
+        const cp = await getCheckpoint(mockPg, 'make_orders');
+        expect(cp.items_replicated).toBe(5);
+        expect(cp.last_replicated_id).toBe('2005');
+
+        // Run pullAttachments with batchSize: 2
+        const attachResult = await pullAttachments({
+            supabaseClient: mockSupabase,
+            pgClient: mockPg,
+            storagePath: tempStorageDir,
+            batchSize: 2
+        });
+
+        expect(attachResult.replicatedCount).toBe(5);
+        for (let i = 1; i <= 5; i++) {
+            const filePath = path.join(tempStorageDir, 'orders', `page_doc_${i}.pdf`);
+            expect(fs.existsSync(filePath)).toBe(true);
+            expect(mockTrueNasReplicatedFiles.has(`orders/page_doc_${i}.pdf`)).toBe(true);
+        }
+    });
+
+    it('21. Storage key normalization and path traversal security: rejects directory traversal and third-party URLs while normalizing valid storage paths', () => {
+        // Path traversal attempts must return null
+        expect(normalizeStorageObjectKey('../secret.env')).toBeNull();
+        expect(normalizeStorageObjectKey('../../etc/passwd')).toBeNull();
+        expect(normalizeStorageObjectKey('..\\Windows\\System32\\cmd.exe')).toBeNull();
+        expect(normalizeStorageObjectKey('cad/../../../shadow')).toBeNull();
+        expect(normalizeStorageObjectKey('/absolute/root/file.pdf')).toBeNull();
+        expect(normalizeStorageObjectKey('C:\\Windows\\win.ini')).toBeNull();
+
+        // Third-party external URLs must return null
+        expect(normalizeStorageObjectKey('https://evil-attacker.com/malware.exe')).toBeNull();
+        expect(normalizeStorageObjectKey('http://insecure-site.org/file.pdf')).toBeNull();
+
+        // Valid relative paths
+        expect(normalizeStorageObjectKey('cad/drawing_001.pdf')).toBe('cad/drawing_001.pdf');
+        expect(normalizeStorageObjectKey('products/photo_99.webp')).toBe('products/photo_99.webp');
+
+        // Valid bucket-prefixed paths
+        expect(normalizeStorageObjectKey('make-order-files/cad/drawing_001.pdf')).toBe('cad/drawing_001.pdf');
+        expect(normalizeStorageObjectKey('/make-order-files/specs/spec_10.pdf')).toBe('specs/spec_10.pdf');
+        expect(normalizeStorageObjectKey('supabase://make-order-files/colors/color_20.png')).toBe('colors/color_20.png');
+
+        // Valid Supabase hosted storage URLs
+        expect(normalizeStorageObjectKey('https://ildkkgjrolcjijwfokek.supabase.co/storage/v1/object/public/make-order-files/cad/drawing_001.pdf')).toBe('cad/drawing_001.pdf');
+        expect(normalizeStorageObjectKey('https://xyz.supabase.co/storage/v1/object/sign/make-order-files/invoices/inv_123.pdf?token=abc')).toBe('invoices/inv_123.pdf');
+
+        // Null / undefined / empty
+        expect(normalizeStorageObjectKey(null)).toBeNull();
+        expect(normalizeStorageObjectKey(undefined)).toBeNull();
+        expect(normalizeStorageObjectKey('')).toBeNull();
+    });
+
+    it('22. Mutable specification and color replication: first replicates a record, then changes name/details/image_url, and proves existing TrueNAS record is updated in place via compound watermark', async () => {
+        const t1 = '2026-10-18T05:00:00.000Z';
+        const specImg1 = 'specs/marble_v1.pdf';
+        const colorImg1 = 'colors/gold_v1.png';
+        const bufSpec1 = Buffer.from('SPEC_IMAGE_VERSION_1');
+        const bufColor1 = Buffer.from('COLOR_IMAGE_VERSION_1');
+        mockSupabaseStorageFiles.set(specImg1, { buffer: bufSpec1, sha256: crypto.createHash('sha256').update(bufSpec1).digest('hex').toUpperCase() });
+        mockSupabaseStorageFiles.set(colorImg1, { buffer: bufColor1, sha256: crypto.createHash('sha256').update(bufColor1).digest('hex').toUpperCase() });
+
+        mockSupabaseSpecs.push({
+            id: 701,
+            product_id: 15,
+            spec_code: 'SPEC-MUTABLE-01',
+            spec_name: 'Initial Marble Surface',
+            spec_details: 'Standard Polished Marble',
+            is_active: true,
+            image_url: `make-order-files/${specImg1}`,
+            created_at: t1,
+            updated_at: t1
+        });
+
+        mockSupabaseColors.push({
+            id: 801,
+            product_id: 15,
+            spec_id: 701,
+            color_name: 'Initial Brushed Gold',
+            color_code: '#D4AF37',
+            is_active: true,
+            image_url: `make-order-files/${colorImg1}`,
+            created_at: t1,
+            updated_at: t1
+        });
+
+        // First replication cycle
+        const cycle1 = await runReplicationCycle({
+            supabaseClient: mockSupabase,
+            pgClient: mockPg,
+            storagePath: tempStorageDir,
+            pruneCloud: false
+        });
+
+        expect(cycle1.success).toBe(true);
+        expect(mockTrueNasSpecs.get(701)?.spec_name).toBe('Initial Marble Surface');
+        expect(mockTrueNasColors.get(801)?.color_name).toBe('Initial Brushed Gold');
+        expect(fs.existsSync(path.join(tempStorageDir, 'specs', 'marble_v1.pdf'))).toBe(true);
+        expect(fs.existsSync(path.join(tempStorageDir, 'colors', 'gold_v1.png'))).toBe(true);
+
+        // Checkpoints after cycle 1
+        const specCp1 = await getCheckpoint(mockPg, 'make_product_specifications');
+        expect(specCp1.last_replicated_id).toBe('701');
+        expect(specCp1.last_replicated_at).toBe(t1);
+
+        // Now mutate existing specification and color in Supabase Cloud
+        const t2 = '2026-10-18T05:30:00.000Z';
+        const specImg2 = 'specs/marble_v2.pdf';
+        const colorImg2 = 'colors/gold_v2.png';
+        const bufSpec2 = Buffer.from('SPEC_IMAGE_VERSION_2_UPDATED');
+        const bufColor2 = Buffer.from('COLOR_IMAGE_VERSION_2_UPDATED');
+        mockSupabaseStorageFiles.set(specImg2, { buffer: bufSpec2, sha256: crypto.createHash('sha256').update(bufSpec2).digest('hex').toUpperCase() });
+        mockSupabaseStorageFiles.set(colorImg2, { buffer: bufColor2, sha256: crypto.createHash('sha256').update(bufColor2).digest('hex').toUpperCase() });
+
+        // Update in place in Supabase (id stays 701 and 801, but updated_at advances)
+        const targetSpec = mockSupabaseSpecs.find(s => s.id === 701);
+        targetSpec.spec_name = 'Ultra Polish Carrara Marble';
+        targetSpec.spec_details = 'Double-beveled edge finish';
+        targetSpec.image_url = `make-order-files/${specImg2}`;
+        targetSpec.updated_at = t2;
+
+        const targetColor = mockSupabaseColors.find(c => c.id === 801);
+        targetColor.color_name = 'Champagne Brushed Gold';
+        targetColor.color_code = '#F1E5AC';
+        targetColor.image_url = `make-order-files/${colorImg2}`;
+        targetColor.updated_at = t2;
+
+        // Second replication cycle: compound watermark (updated_at, id) MUST discover existing modified rows!
+        const cycle2 = await runReplicationCycle({
+            supabaseClient: mockSupabase,
+            pgClient: mockPg,
+            storagePath: tempStorageDir,
+            pruneCloud: false
+        });
+
+        expect(cycle2.success).toBe(true);
+        // Prove TrueNAS records were updated in place without duplicate records
+        expect(mockTrueNasSpecs.size).toBe(1);
+        expect(mockTrueNasSpecs.get(701)?.spec_name).toBe('Ultra Polish Carrara Marble');
+        expect(mockTrueNasSpecs.get(701)?.spec_details).toBe('Double-beveled edge finish');
+        expect(mockTrueNasSpecs.get(701)?.image_url).toBe(`make-order-files/${specImg2}`);
+
+        expect(mockTrueNasColors.size).toBe(1);
+        expect(mockTrueNasColors.get(801)?.color_name).toBe('Champagne Brushed Gold');
+        expect(mockTrueNasColors.get(801)?.color_code).toBe('#F1E5AC');
+        expect(mockTrueNasColors.get(801)?.image_url).toBe(`make-order-files/${colorImg2}`);
+
+        // Prove newly assigned image attachments were pulled to TrueNAS disk
+        expect(fs.existsSync(path.join(tempStorageDir, 'specs', 'marble_v2.pdf'))).toBe(true);
+        expect(fs.existsSync(path.join(tempStorageDir, 'colors', 'gold_v2.png'))).toBe(true);
+
+        // Checkpoints advanced to t2
+        const specCp2 = await getCheckpoint(mockPg, 'make_product_specifications');
+        expect(specCp2.last_replicated_id).toBe('701');
+        expect(specCp2.last_replicated_at).toBe(t2);
+    });
+
+    it('23. Specification and color deletion propagation: tombstones and soft-deletions propagate cleanly to TrueNAS PostgreSQL replica', async () => {
+        const t1 = '2026-10-18T06:00:00.000Z';
+        mockSupabaseSpecs.push({
+            id: 702,
+            product_id: 16,
+            spec_name: 'Temporary Granite Spec',
+            created_at: t1,
+            updated_at: t1
+        });
+        mockSupabaseColors.push({
+            id: 802,
+            product_id: 16,
+            spec_id: 702,
+            color_name: 'Temporary Granite Color',
+            created_at: t1,
+            updated_at: t1
+        });
+
+        // Initial sync
+        await runReplicationCycle({
+            supabaseClient: mockSupabase,
+            pgClient: mockPg,
+            storagePath: tempStorageDir,
+            pruneCloud: false
+        });
+        expect(mockTrueNasSpecs.has(702)).toBe(true);
+        expect(mockTrueNasColors.has(802)).toBe(true);
+
+        // Test 1: Soft-deletion of color (deleted_at set)
+        const t2 = '2026-10-18T06:10:00.000Z';
+        const cl = mockSupabaseColors.find(c => c.id === 802);
+        cl.deleted_at = t2;
+        cl.updated_at = t2;
+
+        await runReplicationCycle({
+            supabaseClient: mockSupabase,
+            pgClient: mockPg,
+            storagePath: tempStorageDir,
+            pruneCloud: false
+        });
+        expect(mockTrueNasColors.has(802)).toBe(false);
+
+        // Test 2: Hard-deletion tombstone of specification
+        const t3 = '2026-10-18T06:20:00.000Z';
+        mockSupabaseTombstones.push({
+            id: 301,
+            table_name: 'make_product_specifications',
+            record_id: 702,
+            deleted_at: t3
+        });
+
+        await runReplicationCycle({
+            supabaseClient: mockSupabase,
+            pgClient: mockPg,
+            storagePath: tempStorageDir,
+            pruneCloud: false
+        });
+        expect(mockTrueNasSpecs.has(702)).toBe(false);
+    });
+
+    it('24. Paginated attachment discovery for specifications and colors processes multiple pages deterministically beyond page 1', async () => {
+        // Create 4 specifications and 4 colors across batches of size 2 (2 pages for specs, 2 pages for colors)
+        for (let i = 1; i <= 4; i++) {
+            const specKey = `specs/paginated_spec_${i}.pdf`;
+            const colorKey = `colors/paginated_color_${i}.png`;
+            const sBuf = Buffer.from(`SPEC_BUF_${i}`);
+            const cBuf = Buffer.from(`COLOR_BUF_${i}`);
+            mockSupabaseStorageFiles.set(specKey, { buffer: sBuf, sha256: crypto.createHash('sha256').update(sBuf).digest('hex').toUpperCase() });
+            mockSupabaseStorageFiles.set(colorKey, { buffer: cBuf, sha256: crypto.createHash('sha256').update(cBuf).digest('hex').toUpperCase() });
+
+            mockSupabaseSpecs.push({
+                id: 1000 + i,
+                product_id: 30,
+                spec_name: `Paginated Spec ${i}`,
+                image_url: `make-order-files/${specKey}`,
+                created_at: `2026-10-18T06:${String(30 + i).padStart(2, '0')}:00.000Z`,
+                updated_at: `2026-10-18T06:${String(30 + i).padStart(2, '0')}:00.000Z`
+            });
+
+            mockSupabaseColors.push({
+                id: 2000 + i,
+                product_id: 30,
+                spec_id: 1000 + i,
+                color_name: `Paginated Color ${i}`,
+                image_url: `make-order-files/${colorKey}`,
+                created_at: `2026-10-18T06:${String(30 + i).padStart(2, '0')}:00.000Z`,
+                updated_at: `2026-10-18T06:${String(30 + i).padStart(2, '0')}:00.000Z`
+            });
+        }
+
+        // Pull attachments with batchSize: 2
+        const res = await pullAttachments({
+            supabaseClient: mockSupabase,
+            pgClient: mockPg,
+            storagePath: tempStorageDir,
+            batchSize: 2
+        });
+
+        expect(res.success).toBe(true);
+        expect(res.filesPulled).toBe(8);
+
+        // Verify all 8 files on TrueNAS disk and registered
+        for (let i = 1; i <= 4; i++) {
+            expect(fs.existsSync(path.join(tempStorageDir, 'specs', `paginated_spec_${i}.pdf`))).toBe(true);
+            expect(fs.existsSync(path.join(tempStorageDir, 'colors', `paginated_color_${i}.png`))).toBe(true);
+            expect(mockTrueNasReplicatedFiles.has(`specs/paginated_spec_${i}.pdf`)).toBe(true);
+            expect(mockTrueNasReplicatedFiles.has(`colors/paginated_color_${i}.png`)).toBe(true);
+        }
+
+        // Running again without new files is completely idempotent and pulls 0 files
+        const res2 = await pullAttachments({
+            supabaseClient: mockSupabase,
+            pgClient: mockPg,
+            storagePath: tempStorageDir,
+            batchSize: 2
+        });
+        expect(res2.success).toBe(true);
+        expect(res2.filesPulled).toBe(0);
+    });
+
+    it('25. Query errors, PostgREST failure isolation, and restart recovery without premature checkpoint advancement', async () => {
+        // Setup order, spec, color
+        mockSupabaseOrders.push({
+            id: 3001,
+            order_number: 'ORD-ERR-001',
+            furniture_name: 'Staging Bench',
+            total_price: 1800,
+            created_at: '2026-10-18T07:00:00.000Z',
+            updated_at: '2026-10-18T07:00:00.000Z'
+        });
+
+        mockSupabaseSpecs.push({
+            id: 4001,
+            product_id: 40,
+            spec_name: 'Bench Cushion Spec',
+            created_at: '2026-10-18T07:00:00.000Z',
+            updated_at: '2026-10-18T07:00:00.000Z'
+        });
+
+        mockSupabaseColors.push({
+            id: 5001,
+            product_id: 40,
+            spec_id: 4001,
+            color_name: 'Navy Blue Fabric',
+            created_at: '2026-10-18T07:00:00.000Z',
+            updated_at: '2026-10-18T07:00:00.000Z'
+        });
+
+        // Simulate PostgREST query failure on make_product_specifications
+        let failSpecQuery = true;
+        const origFrom = mockSupabase.from;
+        mockSupabase.from = vi.fn((table: string) => {
+            if (failSpecQuery && table === 'make_product_specifications') {
+                const chain = origFrom(table).select();
+                chain.then = (resolve: any) => resolve({
+                    data: null,
+                    error: { message: 'PostgREST 500: Database connection timeout', code: 'PGRST000' }
+                });
+                return {
+                    select: vi.fn(() => chain)
+                };
+            }
+            return origFrom(table);
+        });
+
+        // Cycle 1: make_orders succeeds, specs fails, colors skipped
+        const cycle1 = await runReplicationCycle({
+            supabaseClient: mockSupabase,
+            pgClient: mockPg,
+            storagePath: tempStorageDir,
+            pruneCloud: false
+        });
+
+        expect(cycle1.success).toBe(false);
+        expect(cycle1.errors?.businessData?.make_product_specifications).toContain('Database connection timeout');
+        expect(mockTrueNasOrders.has(3001)).toBe(true); // Independent stream succeeded!
+        expect(mockTrueNasSpecs.has(4001)).toBe(false); // Failed stream halted!
+        expect(mockTrueNasColors.has(5001)).toBe(false); // Dependent child stream halted safely!
+
+        // Checkpoint for specs was NOT advanced
+        const specCp1 = await getCheckpoint(mockPg, 'make_product_specifications');
+        expect(specCp1.last_replicated_id).toBeNull();
+        expect(specCp1.last_error).toContain('Database connection timeout');
+
+        // Cycle 2: Transient failure resolved (worker restarted)
+        failSpecQuery = false;
+        mockSupabase.from = origFrom;
+
+        const cycle2 = await runReplicationCycle({
+            supabaseClient: mockSupabase,
+            pgClient: mockPg,
+            storagePath: tempStorageDir,
+            pruneCloud: false
+        });
+
+        expect(cycle2.success).toBe(true);
+        expect(mockTrueNasSpecs.has(4001)).toBe(true);
+        expect(mockTrueNasColors.has(5001)).toBe(true);
+
+        const specCp2 = await getCheckpoint(mockPg, 'make_product_specifications');
+        expect(specCp2.last_replicated_id).toBe('4001');
+        const colorCp2 = await getCheckpoint(mockPg, 'make_product_colors');
+        expect(colorCp2.last_replicated_id).toBe('5001');
     });
 });
