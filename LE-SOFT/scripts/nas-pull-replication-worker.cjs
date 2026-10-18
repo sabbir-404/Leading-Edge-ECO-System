@@ -1195,6 +1195,13 @@ async function pullAttachments(supabaseClient, storageBasePath, pgClient, option
     }
 
     // ── Source C: Discover committed buffer reservations (supabase_buffer_reservations)
+    // A committed quota reservation does not itself identify a Storage object: the
+    // reservation table has no authoritative object-key column. Never infer ownership
+    // merely from a shared folder. A reservation may be attached to a file only when
+    // exactly one listed object explicitly identifies it by a bounded filename prefix
+    // (reservationId, reservationId_..., reservationId....) or trusted object metadata.
+    // If listing was incomplete or multiple objects match, the objects remain pullable
+    // but are deliberately marked non-prunable.
     try {
         const { data: committedReservations, error: resErr } = await supabaseClient
             .from('supabase_buffer_reservations')
@@ -1210,31 +1217,72 @@ async function pullAttachments(supabaseClient, storageBasePath, pgClient, option
             }
         } else if (committedReservations && committedReservations.length > 0) {
             for (const res of committedReservations) {
-                const foldersToCheck = res.target_folder ? [res.target_folder] : ['cad', 'products', 'specs', 'colors'];
+                const reservationId = String(res.id || '').trim();
+                if (!reservationId) {
+                    logger.warn('[NAS-Pull-Worker] Skipping buffer reservation without a valid ID.');
+                    continue;
+                }
+
+                const foldersToCheck = res.target_folder ? [String(res.target_folder)] : ['cad', 'products', 'specs', 'colors'];
+                const reservationObjects = [];
+                let scanIncomplete = false;
+
                 for (const subfolder of foldersToCheck) {
                     const { data: files, error: listErr } = await supabaseClient.storage
                         .from(bucketName)
                         .list(subfolder, { limit: 100 });
 
                     if (listErr) {
+                        scanIncomplete = true;
                         logger.warn(`[NAS-Pull-Worker] Storage list failed for ${subfolder}:`, listErr.message);
                         discoveryErrors.push({ source: `storage_list_${subfolder}`, error: listErr.message });
-                    } else if (files && files.length > 0) {
-                        for (const fileObj of files) {
-                            const cloudPath = `${subfolder}/${fileObj.name}`;
-                            if (!fileTasks.has(cloudPath)) {
-                                fileTasks.set(cloudPath, {
-                                    subfolder,
-                                    name: fileObj.name,
-                                    reservationId: res.id,
-                                    entityType: 'buffer_reservation',
-                                    entityId: res.id,
-                                    cloudSize: fileObj.metadata?.size,
-                                    cloudUpdatedAt: fileObj.updated_at
-                                });
-                            }
-                        }
+                        continue;
                     }
+
+                    for (const fileObj of files || []) {
+                        const fileName = String(fileObj.name || '');
+                        const metadataReservationId = fileObj.user_metadata?.reservation_id
+                            ?? fileObj.metadata?.reservation_id
+                            ?? fileObj.metadata?.reservationId;
+                        const hasBoundedReservationPrefix = fileName === reservationId
+                            || fileName.startsWith(`${reservationId}_`)
+                            || fileName.startsWith(`${reservationId}.`);
+
+                        if (String(metadataReservationId ?? '') !== reservationId && !hasBoundedReservationPrefix) {
+                            continue;
+                        }
+
+                        reservationObjects.push({
+                            subfolder,
+                            fileObj,
+                            cloudPath: `${subfolder}/${fileName}`
+                        });
+                    }
+                }
+
+                if (reservationObjects.length > 1) {
+                    logger.warn(
+                        `[NAS-Pull-Worker] Reservation ${reservationId} matched ${reservationObjects.length} Storage objects; all matching objects are retained in cloud because the reservation-to-object mapping is ambiguous.`
+                    );
+                }
+
+                const canSafelyPrune = !scanIncomplete && reservationObjects.length === 1;
+                for (const { subfolder, fileObj, cloudPath } of reservationObjects) {
+                    if (fileTasks.has(cloudPath)) {
+                        // An order/catalog discovery already owns this object. Preserve that
+                        // authoritative entity association and never reclassify it as temporary.
+                        continue;
+                    }
+
+                    fileTasks.set(cloudPath, {
+                        subfolder,
+                        name: fileObj.name,
+                        reservationId: canSafelyPrune ? reservationId : null,
+                        entityType: canSafelyPrune ? 'buffer_reservation' : 'buffer_reservation_unverified',
+                        entityId: reservationId,
+                        cloudSize: fileObj.metadata?.size,
+                        cloudUpdatedAt: fileObj.updated_at
+                    });
                 }
             }
         }
