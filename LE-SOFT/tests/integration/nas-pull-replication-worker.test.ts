@@ -27,6 +27,7 @@ const {
     getCheckpoint,
     updateCheckpoint,
     normalizeStorageObjectKey,
+    discoverFromTable,
     pullBusinessData,
     pullAttachments,
     runReplicationCycle
@@ -47,7 +48,7 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
     let mockTrueNasSpecs: Map<number, any>;
     let mockTrueNasColors: Map<number, any>;
     let mockSupabaseStorageFiles: Map<string, { buffer: Buffer; sha256: string }>;
-    let mockTrueNasReplicatedFiles: Set<string>;
+    let mockTrueNasReplicatedFiles: Map<string, any>;
     let tempStorageDir: string;
 
     beforeEach(() => {
@@ -56,7 +57,7 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
         mockTrueNasUpdates = new Map();
         mockTrueNasSpecs = new Map();
         mockTrueNasColors = new Map();
-        mockTrueNasReplicatedFiles = new Set();
+        mockTrueNasReplicatedFiles = new Map();
         mockSupabaseOrders = [];
         mockSupabaseUpdates = [];
         mockSupabaseSpecs = [];
@@ -196,12 +197,22 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
                     return { rows: [] };
                 }
 
-                if (normalized.includes('SELECT 1 FROM nas_replicated_files WHERE object_key = $1')) {
-                    return { rows: mockTrueNasReplicatedFiles.has(params[0]) ? [{ 1: 1 }] : [] };
+                if (normalized.includes('SELECT object_key, sha256, size_bytes, replicated_at FROM nas_replicated_files WHERE object_key = $1') ||
+                    normalized.includes('SELECT 1 FROM nas_replicated_files WHERE object_key = $1')) {
+                    const row = mockTrueNasReplicatedFiles.get(params[0]);
+                    return { rows: row ? [row] : [] };
                 }
 
                 if (normalized.includes('INSERT INTO nas_replicated_files')) {
-                    mockTrueNasReplicatedFiles.add(params[0]);
+                    const rec = {
+                        object_key: params[0],
+                        sha256: String(params[1]),
+                        size_bytes: Number(params[2]),
+                        entity_type: params[3] || null,
+                        entity_id: params[4] || null,
+                        replicated_at: new Date().toISOString()
+                    };
+                    mockTrueNasReplicatedFiles.set(params[0], rec);
                     return { rows: [] };
                 }
 
@@ -1418,6 +1429,8 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
             record_id: 702,
             deleted_at: t3
         });
+        const specIdx = mockSupabaseSpecs.findIndex(s => s.id === 702);
+        if (specIdx !== -1) mockSupabaseSpecs.splice(specIdx, 1);
 
         await runReplicationCycle({
             supabaseClient: mockSupabase,
@@ -1571,5 +1584,357 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
         expect(specCp2.last_replicated_id).toBe('4001');
         const colorCp2 = await getCheckpoint(mockPg, 'make_product_colors');
         expect(colorCp2.last_replicated_id).toBe('5001');
+    });
+
+    it('26. Corrupted on-disk file detected: validates disk SHA vs registered SHA, re-downloads cleanly, and repairs disk', async () => {
+        const fileKey = 'invoices/corrupted_test_inv.pdf';
+        const validBuf = Buffer.from('VALID_INVOICE_CONTENT_ORIGINAL');
+        const validSha = crypto.createHash('sha256').update(validBuf).digest('hex').toUpperCase();
+
+        mockSupabaseStorageFiles.set(fileKey, { buffer: validBuf, sha256: validSha });
+
+        mockSupabaseOrders.push({
+            id: 6001,
+            order_number: 'ORD-CORRUPT-01',
+            furniture_name: 'Corrupted Test Desk',
+            total_price: 2500,
+            invoice_attachment_urls: [`make-order-files/${fileKey}`],
+            created_at: '2026-10-18T08:00:00.000Z',
+            updated_at: '2026-10-18T08:00:00.000Z'
+        });
+
+        // Initial replication: pulls and registers valid file
+        const res1 = await pullAttachments({
+            supabaseClient: mockSupabase,
+            pgClient: mockPg,
+            storagePath: tempStorageDir
+        });
+        expect(res1.success).toBe(true);
+        expect(res1.filesPulled).toBe(1);
+
+        const onDiskPath = path.join(tempStorageDir, 'invoices', 'corrupted_test_inv.pdf');
+        expect(fs.existsSync(onDiskPath)).toBe(true);
+        expect(crypto.createHash('sha256').update(fs.readFileSync(onDiskPath)).digest('hex').toUpperCase()).toBe(validSha);
+
+        // Corrupt the on-disk file (simulate bit rot or accidental modification)
+        fs.writeFileSync(onDiskPath, Buffer.from('MALFORMED_GARBAGE_BYTES_THAT_DO_NOT_MATCH_SHA'));
+
+        // Cycle 2: worker detects corruption on disk, re-downloads to temp file, verifies, renames to repair
+        const res2 = await pullAttachments({
+            supabaseClient: mockSupabase,
+            pgClient: mockPg,
+            storagePath: tempStorageDir
+        });
+        expect(res2.success).toBe(true);
+        expect(res2.filesPulled).toBe(1);
+
+        // Verify repaired file on disk matches authoritative SHA
+        const repairedBytes = fs.readFileSync(onDiskPath);
+        expect(repairedBytes.toString()).toBe('VALID_INVOICE_CONTENT_ORIGINAL');
+        expect(crypto.createHash('sha256').update(repairedBytes).digest('hex').toUpperCase()).toBe(validSha);
+    });
+
+    it('27. Physical file removed from disk detected: re-downloads cleanly and restores missing file', async () => {
+        const fileKey = 'invoices/missing_on_disk.pdf';
+        const fileBuf = Buffer.from('UNLINKED_FILE_CONTENT_TO_RESTORE');
+        const fileSha = crypto.createHash('sha256').update(fileBuf).digest('hex').toUpperCase();
+
+        mockSupabaseStorageFiles.set(fileKey, { buffer: fileBuf, sha256: fileSha });
+
+        mockSupabaseOrders.push({
+            id: 6002,
+            order_number: 'ORD-UNLINK-01',
+            furniture_name: 'Unlinked File Table',
+            total_price: 3200,
+            invoice_attachment_urls: [`make-order-files/${fileKey}`],
+            created_at: '2026-10-18T08:05:00.000Z',
+            updated_at: '2026-10-18T08:05:00.000Z'
+        });
+
+        // Cycle 1: pulls and registers file
+        const res1 = await pullAttachments({
+            supabaseClient: mockSupabase,
+            pgClient: mockPg,
+            storagePath: tempStorageDir
+        });
+        expect(res1.success).toBe(true);
+        expect(res1.filesPulled).toBe(1);
+
+        const onDiskPath = path.join(tempStorageDir, 'invoices', 'missing_on_disk.pdf');
+        expect(fs.existsSync(onDiskPath)).toBe(true);
+
+        // Delete physical file from disk (leaving registry row in place)
+        fs.unlinkSync(onDiskPath);
+        expect(fs.existsSync(onDiskPath)).toBe(false);
+
+        // Cycle 2: worker detects missing file on disk, re-downloads and restores
+        const res2 = await pullAttachments({
+            supabaseClient: mockSupabase,
+            pgClient: mockPg,
+            storagePath: tempStorageDir
+        });
+        expect(res2.success).toBe(true);
+        expect(res2.filesPulled).toBe(1);
+
+        // Verified restored on disk
+        expect(fs.existsSync(onDiskPath)).toBe(true);
+        expect(fs.readFileSync(onDiskPath).toString()).toBe('UNLINKED_FILE_CONTENT_TO_RESTORE');
+    });
+
+    it('28. Same-key cloud object replacement: detects updated bytes/size/timestamp, updates on-disk file and registry', async () => {
+        const fileKey = 'specs/same_key_spec.pdf';
+        const v1Buf = Buffer.from('SPEC_VERSION_1_INITIAL_CONTENT');
+        const v1Sha = crypto.createHash('sha256').update(v1Buf).digest('hex').toUpperCase();
+
+        mockSupabaseStorageFiles.set(fileKey, { buffer: v1Buf, sha256: v1Sha });
+
+        const t1 = '2026-10-18T08:10:00.000Z';
+        const specRecord = {
+            id: 6003,
+            product_id: 50,
+            spec_name: 'Same-Key Spec',
+            image_url: `make-order-files/${fileKey}`,
+            created_at: t1,
+            updated_at: t1
+        };
+        mockSupabaseSpecs.push(specRecord);
+
+        // Cycle 1: pulls v1
+        const res1 = await pullAttachments({
+            supabaseClient: mockSupabase,
+            pgClient: mockPg,
+            storagePath: tempStorageDir
+        });
+        expect(res1.success).toBe(true);
+        expect(res1.filesPulled).toBe(1);
+
+        const onDiskPath = path.join(tempStorageDir, 'specs', 'same_key_spec.pdf');
+        expect(fs.readFileSync(onDiskPath).toString()).toBe('SPEC_VERSION_1_INITIAL_CONTENT');
+
+        // Cloud updates the object at the SAME KEY with v2 bytes and newer timestamp
+        const v2Buf = Buffer.from('SPEC_VERSION_2_EXTENDED_MODIFIED_BYTES_LONGER');
+        const v2Sha = crypto.createHash('sha256').update(v2Buf).digest('hex').toUpperCase();
+        mockSupabaseStorageFiles.set(fileKey, { buffer: v2Buf, sha256: v2Sha });
+
+        const t2 = new Date(Date.now() + 60000).toISOString();
+        specRecord.updated_at = t2; // Newer cloud update time triggers revalidation
+
+        // Cycle 2: worker detects same-key replacement via newer timestamp / changed cloud size, downloads v2, updates disk & registry
+        const res2 = await pullAttachments({
+            supabaseClient: mockSupabase,
+            pgClient: mockPg,
+            storagePath: tempStorageDir
+        });
+        expect(res2.success).toBe(true);
+        expect(res2.filesPulled).toBe(1);
+
+        // Verify on-disk file now contains v2 bytes
+        const onDiskV2 = fs.readFileSync(onDiskPath);
+        expect(onDiskV2.toString()).toBe('SPEC_VERSION_2_EXTENDED_MODIFIED_BYTES_LONGER');
+        expect(crypto.createHash('sha256').update(onDiskV2).digest('hex').toUpperCase()).toBe(v2Sha);
+
+        // Verify registry updated with v2 SHA-256 and size
+        const regEntry = mockTrueNasReplicatedFiles.get(fileKey);
+        expect(regEntry.sha256).toBe(v2Sha);
+        expect(regEntry.size_bytes).toBe(v2Buf.length);
+    });
+
+    it('29. Storage URL validation: accepts valid signed/public/relative keys, rejects traversal, untrusted hosts, malformed percent-encoding', () => {
+        const bucket = 'make-order-files';
+        const expectedOrigin = 'https://tenant.supabase.co';
+        const opts = { expectedOrigin };
+
+        // 1. Valid signed URL with configured origin
+        const signedUrl = 'https://tenant.supabase.co/storage/v1/object/sign/make-order-files/invoices/2026/inv1.pdf?token=xyz123';
+        expect(normalizeStorageObjectKey(signedUrl, bucket, opts)).toBe('invoices/2026/inv1.pdf');
+
+        // 2. Valid public URL with configured origin
+        const publicUrl = 'https://tenant.supabase.co/storage/v1/object/public/make-order-files/specs/spec_drawing.png';
+        expect(normalizeStorageObjectKey(publicUrl, bucket, opts)).toBe('specs/spec_drawing.png');
+
+        // 3. Valid authenticated URL with configured origin
+        const authUrl = 'https://tenant.supabase.co/storage/v1/object/authenticated/make-order-files/colors/c1.png';
+        expect(normalizeStorageObjectKey(authUrl, bucket, opts)).toBe('colors/c1.png');
+
+        // 4. Valid relative paths
+        expect(normalizeStorageObjectKey('make-order-files/cad/model.dxf', bucket, opts)).toBe('cad/model.dxf');
+        expect(normalizeStorageObjectKey('cad/model.dxf', bucket, opts)).toBe('cad/model.dxf');
+        expect(normalizeStorageObjectKey('/make-order-files/photos/p.jpg', bucket, opts)).toBe('photos/p.jpg');
+
+        // 5. Untrusted host (spoofing / SSRF attempt)
+        const evilUrl = 'https://attacker.evil.com/storage/v1/object/public/make-order-files/invoices/fake.pdf';
+        expect(normalizeStorageObjectKey(evilUrl, bucket, opts)).toBeNull();
+
+        // 6. Directory traversal attempts
+        expect(normalizeStorageObjectKey('../../../etc/passwd', bucket, opts)).toBeNull();
+        expect(normalizeStorageObjectKey('make-order-files/../../etc/passwd', bucket, opts)).toBeNull();
+        expect(normalizeStorageObjectKey('make-order-files/foo%2f..%2fbar', bucket, opts)).toBeNull();
+        expect(normalizeStorageObjectKey('https://tenant.supabase.co/storage/v1/object/public/make-order-files/..%2F..%2Fwindows', bucket, opts)).toBeNull();
+
+        // 7. Malformed percent-encoding
+        expect(normalizeStorageObjectKey('make-order-files/%E0%A4%A', bucket, opts)).toBeNull();
+        expect(normalizeStorageObjectKey('%FF%FF', bucket, opts)).toBeNull();
+
+        // 8. Null byte injection
+        expect(normalizeStorageObjectKey('make-order-files/file\0.pdf', bucket, opts)).toBeNull();
+
+        // 9. Null/empty inputs
+        expect(normalizeStorageObjectKey('', bucket, opts)).toBeNull();
+        expect(normalizeStorageObjectKey(null, bucket, opts)).toBeNull();
+        expect(normalizeStorageObjectKey(undefined, bucket, opts)).toBeNull();
+    });
+
+    it('30. Discovery pagination cap: durable checkpointing prevents permanent starvation when cap is encountered, handling null references', async () => {
+        // Create 20 specifications across multiple pages (batchSize 2, 2 pages per cycle cap).
+        // Odd specs (1, 3, 5, 7, 9, 11, 13, 15, 17, 19) have images.
+        // Even specs (2, 4, 6, 8, 10, 12, 14, 16, 18, 20) have image_url: null.
+        for (let i = 1; i <= 20; i++) {
+            const hasImage = i % 2 === 1;
+            const fileKey = `specs/cap_spec_${i}.pdf`;
+            if (hasImage) {
+                const buf = Buffer.from(`CAP_SPEC_BUF_${i}`);
+                mockSupabaseStorageFiles.set(fileKey, {
+                    buffer: buf,
+                    sha256: crypto.createHash('sha256').update(buf).digest('hex').toUpperCase()
+                });
+            }
+
+            mockSupabaseSpecs.push({
+                id: 7000 + i,
+                product_id: 60,
+                spec_name: `Cap Spec ${i}`,
+                image_url: hasImage ? `make-order-files/${fileKey}` : null,
+                created_at: `2026-10-18T09:${String(10 + i).padStart(2, '0')}:00.000Z`,
+                updated_at: `2026-10-18T09:${String(10 + i).padStart(2, '0')}:00.000Z`
+            });
+        }
+
+        // Cycle 1: capped at 2 pages of batchSize 2 -> processes specs 7001, 7003, 7005, 7007
+        const cycle1 = await pullAttachments({
+            supabaseClient: mockSupabase,
+            pgClient: mockPg,
+            storagePath: tempStorageDir,
+            batchSize: 2,
+            maxDiscoveryPages: 2
+        });
+
+        // Reports partial failure with reachedCap
+        expect(cycle1.reachedCap).toBe(true);
+        expect(cycle1.success).toBe(false);
+        expect(cycle1.filesPulled).toBe(4);
+        expect(fs.existsSync(path.join(tempStorageDir, 'specs', 'cap_spec_1.pdf'))).toBe(true);
+        expect(fs.existsSync(path.join(tempStorageDir, 'specs', 'cap_spec_7.pdf'))).toBe(true);
+
+        // Discovery checkpoint was saved at ID 7007
+        const cp1 = await getCheckpoint(mockPg, 'discovery_make_product_specifications');
+        expect(cp1.last_replicated_id).toBe('7007');
+        expect(cp1.last_error).toBe('PAGINATION_CAP_REACHED');
+
+        // Cycle 2: resumes from 7007, processes 2 pages -> specs 7009, 7011, 7013, 7015
+        const cycle2 = await pullAttachments({
+            supabaseClient: mockSupabase,
+            pgClient: mockPg,
+            storagePath: tempStorageDir,
+            batchSize: 2,
+            maxDiscoveryPages: 2
+        });
+
+        expect(cycle2.reachedCap).toBe(true);
+        expect(cycle2.filesPulled).toBe(4);
+        expect(fs.existsSync(path.join(tempStorageDir, 'specs', 'cap_spec_9.pdf'))).toBe(true);
+        expect(fs.existsSync(path.join(tempStorageDir, 'specs', 'cap_spec_15.pdf'))).toBe(true);
+
+        const cp2 = await getCheckpoint(mockPg, 'discovery_make_product_specifications');
+        expect(cp2.last_replicated_id).toBe('7015');
+
+        // Cycle 3: resumes from 7015, processes remaining specs 7017, 7019, then exhausts
+        const cycle3 = await pullAttachments({
+            supabaseClient: mockSupabase,
+            pgClient: mockPg,
+            storagePath: tempStorageDir,
+            batchSize: 2,
+            maxDiscoveryPages: 2
+        });
+
+        // Exhausted table: reachedCap is false, success is true
+        expect(cycle3.reachedCap).toBe(false);
+        expect(cycle3.success).toBe(true);
+        expect(cycle3.filesPulled).toBe(2);
+        expect(fs.existsSync(path.join(tempStorageDir, 'specs', 'cap_spec_17.pdf'))).toBe(true);
+        expect(fs.existsSync(path.join(tempStorageDir, 'specs', 'cap_spec_19.pdf'))).toBe(true);
+
+        // All 10 images exist - proves no starvation!
+        for (const i of [1, 3, 5, 7, 9, 11, 13, 15, 17, 19]) {
+            expect(fs.existsSync(path.join(tempStorageDir, 'specs', `cap_spec_${i}.pdf`))).toBe(true);
+        }
+    });
+
+    it('31. Forged tombstone defense: rejected when authoritative Supabase row still exists', async () => {
+        // Setup authoritative order in Supabase
+        const orderId = 9999;
+        mockSupabaseOrders.push({
+            id: orderId,
+            order_number: 'ORD-AUTHORITATIVE-01',
+            furniture_name: 'Authoritative President Desk',
+            total_price: 15000,
+            status: 'confirmed',
+            created_at: '2026-10-18T10:00:00.000Z',
+            updated_at: '2026-10-18T10:00:00.000Z'
+        });
+
+        // Replicate initial order to TrueNAS
+        await runReplicationCycle({
+            supabaseClient: mockSupabase,
+            pgClient: mockPg,
+            storagePath: tempStorageDir,
+            pruneCloud: false
+        });
+        expect(mockTrueNasOrders.has(orderId)).toBe(true);
+
+        // An unauthorized client / attacker forges a tombstone for this order
+        mockSupabaseTombstones.push({
+            id: 9001,
+            table_name: 'make_orders',
+            record_id: orderId,
+            deleted_at: '2026-10-18T10:15:00.000Z'
+        });
+
+        // CRUCIAL: The authoritative Supabase row is NOT deleted!
+        expect(mockSupabaseOrders.some(o => o.id === orderId)).toBe(true);
+
+        // Run replication cycle
+        const res = await runReplicationCycle({
+            supabaseClient: mockSupabase,
+            pgClient: mockPg,
+            storagePath: tempStorageDir,
+            pruneCloud: false
+        });
+
+        // The forged tombstone must NOT delete the TrueNAS record!
+        expect(mockTrueNasOrders.has(orderId)).toBe(true);
+    });
+
+    it('32. Schema initialization error handling: DDL failures halt cycle and return truthful error', async () => {
+        // Make mockPg throw on DDL
+        const origQuery = mockPg.query;
+        mockPg.query = vi.fn(async (sql: string, params: any[] = []) => {
+            if (sql.includes('CREATE TABLE IF NOT EXISTS nas_replication_checkpoints')) {
+                throw new Error('PostgreSQL DDL error: permission denied for schema public');
+            }
+            return origQuery(sql, params);
+        });
+
+        const res = await runReplicationCycle({
+            supabaseClient: mockSupabase,
+            pgClient: mockPg,
+            storagePath: tempStorageDir,
+            pruneCloud: false
+        });
+
+        expect(res.success).toBe(false);
+        expect(res.error).toContain('permission denied for schema public');
+
+        // Restore mockPg
+        mockPg.query = origQuery;
     });
 });

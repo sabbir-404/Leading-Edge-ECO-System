@@ -75,30 +75,28 @@ async function initCheckpoints(pgClient) {
     await pgClient.query(ddl);
 
     // Self-healing: ensure TrueNAS PostgreSQL tables have all replicated columns and indexes
-    try {
-        await pgClient.query(`
-            ALTER TABLE make_orders ADD COLUMN IF NOT EXISTS total_price NUMERIC DEFAULT 0;
-            ALTER TABLE make_orders ADD COLUMN IF NOT EXISTS sale_price NUMERIC DEFAULT 0;
-            ALTER TABLE make_orders ALTER COLUMN designer_name DROP NOT NULL;
-            ALTER TABLE make_orders ALTER COLUMN designer_name SET DEFAULT 'System';
-            ALTER TABLE make_orders ADD COLUMN IF NOT EXISTS invoice_attachment_urls TEXT[] DEFAULT '{}'::text[];
-            ALTER TABLE make_orders ADD COLUMN IF NOT EXISTS current_stage_photo TEXT;
-            ALTER TABLE make_orders ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'Placed';
-            ALTER TABLE make_order_updates ADD COLUMN IF NOT EXISTS stage TEXT DEFAULT 'In Progress';
-            ALTER TABLE make_order_updates ALTER COLUMN status SET DEFAULT 'In Progress';
-            ALTER TABLE make_order_updates ALTER COLUMN updated_by SET DEFAULT 'System';
-            ALTER TABLE make_order_updates ADD COLUMN IF NOT EXISTS actor_name TEXT;
-            ALTER TABLE make_order_updates ADD COLUMN IF NOT EXISTS actor_role TEXT;
-            ALTER TABLE make_order_updates ADD COLUMN IF NOT EXISTS photo_url TEXT;
-            ALTER TABLE make_order_updates ADD COLUMN IF NOT EXISTS photo_urls TEXT[] DEFAULT '{}'::text[];
-            ALTER TABLE make_product_specifications ADD COLUMN IF NOT EXISTS image_url TEXT;
-            ALTER TABLE make_product_specifications ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
-            CREATE INDEX IF NOT EXISTS idx_make_specs_updated_at_id ON make_product_specifications (updated_at ASC, id ASC);
-            ALTER TABLE make_product_colors ADD COLUMN IF NOT EXISTS image_url TEXT;
-            ALTER TABLE make_product_colors ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
-            CREATE INDEX IF NOT EXISTS idx_make_colors_updated_at_id ON make_product_colors (updated_at ASC, id ASC);
-        `);
-    } catch {}
+    await pgClient.query(`
+        ALTER TABLE make_orders ADD COLUMN IF NOT EXISTS total_price NUMERIC DEFAULT 0;
+        ALTER TABLE make_orders ADD COLUMN IF NOT EXISTS sale_price NUMERIC DEFAULT 0;
+        ALTER TABLE make_orders ALTER COLUMN designer_name DROP NOT NULL;
+        ALTER TABLE make_orders ALTER COLUMN designer_name SET DEFAULT 'System';
+        ALTER TABLE make_orders ADD COLUMN IF NOT EXISTS invoice_attachment_urls TEXT[] DEFAULT '{}'::text[];
+        ALTER TABLE make_orders ADD COLUMN IF NOT EXISTS current_stage_photo TEXT;
+        ALTER TABLE make_orders ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'Placed';
+        ALTER TABLE make_order_updates ADD COLUMN IF NOT EXISTS stage TEXT DEFAULT 'In Progress';
+        ALTER TABLE make_order_updates ALTER COLUMN status SET DEFAULT 'In Progress';
+        ALTER TABLE make_order_updates ALTER COLUMN updated_by SET DEFAULT 'System';
+        ALTER TABLE make_order_updates ADD COLUMN IF NOT EXISTS actor_name TEXT;
+        ALTER TABLE make_order_updates ADD COLUMN IF NOT EXISTS actor_role TEXT;
+        ALTER TABLE make_order_updates ADD COLUMN IF NOT EXISTS photo_url TEXT;
+        ALTER TABLE make_order_updates ADD COLUMN IF NOT EXISTS photo_urls TEXT[] DEFAULT '{}'::text[];
+        ALTER TABLE make_product_specifications ADD COLUMN IF NOT EXISTS image_url TEXT;
+        ALTER TABLE make_product_specifications ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+        CREATE INDEX IF NOT EXISTS idx_make_specs_updated_at_id ON make_product_specifications (updated_at ASC, id ASC);
+        ALTER TABLE make_product_colors ADD COLUMN IF NOT EXISTS image_url TEXT;
+        ALTER TABLE make_product_colors ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+        CREATE INDEX IF NOT EXISTS idx_make_colors_updated_at_id ON make_product_colors (updated_at ASC, id ASC);
+    `);
 }
 
 /**
@@ -152,11 +150,14 @@ async function updateCheckpoint(pgClient, tableName, lastId, lastAt, countIncrem
  * Rules:
  * 1. Rejects null, undefined, empty, non-string values.
  * 2. Rejects arbitrary external URLs (e.g. https://evil.com/...) - never treated as trusted storage keys.
- * 3. Strips private bucket prefix (e.g. 'make-order-files/' or 'supabase://make-order-files/').
- * 4. Extracts path from legitimate Supabase storage URLs (/storage/v1/object/(public|sign|authenticated)/<bucket>/...).
- * 5. Rejects directory traversal (../, ..\, absolute paths, drive letters).
+ *    Verifies that the origin matches the configured Supabase origin or allowed hosts.
+ * 3. Enforces valid Supabase Storage URL pathname structure:
+ *    /storage/v1/object/(public|sign|authenticated)/<bucket>/<path>
+ * 4. Strips private bucket prefix (e.g. 'make-order-files/' or 'supabase://make-order-files/').
+ * 5. Rejects directory traversal (../, ..\, %2e%2e, absolute paths, drive letters, null bytes).
+ * 6. Safely handles malformed percent-encoding without crashing.
  */
-function normalizeStorageObjectKey(rawPath, allowedBucket = 'make-order-files') {
+function normalizeStorageObjectKey(rawPath, allowedBucket = 'make-order-files', options = {}) {
     if (!rawPath || typeof rawPath !== 'string') return null;
     let trimmed = rawPath.trim();
     if (!trimmed) return null;
@@ -167,12 +168,47 @@ function normalizeStorageObjectKey(rawPath, allowedBucket = 'make-order-files') 
     if (/^https?:\/\//i.test(trimmed)) {
         try {
             const parsed = new URL(trimmed);
-            const bucketPattern = new RegExp(`(?:^|/)${allowedBucket}/(.+)$`, 'i');
+
+            // Origin validation
+            const allowedOrigins = new Set();
+            if (options.expectedOrigin) {
+                try { allowedOrigins.add(new URL(options.expectedOrigin).origin.toLowerCase()); } catch {}
+            }
+            if (options.supabaseUrl) {
+                try { allowedOrigins.add(new URL(options.supabaseUrl).origin.toLowerCase()); } catch {}
+            }
+            if (process.env.SUPABASE_URL) {
+                try { allowedOrigins.add(new URL(process.env.SUPABASE_URL).origin.toLowerCase()); } catch {}
+            }
+            if (process.env.VITE_SUPABASE_URL) {
+                try { allowedOrigins.add(new URL(process.env.VITE_SUPABASE_URL).origin.toLowerCase()); } catch {}
+            }
+
+            const parsedOrigin = parsed.origin.toLowerCase();
+            const isKnownSupabaseHost = parsed.hostname.endsWith('.supabase.co') ||
+                                        parsed.hostname === '127.0.0.1' ||
+                                        parsed.hostname === 'localhost';
+
+            const isAllowedOrigin = allowedOrigins.size > 0
+                ? (allowedOrigins.has(parsedOrigin) || isKnownSupabaseHost)
+                : isKnownSupabaseHost;
+
+            if (!isAllowedOrigin) {
+                // Reject arbitrary external hosts that do not match configured Supabase endpoint
+                return null;
+            }
+
+            // Must match standard Supabase Storage URL structure
+            const bucketPattern = new RegExp(`^\\/storage\\/v1\\/object\\/(?:public|sign|authenticated)\\/${allowedBucket}\\/(.+)$`, 'i');
             const match = parsed.pathname.match(bucketPattern);
             if (match && match[1]) {
-                key = decodeURIComponent(match[1]);
+                try {
+                    key = decodeURIComponent(match[1]);
+                } catch {
+                    return null; // Malformed percent-encoding
+                }
             } else {
-                // Reject arbitrary external URLs that do not belong to the authorized bucket
+                // Reject arbitrary URL paths that do not adhere to the Supabase Storage contract
                 return null;
             }
         } catch {
@@ -189,7 +225,21 @@ function normalizeStorageObjectKey(rawPath, allowedBucket = 'make-order-files') 
             return null;
         }
         trimmed = trimmed.split('?')[0].split('#')[0];
-        key = trimmed;
+        try {
+            key = decodeURIComponent(trimmed);
+        } catch {
+            return null;
+        }
+    }
+
+    // Traversal check: reject null bytes, encoded traversal (%2e%2e, %00)
+    if (key.includes('\0') || /%00/i.test(key) || /%2e/i.test(key)) {
+        return null;
+    }
+
+    // Traversal components check: reject any ".." segment in raw or decoded key
+    if (/(?:^|\/|\\)\.\.(?:\/|\\|$)/.test(key) || /(?:^|\/|\\)\.\.(?:\/|\\|$)/.test(trimmed)) {
+        return null;
     }
 
     // Path traversal check and normalization
@@ -281,8 +331,34 @@ async function pullBusinessData(supabaseClient, pgClient, options = {}) {
                     const targetTable = tomb.entity_name || tomb.table_name;
                     const targetId = tomb.record_id || tomb.entity_id;
                     if (targetTable && ALLOWED_TOMBSTONE_TABLES.has(targetTable) && targetId) {
-                        await pgClient.query(`DELETE FROM ${targetTable} WHERE id = $1`, [targetId]);
-                        logger.log(`[NAS-Pull-Worker] Processed tombstone: deleted ${targetTable} ID ${targetId}`);
+                        // Anti-Forgery Check:
+                        // Query authoritative Supabase Cloud. If the row still exists in Supabase,
+                        // this tombstone is forged, stale, or premature. It MUST NOT delete the TrueNAS replica row.
+                        const { data: sourceRow, error: sourceErr } = await supabaseClient
+                            .from(targetTable)
+                            .select('id')
+                            .eq('id', targetId)
+                            .maybeSingle();
+
+                        if (!sourceErr && sourceRow && String(sourceRow.id) === String(targetId)) {
+                            logger.error(`[SECURITY ALERT] Forged or invalid tombstone rejected: ${targetTable} ID ${targetId} still exists authoritatively in Supabase. Skipping deletion on TrueNAS.`);
+                            streamErrors.set('replication_tombstones', `FORGED_TOMBSTONE_REJECTED: ${targetTable} ID ${targetId} still exists in Supabase`);
+                            await updateCheckpoint(pgClient, 'replication_tombstones', null, null, 0, `FORGED_TOMBSTONE_REJECTED: ${targetTable} ID ${targetId}`);
+                            hasMoreTombstones = false;
+                            break;
+                        }
+
+                        // Foreign-key safe deletion in parent-before-child order
+                        if (targetTable === 'make_orders') {
+                            await pgClient.query('DELETE FROM make_order_updates WHERE order_id = $1', [targetId]);
+                            await pgClient.query('DELETE FROM make_orders WHERE id = $1', [targetId]);
+                        } else if (targetTable === 'make_product_specifications') {
+                            await pgClient.query('DELETE FROM make_product_colors WHERE spec_id = $1', [targetId]);
+                            await pgClient.query('DELETE FROM make_product_specifications WHERE id = $1', [targetId]);
+                        } else {
+                            await pgClient.query(`DELETE FROM ${targetTable} WHERE id = $1`, [targetId]);
+                        }
+                        logger.log(`[NAS-Pull-Worker] Processed verified tombstone: deleted ${targetTable} ID ${targetId}`);
                     }
                     const tombAt = tomb.deleted_at || tomb.created_at || new Date().toISOString();
                     await updateCheckpoint(pgClient, 'replication_tombstones', String(tomb.id), tombAt, 1, null);
@@ -870,17 +946,33 @@ async function pullBusinessData(supabaseClient, pgClient, options = {}) {
 
 /**
  * Discovers and paginates image/file references from a database table.
- * Paginates deterministically by id until exhaustion, ensuring records beyond page 1
- * are never missed.
+ * Supports durable resumable pagination cursor (discovery_<table_name>) and handles
+ * page caps truthfully without permanent starvation.
  */
-async function discoverFromTable(client, config, fileTasks, logger, bucketName) {
-    const { table, select, filterFn, batchSize = 50, extractUrls } = config;
+async function discoverFromTable(client, config, fileTasks, logger, bucketName, pgClient) {
+    const { table, select, filterFn, batchSize = 50, extractUrls, maxPages } = config;
     let lastId = 0;
+    const checkpointKey = `discovery_${table}`;
+
+    if (pgClient) {
+        try {
+            const cp = await getCheckpoint(pgClient, checkpointKey);
+            if (cp && cp.last_replicated_id) {
+                const parsedId = Number(cp.last_replicated_id);
+                if (!isNaN(parsedId) && parsedId > 0) {
+                    lastId = parsedId;
+                }
+            }
+        } catch (cpErr) {
+            logger.warn(`[NAS-Pull-Worker] Failed to load discovery checkpoint for ${table}:`, cpErr.message);
+        }
+    }
+
     let hasMore = true;
     let pages = 0;
-    const maxPages = 1000;
+    const effectiveMaxPages = (typeof maxPages === 'number' && maxPages > 0) ? maxPages : 1000;
 
-    while (hasMore && pages < maxPages) {
+    while (hasMore && pages < effectiveMaxPages) {
         pages++;
         let q = client.from(table).select(select);
         if (filterFn) {
@@ -893,8 +985,8 @@ async function discoverFromTable(client, config, fileTasks, logger, bucketName) 
 
         const { data, error } = await q;
         if (error) {
-            logger.warn(`[NAS-Pull-Worker] Attachment discovery query failed on ${table}:`, error.message);
-            return { error: error.message };
+            logger.error(`[NAS-Pull-Worker] Attachment discovery query failed on ${table}:`, error.message);
+            return { success: false, error: error.message };
         }
 
         if (!data || data.length === 0) {
@@ -915,7 +1007,33 @@ async function discoverFromTable(client, config, fileTasks, logger, bucketName) 
         }
     }
 
-    return { success: true };
+    if (hasMore && pages >= effectiveMaxPages) {
+        logger.warn(`[NAS-Pull-Worker] Discovery pagination cap reached on ${table} (${pages} pages processed, lastId: ${lastId}). Saving checkpoint to resume next cycle.`);
+        if (pgClient) {
+            try {
+                await updateCheckpoint(pgClient, checkpointKey, String(lastId), new Date().toISOString(), pages, 'PAGINATION_CAP_REACHED');
+            } catch (upErr) {
+                logger.error(`[NAS-Pull-Worker] Failed to save discovery checkpoint for ${table}:`, upErr.message);
+            }
+        }
+        return {
+            success: false,
+            partial: true,
+            reachedCap: true,
+            lastId,
+            hasMore: true,
+            error: `PAGINATION_CAP_REACHED on ${table} at ID ${lastId}`
+        };
+    }
+
+    // Exhausted all records in this table: reset checkpoint to 0 so future cycles sweep from beginning
+    if (!hasMore && pgClient) {
+        try {
+            await updateCheckpoint(pgClient, checkpointKey, '0', new Date().toISOString(), pages, null);
+        } catch {}
+    }
+
+    return { success: true, lastId };
 }
 
 /**
@@ -943,11 +1061,15 @@ async function pullAttachments(supabaseClient, storageBasePath, pgClient, option
     const bucketName = options.bucketName || 'make-order-files';
     const pruneCloud = options.pruneCloud === true || options.pruneCloudAfterNasConfirmation === true;
     const batchSize = options.batchSize || 50;
+    const urlOpts = {
+        supabaseUrl: supabaseClient?.supabaseUrl,
+        expectedOrigin: options.expectedOrigin
+    };
     let filesPulled = 0;
     const failedFiles = [];
     const discoveryErrors = [];
 
-    // Discovered file tasks: Map<objectKey, { subfolder, name, reservationId?, entityType?, entityId?, expectedSha256? }>
+    // Discovered file tasks: Map<objectKey, { subfolder, name, reservationId?, entityType?, entityId?, expectedSha256?, cloudSize?, cloudUpdatedAt? }>
     const fileTasks = new Map();
 
     // ── Source A: Discover files from committed make_orders (paginated) ───────
@@ -956,31 +1078,34 @@ async function pullAttachments(supabaseClient, storageBasePath, pgClient, option
             supabaseClient,
             {
                 table: 'make_orders',
-                select: 'id, invoice_attachment_urls, current_stage_photo',
+                select: 'id, invoice_attachment_urls, current_stage_photo, updated_at',
                 filterFn: q => q.or('invoice_attachment_urls.neq.{},current_stage_photo.not.is.null'),
                 batchSize,
+                maxPages: options.maxDiscoveryPages,
                 extractUrls: (ord, tasks, bucket) => {
                     if (Array.isArray(ord.invoice_attachment_urls)) {
                         for (const rawUrl of ord.invoice_attachment_urls) {
-                            const cleanKey = normalizeStorageObjectKey(rawUrl, bucket);
+                            const cleanKey = normalizeStorageObjectKey(rawUrl, bucket, urlOpts);
                             if (cleanKey && !tasks.has(cleanKey)) {
                                 tasks.set(cleanKey, {
                                     subfolder: cleanKey.includes('/') ? path.dirname(cleanKey) : 'cad',
                                     name: path.basename(cleanKey),
                                     entityType: 'make_orders',
-                                    entityId: String(ord.id)
+                                    entityId: String(ord.id),
+                                    cloudUpdatedAt: ord.updated_at
                                 });
                             }
                         }
                     }
                     if (ord.current_stage_photo) {
-                        const cleanKey = normalizeStorageObjectKey(ord.current_stage_photo, bucket);
+                        const cleanKey = normalizeStorageObjectKey(ord.current_stage_photo, bucket, urlOpts);
                         if (cleanKey && !tasks.has(cleanKey)) {
                             tasks.set(cleanKey, {
                                 subfolder: cleanKey.includes('/') ? path.dirname(cleanKey) : 'products',
                                 name: path.basename(cleanKey),
                                 entityType: 'make_orders',
-                                entityId: String(ord.id)
+                                entityId: String(ord.id),
+                                cloudUpdatedAt: ord.updated_at
                             });
                         }
                     }
@@ -988,10 +1113,11 @@ async function pullAttachments(supabaseClient, storageBasePath, pgClient, option
             },
             fileTasks,
             logger,
-            bucketName
+            bucketName,
+            pgClient
         );
-        if (resA && resA.error) {
-            discoveryErrors.push({ source: 'make_orders', error: resA.error });
+        if (resA && (!resA.success || resA.error)) {
+            discoveryErrors.push({ source: 'make_orders', error: resA.error, partial: resA.partial, reachedCap: resA.reachedCap });
         }
     } catch (e) {
         logger.warn('[NAS-Pull-Worker] Discovery from make_orders attachments failed:', e.message);
@@ -1004,29 +1130,33 @@ async function pullAttachments(supabaseClient, storageBasePath, pgClient, option
             supabaseClient,
             {
                 table: 'make_order_updates',
-                select: 'id, photo_url, photo_urls',
+                select: 'id, photo_url, photo_urls, updated_at, created_at',
                 batchSize,
+                maxPages: options.maxDiscoveryPages,
                 extractUrls: (upd, tasks, bucket) => {
+                    const updateTime = upd.updated_at || upd.created_at;
                     if (upd.photo_url) {
-                        const cleanKey = normalizeStorageObjectKey(upd.photo_url, bucket);
+                        const cleanKey = normalizeStorageObjectKey(upd.photo_url, bucket, urlOpts);
                         if (cleanKey && !tasks.has(cleanKey)) {
                             tasks.set(cleanKey, {
                                 subfolder: cleanKey.includes('/') ? path.dirname(cleanKey) : 'products',
                                 name: path.basename(cleanKey),
                                 entityType: 'make_order_updates',
-                                entityId: String(upd.id)
+                                entityId: String(upd.id),
+                                cloudUpdatedAt: updateTime
                             });
                         }
                     }
                     if (Array.isArray(upd.photo_urls)) {
                         for (const rawUrl of upd.photo_urls) {
-                            const cleanKey = normalizeStorageObjectKey(rawUrl, bucket);
+                            const cleanKey = normalizeStorageObjectKey(rawUrl, bucket, urlOpts);
                             if (cleanKey && !tasks.has(cleanKey)) {
                                 tasks.set(cleanKey, {
                                     subfolder: cleanKey.includes('/') ? path.dirname(cleanKey) : 'products',
                                     name: path.basename(cleanKey),
                                     entityType: 'make_order_updates',
-                                    entityId: String(upd.id)
+                                    entityId: String(upd.id),
+                                    cloudUpdatedAt: updateTime
                                 });
                             }
                         }
@@ -1035,10 +1165,11 @@ async function pullAttachments(supabaseClient, storageBasePath, pgClient, option
             },
             fileTasks,
             logger,
-            bucketName
+            bucketName,
+            pgClient
         );
-        if (resB && resB.error) {
-            discoveryErrors.push({ source: 'make_order_updates', error: resB.error });
+        if (resB && (!resB.success || resB.error)) {
+            discoveryErrors.push({ source: 'make_order_updates', error: resB.error, partial: resB.partial, reachedCap: resB.reachedCap });
         }
     } catch (e) {
         logger.warn('[NAS-Pull-Worker] Discovery from make_order_updates attachments failed:', e.message);
@@ -1079,7 +1210,9 @@ async function pullAttachments(supabaseClient, storageBasePath, pgClient, option
                                     name: fileObj.name,
                                     reservationId: res.id,
                                     entityType: 'buffer_reservation',
-                                    entityId: res.id
+                                    entityId: res.id,
+                                    cloudSize: fileObj.metadata?.size,
+                                    cloudUpdatedAt: fileObj.updated_at
                                 });
                             }
                         }
@@ -1098,18 +1231,20 @@ async function pullAttachments(supabaseClient, storageBasePath, pgClient, option
             supabaseClient,
             {
                 table: 'make_product_specifications',
-                select: 'id, image_url',
+                select: 'id, image_url, updated_at, created_at',
                 filterFn: q => q.not('image_url', 'is', null),
                 batchSize,
+                maxPages: options.maxDiscoveryPages,
                 extractUrls: (sp, tasks, bucket) => {
                     if (sp.image_url) {
-                        const cleanKey = normalizeStorageObjectKey(sp.image_url, bucket);
+                        const cleanKey = normalizeStorageObjectKey(sp.image_url, bucket, urlOpts);
                         if (cleanKey && !tasks.has(cleanKey)) {
                             tasks.set(cleanKey, {
                                 subfolder: cleanKey.includes('/') ? path.dirname(cleanKey) : 'specs',
                                 name: path.basename(cleanKey),
                                 entityType: 'make_product_specifications',
-                                entityId: String(sp.id)
+                                entityId: String(sp.id),
+                                cloudUpdatedAt: sp.updated_at || sp.created_at
                             });
                         }
                     }
@@ -1117,10 +1252,11 @@ async function pullAttachments(supabaseClient, storageBasePath, pgClient, option
             },
             fileTasks,
             logger,
-            bucketName
+            bucketName,
+            pgClient
         );
-        if (resD && resD.error) {
-            discoveryErrors.push({ source: 'make_product_specifications', error: resD.error });
+        if (resD && (!resD.success || resD.error)) {
+            discoveryErrors.push({ source: 'make_product_specifications', error: resD.error, partial: resD.partial, reachedCap: resD.reachedCap });
         }
     } catch (e) {
         logger.warn('[NAS-Pull-Worker] Discovery from specifications images failed:', e.message);
@@ -1133,18 +1269,20 @@ async function pullAttachments(supabaseClient, storageBasePath, pgClient, option
             supabaseClient,
             {
                 table: 'make_product_colors',
-                select: 'id, image_url',
+                select: 'id, image_url, updated_at, created_at',
                 filterFn: q => q.not('image_url', 'is', null),
                 batchSize,
+                maxPages: options.maxDiscoveryPages,
                 extractUrls: (cl, tasks, bucket) => {
                     if (cl.image_url) {
-                        const cleanKey = normalizeStorageObjectKey(cl.image_url, bucket);
+                        const cleanKey = normalizeStorageObjectKey(cl.image_url, bucket, urlOpts);
                         if (cleanKey && !tasks.has(cleanKey)) {
                             tasks.set(cleanKey, {
                                 subfolder: cleanKey.includes('/') ? path.dirname(cleanKey) : 'colors',
                                 name: path.basename(cleanKey),
                                 entityType: 'make_product_colors',
-                                entityId: String(cl.id)
+                                entityId: String(cl.id),
+                                cloudUpdatedAt: cl.updated_at || cl.created_at
                             });
                         }
                     }
@@ -1152,10 +1290,11 @@ async function pullAttachments(supabaseClient, storageBasePath, pgClient, option
             },
             fileTasks,
             logger,
-            bucketName
+            bucketName,
+            pgClient
         );
-        if (resE && resE.error) {
-            discoveryErrors.push({ source: 'make_product_colors', error: resE.error });
+        if (resE && (!resE.success || resE.error)) {
+            discoveryErrors.push({ source: 'make_product_colors', error: resE.error, partial: resE.partial, reachedCap: resE.reachedCap });
         }
     } catch (e) {
         logger.warn('[NAS-Pull-Worker] Discovery from colors images failed:', e.message);
@@ -1163,7 +1302,15 @@ async function pullAttachments(supabaseClient, storageBasePath, pgClient, option
     }
 
     if (fileTasks.size === 0) {
-        return { success: discoveryErrors.length === 0, filesPulled: 0, errors: discoveryErrors };
+        const hasReachedCap = discoveryErrors.some(e => e.reachedCap || (typeof e.error === 'string' && e.error.includes('PAGINATION_CAP_REACHED')));
+        return {
+            success: discoveryErrors.length === 0,
+            reachedCap: hasReachedCap,
+            partial: hasReachedCap,
+            filesPulled: 0,
+            replicatedCount: 0,
+            errors: discoveryErrors
+        };
     }
 
     // ── Process and Verify Discovered Files ────────────────────────────────────
@@ -1173,16 +1320,77 @@ async function pullAttachments(supabaseClient, storageBasePath, pgClient, option
         const tempFilePath = path.join(targetDir, `.${fileInfo.name}.${Date.now()}.${crypto.randomBytes(4).toString('hex')}.tmp`);
 
         // Check if already persisted and verified in TrueNAS database and filesystem
+        let skipDownload = false;
         if (pgClient) {
             try {
                 const regCheck = await pgClient.query(
-                    'SELECT 1 FROM nas_replicated_files WHERE object_key = $1',
+                    'SELECT object_key, sha256, size_bytes, replicated_at FROM nas_replicated_files WHERE object_key = $1',
                     [cloudPath]
                 );
-                if (regCheck.rows && regCheck.rows.length > 0 && fs.existsSync(targetFilePath)) {
-                    continue; // Already replicated durably and verified
+                if (regCheck.rows && regCheck.rows.length > 0) {
+                    const regRow = regCheck.rows[0];
+                    const regSha = regRow.sha256 ? String(regRow.sha256).toUpperCase() : null;
+                    const regSize = Number(regRow.size_bytes);
+
+                    if (fs.existsSync(targetFilePath)) {
+                        const stat = fs.statSync(targetFilePath);
+                        if (stat.size === regSize) {
+                            const diskBytes = fs.readFileSync(targetFilePath);
+                            const diskSha = crypto.createHash('sha256').update(diskBytes).digest('hex').toUpperCase();
+
+                            if (diskSha === regSha) {
+                                // On-disk file is fully intact and matches registered checksum.
+                                // Now check for same-key replacement in cloud:
+                                let isSameKeyReplaced = false;
+
+                                if (fileInfo.expectedSha256 && fileInfo.expectedSha256.toUpperCase() !== regSha) {
+                                    isSameKeyReplaced = true;
+                                    logger.warn(`[NAS-Pull-Worker] Same-key replacement detected for ${cloudPath}: expected SHA changed from ${regSha} to ${fileInfo.expectedSha256.toUpperCase()}`);
+                                }
+
+                                if (fileInfo.cloudSize !== undefined && Number(fileInfo.cloudSize) !== regSize) {
+                                    isSameKeyReplaced = true;
+                                    logger.warn(`[NAS-Pull-Worker] Same-key replacement detected for ${cloudPath}: cloud size changed from ${regSize} to ${fileInfo.cloudSize}`);
+                                }
+
+                                if (fileInfo.cloudUpdatedAt && regRow.replicated_at) {
+                                    const cloudTime = new Date(fileInfo.cloudUpdatedAt).getTime();
+                                    const repTime = new Date(regRow.replicated_at).getTime();
+                                    if (cloudTime > repTime + 1000) {
+                                        isSameKeyReplaced = true;
+                                        logger.warn(`[NAS-Pull-Worker] Same-key replacement detected for ${cloudPath}: cloud updated_at (${fileInfo.cloudUpdatedAt}) is newer than replication (${regRow.replicated_at})`);
+                                    }
+                                }
+
+                                const revalidateIntervalMs = options.revalidationIntervalMs !== undefined
+                                    ? options.revalidationIntervalMs
+                                    : 24 * 60 * 60 * 1000;
+                                if (options.forceRevalidate || (regRow.replicated_at && (Date.now() - new Date(regRow.replicated_at).getTime() >= revalidateIntervalMs))) {
+                                    isSameKeyReplaced = true;
+                                    logger.log(`[NAS-Pull-Worker] Revalidation triggered for ${cloudPath}. Re-downloading from cloud.`);
+                                }
+
+                                if (!isSameKeyReplaced && !options.forceRevalidate) {
+                                    skipDownload = true;
+                                }
+                            } else {
+                                logger.warn(`[NAS-Pull-Worker] Corrupted file on disk for ${cloudPath}: disk SHA ${diskSha} !== registered SHA ${regSha}. Re-downloading to repair.`);
+                            }
+                        } else {
+                            logger.warn(`[NAS-Pull-Worker] Corrupted file size on disk for ${cloudPath}: disk size ${stat.size} !== registered size ${regSize}. Re-downloading to repair.`);
+                        }
+                    } else {
+                        logger.warn(`[NAS-Pull-Worker] Registered file missing from disk for ${cloudPath}: ${targetFilePath}. Re-downloading to restore.`);
+                    }
                 }
-            } catch {}
+            } catch (regErr) {
+                logger.error(`[NAS-Pull-Worker] Error checking registry for ${cloudPath}:`, regErr.message);
+                throw regErr;
+            }
+        }
+
+        if (skipDownload) {
+            continue; // Already replicated durably, verified on physical disk, and unchanged in cloud
         }
 
         try {
@@ -1287,8 +1495,12 @@ async function pullAttachments(supabaseClient, storageBasePath, pgClient, option
         await updateCheckpoint(pgClient, 'storage_files', null, new Date().toISOString(), filesPulled, null);
     }
 
+    const hasReachedCap = discoveryErrors.some(e => e.reachedCap || (typeof e.error === 'string' && e.error.includes('PAGINATION_CAP_REACHED')));
+
     return {
         success: failedFiles.length === 0 && discoveryErrors.length === 0,
+        reachedCap: hasReachedCap,
+        partial: hasReachedCap,
         filesPulled,
         replicatedCount: filesPulled,
         errors: [...failedFiles, ...discoveryErrors]
@@ -1333,7 +1545,15 @@ async function runReplicationCycle(options = {}) {
         }
 
         // Initialize checkpoint table on TrueNAS PostgreSQL
-        await initCheckpoints(pg);
+        try {
+            await initCheckpoints(pg);
+        } catch (initErr) {
+            logger.error('[NAS-Pull-Worker] Failed to initialize checkpoints and schema:', initErr.message);
+            return {
+                success: false,
+                error: `SCHEMA_INIT_FAILED: ${initErr.message}`
+            };
+        }
 
         // 1. Pull Business Records in dependency order
         const dataResult = await pullBusinessData(supabaseClient, pg, {
@@ -1412,6 +1632,7 @@ module.exports = {
     getCheckpoint,
     updateCheckpoint,
     normalizeStorageObjectKey,
+    discoverFromTable,
     pullBusinessData,
     pullAttachments,
     runReplicationCycle

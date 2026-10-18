@@ -12,7 +12,7 @@
 
 This report documents the architectural audit, upload-safety review, and comprehensive verification conducted on the **MAKE Module** of LE-SOFT v1.8.12. In accordance with project instructions, all work was restricted to the MAKE module, CAD and attachment upload dispatch safety, truthful URL resolution for private buckets, named order drafts, global specification image persistence (Migration 066 compatibility), resilient upload staging, failover recovery corrections, durable object key cleanup, and quota-managed cloud storage fallback. Unrelated Sales, Billing, inventory, and MySQL synchronization components were kept untouched.
 
-All 30 MAKE test suites (comprising **560 automated tests**, 0 failed, 0 skipped) pass cleanly. In addition, the NAS Pull Replication Worker test suite (comprising **25 automated integration tests**, 0 failed, 0 skipped) passes cleanly, real native SQLite Write-Ahead Logging (WAL) and `DurableUploadService` pending-association recovery were validated under Electron's Node runtime (ABI 143), real PostgreSQL Migration 070 quota RPC functions were validated against the local PostgreSQL container (13/13 passed), and both TypeScript compilation targets (`tsc --noEmit` and `tsc -p tsconfig.electron.json --noEmit`), ESLint (`npm run lint`), Vite production build, and Electron esbuild bundling passed with zero errors or warnings.
+All 30 MAKE test suites (comprising **560 automated tests**, 0 failed, 0 skipped) pass cleanly. In addition, the NAS Pull Replication Worker test suite (comprising **32 automated integration tests**, 0 failed, 0 skipped) passes cleanly, real native SQLite Write-Ahead Logging (WAL) and `DurableUploadService` pending-association recovery were validated under Electron's Node runtime (ABI 143), real PostgreSQL Migration 070 quota RPC functions (13/13 passed) and Migration 071 tombstone authorization security tests (8/8 passed) were validated against the local PostgreSQL 17 container (21/21 passed total), and both TypeScript compilation targets (`tsc --noEmit` and `tsc -p tsconfig.electron.json --noEmit`), ESLint (`npm run lint`), Vite production build, and Electron esbuild bundling passed with zero errors or warnings.
 
 ---
 
@@ -487,22 +487,23 @@ sequenceDiagram
 
 | Test Suite / Quality Gate | Scope | Total Tests | Passed | Failed | Skipped | Exit Code | Duration |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **All MAKE Test Suites (`tests/make`)** | Unit / Mock / Failover | **560** | **560** | **0** | **0** | **`0`** | **15.89s** |
+| **All MAKE Test Suites (`tests/make`)** | Unit / Mock / Failover | **560** | **560** | **0** | **0** | **`0`** | **15.83s** |
 | `smart-failover-uploads-buffer.test.ts` | 46 Scenarios (Buffer/Failover) | 46 | 46 | 0 | 0 | `0` | 0.63s |
 | `make-module-stability.integration.test.ts` | Stability & Stages | 73 | 73 | 0 | 0 | `0` | 0.70s |
-| **NAS Pull Replication Worker Suite** | NAS Pull Daemon & Regression Tests | **16** | **16** | **0** | **0** | **`0`** | **0.35s** |
-| **Real PostgreSQL 17 Integration** | Real PG 17 (port 54322) | **13** | **13** | **0** | **0** | **`0`** | **0.52s** |
-| **Real SQLite Outbox Integration** | Electron Node ABI 143 (`real-sqlite-outbox`) | **8** | **8** | **0** | **0** | **`0`** | **0.51s** |
-| **Real SQLite Upload Integration** | Electron Node ABI 143 (`durable-upload-real-sqlite`) | **1** | **1** | **0** | **0** | **`0`** | **0.65s** |
+| **NAS Pull Replication Worker Suite** | NAS Pull Daemon & Security Regressions | **32** | **32** | **0** | **0** | **`0`** | **0.47s** |
+| **Real PostgreSQL 17 Quota RPC Suite** | Real PG 17 (`supabase-quota-rpc.pg-integration`) | **13** | **13** | **0** | **0** | **`0`** | **0.47s** |
+| **Real PostgreSQL 17 Tombstone Auth** | Real PG 17 (`tombstone-authorization.pg-integration`) | **8** | **8** | **0** | **0** | **`0`** | **0.34s** |
+| **Real SQLite Outbox Integration** | Electron Node ABI 143 (`real-sqlite-outbox`) | **8** | **8** | **0** | **0** | **`0`** | **0.45s** |
+| **Real SQLite Upload Integration** | Electron Node ABI 143 (`durable-upload-real-sqlite`) | **1** | **1** | **0** | **0** | **`0`** | **0.63s** |
 | **Frontend Typecheck (`tsc --noEmit`)** | TypeScript Renderer Check | — | — | 0 | — | **`0`** | 9.5s |
 | **Electron Typecheck (`tsc (electron)`)** | TypeScript Main Check | — | — | 0 | — | **`0`** | 4.8s |
 | **Linter (`npm run lint`)** | ESLint Strict Gate | — | — | 0 (0 warnings) | — | **`0`** | 5.2s |
-| **Vite Production Build (`npm run build`)** | Vite Asset Bundle | — | — | 0 | — | **`0`** | 8.35s |
+| **Vite Production Build (`npm run build`)** | Vite Asset Bundle | — | — | 0 | — | **`0`** | 9.47s |
 | **Electron Bundle (`node build-electron.cjs`)**| Electron Main (`core/main.cjs`)| — | — | 0 (5.9 MB) | — | **`0`** | 1.15s |
 | **License Check (`npm run license:check`)** | Ed25519 License Verification | — | — | 0 (Verified) | — | **`0`** | 0.8s |
 | **Git Whitespace Hygiene (`git diff --check`)**| Git Diff Hygiene | — | — | 0 | — | **`0`** | 0.1s |
 
-**Summary**: 100% of quality gates, unit tests, and integration suites pass cleanly with **zero failures** and **zero skipped tests**.
+**Summary**: 100% of quality gates, unit tests, and integration suites pass cleanly with **zero failures** and **zero skipped tests** (622 total automated tests passing).
 
 ---
 
@@ -566,10 +567,11 @@ Targeting the physical TrueNAS node `le-nas-server` over Tailscale (`100.88.85.6
 - **Target Branch**: `feat/failover-uploads-buffer`.
 - **Pull Request**: PR #41 (Status: **OPEN and UNMERGED**).
 - **Modified / Introduced Repository Files**:
-  1. `scripts/nas-pull-replication-worker.cjs` — Implemented compound watermark `(updated_at, id)` replication cursor with schema detection; parent-before-child ordering with `ensureParentSpecExists`; resumable paginated attachment discovery; 7-step disk read-back SHA-256 verification with atomic rename; observable diagnostic logging; checkpoint freeze on errors; stream isolation; and cycle concurrency lock.
-  2. `supabase/migrations/071_make_specs_and_colors_updated_at.sql` — Added `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`, compound indexes `(updated_at ASC, id ASC)`, automatic `set_make_catalog_updated_at` triggers, and deletion tombstone tracking on `make_product_specifications` and `make_product_colors`.
-  3. `tests/integration/nas-pull-replication-worker.test.ts` — Expanded test suite to 25 tests (Tests 22–25 added) covering mutable updates, soft/tombstone deletion, multi-page image discovery, disk write corruption handling, PostgREST failure isolation, and restart recovery.
-  4. `docs/architecture/MAKE-MODULE-VERIFICATION-REPORT.md` — Updated comprehensive verification report with defect resolutions, test results, and clear verification tier distinctions.
+  1. `scripts/nas-pull-replication-worker.cjs` — Implemented hardened storage URL parser, on-disk SHA-256 and byte-size validation for registered files, corruption repair, missing file restoration, same-key cloud object replacement detection, durable `discovery_<table_name>` checkpoint pagination without starvation, anti-forgery tombstone validation against authoritative Supabase tables, parent-before-child hard deletion ordering, and fail-closed schema initialization.
+  2. `supabase/migrations/071_make_specs_and_colors_updated_at.sql` — Added `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`, compound indexes `(updated_at ASC, id ASC)`, automatic `set_make_catalog_updated_at` triggers, RLS-protected `replication_tombstones` table with grants revoked from `PUBLIC`, `anon`, and `authenticated` and granted exclusively to `service_role`, trusted `SECURITY DEFINER` deletion trigger function with fixed safe `search_path = pg_catalog, public`, and `AFTER DELETE` triggers across `make_orders`, `make_order_updates`, `make_product_specifications`, and `make_product_colors`.
+  3. `tests/integration/nas-pull-replication-worker.test.ts` — Expanded test suite to 32 tests (Tests 22–32 added) covering mutable updates, deletion propagation, multi-page image discovery, disk corruption repair, missing file restoration, same-key cloud object replacement, storage URL parsing and traversal security, pagination cap checkpointing without starvation, forged tombstone rejection, and schema initialization failure handling.
+  4. `tests/integration/tombstone-authorization.pg-integration.test.ts` — Real PostgreSQL 17 integration test suite (8 tests) proving that `authenticated` and `anon` roles cannot forge, alter, or view tombstones (error 42501), while legitimate source deletions record tombstones via `SECURITY DEFINER` triggers with safe `search_path`.
+  5. `docs/architecture/MAKE-MODULE-VERIFICATION-REPORT.md` — Updated comprehensive verification report with defect resolutions, test results, and clear verification tier distinctions.
 
 #### Required Final Verdict
 
@@ -577,8 +579,8 @@ Targeting the physical TrueNAS node `le-nas-server` over Tailscale (`100.88.85.6
 
 *Rationale*:
 All local tests, integration suites, build pipelines, and architecture contracts are complete and 100% passing:
-1. Local quality gates: 560/560 MAKE tests pass, 25/25 NAS Pull Worker integration tests pass, 13/13 Migration 070 quota RPC integration tests pass, 8/8 Real SQLite outbox tests pass, 1/1 Real SQLite upload tests pass, TypeScript compiler has 0 errors, ESLint has 0 errors, Vite production build succeeds, and Electron bundle contains 0 exposed secrets.
-2. Architecture & Infrastructure: Compound watermark replication, parent-child referential integrity, multi-page image discovery pagination, disk read-back SHA-256 verification, and error isolation have been implemented and verified.
+1. Local quality gates: 560/560 MAKE tests pass, 32/32 NAS Pull Worker integration tests pass, 13/13 Migration 070 quota RPC integration tests pass, 8/8 Migration 071 tombstone authorization integration tests pass, 8/8 Real SQLite outbox tests pass, 1/1 Real SQLite upload tests pass (622 total passing automated tests), TypeScript compiler has 0 errors, ESLint has 0 errors, Vite production build succeeds, and Electron bundle contains 0 exposed secrets.
+2. Architecture & Infrastructure: Compound watermark replication, parent-child referential integrity, multi-page image discovery pagination, disk read-back SHA-256 verification, same-key cloud object replacement detection, and error isolation have been implemented and verified.
 3. Cleanup Audit: Verified that real TrueNAS customer order 20 is untouched, and zero disposable test records or files remain in production systems.
 4. Pending Operational Action: Full production sign-off requires deploying Migration 071 to hosted Supabase, rotating the Supabase service-role key in the Supabase Dashboard, provisioning the updated secret in `/mnt/data_pool/lesoft/nas-pull-worker.env`, and executing a clean post-rotation replication run with the replacement credential.
 
@@ -603,24 +605,38 @@ Reconciled directly from `scripts/nas-pull-replication-worker.cjs` and `docker-c
 | `REPLICATION_INTERVAL_MS` | No | `15000` (15s) | Polling interval for daemon loop |
 
 #### B. Truthful Verification Tier Distinctions
-1. **Tier 1: Unit & Mocked Integration Tests (100% PASS)**:
-   - 560/560 MAKE module unit and failover tests passed (`tests/make`).
-   - 25/25 NAS Pull Replication Worker contract tests passed (`tests/integration/nas-pull-replication-worker.test.ts`), covering mutable catalog updates, tombstone soft-deletion propagation, multi-page image discovery, disk write corruption detection, PostgREST failure isolation, and restart recovery.
-   - 0 errors across TypeScript compiler (`renderer` and `electron`), ESLint, and license check.
+
+The verification framework rigorously distinguishes five tiers of evidence to prevent conflating local mocks with live production validation:
+
+1. **Tier 1: Locally Reproduced Automated Test Results (100% PASS)**:
+   - **560/560 MAKE module unit, stage, and failover tests** passed (`tests/make`).
+   - **32/32 NAS Pull Replication Worker integration tests** passed (`tests/integration/nas-pull-replication-worker.test.ts`), covering mutable catalog updates, tombstone soft/hard deletion propagation, multi-page image discovery, disk corruption repair, missing file restoration, same-key cloud object replacement, storage URL parsing and traversal security, pagination cap checkpointing without starvation, forged tombstone rejection, and schema initialization failure handling.
+   - **0 errors** across TypeScript compiler (`renderer` and `electron`), ESLint, and license check.
    - Full Vite frontend and Electron esbuild bundles built cleanly without exposed secrets.
-2. **Tier 2: Real Local Native SQLite & PostgreSQL Integration Tests (100% PASS)**:
-   - 13/13 Migration 070 PostgreSQL integration tests passed against real PostgreSQL 17 container on `127.0.0.1:54322`.
-   - 1/1 Real Native SQLite durable upload test passed under Electron Node runtime (ABI 143) with real `better-sqlite3`.
-   - 8/8 Real Native SQLite outbox queue tests passed under Electron Node runtime.
-3. **Tier 3: Read-Only Checks Against Live Supabase & TrueNAS (VERIFIED & CLEAN)**:
+2. **Tier 2: Real Local Native SQLite & Disposable PostgreSQL 17 Staging Integration (100% PASS)**:
+   - **13/13 Migration 070 PostgreSQL integration tests** passed against real PostgreSQL 17 container on `127.0.0.1:54322` (`supabase-quota-rpc.pg-integration.test.ts`).
+   - **8/8 Migration 071 PostgreSQL tombstone authorization tests** passed against real PostgreSQL 17 container on `127.0.0.1:54322` (`tombstone-authorization.pg-integration.test.ts`). Proves ordinary `authenticated` and `anon` roles cannot forge, alter, or read tombstones (PostgreSQL error 42501), while legitimate source deletions safely trigger tombstones via `SECURITY DEFINER` function with fixed safe `search_path`.
+   - **1/1 Real Native SQLite durable upload test** passed under Electron Node runtime (ABI 143) with real `better-sqlite3`.
+   - **8/8 Real Native SQLite outbox queue tests** passed under Electron Node runtime.
+3. **Tier 3: Source-Reviewed Behavior & Security Code Audits (AUDITED & PROVEN)**:
+   - Storage URL parser verifies origin against configured Supabase endpoint, validates canonical `/storage/v1/object/(public|sign|authenticated)/<bucket>/...` format, rejects external hosts, rejects traversal components (`..`), null bytes, and handles malformed percent-encoding safely without crashing.
+   - Deletion trigger function `log_make_deletion_tombstone()` explicitly sets `SET search_path = pg_catalog, public` to eliminate search-path injection vulnerabilities.
+   - Anti-forgery validation verifies source record non-existence in Supabase before applying deletions to TrueNAS.
+   - Parent-before-child deletion ordering ensures foreign-key references are respected (`make_order_updates` before `make_orders`, `make_product_colors` before `make_product_specifications`).
+   - Resumable discovery checkpoints (`discovery_<table_name>`) prevent starvation when protective page caps are reached.
+4. **Tier 4: Live Read-Only Reachability Checks Against Tailscale & Supabase (VERIFIED & UNTOUCHED)**:
    - Live network reachability to TrueNAS Tailscale endpoint `100.88.85.6` verified on Port 8081 (storage) and Port 3001/5432 (PostgREST / PostgreSQL).
    - Read-only query against TrueNAS PostgREST (`http://100.88.85.6:3001/make_orders?limit=1`) confirmed operational and intact.
    - Zero disposable rows created or altered in production Supabase Cloud or TrueNAS PostgreSQL. Real customer data remains 100% untouched.
    - Unauthenticated probe to Supabase Cloud confirms expected least-privilege boundary (`401 No API key found`).
-4. **Tier 4: Live NAS Pull Replication (DEPLOYED & OBSERVED; PENDING MIGRATION 071 & KEY ROTATION)**:
+5. **Tier 5: Authenticated Production Replication Verification (PENDING DEPLOYMENT & KEY ROTATION)**:
    - Tailscale connectivity to `100.88.85.6` is healthy.
    - Pull worker deployed in container `lesoft-nas-pull-worker` with `restart: always`.
-   - Production readiness requires applying Migration 071 to hosted Supabase, rotating the Supabase service-role secret, updating `/mnt/data_pool/lesoft/nas-pull-worker.env`, and verifying live sync.
+   - **Production Readiness Gate**: TrueNAS pull replication cannot be claimed fully production-verified until:
+     1. Migration 071 is applied to hosted Supabase.
+     2. Supabase service-role secret is rotated in Supabase Dashboard.
+     3. Replacement secret is provisioned in `/mnt/data_pool/lesoft/nas-pull-worker.env`.
+     4. A live authenticated pull cycle is executed and evidenced post-rotation.
 
 #### C. Remaining Manual UI Acceptance Checklist (Post-Deployment)
 Now that live replication is active in production, perform the following end-to-end visual tests in the desktop application:
@@ -670,3 +686,55 @@ In `pullAttachments()`, every file downloaded from Supabase Storage undergoes a 
 - **Stream Isolation**: Stream errors in one entity (such as specifications) prevent dependent child replication (colors) but allow independent streams (orders) to progress without masking cycle errors.
 - **Daemon Concurrency Lock**: Added an in-memory execution lock (`isCycleRunning`) to prevent overlapping cycles from racing or causing duplicate transfers.
 - **Restart Recovery**: Restarting the worker cleanly reloads checkpoints from `nas_replication_state` and retries incomplete items idempotently without data loss or duplicate records.
+
+---
+
+### 7.12 Final Correctness and Security Remediation (LE-SOFT v1.8.12)
+
+This section details the critical security boundaries, file verification repairs, truthful pagination, and hard-delete guarantees implemented and validated during the final production-readiness pass:
+
+#### 1. P0 — Secure Deletion Tombstones & Authorization Boundaries
+- **Vulnerability Remediated**: Migration 071 previously granted `INSERT` on `public.replication_tombstones` to `authenticated` without RLS, creating a vulnerability where ordinary authenticated API clients could forge tombstones and delete TrueNAS records.
+- **Applied Hardening**:
+  - `ALTER TABLE public.replication_tombstones ENABLE ROW LEVEL SECURITY;`
+  - `REVOKE ALL ON public.replication_tombstones FROM PUBLIC, anon, authenticated;`
+  - `GRANT ALL ON public.replication_tombstones TO service_role;`
+  - Created strict RLS policy: only `service_role` may select, insert, update, or delete tombstones.
+  - Revoked `PUBLIC` and `anon` from catalog tables (`make_product_specifications`, `make_product_colors`) and set explicit `authenticated` and `service_role` grants.
+  - Hardened deletion trigger function `log_make_deletion_tombstone()` as `SECURITY DEFINER` with fixed, immutable `SET search_path = pg_catalog, public` to defeat search-path hijacking attacks.
+  - Added `AFTER DELETE` triggers across all replicated tables: `make_orders`, `make_order_updates`, `make_product_specifications`, and `make_product_colors`.
+- **Anti-Forgery Verification Gate**:
+  - Before applying a tombstone deletion to TrueNAS PostgreSQL, the replication worker executes a verified check against the authoritative Supabase Cloud table: `supabaseClient.from(table).select('id').eq('id', recordId).maybeSingle()`.
+  - If the authoritative Supabase row still exists, deletion on TrueNAS is immediately aborted, flagged as `FORGED_TOMBSTONE_REJECTED`, and the TrueNAS replica is preserved.
+- **PostgreSQL Authorization Tests**: Proved in `tests/integration/tombstone-authorization.pg-integration.test.ts` (8/8 passing against local PostgreSQL 17 on port 54322) that ordinary `authenticated` and `anon` roles receive error `42501` on all direct tombstone operations, while legitimate deletions safely log tombstones via the `SECURITY DEFINER` trigger.
+
+#### 2. P1 — On-Disk File Integrity, Corruption Repair, and Same-Key Cloud Replacement Detection
+- **Registered File Validation**: Rather than trusting registry existence and file presence alone, `pullAttachments()` now retrieves the registered `sha256` and `size_bytes` from `nas_replicated_files`, reads the physical on-disk file, and verifies that `stat.size === regSize` and `crypto.createHash('sha256').update(diskBytes).digest('hex') === regSha`.
+- **Corruption & Missing File Repair**:
+  - If a file on disk has modified bytes or size mismatch (e.g. bit rot, truncation, accidental edit), the worker detects the discrepancy, logs a repair warning, and re-downloads the authoritative file from Supabase Storage.
+  - If a registered file was unlinked/removed from disk, the worker detects its absence and restores it.
+  - All downloads follow the safe temporary-write (`.filename.tmp`), read-back verification, and atomic rename protocol before updating the registry.
+- **Same-Key Replacement Detection**:
+  - When a cloud object is updated in Supabase Storage under an identical storage key, the worker detects replacement via:
+    1. Newer cloud record timestamp (`cloudUpdatedAt > regRow.replicated_at + 1000ms`).
+    2. Cloud object size change (`fileInfo.cloudSize !== regSize`).
+    3. Expected SHA change (`fileInfo.expectedSha256 !== regSha`).
+    4. Periodic revalidation interval elapsed (`Date.now() - replicated_at >= revalidationIntervalMs`, default 24h).
+  - Upon detection, the worker pulls the new object version, verifies checksums, atomically updates the disk file, and refreshes the registered checksum and size in `nas_replicated_files`.
+- **Retry Safety**: On any download, verification, or registry failure, the cloud object is preserved, the operation remains retryable, and a truthful failure result is returned.
+
+#### 3. P1 — Complete and Truthful Pagination with Starvation Avoidance
+- **Durable Checkpoints**: Implemented `discoverFromTable()` with durable resumable checkpoints (`discovery_<table_name>`) tracking `lastId`.
+- **Truthful Cap Handling**: If a protective page cap is reached before table exhaustion, the worker does NOT report false completion. It returns `{ success: false, partial: true, reachedCap: true, lastId }`, persists the discovery cursor in `nas_replication_checkpoints`, and fairly resumes from `id > lastId` on the subsequent cycle.
+- **Starvation Avoidance**: Verified across multi-page batches (with both valid and null image references) that later records are never starved and are deterministically visited and pulled.
+
+#### 4. P1 — Strict Supabase Storage URL Parsing and Traversal Security
+- **Origin Validation**: `normalizeStorageObjectKey()` verifies that the URL origin strictly matches the configured Supabase endpoint or allowed localhost/staging addresses. Arbitrary external hosts (SSRF / spoofing attempts) are rejected (`return null`).
+- **Path Structure Enforcement**: Enforces canonical Supabase Storage URL structure: `/storage/v1/object/(public|sign|authenticated)/<bucket>/<path>`.
+- **Path Traversal Security**: Rejects all directory traversal sequences (`..` components in raw, decoded, or path segments), null bytes (`\0`, `%00`), and absolute path injections.
+- **Safe Encoding**: Safely catches and rejects malformed percent-encoding without throwing unhandled exceptions.
+
+#### 5. P1 — Reconciled Hard-Delete Guarantees
+- Hard-delete propagation is reconciled across parent and child tables in strict foreign-key order:
+  - Deletions: `make_order_updates` before `make_orders`, and `make_product_colors` before `make_product_specifications`.
+- Under no circumstances is a Supabase Cloud source record deleted as a side-effect of TrueNAS replication; Supabase Cloud remains the permanent primary write authority.
