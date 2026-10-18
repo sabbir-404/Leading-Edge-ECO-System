@@ -1267,9 +1267,20 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
         expect(normalizeStorageObjectKey('/make-order-files/specs/spec_10.pdf')).toBe('specs/spec_10.pdf');
         expect(normalizeStorageObjectKey('supabase://make-order-files/colors/color_20.png')).toBe('colors/color_20.png');
 
-        // Valid Supabase hosted storage URLs
-        expect(normalizeStorageObjectKey('https://ildkkgjrolcjijwfokek.supabase.co/storage/v1/object/public/make-order-files/cad/drawing_001.pdf')).toBe('cad/drawing_001.pdf');
-        expect(normalizeStorageObjectKey('https://xyz.supabase.co/storage/v1/object/sign/make-order-files/invoices/inv_123.pdf?token=abc')).toBe('invoices/inv_123.pdf');
+        // Full storage URLs require the exact configured project origin.
+        const storageUrlOptions = {
+            expectedOrigin: 'https://ildkkgjrolcjijwfokek.supabase.co'
+        };
+        expect(normalizeStorageObjectKey(
+            'https://ildkkgjrolcjijwfokek.supabase.co/storage/v1/object/public/make-order-files/cad/drawing_001.pdf',
+            'make-order-files',
+            storageUrlOptions
+        )).toBe('cad/drawing_001.pdf');
+        expect(normalizeStorageObjectKey(
+            'https://xyz.supabase.co/storage/v1/object/sign/make-order-files/invoices/inv_123.pdf?token=abc',
+            'make-order-files',
+            storageUrlOptions
+        )).toBeNull();
 
         // Null / undefined / empty
         expect(normalizeStorageObjectKey(null)).toBeNull();
@@ -2005,5 +2016,51 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
         } finally {
             mockSupabase.from = originalFrom;
         }
+    }); 
+    it('34. Buffer pruning requires one unambiguous reservation-to-object match; unrelated and ambiguous objects are preserved', async () => {
+        const reservationId = 'res_ambiguous_100';
+        const firstPath = `products/${reservationId}_piece_a.webp`;
+        const secondPath = `products/${reservationId}_piece_b.webp`;
+        const unrelatedPath = 'products/unrelated_customer_photo.webp';
+        const firstBytes = Buffer.from('RESERVATION-PIECE-A');
+        const secondBytes = Buffer.from('RESERVATION-PIECE-B');
+        const unrelatedBytes = Buffer.from('UNRELATED-CUSTOMER-IMAGE');
+
+        mockSupabaseReservations.push({
+            id: reservationId,
+            resource_type: 'storage',
+            bytes_reserved: firstBytes.length + secondBytes.length,
+            status: 'committed'
+        });
+        mockSupabaseStorageFiles.set(firstPath, {
+            buffer: firstBytes,
+            sha256: crypto.createHash('sha256').update(firstBytes).digest('hex')
+        });
+        mockSupabaseStorageFiles.set(secondPath, {
+            buffer: secondBytes,
+            sha256: crypto.createHash('sha256').update(secondBytes).digest('hex')
+        });
+        mockSupabaseStorageFiles.set(unrelatedPath, {
+            buffer: unrelatedBytes,
+            sha256: crypto.createHash('sha256').update(unrelatedBytes).digest('hex')
+        });
+
+        const result = await pullAttachments(mockSupabase, tempStorageDir, mockPg, {
+            pruneCloudAfterNasConfirmation: true
+        });
+
+        expect(result.success).toBe(true);
+        expect(result.filesPulled).toBe(2);
+        expect(fs.existsSync(path.join(tempStorageDir, firstPath))).toBe(true);
+        expect(fs.existsSync(path.join(tempStorageDir, secondPath))).toBe(true);
+        expect(fs.existsSync(path.join(tempStorageDir, unrelatedPath))).toBe(false);
+
+        // Ambiguous matching must disable pruning for both objects; the unrelated
+        // object must never have been claimed by this reservation at all.
+        expect(mockSupabaseStorageFiles.has(firstPath)).toBe(true);
+        expect(mockSupabaseStorageFiles.has(secondPath)).toBe(true);
+        expect(mockSupabaseStorageFiles.has(unrelatedPath)).toBe(true);
+        expect(mockSupabaseReservations.find(r => r.id === reservationId)?.status).toBe('committed');
     });
+
 });
