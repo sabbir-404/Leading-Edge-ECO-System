@@ -558,12 +558,12 @@ During the operational deployment preflight over Tailscale (`100.88.85.6` / `le-
 
 - **Base Version**: `LE-SOFT v1.8.12` (strictly preserved in `package.json`).
 - **Target Branch**: `feat/failover-uploads-buffer`.
-- **Latest Upstream Commit**: `9cf25673368bf25f7f148a43be69829d6edd9096`.
+- **Latest Upstream Commit**: `302d384docs`.
 - **Pull Request**: PR #41 (Status: **OPEN and UNMERGED**).
 - **Production Isolation**: Zero modifications to hosted production database (`ildkkgjrolcjijwfokek`). TrueNAS services running without disruption.
 - **Modified Files**:
   1. `docker-compose-truenas.yml` — Corrected container networking with `extra_hosts: ["host.docker.internal:host-gateway"]`, defaulted `TRUENAS_PG_HOST` to `host.docker.internal`, `TRUENAS_PG_USER` to `admin`, and mounted real TrueNAS storage dataset `/mnt/data_pool/lesoft/lesoft-storage/uploads`.
-  2. `docs/architecture/MAKE-MODULE-VERIFICATION-REPORT.md` — Updated verification report with operational preflight audit findings, hosted Supabase Migration 070 verification, container networking resolution, and clear blocker analysis.
+  2. `docs/architecture/MAKE-MODULE-VERIFICATION-REPORT.md` — Updated verification report with operational preflight audit findings, hosted Supabase Migration 070 verification, container networking resolution, environment variable contract confirmation, and clear blocker analysis.
 
 #### Required Final Verdict
 
@@ -574,3 +574,45 @@ All local tests, integration suites, build pipelines, and remote TrueNAS preflig
 1. **TrueNAS Account Access**: The temporary account `truenas_admin` is locked on `100.88.85.6`. Fresh authorized access (unlocking the account or configuring an SSH key) is required.
 2. **TrueNAS Worker Secret Provisioning**: `SUPABASE_REPLICATION_KEY` (service-role key) must be provisioned on TrueNAS at `/mnt/data_pool/lesoft/nas-pull-worker.env` along with the `lesoft-postgres` database password.
 
+---
+
+### 7.10 Architecture Contracts, Test Tier Distinctions & Acceptance Checklist
+
+#### A. Verified Environment Variable Contract (Confirmed From Code)
+Reconciled directly from `scripts/nas-pull-replication-worker.cjs` and `docker-compose-truenas.yml`:
+
+| Variable Name | Required | Default / Fallback | Purpose in Daemon / Container |
+| :--- | :--- | :--- | :--- |
+| `SUPABASE_URL` | **Yes** | `process.env.VITE_SUPABASE_URL` | Canonical cloud endpoint for fetching reservations & tables |
+| `SUPABASE_REPLICATION_KEY` | **Yes** | `process.env.SUPABASE_SERVICE_ROLE_KEY` | Privileged service-role secret for backend pull and scoped pruning |
+| `TRUENAS_PG_HOST` | No | `host.docker.internal` (Docker) / `127.0.0.1` | Host gateway address for `lesoft-postgres` container |
+| `TRUENAS_PG_PORT` | No | `5432` | PostgreSQL listening port |
+| `TRUENAS_PG_DATABASE` | No | `lesoft` | TrueNAS PostgreSQL database name |
+| `TRUENAS_PG_USER` | No | `admin` | Database user (must have write privileges on `make_orders`) |
+| `TRUENAS_PG_PASSWORD` | **Yes** | `''` | Database password for `admin` |
+| `TRUENAS_STORAGE_PATH` | No | `/data/uploads` (in container) / `../uploads` | Destination directory on disk for replicated binary files |
+| `PRUNE_CLOUD_AFTER_NAS_CONFIRMATION` | No | `false` | Cloud storage retention flag (must remain `false` during preflight) |
+| `REPLICATION_INTERVAL_MS` | No | `15000` (15s) | Polling interval for daemon loop |
+
+#### B. Truthful Verification Tier Distinctions
+1. **Locally Tested Behavior (100% PASS)**:
+   - 560/560 MAKE module unit and failover tests passed.
+   - 15/15 NAS Pull Replication Worker contract tests passed (compound watermarks, parent-child chaining, SHA-256 verification, restart resumption, and idempotent replay).
+   - 13/13 Migration 070 PostgreSQL integration tests passed against real PostgreSQL 17.
+   - 0 errors across TypeScript compiler (`renderer` and `electron`), ESLint, and license check.
+   - Full Vite frontend and Electron esbuild bundles built cleanly without exposed secrets.
+2. **Hosted Supabase Tests (VERIFIED DEPLOYED & ACTIVE)**:
+   - Probed live `https://ildkkgjrolcjijwfokek.supabase.co`.
+   - Confirmed `get_buffer_quota_status`, `reserve_buffer_capacity`, and `supabase_buffer_reservations` exist in PostgREST schema cache and correctly return `401 {"code":"42501"}` (permission denied) for unauthenticated/anon callers.
+3. **Live NAS Pull Replication (DEPLOYMENT BLOCKED)**:
+   - Tailscale connectivity to `100.88.85.6` is healthy.
+   - TrueNAS account `truenas_admin` is locked (`All configured authentication methods failed`).
+   - `SUPABASE_REPLICATION_KEY` is not present on TrueNAS.
+   - **Status**: Halted at this precise boundary. Never claim live NAS deployment succeeded until end-to-end cloud-to-NAS replication is executed and verified on the physical node.
+
+#### C. Remaining Manual UI Acceptance Checklist (Post-Deployment)
+Once live replication is active, perform the following end-to-end visual tests in the desktop application:
+- [ ] **Place Order Draft Duplication**: Click the copy icon in Saved Drafts drawer; verify a new draft titled `<Name> (Copy)` is created with a unique draft ID without mutating the original.
+- [ ] **Offline Staged Upload Badging**: Disconnect network or stop NAS; upload CAD file or invoice attachment; verify table displays yellow `PENDING UPLOAD` badge and does not crash or generate fake `file://` URLs.
+- [ ] **Order Creation During Outage**: Submit order with pending attachments during simulated outage; verify order enters `buffered_supabase` and local files are retained.
+- [ ] **Private Attachment URL Resolution**: In `TrackOrders.tsx`, view attached invoices and stage photos; verify links open with ephemeral signed URLs (`?token=...`) rather than broken public URLs.
