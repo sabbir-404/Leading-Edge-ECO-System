@@ -69,6 +69,7 @@ async function initCheckpoints(pgClient) {
             size_bytes BIGINT NOT NULL,
             entity_type TEXT,
             entity_id TEXT,
+            source_updated_at TIMESTAMPTZ,
             replicated_at TIMESTAMPTZ DEFAULT NOW()
         );
     `;
@@ -96,6 +97,7 @@ async function initCheckpoints(pgClient) {
         ALTER TABLE make_product_colors ADD COLUMN IF NOT EXISTS image_url TEXT;
         ALTER TABLE make_product_colors ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
         CREATE INDEX IF NOT EXISTS idx_make_colors_updated_at_id ON make_product_colors (updated_at ASC, id ASC);
+        ALTER TABLE nas_replicated_files ADD COLUMN IF NOT EXISTS source_updated_at TIMESTAMPTZ;
     `);
 }
 
@@ -185,13 +187,10 @@ function normalizeStorageObjectKey(rawPath, allowedBucket = 'make-order-files', 
             }
 
             const parsedOrigin = parsed.origin.toLowerCase();
-            const isKnownSupabaseHost = parsed.hostname.endsWith('.supabase.co') ||
-                                        parsed.hostname === '127.0.0.1' ||
-                                        parsed.hostname === 'localhost';
-
-            const isAllowedOrigin = allowedOrigins.size > 0
-                ? (allowedOrigins.has(parsedOrigin) || isKnownSupabaseHost)
-                : isKnownSupabaseHost;
+            // Full URLs are accepted only when their origin exactly matches the
+            // configured Supabase endpoint. Do not trust arbitrary *.supabase.co
+            // subdomains: another tenant is not this project's storage authority.
+            const isAllowedOrigin = allowedOrigins.size > 0 && allowedOrigins.has(parsedOrigin);
 
             if (!isAllowedOrigin) {
                 // Reject arbitrary external hosts that do not match configured Supabase endpoint
@@ -340,12 +339,23 @@ async function pullBusinessData(supabaseClient, pgClient, options = {}) {
                             .eq('id', targetId)
                             .maybeSingle();
 
-                        if (!sourceErr && sourceRow && String(sourceRow.id) === String(targetId)) {
-                            logger.error(`[SECURITY ALERT] Forged or invalid tombstone rejected: ${targetTable} ID ${targetId} still exists authoritatively in Supabase. Skipping deletion on TrueNAS.`);
-                            streamErrors.set('replication_tombstones', `FORGED_TOMBSTONE_REJECTED: ${targetTable} ID ${targetId} still exists in Supabase`);
-                            await updateCheckpoint(pgClient, 'replication_tombstones', null, null, 0, `FORGED_TOMBSTONE_REJECTED: ${targetTable} ID ${targetId}`);
-                            hasMoreTombstones = false;
-                            break;
+                        if (sourceErr) {
+                            // Fail closed: an inability to confirm authoritative source state
+                            // must never be interpreted as proof that the row was deleted.
+                            throw new Error(`Unable to validate tombstone for ${targetTable} ID ${targetId}: ${sourceErr.message || 'unknown Supabase query error'}`);
+                        }
+
+                        if (sourceRow && String(sourceRow.id) === String(targetId)) {
+                            // Ignore a forged/stale tombstone but advance its cursor so one
+                            // invalid row cannot block all later legitimate tombstones.
+                            const reason = `FORGED_TOMBSTONE_REJECTED: ${targetTable} ID ${targetId} still exists in Supabase`;
+                            logger.error(`[SECURITY ALERT] ${reason}. Skipping deletion on TrueNAS.`);
+                            streamErrors.set('replication_tombstones', reason);
+                            const tombAt = tomb.deleted_at || tomb.created_at || new Date().toISOString();
+                            await updateCheckpoint(pgClient, 'replication_tombstones', String(tomb.id), tombAt, 1, reason);
+                            tombstonesReplicated++;
+                            totalReplicated++;
+                            continue;
                         }
 
                         // Foreign-key safe deletion in parent-before-child order
@@ -1026,11 +1036,19 @@ async function discoverFromTable(client, config, fileTasks, logger, bucketName, 
         };
     }
 
-    // Exhausted all records in this table: reset checkpoint to 0 so future cycles sweep from beginning
+    // Exhausted all records in this table: reset checkpoint to 0 so future cycles
+    // sweep from the beginning and detect changed references on already-seen rows.
     if (!hasMore && pgClient) {
         try {
-            await updateCheckpoint(pgClient, checkpointKey, '0', new Date().toISOString(), pages, null);
-        } catch {}
+            await updateCheckpoint(pgClient, checkpointKey, '0', new Date().toISOString(), 0, null);
+        } catch (resetErr) {
+            logger.error(`[NAS-Pull-Worker] Failed to reset discovery checkpoint for ${table}:`, resetErr.message);
+            return {
+                success: false,
+                lastId,
+                error: `DISCOVERY_CHECKPOINT_RESET_FAILED for ${table}: ${resetErr.message}`
+            };
+        }
     }
 
     return { success: true, lastId };
@@ -1324,7 +1342,7 @@ async function pullAttachments(supabaseClient, storageBasePath, pgClient, option
         if (pgClient) {
             try {
                 const regCheck = await pgClient.query(
-                    'SELECT object_key, sha256, size_bytes, replicated_at FROM nas_replicated_files WHERE object_key = $1',
+                    'SELECT object_key, sha256, size_bytes, replicated_at, source_updated_at FROM nas_replicated_files WHERE object_key = $1',
                     [cloudPath]
                 );
                 if (regCheck.rows && regCheck.rows.length > 0) {
@@ -1353,12 +1371,17 @@ async function pullAttachments(supabaseClient, storageBasePath, pgClient, option
                                     logger.warn(`[NAS-Pull-Worker] Same-key replacement detected for ${cloudPath}: cloud size changed from ${regSize} to ${fileInfo.cloudSize}`);
                                 }
 
-                                if (fileInfo.cloudUpdatedAt && regRow.replicated_at) {
+                                if (fileInfo.cloudUpdatedAt) {
                                     const cloudTime = new Date(fileInfo.cloudUpdatedAt).getTime();
-                                    const repTime = new Date(regRow.replicated_at).getTime();
-                                    if (cloudTime > repTime + 1000) {
+                                    const sourceTime = regRow.source_updated_at
+                                        ? new Date(regRow.source_updated_at).getTime()
+                                        : Number.NaN;
+                                    // Compare source metadata to the last source timestamp, not
+                                    // to NAS replicated_at (the clocks may differ and cause loops).
+                                    if (Number.isFinite(cloudTime) &&
+                                        (!Number.isFinite(sourceTime) || cloudTime > sourceTime)) {
                                         isSameKeyReplaced = true;
-                                        logger.warn(`[NAS-Pull-Worker] Same-key replacement detected for ${cloudPath}: cloud updated_at (${fileInfo.cloudUpdatedAt}) is newer than replication (${regRow.replicated_at})`);
+                                        logger.warn(`[NAS-Pull-Worker] Source metadata changed for ${cloudPath}: updated_at ${fileInfo.cloudUpdatedAt} is newer than registered source timestamp ${regRow.source_updated_at || 'unknown'}`);
                                     }
                                 }
 
@@ -1441,18 +1464,22 @@ async function pullAttachments(supabaseClient, storageBasePath, pgClient, option
             // Step 6: Register object in nas_replicated_files ONLY after verification succeeds
             if (pgClient) {
                 await pgClient.query(`
-                    INSERT INTO nas_replicated_files (object_key, sha256, size_bytes, entity_type, entity_id, replicated_at)
-                    VALUES ($1, $2, $3, $4, $5, NOW())
+                    INSERT INTO nas_replicated_files (object_key, sha256, size_bytes, entity_type, entity_id, source_updated_at, replicated_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, NOW())
                     ON CONFLICT (object_key) DO UPDATE SET
                         sha256 = EXCLUDED.sha256,
                         size_bytes = EXCLUDED.size_bytes,
+                        entity_type = COALESCE(EXCLUDED.entity_type, nas_replicated_files.entity_type),
+                        entity_id = COALESCE(EXCLUDED.entity_id, nas_replicated_files.entity_id),
+                        source_updated_at = COALESCE(EXCLUDED.source_updated_at, nas_replicated_files.source_updated_at),
                         replicated_at = NOW();
                 `, [
                     cloudPath,
                     persistedSha256,
                     persistedBytes.length,
                     fileInfo.entityType || null,
-                    fileInfo.entityId || null
+                    fileInfo.entityId || null,
+                    fileInfo.cloudUpdatedAt || null
                 ]);
             }
 
@@ -1460,24 +1487,32 @@ async function pullAttachments(supabaseClient, storageBasePath, pgClient, option
             filesPulled++;
 
             // Step 7: Cloud Retention: Prune cloud object ONLY if explicitly enabled
-            if (pruneCloud) {
+            // Only explicitly committed buffer-reservation objects may be pruned.
+            // Authoritative order/catalog attachments and images remain in Supabase.
+            if (pruneCloud && fileInfo.entityType === 'buffer_reservation' && fileInfo.reservationId) {
                 try {
-                    await supabaseClient.storage.from(bucketName).remove([cloudPath]);
-                    logger.log(`[NAS-Pull-Worker] Cloud buffer pruned after TrueNAS confirmation: ${cloudPath}`);
-                } catch (pruneErr) {
-                    logger.warn(`[NAS-Pull-Worker] Failed to prune cloud object ${cloudPath}:`, pruneErr.message);
-                }
+                    const { error: removeError } = await supabaseClient.storage.from(bucketName).remove([cloudPath]);
+                    if (removeError) {
+                        throw new Error(`Storage removal failed: ${removeError.message}`);
+                    }
+                    logger.log(`[NAS-Pull-Worker] Cloud buffer pruned after verified TrueNAS persistence: ${cloudPath}`);
 
-                if (fileInfo.reservationId) {
-                    try {
-                        await supabaseClient.rpc('release_buffer_capacity', {
-                            p_reservation_id: fileInfo.reservationId,
-                            p_client_id: 'reconciliation_daemon',
-                            p_status: 'pruned',
-                            p_actual_bytes: 0
-                        });
-                        logger.log(`[NAS-Pull-Worker] Pruned cloud copy and released quota for ${fileInfo.reservationId}.`);
-                    } catch {}
+                    const { data: releaseData, error: releaseError } = await supabaseClient.rpc('release_buffer_capacity', {
+                        p_reservation_id: fileInfo.reservationId,
+                        p_client_id: 'reconciliation_daemon',
+                        p_status: 'pruned',
+                        p_actual_bytes: 0
+                    });
+                    if (releaseError || releaseData?.success === false) {
+                        const message = releaseError?.message || 'Quota release RPC reported failure';
+                        logger.error(`[NAS-Pull-Worker] Cloud object was pruned but quota release failed for reservation ${fileInfo.reservationId}: ${message}`);
+                        failedFiles.push({ cloudPath, error: `QUOTA_RELEASE_FAILED after cloud prune: ${message}` });
+                    } else {
+                        logger.log(`[NAS-Pull-Worker] Released quota for pruned buffer reservation ${fileInfo.reservationId}.`);
+                    }
+                } catch (pruneErr) {
+                    logger.error(`[NAS-Pull-Worker] Failed to prune cloud buffer object ${cloudPath}:`, pruneErr.message);
+                    failedFiles.push({ cloudPath, error: `CLOUD_PRUNE_FAILED: ${pruneErr.message}` });
                 }
             }
         } catch (fileErr) {
@@ -1524,7 +1559,9 @@ async function runReplicationCycle(options = {}) {
     const supabaseClient = options.supabaseClient;
     const pgConfig = options.pgConfig || getPgConfig();
     const storagePath = options.storagePath || process.env.TRUENAS_STORAGE_PATH || path.join(__dirname, '..', 'uploads');
-    const pruneCloud = options.pruneCloud || process.env.PRUNE_CLOUD_AFTER_NAS_CONFIRMATION === 'true';
+    const pruneCloud = options.pruneCloud !== undefined
+        ? options.pruneCloud === true
+        : process.env.PRUNE_CLOUD_AFTER_NAS_CONFIRMATION === 'true';
 
     if (!supabaseClient) {
         isCycleRunning = false;
