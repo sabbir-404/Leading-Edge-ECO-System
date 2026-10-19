@@ -39,7 +39,10 @@ const {
     discoverFromTable,
     pullBusinessData,
     pullAttachments,
-    runReplicationCycle
+    runReplicationCycle,
+    schemaCapabilityCache,
+    getSchemaCapabilityCache,
+    clearSchemaCapabilityCache
 } = require('../../scripts/nas-pull-replication-worker.cjs');
 
 describe('NAS-Side Pull Replication Worker Suite', () => {
@@ -86,6 +89,7 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
         mockSupabaseReservations = [];
         mockSupabaseTombstones = [];
         mockSupabaseStorageFiles = new Map();
+        clearSchemaCapabilityCache();
 
         tempStorageDir = path.join(process.cwd(), 'tmp_nas_storage_test_' + Date.now());
         fs.mkdirSync(tempStorageDir, { recursive: true });
@@ -3221,6 +3225,199 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
             expect(result.success).toBe(true);
             expect(result.recordsReplicated).toBeGreaterThanOrEqual(1);
             expect(mockTrueNasProducts.has(701)).toBe(true);
+        });
+
+        it('50. Schema capability caching: first cycle negotiates compatible projection and logs once; subsequent cycles reuse cache without repeating warnings or querying missing columns', async () => {
+            const orderFile = 'cad/order_50.pdf';
+            const orderBytes = Buffer.from('ORDER_50_PDF_CONTENT');
+            mockSupabaseStorageFiles.set(orderFile, {
+                buffer: orderBytes,
+                sha256: crypto.createHash('sha256').update(orderBytes).digest('hex').toUpperCase()
+            });
+            mockSupabaseOrders.push({
+                id: 95001,
+                order_number: 'ORD-TEST-50',
+                invoice_attachment_urls: [`make-order-files/${orderFile}`],
+                updated_at: '2026-10-19T13:00:00.000Z'
+            });
+
+            // Track attempted selects on make_orders
+            const attemptedOrderSelects: string[] = [];
+            const originalFrom = mockSupabase.from;
+            mockSupabase.from = vi.fn((table: string) => {
+                const tableQuery = originalFrom(table);
+                if (table !== 'make_orders') return tableQuery;
+                const originalSelect = tableQuery.select;
+                tableQuery.select = vi.fn((cols: string = '*') => {
+                    attemptedOrderSelects.push(cols);
+                    const chain = originalSelect(cols);
+                    if (cols.includes('current_stage_photo')) {
+                        chain.then = (resolve: any) => resolve({
+                            data: null,
+                            error: {
+                                code: '42703',
+                                message: 'column make_orders.current_stage_photo does not exist'
+                            }
+                        });
+                    }
+                    return chain;
+                });
+                return tableQuery;
+            });
+
+            const logger = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+            try {
+                // Ensure cache is initially empty
+                clearSchemaCapabilityCache();
+                expect(getSchemaCapabilityCache().size).toBe(0);
+
+                // --- Cycle 1 ---
+                const res1 = await pullAttachments(mockSupabase, tempStorageDir, mockPg, {
+                    batchSize: 10,
+                    logger
+                });
+
+                expect(res1.success).toBe(true);
+                expect(res1.filesPulled).toBe(1);
+                // Cycle 1 tried variant 0 first, failed, then tried variant 1
+                expect(attemptedOrderSelects).toEqual([
+                    'id, invoice_attachment_urls, current_stage_photo, updated_at',
+                    'id, invoice_attachment_urls, updated_at'
+                ]);
+                // Logged warning exactly once on Cycle 1
+                expect(logger.warn).toHaveBeenCalledWith(
+                    expect.stringContaining('[NAS-Pull-Worker] Source schema mismatch on make_orders')
+                );
+                // Schema capability cache now holds variantIndex 1 for make_orders
+                const cached = getSchemaCapabilityCache().get('discovery:make_orders');
+                expect(cached).toBeDefined();
+                expect(cached.variantIndex).toBe(1);
+
+                // Reset logger and attempted selects for Cycle 2
+                logger.warn.mockClear();
+                attemptedOrderSelects.length = 0;
+
+                // --- Cycle 2 (Next polling cycle, e.g. 15s later) ---
+                const res2 = await pullAttachments(mockSupabase, tempStorageDir, mockPg, {
+                    batchSize: 10,
+                    logger
+                });
+
+                expect(res2.success).toBe(true);
+                // Cycle 2 MUST start directly at variant 1, skipping variant 0 entirely
+                expect(attemptedOrderSelects).toEqual([
+                    'id, invoice_attachment_urls, updated_at'
+                ]);
+                // Cycle 2 MUST NOT log any schema mismatch warning!
+                expect(logger.warn).not.toHaveBeenCalledWith(
+                    expect.stringContaining('[NAS-Pull-Worker] Source schema mismatch on make_orders')
+                );
+            } finally {
+                mockSupabase.from = originalFrom;
+            }
+        });
+
+        it('51. Order attachment and photo metadata retention: preserves available photo metadata when optional columns exist, downloads files, and registers in nas_replicated_files', async () => {
+            const stagePhoto = 'products/order_51_stage.webp';
+            const invoicePdf = 'cad/order_51_inv.pdf';
+            const stageBytes = Buffer.from('STAGE_PHOTO_51_CONTENT');
+            const invBytes = Buffer.from('INVOICE_PDF_51_CONTENT');
+            const stageSha = crypto.createHash('sha256').update(stageBytes).digest('hex').toUpperCase();
+            const invSha = crypto.createHash('sha256').update(invBytes).digest('hex').toUpperCase();
+
+            mockSupabaseStorageFiles.set(stagePhoto, { buffer: stageBytes, sha256: stageSha });
+            mockSupabaseStorageFiles.set(invoicePdf, { buffer: invBytes, sha256: invSha });
+
+            mockSupabaseOrders.push({
+                id: 95002,
+                order_number: 'ORD-TEST-51',
+                invoice_attachment_urls: [`make-order-files/${invoicePdf}`],
+                current_stage_photo: `make-order-files/${stagePhoto}`,
+                updated_at: '2026-10-19T13:30:00.000Z'
+            });
+
+            clearSchemaCapabilityCache();
+            const res = await pullAttachments(mockSupabase, tempStorageDir, mockPg, {
+                batchSize: 10
+            });
+
+            expect(res.success).toBe(true);
+            expect(res.filesPulled).toBe(2);
+
+            // Both files persisted to physical disk
+            expect(fs.existsSync(path.join(tempStorageDir, invoicePdf))).toBe(true);
+            expect(fs.existsSync(path.join(tempStorageDir, stagePhoto))).toBe(true);
+
+            // Both registered in nas_replicated_files with entity metadata
+            const regInv = mockTrueNasReplicatedFiles.get(invoicePdf);
+            expect(regInv).toBeDefined();
+            expect(regInv.sha256).toBe(invSha);
+            expect(regInv.entity_type).toBe('make_orders');
+            expect(regInv.entity_id).toBe('95002');
+
+            const regStage = mockTrueNasReplicatedFiles.get(stagePhoto);
+            expect(regStage).toBeDefined();
+            expect(regStage.sha256).toBe(stageSha);
+            expect(regStage.entity_type).toBe('make_orders');
+            expect(regStage.entity_id).toBe('95002');
+        });
+
+        it('52. Fail-closed security on discovery: auth, permission, or transport errors halt immediately without fallback or advancing checkpoints', async () => {
+            mockSupabaseOrders.push({
+                id: 95003,
+                order_number: 'ORD-TEST-52',
+                invoice_attachment_urls: ['make-order-files/cad/auth_fail.pdf'],
+                updated_at: '2026-10-19T14:00:00.000Z'
+            });
+
+            const originalFrom = mockSupabase.from;
+            mockSupabase.from = vi.fn((table: string) => {
+                const tableQuery = originalFrom(table);
+                if (table !== 'make_orders') return tableQuery;
+                const originalSelect = tableQuery.select;
+                tableQuery.select = vi.fn((cols: string = '*') => {
+                    const chain = originalSelect(cols);
+                    chain.then = (resolve: any) => resolve({
+                        data: null,
+                        error: {
+                            code: 'PGRST301',
+                            message: 'JWT expired / 401 Unauthorized'
+                        }
+                    });
+                    return chain;
+                });
+                return tableQuery;
+            });
+
+            clearSchemaCapabilityCache();
+            const logger = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+            try {
+                const res = await pullAttachments(mockSupabase, tempStorageDir, mockPg, {
+                    batchSize: 10,
+                    logger
+                });
+
+                // Must fail closed
+                expect(res.success).toBe(false);
+                expect(res.filesPulled).toBe(0);
+                expect(res.errors).toEqual(expect.arrayContaining([
+                    expect.objectContaining({
+                        source: 'make_orders',
+                        error: expect.stringContaining('JWT expired')
+                    })
+                ]));
+
+                // Schema capability cache must NOT be updated with fallback variant for auth error
+                expect(getSchemaCapabilityCache().get('discovery:make_orders')).toBeUndefined();
+
+                // Checkpoint for discovery_make_orders was NOT advanced past error
+                const cp = await getCheckpoint(mockPg, 'discovery_make_orders');
+                expect(cp.last_error).toContain('JWT expired');
+            } finally {
+                mockSupabase.from = originalFrom;
+            }
         });
     });
 });

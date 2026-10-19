@@ -320,6 +320,24 @@ function isMissingColumnError(error) {
 }
 
 /**
+ * Module-level schema capability and projection cache.
+ * Caches the negotiated compatible projection or column availability per table
+ * for the lifetime of the worker, preventing repeated failing queries and noisy
+ * warnings on every 15-second polling cycle.
+ *
+ * Cache entries: Map<cacheKey, { variantIndex: number, lastLoggedVariantIndex?: number }>
+ */
+const schemaCapabilityCache = new Map();
+
+function getSchemaCapabilityCache() {
+    return schemaCapabilityCache;
+}
+
+function clearSchemaCapabilityCache() {
+    schemaCapabilityCache.clear();
+}
+
+/**
  * Look up persistent source-to-target entity mapping.
  */
 async function getIdMapping(pgClient, entityType, sourceId) {
@@ -1934,7 +1952,11 @@ async function discoverFromTable(client, config, fileTasks, logger, bucketName, 
     const queryVariants = Array.isArray(configuredQueryVariants) && configuredQueryVariants.length > 0
         ? configuredQueryVariants
         : [{ select, filterFn }];
-    let queryVariantIndex = 0;
+    const cacheKey = `discovery:${table}`;
+    const cachedState = schemaCapabilityCache.get(cacheKey);
+    let queryVariantIndex = (cachedState && typeof cachedState.variantIndex === 'number' && cachedState.variantIndex < queryVariants.length)
+        ? cachedState.variantIndex
+        : 0;
     let lastId = 0;
     const checkpointKey = `discovery_${table}`;
 
@@ -1980,11 +2002,24 @@ async function discoverFromTable(client, config, fileTasks, logger, bucketName, 
             if (queryResult.error &&
                 isMissingColumnError(queryResult.error) &&
                 queryVariantIndex < queryVariants.length - 1) {
-                logger.warn(
-                    `[NAS-Pull-Worker] Source schema mismatch on ${table} using "${variant.select || select}": ${queryResult.error.message}. Retrying with a compatible column set.`
-                );
+                const currentState = schemaCapabilityCache.get(cacheKey) || {};
+                if (currentState.lastLoggedVariantIndex !== queryVariantIndex) {
+                    logger.warn(
+                        `[NAS-Pull-Worker] Source schema mismatch on ${table} using "${variant.select || select}": ${queryResult.error.message}. Retrying with a compatible column set.`
+                    );
+                    currentState.lastLoggedVariantIndex = queryVariantIndex;
+                }
                 queryVariantIndex++;
+                currentState.variantIndex = queryVariantIndex;
+                schemaCapabilityCache.set(cacheKey, currentState);
                 continue;
+            }
+
+            // On success, store the verified compatible variant index in the cache
+            if (!queryResult.error && queryResult.data) {
+                const currentState = schemaCapabilityCache.get(cacheKey) || {};
+                currentState.variantIndex = queryVariantIndex;
+                schemaCapabilityCache.set(cacheKey, currentState);
             }
             break;
         }
@@ -1993,6 +2028,9 @@ async function discoverFromTable(client, config, fileTasks, logger, bucketName, 
         const error = queryResult?.error;
         if (error) {
             logger.error(`[NAS-Pull-Worker] Attachment discovery query failed on ${table}:`, error.message);
+            if (pgClient) {
+                await updateCheckpoint(pgClient, checkpointKey, lastId > 0 ? String(lastId) : null, new Date().toISOString(), 0, error.message).catch(() => {});
+            }
             return { success: false, error: error.message };
         }
 
@@ -2783,5 +2821,8 @@ module.exports = {
     discoverFromTable,
     pullBusinessData,
     pullAttachments,
-    runReplicationCycle
+    runReplicationCycle,
+    schemaCapabilityCache,
+    getSchemaCapabilityCache,
+    clearSchemaCapabilityCache
 };
