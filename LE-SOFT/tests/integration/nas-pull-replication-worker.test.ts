@@ -27,6 +27,15 @@ const {
     getCheckpoint,
     updateCheckpoint,
     normalizeStorageObjectKey,
+    isMissingColumnError,
+    getIdMapping,
+    recordIdMapping,
+    resolveTargetProductId,
+    resolveTargetSpecId,
+    ensureProductCategory,
+    upsertProductRecord,
+    upsertSpecificationRecord,
+    upsertColorRecord,
     discoverFromTable,
     pullBusinessData,
     pullAttachments,
@@ -53,6 +62,8 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
     let mockTrueNasColors: Map<number, any>;
     let mockSupabaseStorageFiles: Map<string, { buffer: Buffer; sha256: string }>;
     let mockTrueNasReplicatedFiles: Map<string, any>;
+    let mockTrueNasIdMap: Map<string, any>;
+    let autoIncrementId: number;
     let tempStorageDir: string;
 
     beforeEach(() => {
@@ -64,6 +75,8 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
         mockTrueNasSpecs = new Map();
         mockTrueNasColors = new Map();
         mockTrueNasReplicatedFiles = new Map();
+        mockTrueNasIdMap = new Map();
+        autoIncrementId = 1000;
         mockSupabaseOrders = [];
         mockSupabaseUpdates = [];
         mockSupabaseProducts = [];
@@ -154,21 +167,42 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
                     return { rows: [updateRecord] };
                 }
 
-                if (normalized.includes('INSERT INTO make_product_specifications')) {
-                    const id = Number(params[0]);
-                    const specRecord = {
-                        id,
-                        product_id: params[1],
-                        spec_code: params[2],
-                        spec_name: params[3],
-                        spec_details: params[4],
-                        is_active: params[5],
-                        image_url: params[6],
-                        created_at: params[7],
-                        updated_at: params[8] || params[7] || new Date().toISOString()
+                // --- nas_replication_id_map handlers ---
+                if (normalized.includes('SELECT target_id FROM nas_replication_id_map') ||
+                    (normalized.includes('FROM nas_replication_id_map WHERE entity_type = $1 AND source_id = $2') && !normalized.includes('DELETE'))) {
+                    const key = `${params[0]}:${params[1]}`;
+                    const row = mockTrueNasIdMap.get(key);
+                    return { rows: row ? [row] : [] };
+                }
+
+                if (normalized.includes('INSERT INTO nas_replication_id_map')) {
+                    const key = `${params[0]}:${params[1]}`;
+                    const rec = {
+                        entity_type: params[0],
+                        source_id: String(params[1]),
+                        target_id: Number(params[2]),
+                        natural_key: params[3] || null
                     };
-                    mockTrueNasSpecs.set(id, specRecord);
-                    return { rows: [specRecord] };
+                    mockTrueNasIdMap.set(key, rec);
+                    return { rows: [rec], rowCount: 1 };
+                }
+
+                if (normalized.includes('DELETE FROM nas_replication_id_map')) {
+                    const key = `${params[0]}:${params[1]}`;
+                    mockTrueNasIdMap.delete(key);
+                    return { rows: [], rowCount: 1 };
+                }
+
+                // --- make_product_specifications handlers ---
+                if (normalized.includes('SELECT id, product_id, spec_code, spec_name FROM make_product_specifications WHERE id = $1')) {
+                    const id = Number(params[0]);
+                    const found = mockTrueNasSpecs.get(id);
+                    return { rows: found ? [found] : [] };
+                }
+
+                if (normalized.includes('SELECT id, product_id, spec_code, spec_name FROM make_product_specifications WHERE product_id = $1 AND spec_code = $2')) {
+                    const found = Array.from(mockTrueNasSpecs.values()).find(s => s && Number(s.product_id) === Number(params[0]) && s.spec_code === params[1]);
+                    return { rows: found ? [found] : [] };
                 }
 
                 if (normalized.includes('SELECT 1 FROM make_product_specifications WHERE id = $1')) {
@@ -182,27 +216,143 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
                     return { rows: [] };
                 }
 
-                if (normalized.includes('INSERT INTO make_product_colors')) {
-                    const id = Number(params[0]);
-                    const colorRecord = {
-                        id,
-                        product_id: params[1],
-                        spec_id: params[2],
-                        color_name: params[3],
-                        color_code: params[4],
-                        is_active: params[5],
-                        image_url: params[6],
-                        created_at: params[7],
-                        updated_at: params[8] || params[7] || new Date().toISOString()
+                if (normalized.includes('DELETE FROM make_product_specifications WHERE product_id = $1')) {
+                    const pId = Number(params[0]);
+                    for (const [id, s] of mockTrueNasSpecs.entries()) {
+                        if (Number(s.product_id) === pId) mockTrueNasSpecs.delete(id);
+                    }
+                    return { rows: [] };
+                }
+
+                if (normalized.includes('UPDATE make_product_specifications SET')) {
+                    const targetId = Number(params[params.length - 1]);
+                    const existing = mockTrueNasSpecs.get(targetId) || { id: targetId };
+                    const updated = {
+                        ...existing,
+                        product_id: params[0],
+                        spec_code: params[1],
+                        spec_name: params[2],
+                        spec_details: params[3],
+                        is_active: params[4],
+                        image_url: params[5],
+                        updated_at: params[6] || new Date().toISOString()
                     };
-                    mockTrueNasColors.set(id, colorRecord);
-                    return { rows: [colorRecord] };
+                    mockTrueNasSpecs.set(targetId, updated);
+                    return { rows: [updated], rowCount: 1 };
+                }
+
+                if (normalized.includes('INSERT INTO make_product_specifications')) {
+                    let id: number;
+                    let specRecord: any;
+                    if (normalized.includes('INSERT INTO make_product_specifications ( id,') || normalized.includes('INSERT INTO make_product_specifications (id,')) {
+                        id = Number(params[0]);
+                        specRecord = {
+                            id,
+                            product_id: params[1],
+                            spec_code: params[2],
+                            spec_name: params[3],
+                            spec_details: params[4],
+                            is_active: params[5],
+                            image_url: params[6],
+                            created_at: params[7],
+                            updated_at: params[8] || params[7] || new Date().toISOString()
+                        };
+                    } else {
+                        id = autoIncrementId++;
+                        specRecord = {
+                            id,
+                            product_id: params[0],
+                            spec_code: params[1],
+                            spec_name: params[2],
+                            spec_details: params[3],
+                            is_active: params[4],
+                            image_url: params[5],
+                            created_at: params[6],
+                            updated_at: params[7] || params[6] || new Date().toISOString()
+                        };
+                    }
+                    mockTrueNasSpecs.set(id, specRecord);
+                    return { rows: [specRecord], rowCount: 1 };
+                }
+
+                // --- make_product_colors handlers ---
+                if (normalized.includes('SELECT id, product_id, spec_id, color_name FROM make_product_colors WHERE id = $1')) {
+                    const id = Number(params[0]);
+                    const found = mockTrueNasColors.get(id);
+                    return { rows: found ? [found] : [] };
                 }
 
                 if (normalized.includes('DELETE FROM make_product_colors WHERE id = $1')) {
                     const id = Number(params[0]);
                     mockTrueNasColors.delete(id);
                     return { rows: [] };
+                }
+
+                if (normalized.includes('DELETE FROM make_product_colors WHERE product_id = $1')) {
+                    const pId = Number(params[0]);
+                    for (const [id, c] of mockTrueNasColors.entries()) {
+                        if (Number(c.product_id) === pId) mockTrueNasColors.delete(id);
+                    }
+                    return { rows: [] };
+                }
+
+                if (normalized.includes('DELETE FROM make_product_colors WHERE spec_id = $1')) {
+                    const sId = Number(params[0]);
+                    for (const [id, c] of mockTrueNasColors.entries()) {
+                        if (Number(c.spec_id) === sId) mockTrueNasColors.delete(id);
+                    }
+                    return { rows: [] };
+                }
+
+                if (normalized.includes('UPDATE make_product_colors SET')) {
+                    const targetId = Number(params[params.length - 1]);
+                    const existing = mockTrueNasColors.get(targetId) || { id: targetId };
+                    const updated = {
+                        ...existing,
+                        product_id: params[0],
+                        spec_id: params[1],
+                        color_name: params[2],
+                        color_code: params[3],
+                        is_active: params[4],
+                        image_url: params[5],
+                        updated_at: params[6] || new Date().toISOString()
+                    };
+                    mockTrueNasColors.set(targetId, updated);
+                    return { rows: [updated], rowCount: 1 };
+                }
+
+                if (normalized.includes('INSERT INTO make_product_colors')) {
+                    let id: number;
+                    let colorRecord: any;
+                    if (normalized.includes('INSERT INTO make_product_colors ( id,') || normalized.includes('INSERT INTO make_product_colors (id,')) {
+                        id = Number(params[0]);
+                        colorRecord = {
+                            id,
+                            product_id: params[1],
+                            spec_id: params[2],
+                            color_name: params[3],
+                            color_code: params[4],
+                            is_active: params[5],
+                            image_url: params[6],
+                            created_at: params[7],
+                            updated_at: params[8] || params[7] || new Date().toISOString()
+                        };
+                    } else {
+                        id = autoIncrementId++;
+                        colorRecord = {
+                            id,
+                            product_id: params[0],
+                            spec_id: params[1],
+                            color_name: params[2],
+                            color_code: params[3],
+                            is_active: params[4],
+                            image_url: params[5],
+                            created_at: params[6],
+                            updated_at: params[7] || params[6] || new Date().toISOString()
+                        };
+                    }
+                    mockTrueNasColors.set(id, colorRecord);
+                    return { rows: [colorRecord], rowCount: 1 };
                 }
 
                 if (normalized.includes('SELECT object_key, sha256, size_bytes, replicated_at, source_updated_at FROM nas_replicated_files WHERE object_key = $1') ||
@@ -226,23 +376,69 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
                     return { rows: [] };
                 }
 
+                // --- make_product_categories handlers ---
+                if (normalized.includes('SELECT id, name, code FROM make_product_categories WHERE id = $1')) {
+                    const id = Number(params[0]);
+                    const found = mockTrueNasCategories.get(id);
+                    return { rows: found ? [found] : [] };
+                }
+
                 if (normalized.includes('SELECT 1 FROM make_product_categories WHERE id = $1')) {
                     const id = Number(params[0]);
                     return { rows: mockTrueNasCategories.has(id) ? [{ 1: 1 }] : [] };
                 }
 
+                if (normalized.includes('SELECT id, name, code FROM make_product_categories WHERE LOWER(TRIM(name)) = LOWER(TRIM($1))') ||
+                    normalized.includes('SELECT id, name FROM make_product_categories WHERE LOWER(TRIM(name)) = LOWER(TRIM($1))') ||
+                    normalized.includes('FROM make_product_categories WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) OR (code IS NOT NULL AND code = $2)')) {
+                    const searchName = String(params[0] || '').trim().toLowerCase();
+                    const searchCode = params[1] || '';
+                    const found = Array.from(mockTrueNasCategories.values()).find(c => {
+                        const nameMatches = c && c.name && c.name.trim().toLowerCase() === searchName;
+                        const codeMatches = c && c.code && searchCode && c.code === searchCode;
+                        return nameMatches || codeMatches;
+                    });
+                    return { rows: found ? [found] : [] };
+                }
+
                 if (normalized.includes('INSERT INTO make_product_categories')) {
-                    const id = Number(params[0]);
-                    const catRec = {
-                        id,
-                        name: params[1],
-                        code: params[2],
-                        description: params[3],
-                        is_active: params[4],
-                        created_at: params[5]
-                    };
+                    let id: number;
+                    let catRec: any;
+                    if (normalized.includes('INSERT INTO make_product_categories (id,')) {
+                        id = Number(params[0]);
+                        catRec = {
+                            id,
+                            name: params[1],
+                            code: params[2],
+                            description: params[3],
+                            is_active: params[4],
+                            created_at: params[5]
+                        };
+                    } else {
+                        id = autoIncrementId++;
+                        catRec = {
+                            id,
+                            name: params[0],
+                            code: params[1],
+                            description: params[2],
+                            is_active: params[3],
+                            created_at: params[4]
+                        };
+                    }
                     mockTrueNasCategories.set(id, catRec);
-                    return { rows: [catRec] };
+                    return { rows: [catRec], rowCount: 1 };
+                }
+
+                // --- make_products handlers ---
+                if (normalized.includes('SELECT id, product_code, product_name FROM make_products WHERE product_code = $1')) {
+                    const found = Array.from(mockTrueNasProducts.values()).find(p => p && p.product_code === params[0]);
+                    return { rows: found ? [found] : [] };
+                }
+
+                if (normalized.includes('SELECT id, product_code, product_name FROM make_products WHERE id = $1')) {
+                    const id = Number(params[0]);
+                    const found = mockTrueNasProducts.get(id);
+                    return { rows: found ? [found] : [] };
                 }
 
                 if (normalized.includes('SELECT 1 FROM make_products WHERE id = $1')) {
@@ -256,10 +452,34 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
                     return { rows: [] };
                 }
 
+                if (normalized.includes('UPDATE make_products SET')) {
+                    const targetId = Number(params[params.length - 1]);
+                    const existing = mockTrueNasProducts.get(targetId) || { id: targetId };
+                    const updated = {
+                        ...existing,
+                        product_code: params[0] || existing.product_code,
+                        product_name: params[1] || existing.product_name,
+                        description: params[2] !== undefined ? params[2] : existing.description,
+                        main_image: params[3] !== undefined ? params[3] : existing.main_image,
+                        is_active: params[4] !== undefined ? params[4] : true,
+                        created_by: params[5] !== undefined ? params[5] : existing.created_by,
+                        category: params[6] !== undefined ? params[6] : existing.category,
+                        category_id: params[7] !== undefined ? params[7] : existing.category_id,
+                        cost_price: params[8] !== undefined ? params[8] : existing.cost_price,
+                        sale_price: params[9] !== undefined ? params[9] : existing.sale_price,
+                        max_discount_type: params[10] !== undefined ? params[10] : existing.max_discount_type,
+                        max_discount_value: params[11] !== undefined ? params[11] : existing.max_discount_value,
+                        updated_at: params[params.length - 2] || new Date().toISOString()
+                    };
+                    mockTrueNasProducts.set(targetId, updated);
+                    return { rows: [updated], rowCount: 1 };
+                }
+
                 if (normalized.includes('INSERT INTO make_products')) {
-                    const id = Number(params[0]);
+                    let id: number;
                     let prodRec: any;
-                    if (params.length >= 15) {
+                    if (normalized.includes('INSERT INTO make_products ( id,') || normalized.includes('INSERT INTO make_products (id,')) {
+                        id = Number(params[0]);
                         prodRec = {
                             id,
                             product_code: params[1],
@@ -274,38 +494,31 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
                             sale_price: params[10],
                             max_discount_type: params[11],
                             max_discount_value: params[12],
-                            created_at: params[13],
-                            updated_at: params[14]
-                        };
-                    } else if (params.length >= 11) {
-                        prodRec = {
-                            id,
-                            product_code: params[1],
-                            product_name: params[2],
-                            description: params[3],
-                            main_image: params[4],
-                            is_active: params[5],
-                            created_by: params[6],
-                            category: params[7],
-                            category_id: params[8],
-                            created_at: params[9],
-                            updated_at: params[10]
+                            created_at: params[params.length - 2] || new Date().toISOString(),
+                            updated_at: params[params.length - 1] || new Date().toISOString()
                         };
                     } else {
+                        id = autoIncrementId++;
                         prodRec = {
                             id,
-                            product_code: params[1],
-                            product_name: params[2],
-                            description: params[3],
-                            main_image: params[4],
-                            is_active: params[5],
-                            created_by: params[6],
-                            created_at: params[7],
-                            updated_at: params[8]
+                            product_code: params[0],
+                            product_name: params[1],
+                            description: params[2],
+                            main_image: params[3],
+                            is_active: params[4],
+                            created_by: params[5],
+                            category: params[6],
+                            category_id: params[7],
+                            cost_price: params[8],
+                            sale_price: params[9],
+                            max_discount_type: params[10],
+                            max_discount_value: params[11],
+                            created_at: params[params.length - 2] || new Date().toISOString(),
+                            updated_at: params[params.length - 1] || new Date().toISOString()
                         };
                     }
                     mockTrueNasProducts.set(id, prodRec);
-                    return { rows: [prodRec] };
+                    return { rows: [prodRec], rowCount: 1 };
                 }
 
                 return { rows: [] };
@@ -355,7 +568,7 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
                                 return chain;
                             }),
                             eq: vi.fn((col: string, val: any) => {
-                                chain.data = chain.data.filter((item: any) => item[col] === val);
+                                chain.data = chain.data.filter((item: any) => item[col] === val || String(item[col]) === String(val));
                                 return chain;
                             }),
                             or: vi.fn((clause: string) => {
@@ -2579,4 +2792,435 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
         expect(reg.entity_id).toBe('8801');
     });
 
+    describe('Supabase -> TrueNAS Product Replication & Natural Key Reconciliation (Production Collision Fix)', () => {
+        it('42. TrueNAS Production Collision Resolution: Source ID 5 (LE-CT-03) mapped to target ID 4, leaving target ID 5 (1000) completely untouched and intact', async () => {
+            // Setup target state mimicking production TrueNAS
+            mockTrueNasProducts.set(4, {
+                id: 4,
+                product_code: 'LE-CT-03',
+                product_name: 'Aero Floating Coffee Table',
+                cost_price: 120,
+                sale_price: 250,
+                is_active: true,
+                created_at: '2026-09-09T06:59:21.110Z',
+                updated_at: '2026-09-09T06:59:21.110Z'
+            });
+            mockTrueNasProducts.set(5, {
+                id: 5,
+                product_code: '1000',
+                product_name: 'WS 2P 50-4773.1000',
+                cost_price: 450,
+                sale_price: 800,
+                is_active: true,
+                created_at: '2026-09-13T12:01:21.550Z',
+                updated_at: '2026-09-13T12:01:21.550Z'
+            });
+
+            // Target product 5 has existing child spec (ID 6 Melamine) and colors (IDs 8, 9)
+            mockTrueNasSpecs.set(6, {
+                id: 6,
+                product_id: 5,
+                spec_code: 'SPEC-WS-MELAMINE',
+                spec_name: 'Melamine Workstation Top',
+                is_active: true,
+                created_at: '2026-09-13T12:02:00.000Z'
+            });
+            mockTrueNasColors.set(8, {
+                id: 8,
+                product_id: 5,
+                spec_id: 6,
+                color_name: 'Grey Workstation',
+                is_active: true,
+                created_at: '2026-09-13T12:03:00.000Z'
+            });
+            mockTrueNasColors.set(9, {
+                id: 9,
+                product_id: 5,
+                spec_id: 6,
+                color_name: 'White Workstation',
+                is_active: true,
+                created_at: '2026-09-13T12:03:00.000Z'
+            });
+
+            // Cloud state: Product 5 has code 'LE-CT-03', Spec 1 has product_id 5, Color 101 has product_id 5 & spec_id 1
+            const t1 = '2026-10-19T09:00:00.000Z';
+            mockSupabaseProducts.push({
+                id: 5,
+                product_code: 'LE-CT-03',
+                product_name: 'Aero Floating Coffee Table (Cloud Updated)',
+                cost_price: 180,
+                sale_price: 320,
+                is_active: true,
+                created_at: t1,
+                updated_at: t1
+            });
+            mockSupabaseSpecs.push({
+                id: 1,
+                product_id: 5,
+                spec_code: 'CT-SPEC-01',
+                spec_name: 'Tempered Glass Top',
+                is_active: true,
+                created_at: t1,
+                updated_at: t1
+            });
+            mockSupabaseColors.push({
+                id: 101,
+                product_id: 5,
+                spec_id: 1,
+                color_name: 'Smoked Grey Glass',
+                color_code: '#333333',
+                is_active: true,
+                created_at: t1,
+                updated_at: t1
+            });
+
+            const res = await pullBusinessData(mockSupabase, mockPg, { batchSize: 50 });
+            expect(res.success).toBe(true);
+            expect(res.productsReplicated).toBe(1);
+            expect(res.specsReplicated).toBe(1);
+            expect(res.colorsReplicated).toBe(1);
+
+            // 1. Target ID 4 (LE-CT-03) was UPDATED in place with latest cloud fields
+            expect(mockTrueNasProducts.has(4)).toBe(true);
+            const prod4 = mockTrueNasProducts.get(4);
+            expect(prod4.product_code).toBe('LE-CT-03');
+            expect(prod4.product_name).toBe('Aero Floating Coffee Table (Cloud Updated)');
+            expect(prod4.cost_price).toBe(180);
+            expect(prod4.sale_price).toBe(320);
+
+            // 2. Target ID 5 (Workstation 1000) was COMPLETELY PRESERVED and untouched!
+            expect(mockTrueNasProducts.has(5)).toBe(true);
+            const prod5 = mockTrueNasProducts.get(5);
+            expect(prod5.product_code).toBe('1000');
+            expect(prod5.product_name).toBe('WS 2P 50-4773.1000');
+            expect(prod5.cost_price).toBe(450);
+
+            // 3. Workstation's child records (Spec 6 and Colors 8, 9) remain fully intact
+            expect(mockTrueNasSpecs.get(6).product_id).toBe(5);
+            expect(mockTrueNasColors.get(8).product_id).toBe(5);
+            expect(mockTrueNasColors.get(9).product_id).toBe(5);
+
+            // 4. Stable source-to-target mapping recorded in nas_replication_id_map
+            const mappedProdId = await getIdMapping(mockPg, 'make_products', 5);
+            expect(mappedProdId).toBe(4);
+
+            // 5. Specification 1 resolved to target product ID 4 (NOT 5!)
+            expect(mockTrueNasSpecs.has(1)).toBe(true);
+            const spec1 = mockTrueNasSpecs.get(1);
+            expect(spec1.product_id).toBe(4);
+            expect(spec1.spec_name).toBe('Tempered Glass Top');
+
+            // 6. Color 101 resolved to target product ID 4 and target spec ID 1
+            expect(mockTrueNasColors.has(101)).toBe(true);
+            const col101 = mockTrueNasColors.get(101);
+            expect(col101.product_id).toBe(4);
+            expect(col101.spec_id).toBe(1);
+            expect(col101.color_name).toBe('Smoked Grey Glass');
+
+            // 7. Checkpoints advanced cleanly without error
+            const prodCp = await getCheckpoint(mockPg, 'make_products');
+            expect(prodCp.last_replicated_id).toBe('5');
+            expect(prodCp.last_error).toBeNull();
+
+            const specCp = await getCheckpoint(mockPg, 'make_product_specifications');
+            expect(specCp.last_replicated_id).toBe('1');
+            expect(specCp.last_error).toBeNull();
+
+            const colorCp = await getCheckpoint(mockPg, 'make_product_colors');
+            expect(colorCp.last_replicated_id).toBe('101');
+            expect(colorCp.last_error).toBeNull();
+        });
+
+        it('43. Idempotent re-run after collision resolution: does not create duplicates or alter correct mappings', async () => {
+            // Setup target state mimicking production TrueNAS
+            mockTrueNasProducts.set(4, {
+                id: 4,
+                product_code: 'LE-CT-03',
+                product_name: 'Aero Floating Coffee Table',
+                cost_price: 120,
+                sale_price: 250,
+                is_active: true
+            });
+            mockTrueNasProducts.set(5, {
+                id: 5,
+                product_code: '1000',
+                product_name: 'WS 2P 50-4773.1000',
+                cost_price: 450,
+                sale_price: 800,
+                is_active: true
+            });
+            mockTrueNasSpecs.set(6, {
+                id: 6,
+                product_id: 5,
+                spec_name: 'Melamine Workstation Top'
+            });
+            mockTrueNasColors.set(8, {
+                id: 8,
+                product_id: 5,
+                spec_id: 6,
+                color_name: 'Grey Workstation'
+            });
+
+            const t1 = '2026-10-19T09:00:00.000Z';
+            mockSupabaseProducts.push({
+                id: 5,
+                product_code: 'LE-CT-03',
+                product_name: 'Aero Floating Coffee Table (Cloud Updated)',
+                cost_price: 180,
+                sale_price: 320,
+                is_active: true,
+                created_at: t1,
+                updated_at: t1
+            });
+            mockSupabaseSpecs.push({
+                id: 1,
+                product_id: 5,
+                spec_name: 'Tempered Glass Top',
+                created_at: t1,
+                updated_at: t1
+            });
+            mockSupabaseColors.push({
+                id: 101,
+                product_id: 5,
+                spec_id: 1,
+                color_name: 'Smoked Grey Glass',
+                created_at: t1,
+                updated_at: t1
+            });
+
+            // Cycle 1: initial replication
+            const res1 = await pullBusinessData(mockSupabase, mockPg, { batchSize: 50 });
+            expect(res1.success).toBe(true);
+            expect(res1.productsReplicated).toBe(1);
+
+            // Cycle 2: re-running pullBusinessData immediately
+            const res2 = await pullBusinessData(mockSupabase, mockPg, { batchSize: 50 });
+            expect(res2.success).toBe(true);
+            expect(res2.productsReplicated).toBe(0);
+            expect(res2.specsReplicated).toBe(0);
+            expect(res2.colorsReplicated).toBe(0);
+
+            // TrueNAS still has exactly product 4 (LE-CT-03) and product 5 (1000) - zero duplicates
+            expect(mockTrueNasProducts.size).toBe(2);
+            expect(mockTrueNasProducts.get(4).product_code).toBe('LE-CT-03');
+            expect(mockTrueNasProducts.get(5).product_code).toBe('1000');
+
+            // Specifications and colors remain consistent
+            expect(mockTrueNasSpecs.size).toBe(2);
+            expect(mockTrueNasColors.size).toBe(2);
+
+            // ID mapping remains intact
+            const mappedProdId = await getIdMapping(mockPg, 'make_products', 5);
+            expect(mappedProdId).toBe(4);
+        });
+
+        it('44. Non-colliding product code with numeric ID collision: allocates distinct target ID via sequence, preserving existing target product', async () => {
+            // TrueNAS has product 18 with code '1014' (Table Frame 50-4790)
+            mockTrueNasProducts.set(18, {
+                id: 18,
+                product_code: '1014',
+                product_name: 'Table Frame 50-4790',
+                is_active: true
+            });
+
+            // Supabase Cloud introduces a new product with id 18, but a DIFFERENT product code 'LE-NEW-CHAIR'
+            mockSupabaseProducts.push({
+                id: 18,
+                product_code: 'LE-NEW-CHAIR',
+                product_name: 'Nordic Lounge Chair',
+                is_active: true,
+                created_at: '2026-10-19T10:00:00.000Z',
+                updated_at: '2026-10-19T10:00:00.000Z'
+            });
+
+            // Child spec referencing Cloud product 18
+            mockSupabaseSpecs.push({
+                id: 201,
+                product_id: 18,
+                spec_code: 'SPEC-CHAIR-01',
+                spec_name: 'Oak Finish',
+                created_at: '2026-10-19T10:01:00.000Z',
+                updated_at: '2026-10-19T10:01:00.000Z'
+            });
+
+            const res = await pullBusinessData(mockSupabase, mockPg, { batchSize: 50 });
+            expect(res.success).toBe(true);
+            expect(res.productsReplicated).toBe(1);
+            expect(res.specsReplicated).toBe(1);
+
+            // TrueNAS product 18 ('1014') is COMPLETELY UNTOUCHED!
+            expect(mockTrueNasProducts.get(18).product_code).toBe('1014');
+            expect(mockTrueNasProducts.get(18).product_name).toBe('Table Frame 50-4790');
+
+            // Cloud product 18 was allocated a new distinct sequence ID on TrueNAS
+            const mappedId = await getIdMapping(mockPg, 'make_products', 18);
+            expect(mappedId).not.toBeNull();
+            expect(mappedId).not.toBe(18);
+            expect(mockTrueNasProducts.has(mappedId!)).toBe(true);
+            expect(mockTrueNasProducts.get(mappedId!).product_code).toBe('LE-NEW-CHAIR');
+
+            // Child spec 201 resolved to the newly allocated target ID
+            expect(mockTrueNasSpecs.has(201)).toBe(true);
+            expect(mockTrueNasSpecs.get(201).product_id).toBe(mappedId);
+        });
+
+        it('45. Child specification auto-resolution: on-demand resolution uses ID mapping to connect children to correct target product', async () => {
+            // Cloud has product 5 (which maps to TrueNAS product 4)
+            mockTrueNasProducts.set(4, { id: 4, product_code: 'LE-CT-03', product_name: 'Aero Floating Coffee Table' });
+            await recordIdMapping(mockPg, 'make_products', 5, 4, 'LE-CT-03');
+
+            // Advance make_products checkpoint past product 5 so the product stream skips it
+            mockCheckpoints.set('make_products', {
+                table_name: 'make_products',
+                last_replicated_id: '100',
+                items_replicated: 5
+            });
+
+            // Cloud has new specification 55 referencing product 5
+            mockSupabaseSpecs.push({
+                id: 55,
+                product_id: 5,
+                spec_code: 'SPEC-55',
+                spec_name: 'Marble Top Option',
+                created_at: '2026-10-19T10:30:00.000Z',
+                updated_at: '2026-10-19T10:30:00.000Z'
+            });
+
+            const res = await pullBusinessData(mockSupabase, mockPg, { batchSize: 50 });
+            expect(res.success).toBe(true);
+            expect(res.specsReplicated).toBe(1);
+
+            // Spec 55 correctly mapped to TrueNAS product 4
+            expect(mockTrueNasSpecs.has(55)).toBe(true);
+            expect(mockTrueNasSpecs.get(55).product_id).toBe(4);
+        });
+
+        it('46. Tombstone processing with mapped IDs: deletes the mapped target entity and removes mapping without deleting colliding local product', async () => {
+            // TrueNAS has product 4 (mapped to Cloud product 5) and product 5 (local workstation 1000)
+            mockTrueNasProducts.set(4, { id: 4, product_code: 'LE-CT-03', product_name: 'Aero Coffee Table' });
+            mockTrueNasProducts.set(5, { id: 5, product_code: '1000', product_name: 'WS 2P 50-4773.1000' });
+            mockTrueNasSpecs.set(1, { id: 1, product_id: 4, spec_name: 'Glass Spec' });
+            mockTrueNasColors.set(101, { id: 101, product_id: 4, spec_id: 1, color_name: 'Grey Glass' });
+            await recordIdMapping(mockPg, 'make_products', 5, 4, 'LE-CT-03');
+
+            // Tombstone arrives for product 5 (the cloud coffee table was deleted)
+            mockSupabaseTombstones.push({
+                id: 9001,
+                entity_name: 'make_products',
+                record_id: '5',
+                deleted_at: '2026-10-19T11:00:00.000Z'
+            });
+
+            // Cloud make_products does NOT have row 5 anymore (deletion verified)
+            mockSupabaseProducts = [];
+
+            const res = await pullBusinessData(mockSupabase, mockPg, { batchSize: 50 });
+            expect(res.success).toBe(true);
+            expect(res.tombstonesReplicated).toBe(1);
+
+            // Target product 4 was DELETED along with its children
+            expect(mockTrueNasProducts.has(4)).toBe(false);
+            expect(mockTrueNasSpecs.has(1)).toBe(false);
+            expect(mockTrueNasColors.has(101)).toBe(false);
+
+            // Local product 5 (workstation 1000) is STILL ALIVE and untouched!
+            expect(mockTrueNasProducts.has(5)).toBe(true);
+            expect(mockTrueNasProducts.get(5).product_code).toBe('1000');
+
+            // Mapping was cleanly removed
+            const mapped = await getIdMapping(mockPg, 'make_products', 5);
+            expect(mapped).toBeNull();
+        });
+
+        it('47. Category natural key reconciliation: maps cloud category to existing TrueNAS category by name without constraint collision', async () => {
+            // TrueNAS already has category 19 ('Living Room Tables')
+            mockTrueNasCategories.set(19, {
+                id: 19,
+                name: 'Living Room Tables',
+                code: 'LRT',
+                is_active: true
+            });
+
+            // Cloud has category 77 ('Living Room Tables') with different ID
+            mockSupabaseCategories.push({
+                id: 77,
+                name: 'Living Room Tables',
+                code: 'LRT-CLOUD',
+                description: 'Coffee and side tables'
+            });
+
+            // Cloud product 600 references category 77
+            mockSupabaseProducts.push({
+                id: 600,
+                product_code: 'PROD-SIDE-01',
+                product_name: 'Cantilever Side Table',
+                category_id: 77,
+                created_at: '2026-10-19T11:30:00.000Z',
+                updated_at: '2026-10-19T11:30:00.000Z'
+            });
+
+            const res = await pullBusinessData(mockSupabase, mockPg, { batchSize: 50 });
+            expect(res.success).toBe(true);
+            expect(res.productsReplicated).toBe(1);
+
+            // TrueNAS category 19 was used without duplicate key violation
+            const mappedCatId = await getIdMapping(mockPg, 'make_product_categories', 77);
+            expect(mappedCatId).toBe(19);
+
+            // Product 600 references TrueNAS category 19
+            expect(mockTrueNasProducts.get(600).category_id).toBe(19);
+        });
+
+        it('48. Actionable error reporting on unresolvable identity conflict and strict checkpoint safety', async () => {
+            // Simulate an unresolvable error during product replication
+            mockSupabaseProducts.push({
+                id: 9999,
+                product_code: 'PROD-FAIL',
+                product_name: 'Failing Product',
+                created_at: '2026-10-19T12:00:00.000Z',
+                updated_at: '2026-10-19T12:00:00.000Z'
+            });
+
+            const origQuery = mockPg.query;
+            mockPg.query = vi.fn(async (sql: string, params: any[] = []) => {
+                const normalized = sql.replace(/\s+/g, ' ').trim();
+                if (normalized.includes('INSERT INTO make_products') && params.includes('PROD-FAIL')) {
+                    throw new Error('simulated disk I/O failure on make_products');
+                }
+                return origQuery(sql, params);
+            });
+
+            try {
+                const res = await pullBusinessData(mockSupabase, mockPg, { batchSize: 50 });
+                expect(res.success).toBe(false);
+                expect(res.errors?.make_products).toContain('simulated disk I/O failure on make_products');
+
+                // Checkpoint did not advance past failing product
+                const cp = await getCheckpoint(mockPg, 'make_products');
+                expect(cp.last_error).toContain('simulated disk I/O failure on make_products');
+            } finally {
+                mockPg.query = origQuery;
+            }
+        });
+
+        it('49. Full cycle execution with runReplicationCycle: end-to-end integration', async () => {
+            mockSupabaseProducts.push({
+                id: 701,
+                product_code: 'PROD-E2E-01',
+                product_name: 'E2E Testing Product',
+                created_at: '2026-10-19T12:30:00.000Z',
+                updated_at: '2026-10-19T12:30:00.000Z'
+            });
+
+            const result = await runReplicationCycle({
+                supabaseClient: mockSupabase,
+                pgClient: mockPg,
+                storageDir: tempStorageDir
+            });
+
+            expect(result.success).toBe(true);
+            expect(result.recordsReplicated).toBeGreaterThanOrEqual(1);
+            expect(mockTrueNasProducts.has(701)).toBe(true);
+        });
+    });
 });

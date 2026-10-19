@@ -72,6 +72,20 @@ async function initCheckpoints(pgClient) {
             source_updated_at TIMESTAMPTZ,
             replicated_at TIMESTAMPTZ DEFAULT NOW()
         );
+
+        CREATE TABLE IF NOT EXISTS nas_replication_id_map (
+            entity_type VARCHAR(50) NOT NULL,
+            source_id VARCHAR(100) NOT NULL,
+            target_id BIGINT NOT NULL,
+            natural_key VARCHAR(255),
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW(),
+            PRIMARY KEY (entity_type, source_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_nas_id_map_lookup 
+            ON nas_replication_id_map (entity_type, target_id);
+        CREATE INDEX IF NOT EXISTS idx_nas_id_map_natural 
+            ON nas_replication_id_map (entity_type, natural_key);
     `;
     await pgClient.query(ddl);
 
@@ -306,22 +320,147 @@ function isMissingColumnError(error) {
 }
 
 /**
+ * Look up persistent source-to-target entity mapping.
+ */
+async function getIdMapping(pgClient, entityType, sourceId) {
+    if (!sourceId) return null;
+    try {
+        const res = await pgClient.query(
+            'SELECT target_id FROM nas_replication_id_map WHERE entity_type = $1 AND source_id = $2',
+            [entityType, String(sourceId)]
+        );
+        if (res.rows && res.rows.length > 0) {
+            return Number(res.rows[0].target_id);
+        }
+    } catch {
+        // Table not ready or initialized
+    }
+    return null;
+}
+
+/**
+ * Record durable source-to-target entity mapping.
+ */
+async function recordIdMapping(pgClient, entityType, sourceId, targetId, naturalKey = null) {
+    if (!sourceId || targetId === undefined || targetId === null) return;
+    try {
+        await pgClient.query(`
+            INSERT INTO nas_replication_id_map (entity_type, source_id, target_id, natural_key, updated_at)
+            VALUES ($1, $2, $3, $4, NOW())
+            ON CONFLICT (entity_type, source_id) DO UPDATE SET
+                target_id = EXCLUDED.target_id,
+                natural_key = EXCLUDED.natural_key,
+                updated_at = NOW();
+        `, [entityType, String(sourceId), targetId, naturalKey ? String(naturalKey) : null]);
+    } catch {
+        // Non-fatal if table not initialized yet
+    }
+}
+
+/**
+ * Resolves the true TrueNAS product ID for a given Supabase Cloud product ID.
+ * Pulls the authoritative parent product on demand if not yet replicated.
+ */
+async function resolveTargetProductId(pgClient, supabaseClient, sourceProductId, logger = console) {
+    if (!sourceProductId) return null;
+    const sourceProdIdStr = String(sourceProductId);
+
+    // 1. Check ID map table
+    const mapped = await getIdMapping(pgClient, 'make_products', sourceProdIdStr);
+    if (mapped) return mapped;
+
+    // 2. Fetch authoritative product from Cloud
+    const { data: prodData, error: prodErr } = await supabaseClient
+        .from('make_products')
+        .select('*')
+        .eq('id', sourceProductId)
+        .maybeSingle();
+
+    if (prodErr) {
+        throw new Error(`Failed to query parent product ${sourceProductId} from Supabase: ${prodErr.message}`);
+    }
+
+    if (!prodData) {
+        logger.warn(`[NAS-Pull-Worker] Missing parent product ${sourceProductId} in Supabase Cloud.`);
+        throw new Error(`Missing parent product ${sourceProductId}`);
+    }
+
+    // 3. Upsert product into TrueNAS (this populates nas_replication_id_map and returns targetId)
+    const { targetId } = await upsertProductRecord(pgClient, supabaseClient, prodData, logger);
+    return targetId;
+}
+
+/**
+ * Resolves the true TrueNAS specification ID for a given Supabase Cloud specification ID.
+ * Pulls the authoritative parent specification on demand if not yet replicated.
+ */
+async function resolveTargetSpecId(pgClient, supabaseClient, sourceSpecId, logger = console) {
+    if (!sourceSpecId) return null;
+    const sourceSpecIdStr = String(sourceSpecId);
+
+    const mapped = await getIdMapping(pgClient, 'make_product_specifications', sourceSpecIdStr);
+    if (mapped) return mapped;
+
+    const { data: specData, error: specErr } = await supabaseClient
+        .from('make_product_specifications')
+        .select('*')
+        .eq('id', sourceSpecId)
+        .maybeSingle();
+
+    if (specErr) {
+        throw new Error(`Failed to query parent specification ${sourceSpecId} from Supabase: ${specErr.message}`);
+    }
+
+    if (!specData) {
+        logger.warn(`[NAS-Pull-Worker] Missing parent specification ${sourceSpecId} in Supabase Cloud.`);
+        throw new Error(`Missing parent specification ${sourceSpecId}`);
+    }
+
+    const { targetId } = await upsertSpecificationRecord(pgClient, supabaseClient, specData, logger);
+    return targetId;
+}
+
+/**
  * Ensures an authoritative product category exists on TrueNAS PostgreSQL.
- * If missing locally, pulls the authoritative record from Supabase Cloud.
- * Never invents placeholder data; fails closed if the source category cannot be verified.
+ * Matches by name/code before inserting to prevent unique-constraint violations.
+ * Records source-to-target category mapping and returns resolved target category ID.
  */
 async function ensureProductCategory(pgClient, supabaseClient, categoryId, categoryName, logger = console) {
     if (!categoryId) {
-        return { success: true };
+        return null;
+    }
+    const sourceCatIdStr = String(categoryId);
+
+    // 1. Check if mapping already exists in nas_replication_id_map
+    const mappedId = await getIdMapping(pgClient, 'make_product_categories', sourceCatIdStr);
+    if (mappedId) {
+        return mappedId;
     }
 
-    // Check if category already exists on TrueNAS PostgreSQL
-    const catCheck = await pgClient.query('SELECT 1 FROM make_product_categories WHERE id = $1', [categoryId]);
-    if (catCheck.rows && catCheck.rows.length > 0) {
-        return { success: true, categoryId };
+    // 2. Check if category exists directly on TrueNAS with matching id
+    const idCheck = await pgClient.query('SELECT id, name, code FROM make_product_categories WHERE id = $1', [categoryId]);
+    if (idCheck.rows && idCheck.rows.length > 0) {
+        const row = idCheck.rows[0];
+        if (!categoryName || row.name.toLowerCase() === categoryName.trim().toLowerCase()) {
+            await recordIdMapping(pgClient, 'make_product_categories', sourceCatIdStr, row.id, row.name);
+            return row.id;
+        }
     }
 
-    // Fetch authoritative category from Supabase Cloud
+    // 3. Check if category exists on TrueNAS by name or code if categoryName is provided
+    if (categoryName) {
+        const nameCheck = await pgClient.query(
+            'SELECT id, name, code FROM make_product_categories WHERE LOWER(TRIM(name)) = LOWER(TRIM($1))',
+            [categoryName]
+        );
+        if (nameCheck.rows && nameCheck.rows.length > 0) {
+            const row = nameCheck.rows[0];
+            await recordIdMapping(pgClient, 'make_product_categories', sourceCatIdStr, row.id, row.name);
+            return row.id;
+        }
+    }
+
+    // 4. Query authoritative category from Supabase Cloud
     const { data: catData, error: catErr } = await supabaseClient
         .from('make_product_categories')
         .select('*')
@@ -333,169 +472,745 @@ async function ensureProductCategory(pgClient, supabaseClient, categoryId, categ
     }
 
     if (!catData) {
-        throw new Error(`Missing parent category ${categoryId} in Supabase Cloud`);
+        // If categoryName is provided, check if TrueNAS has it by name as fallback
+        if (categoryName) {
+            const nameCheck = await pgClient.query(
+                'SELECT id, name, code FROM make_product_categories WHERE LOWER(TRIM(name)) = LOWER(TRIM($1))',
+                [categoryName]
+            );
+            if (nameCheck.rows && nameCheck.rows.length > 0) {
+                const row = nameCheck.rows[0];
+                await recordIdMapping(pgClient, 'make_product_categories', sourceCatIdStr, row.id, row.name);
+                return row.id;
+            }
+        }
+        logger.warn(`[NAS-Pull-Worker] Missing parent category ${categoryId} in Supabase Cloud. Halting category resolution.`);
+        throw new Error(`Missing parent category ${categoryId}`);
     }
 
-    // Insert authoritative category to TrueNAS PostgreSQL
-    const insertCatSql = `
-        INSERT INTO make_product_categories (id, name, code, description, is_active, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        ON CONFLICT (id) DO UPDATE SET
-            name = EXCLUDED.name,
-            code = EXCLUDED.code,
-            description = EXCLUDED.description,
-            is_active = EXCLUDED.is_active;
-    `;
-    await pgClient.query(insertCatSql, [
-        catData.id,
-        catData.name,
-        catData.code || null,
-        catData.description || null,
-        catData.is_active !== undefined ? catData.is_active : true,
-        catData.created_at || new Date().toISOString()
-    ]);
+    // 5. With authoritative catData: check if TrueNAS has matching category by name or code
+    const matchCheck = await pgClient.query(
+        'SELECT id, name FROM make_product_categories WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) OR (code IS NOT NULL AND code = $2)',
+        [catData.name, catData.code || '']
+    );
+    if (matchCheck.rows && matchCheck.rows.length > 0) {
+        const matched = matchCheck.rows[0];
+        await recordIdMapping(pgClient, 'make_product_categories', sourceCatIdStr, matched.id, catData.name);
+        return matched.id;
+    }
 
-    logger.log(`[NAS-Pull-Worker] Replicated authoritative parent category ${catData.id} (${catData.name}) to TrueNAS.`);
-    return { success: true, categoryId: catData.id };
+    // 6. Category does not exist on TrueNAS: insert it
+    const freeCheck = await pgClient.query('SELECT 1 FROM make_product_categories WHERE id = $1', [catData.id]);
+    let targetCatId;
+    if (!freeCheck.rows || freeCheck.rows.length === 0) {
+        await pgClient.query(`
+            INSERT INTO make_product_categories (id, name, code, description, is_active, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT (name) DO UPDATE SET
+                code = EXCLUDED.code,
+                description = EXCLUDED.description,
+                is_active = EXCLUDED.is_active;
+        `, [
+            catData.id,
+            catData.name,
+            catData.code || null,
+            catData.description || null,
+            catData.is_active !== undefined ? catData.is_active : true,
+            catData.created_at || new Date().toISOString()
+        ]);
+        targetCatId = catData.id;
+    } else {
+        const insertRes = await pgClient.query(`
+            INSERT INTO make_product_categories (name, code, description, is_active, created_at)
+            VALUES ($1, $2, $3, $4, $5)
+            RETURNING id;
+        `, [
+            catData.name,
+            catData.code || null,
+            catData.description || null,
+            catData.is_active !== undefined ? catData.is_active : true,
+            catData.created_at || new Date().toISOString()
+        ]);
+        targetCatId = insertRes.rows[0].id;
+    }
+
+    await recordIdMapping(pgClient, 'make_product_categories', sourceCatIdStr, targetCatId, catData.name);
+    logger.log(`[NAS-Pull-Worker] Replicated authoritative parent category ${catData.id} (${catData.name}) -> TrueNAS category ${targetCatId}.`);
+    return targetCatId;
 }
 
 /**
  * Idempotently applies a make_products record to TrueNAS PostgreSQL with schema compatibility.
- * Checks and replicates required parent categories before inserting.
- * Fails closed on permission, auth, or referential integrity errors.
+ * Reconciles product_code natural keys without destroying conflicting local IDs.
+ * Records source-to-target product mapping and returns resolved target product ID.
  */
 async function upsertProductRecord(pgClient, supabaseClient, prod, logger = console) {
+    const sourceProdIdStr = String(prod.id);
+
     if (prod.is_deleted === true || prod.status === 'deleted' || prod.deleted_at) {
-        await pgClient.query('DELETE FROM make_product_colors WHERE product_id = $1', [prod.id]);
-        await pgClient.query('DELETE FROM make_product_specifications WHERE product_id = $1', [prod.id]);
-        await pgClient.query('DELETE FROM make_products WHERE id = $1', [prod.id]);
-        return { deleted: true };
+        const targetId = (await getIdMapping(pgClient, 'make_products', sourceProdIdStr)) || prod.id;
+        await pgClient.query('DELETE FROM make_product_colors WHERE product_id = $1', [targetId]);
+        await pgClient.query('DELETE FROM make_product_specifications WHERE product_id = $1', [targetId]);
+        await pgClient.query('DELETE FROM make_products WHERE id = $1', [targetId]);
+        await pgClient.query('DELETE FROM nas_replication_id_map WHERE entity_type = $1 AND source_id = $2', ['make_products', sourceProdIdStr]);
+        return { deleted: true, targetId };
     }
 
     // Ensure parent category exists on TrueNAS without inventing placeholder data
+    let targetCategoryId = null;
     if (prod.category_id) {
-        await ensureProductCategory(pgClient, supabaseClient, prod.category_id, prod.category, logger);
+        targetCategoryId = await ensureProductCategory(pgClient, supabaseClient, prod.category_id, prod.category, logger);
+    }
+
+    // Identity Resolution:
+    let targetId = await getIdMapping(pgClient, 'make_products', sourceProdIdStr);
+    let isExistingOnTarget = false;
+
+    // Check if target product exists with matching product_code
+    if (!targetId && prod.product_code) {
+        const codeCheck = await pgClient.query(
+            'SELECT id, product_code, product_name FROM make_products WHERE product_code = $1',
+            [prod.product_code]
+        );
+        if (codeCheck.rows && codeCheck.rows.length > 0) {
+            targetId = codeCheck.rows[0].id;
+            isExistingOnTarget = true;
+            logger.log(`[NAS-Pull-Worker] Mapped source product ${prod.id} (${prod.product_code}) to existing TrueNAS product ID ${targetId}`);
+        }
+    }
+
+    // If not mapped by code, check if target row exists with id = prod.id
+    if (!targetId) {
+        const idCheck = await pgClient.query(
+            'SELECT id, product_code, product_name FROM make_products WHERE id = $1',
+            [prod.id]
+        );
+        if (idCheck.rows && idCheck.rows.length > 0) {
+            const existingRow = idCheck.rows[0];
+            if (existingRow.product_code === prod.product_code) {
+                targetId = prod.id;
+                isExistingOnTarget = true;
+            } else {
+                // ID collision with a DIFFERENT product (e.g. Target ID 5 is '1000' while source ID 5 is 'LE-CT-03')
+                // Do NOT overwrite existingRow! Allocate a new target ID using sequence.
+                logger.warn(`[NAS-Pull-Worker] ID collision: source product ${prod.id} (${prod.product_code}) collides with target ID ${existingRow.id} (${existingRow.product_code}). Allocating distinct TrueNAS ID.`);
+                targetId = null;
+                isExistingOnTarget = false;
+            }
+        } else {
+            // Target ID is free and product_code does not collide
+            targetId = prod.id;
+            isExistingOnTarget = false;
+        }
+    } else {
+        isExistingOnTarget = true;
     }
 
     const prodUpdatedAt = prod.updated_at || prod.created_at || new Date().toISOString();
 
-    const fullUpsertSql = `
-        INSERT INTO make_products (
-            id, product_code, product_name, description, main_image,
-            is_active, created_by, category, category_id,
-            cost_price, sale_price, max_discount_type, max_discount_value,
-            created_at, updated_at
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-        ON CONFLICT (id) DO UPDATE SET
-            product_code = EXCLUDED.product_code,
-            product_name = EXCLUDED.product_name,
-            description = EXCLUDED.description,
-            main_image = EXCLUDED.main_image,
-            is_active = EXCLUDED.is_active,
-            created_by = EXCLUDED.created_by,
-            category = EXCLUDED.category,
-            category_id = EXCLUDED.category_id,
-            cost_price = EXCLUDED.cost_price,
-            sale_price = EXCLUDED.sale_price,
-            max_discount_type = EXCLUDED.max_discount_type,
-            max_discount_value = EXCLUDED.max_discount_value,
-            updated_at = EXCLUDED.updated_at;
-    `;
+    if (isExistingOnTarget && targetId) {
+        // UPDATE existing target product row
+        const fullUpdateSql = `
+            UPDATE make_products SET
+                product_code = $1,
+                product_name = $2,
+                description = $3,
+                main_image = $4,
+                is_active = $5,
+                created_by = $6,
+                category = $7,
+                category_id = $8,
+                cost_price = $9,
+                sale_price = $10,
+                max_discount_type = $11,
+                max_discount_value = $12,
+                updated_at = $13
+            WHERE id = $14
+        `;
+        const fallbackUpdateSql = `
+            UPDATE make_products SET
+                product_code = $1,
+                product_name = $2,
+                description = $3,
+                main_image = $4,
+                is_active = $5,
+                created_by = $6,
+                category = $7,
+                category_id = $8,
+                updated_at = $9
+            WHERE id = $10
+        `;
+        const baseUpdateSql = `
+            UPDATE make_products SET
+                product_code = $1,
+                product_name = $2,
+                description = $3,
+                main_image = $4,
+                is_active = $5,
+                created_by = $6,
+                updated_at = $7
+            WHERE id = $8
+        `;
 
-    const fallbackUpsertSql = `
-        INSERT INTO make_products (
-            id, product_code, product_name, description, main_image,
-            is_active, created_by, category, category_id,
-            created_at, updated_at
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-        ON CONFLICT (id) DO UPDATE SET
-            product_code = EXCLUDED.product_code,
-            product_name = EXCLUDED.product_name,
-            description = EXCLUDED.description,
-            main_image = EXCLUDED.main_image,
-            is_active = EXCLUDED.is_active,
-            created_by = EXCLUDED.created_by,
-            category = EXCLUDED.category,
-            category_id = EXCLUDED.category_id,
-            updated_at = EXCLUDED.updated_at;
-    `;
+        try {
+            await pgClient.query(fullUpdateSql, [
+                prod.product_code || `PROD-${targetId}`,
+                prod.product_name || '',
+                prod.description || null,
+                prod.main_image || null,
+                prod.is_active !== undefined ? prod.is_active : true,
+                prod.created_by || null,
+                prod.category || null,
+                targetCategoryId,
+                prod.cost_price !== undefined ? prod.cost_price : 0,
+                prod.sale_price !== undefined ? prod.sale_price : 0,
+                prod.max_discount_type || 'percent',
+                prod.max_discount_value !== undefined ? prod.max_discount_value : 0,
+                prodUpdatedAt,
+                targetId
+            ]);
+        } catch (sqlErr) {
+            if (isMissingColumnError(sqlErr)) {
+                logger.warn(`[NAS-Pull-Worker] make_products table missing pricing columns on TrueNAS (${sqlErr.message}). Retrying update with base product columns.`);
+                try {
+                    await pgClient.query(fallbackUpdateSql, [
+                        prod.product_code || `PROD-${targetId}`,
+                        prod.product_name || '',
+                        prod.description || null,
+                        prod.main_image || null,
+                        prod.is_active !== undefined ? prod.is_active : true,
+                        prod.created_by || null,
+                        prod.category || null,
+                        targetCategoryId,
+                        prodUpdatedAt,
+                        targetId
+                    ]);
+                } catch (fallbackErr) {
+                    if (isMissingColumnError(fallbackErr)) {
+                        logger.warn(`[NAS-Pull-Worker] make_products table missing category columns on TrueNAS (${fallbackErr.message}). Retrying update with minimal product schema.`);
+                        await pgClient.query(baseUpdateSql, [
+                            prod.product_code || `PROD-${targetId}`,
+                            prod.product_name || '',
+                            prod.description || null,
+                            prod.main_image || null,
+                            prod.is_active !== undefined ? prod.is_active : true,
+                            prod.created_by || null,
+                            prodUpdatedAt,
+                            targetId
+                        ]);
+                    } else {
+                        throw fallbackErr;
+                    }
+                }
+            } else {
+                throw sqlErr;
+            }
+        }
+    } else {
+        // INSERT new product row on TrueNAS
+        if (targetId) {
+            const fullInsertSql = `
+                INSERT INTO make_products (
+                    id, product_code, product_name, description, main_image,
+                    is_active, created_by, category, category_id,
+                    cost_price, sale_price, max_discount_type, max_discount_value,
+                    created_at, updated_at
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                ON CONFLICT (id) DO UPDATE SET
+                    product_code = EXCLUDED.product_code,
+                    product_name = EXCLUDED.product_name,
+                    description = EXCLUDED.description,
+                    main_image = EXCLUDED.main_image,
+                    is_active = EXCLUDED.is_active,
+                    created_by = EXCLUDED.created_by,
+                    category = EXCLUDED.category,
+                    category_id = EXCLUDED.category_id,
+                    cost_price = EXCLUDED.cost_price,
+                    sale_price = EXCLUDED.sale_price,
+                    max_discount_type = EXCLUDED.max_discount_type,
+                    max_discount_value = EXCLUDED.max_discount_value,
+                    updated_at = EXCLUDED.updated_at
+                RETURNING id;
+            `;
+            const fallbackInsertSql = `
+                INSERT INTO make_products (
+                    id, product_code, product_name, description, main_image,
+                    is_active, created_by, category, category_id,
+                    created_at, updated_at
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                ON CONFLICT (id) DO UPDATE SET
+                    product_code = EXCLUDED.product_code,
+                    product_name = EXCLUDED.product_name,
+                    description = EXCLUDED.description,
+                    main_image = EXCLUDED.main_image,
+                    is_active = EXCLUDED.is_active,
+                    created_by = EXCLUDED.created_by,
+                    category = EXCLUDED.category,
+                    category_id = EXCLUDED.category_id,
+                    updated_at = EXCLUDED.updated_at
+                RETURNING id;
+            `;
+            const baseInsertSql = `
+                INSERT INTO make_products (
+                    id, product_code, product_name, description, main_image,
+                    is_active, created_by, created_at, updated_at
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                ON CONFLICT (id) DO UPDATE SET
+                    product_code = EXCLUDED.product_code,
+                    product_name = EXCLUDED.product_name,
+                    description = EXCLUDED.description,
+                    main_image = EXCLUDED.main_image,
+                    is_active = EXCLUDED.is_active,
+                    created_by = EXCLUDED.created_by,
+                    updated_at = EXCLUDED.updated_at
+                RETURNING id;
+            `;
 
-    const baseUpsertSql = `
-        INSERT INTO make_products (
-            id, product_code, product_name, description, main_image,
-            is_active, created_by, created_at, updated_at
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        ON CONFLICT (id) DO UPDATE SET
-            product_code = EXCLUDED.product_code,
-            product_name = EXCLUDED.product_name,
-            description = EXCLUDED.description,
-            main_image = EXCLUDED.main_image,
-            is_active = EXCLUDED.is_active,
-            created_by = EXCLUDED.created_by,
-            updated_at = EXCLUDED.updated_at;
-    `;
-
-    try {
-        await pgClient.query(fullUpsertSql, [
-            prod.id,
-            prod.product_code || `PROD-${prod.id}`,
-            prod.product_name || '',
-            prod.description || null,
-            prod.main_image || null,
-            prod.is_active !== undefined ? prod.is_active : true,
-            prod.created_by || null,
-            prod.category || null,
-            prod.category_id || null,
-            prod.cost_price !== undefined ? prod.cost_price : 0,
-            prod.sale_price !== undefined ? prod.sale_price : 0,
-            prod.max_discount_type || 'percent',
-            prod.max_discount_value !== undefined ? prod.max_discount_value : 0,
-            prod.created_at || new Date().toISOString(),
-            prodUpdatedAt
-        ]);
-    } catch (sqlErr) {
-        if (isMissingColumnError(sqlErr)) {
-            logger.warn(`[NAS-Pull-Worker] make_products table missing pricing columns on TrueNAS (${sqlErr.message}). Retrying with base product columns.`);
             try {
-                await pgClient.query(fallbackUpsertSql, [
-                    prod.id,
-                    prod.product_code || `PROD-${prod.id}`,
+                const res = await pgClient.query(fullInsertSql, [
+                    targetId,
+                    prod.product_code || `PROD-${targetId}`,
                     prod.product_name || '',
                     prod.description || null,
                     prod.main_image || null,
                     prod.is_active !== undefined ? prod.is_active : true,
                     prod.created_by || null,
                     prod.category || null,
-                    prod.category_id || null,
+                    targetCategoryId,
+                    prod.cost_price !== undefined ? prod.cost_price : 0,
+                    prod.sale_price !== undefined ? prod.sale_price : 0,
+                    prod.max_discount_type || 'percent',
+                    prod.max_discount_value !== undefined ? prod.max_discount_value : 0,
                     prod.created_at || new Date().toISOString(),
                     prodUpdatedAt
                 ]);
-            } catch (fallbackErr) {
-                if (isMissingColumnError(fallbackErr)) {
-                    logger.warn(`[NAS-Pull-Worker] make_products table missing category columns on TrueNAS (${fallbackErr.message}). Retrying with minimal product schema.`);
-                    await pgClient.query(baseUpsertSql, [
-                        prod.id,
-                        prod.product_code || `PROD-${prod.id}`,
-                        prod.product_name || '',
-                        prod.description || null,
-                        prod.main_image || null,
-                        prod.is_active !== undefined ? prod.is_active : true,
-                        prod.created_by || null,
-                        prod.created_at || new Date().toISOString(),
-                        prodUpdatedAt
-                    ]);
+                targetId = res.rows[0].id;
+            } catch (sqlErr) {
+                if (isMissingColumnError(sqlErr)) {
+                    logger.warn(`[NAS-Pull-Worker] make_products table missing pricing columns on TrueNAS (${sqlErr.message}). Retrying insert with base product columns.`);
+                    try {
+                        const res = await pgClient.query(fallbackInsertSql, [
+                            targetId,
+                            prod.product_code || `PROD-${targetId}`,
+                            prod.product_name || '',
+                            prod.description || null,
+                            prod.main_image || null,
+                            prod.is_active !== undefined ? prod.is_active : true,
+                            prod.created_by || null,
+                            prod.category || null,
+                            targetCategoryId,
+                            prod.created_at || new Date().toISOString(),
+                            prodUpdatedAt
+                        ]);
+                        targetId = res.rows[0].id;
+                    } catch (fallbackErr) {
+                        if (isMissingColumnError(fallbackErr)) {
+                            logger.warn(`[NAS-Pull-Worker] make_products table missing category columns on TrueNAS (${fallbackErr.message}). Retrying insert with minimal product schema.`);
+                            const res = await pgClient.query(baseInsertSql, [
+                                targetId,
+                                prod.product_code || `PROD-${targetId}`,
+                                prod.product_name || '',
+                                prod.description || null,
+                                prod.main_image || null,
+                                prod.is_active !== undefined ? prod.is_active : true,
+                                prod.created_by || null,
+                                prod.created_at || new Date().toISOString(),
+                                prodUpdatedAt
+                            ]);
+                            targetId = res.rows[0].id;
+                        } else {
+                            throw fallbackErr;
+                        }
+                    }
                 } else {
-                    throw fallbackErr;
+                    throw sqlErr;
                 }
             }
         } else {
-            throw sqlErr;
+            // Allocate new target ID via sequence
+            const fullInsertSeqSql = `
+                INSERT INTO make_products (
+                    product_code, product_name, description, main_image,
+                    is_active, created_by, category, category_id,
+                    cost_price, sale_price, max_discount_type, max_discount_value,
+                    created_at, updated_at
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                RETURNING id;
+            `;
+            const fallbackInsertSeqSql = `
+                INSERT INTO make_products (
+                    product_code, product_name, description, main_image,
+                    is_active, created_by, category, category_id,
+                    created_at, updated_at
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                RETURNING id;
+            `;
+            const baseInsertSeqSql = `
+                INSERT INTO make_products (
+                    product_code, product_name, description, main_image,
+                    is_active, created_by, created_at, updated_at
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                RETURNING id;
+            `;
+
+            try {
+                const res = await pgClient.query(fullInsertSeqSql, [
+                    prod.product_code || `PROD-NEW-${Date.now()}`,
+                    prod.product_name || '',
+                    prod.description || null,
+                    prod.main_image || null,
+                    prod.is_active !== undefined ? prod.is_active : true,
+                    prod.created_by || null,
+                    prod.category || null,
+                    targetCategoryId,
+                    prod.cost_price !== undefined ? prod.cost_price : 0,
+                    prod.sale_price !== undefined ? prod.sale_price : 0,
+                    prod.max_discount_type || 'percent',
+                    prod.max_discount_value !== undefined ? prod.max_discount_value : 0,
+                    prod.created_at || new Date().toISOString(),
+                    prodUpdatedAt
+                ]);
+                targetId = res.rows[0].id;
+            } catch (sqlErr) {
+                if (isMissingColumnError(sqlErr)) {
+                    logger.warn(`[NAS-Pull-Worker] make_products table missing pricing columns on TrueNAS (${sqlErr.message}). Retrying insert with base product columns.`);
+                    try {
+                        const res = await pgClient.query(fallbackInsertSeqSql, [
+                            prod.product_code || `PROD-NEW-${Date.now()}`,
+                            prod.product_name || '',
+                            prod.description || null,
+                            prod.main_image || null,
+                            prod.is_active !== undefined ? prod.is_active : true,
+                            prod.created_by || null,
+                            prod.category || null,
+                            targetCategoryId,
+                            prod.created_at || new Date().toISOString(),
+                            prodUpdatedAt
+                        ]);
+                        targetId = res.rows[0].id;
+                    } catch (fallbackErr) {
+                        if (isMissingColumnError(fallbackErr)) {
+                            logger.warn(`[NAS-Pull-Worker] make_products table missing category columns on TrueNAS (${fallbackErr.message}). Retrying insert with minimal product schema.`);
+                            const res = await pgClient.query(baseInsertSeqSql, [
+                                prod.product_code || `PROD-NEW-${Date.now()}`,
+                                prod.product_name || '',
+                                prod.description || null,
+                                prod.main_image || null,
+                                prod.is_active !== undefined ? prod.is_active : true,
+                                prod.created_by || null,
+                                prod.created_at || new Date().toISOString(),
+                                prodUpdatedAt
+                            ]);
+                            targetId = res.rows[0].id;
+                        } else {
+                            throw fallbackErr;
+                        }
+                    }
+                } else {
+                    throw sqlErr;
+                }
+            }
         }
     }
-    return { success: true };
+
+    await recordIdMapping(pgClient, 'make_products', sourceProdIdStr, targetId, prod.product_code);
+    return { success: true, targetId };
+}
+
+/**
+ * Idempotently applies a make_product_specifications record to TrueNAS PostgreSQL.
+ * Resolves parent product reference to the true TrueNAS product ID.
+ * Records source-to-target specification mapping and returns resolved target specification ID.
+ */
+async function upsertSpecificationRecord(pgClient, supabaseClient, sp, logger = console) {
+    const sourceSpecIdStr = String(sp.id);
+
+    if (sp.is_deleted === true || sp.deleted_at) {
+        const targetSpecId = (await getIdMapping(pgClient, 'make_product_specifications', sourceSpecIdStr)) || sp.id;
+        await pgClient.query('DELETE FROM make_product_colors WHERE spec_id = $1', [targetSpecId]);
+        await pgClient.query('DELETE FROM make_product_specifications WHERE id = $1', [targetSpecId]);
+        await pgClient.query('DELETE FROM nas_replication_id_map WHERE entity_type = $1 AND source_id = $2', ['make_product_specifications', sourceSpecIdStr]);
+        return { deleted: true, targetId: targetSpecId };
+    }
+
+    // Ensure parent product exists on TrueNAS and resolve its target ID
+    let targetProductId = null;
+    if (sp.product_id) {
+        try {
+            targetProductId = await resolveTargetProductId(pgClient, supabaseClient, sp.product_id, logger);
+        } catch (resolveErr) {
+            throw new Error(`Missing parent product ${sp.product_id} for specification ${sp.id}`);
+        }
+        if (!targetProductId) {
+            throw new Error(`Missing parent product ${sp.product_id} for specification ${sp.id}`);
+        }
+    }
+
+    let targetSpecId = await getIdMapping(pgClient, 'make_product_specifications', sourceSpecIdStr);
+    let isExistingOnTarget = false;
+
+    if (!targetSpecId) {
+        if (sp.spec_code) {
+            const codeCheck = await pgClient.query(
+                'SELECT id, product_id, spec_code, spec_name FROM make_product_specifications WHERE product_id = $1 AND spec_code = $2',
+                [targetProductId, sp.spec_code]
+            );
+            if (codeCheck.rows && codeCheck.rows.length > 0) {
+                targetSpecId = codeCheck.rows[0].id;
+                isExistingOnTarget = true;
+            }
+        }
+        if (!targetSpecId) {
+            const idCheck = await pgClient.query(
+                'SELECT id, product_id, spec_code, spec_name FROM make_product_specifications WHERE id = $1',
+                [sp.id]
+            );
+            if (idCheck.rows && idCheck.rows.length > 0) {
+                const existingRow = idCheck.rows[0];
+                if (Number(existingRow.product_id) === Number(targetProductId) && (existingRow.spec_code === sp.spec_code || existingRow.spec_name === sp.spec_name)) {
+                    targetSpecId = sp.id;
+                    isExistingOnTarget = true;
+                } else {
+                    targetSpecId = null; // allocate new ID
+                    isExistingOnTarget = false;
+                }
+            } else {
+                targetSpecId = sp.id;
+                isExistingOnTarget = false;
+            }
+        }
+    } else {
+        isExistingOnTarget = true;
+    }
+
+    const spUpdatedAt = sp.updated_at || sp.created_at || new Date().toISOString();
+
+    if (isExistingOnTarget && targetSpecId) {
+        await pgClient.query(`
+            UPDATE make_product_specifications SET
+                product_id = $1,
+                spec_code = $2,
+                spec_name = $3,
+                spec_details = $4,
+                is_active = $5,
+                image_url = $6,
+                updated_at = $7
+            WHERE id = $8
+        `, [
+            targetProductId,
+            sp.spec_code || null,
+            sp.spec_name || '',
+            sp.spec_details || null,
+            sp.is_active !== undefined ? sp.is_active : true,
+            sp.image_url || null,
+            spUpdatedAt,
+            targetSpecId
+        ]);
+    } else if (targetSpecId) {
+        const res = await pgClient.query(`
+            INSERT INTO make_product_specifications (
+                id, product_id, spec_code, spec_name, spec_details, is_active, image_url, created_at, updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            ON CONFLICT (id) DO UPDATE SET
+                product_id = EXCLUDED.product_id,
+                spec_code = EXCLUDED.spec_code,
+                spec_name = EXCLUDED.spec_name,
+                spec_details = EXCLUDED.spec_details,
+                is_active = EXCLUDED.is_active,
+                image_url = EXCLUDED.image_url,
+                updated_at = EXCLUDED.updated_at
+            RETURNING id;
+        `, [
+            targetSpecId,
+            targetProductId,
+            sp.spec_code || null,
+            sp.spec_name || '',
+            sp.spec_details || null,
+            sp.is_active !== undefined ? sp.is_active : true,
+            sp.image_url || null,
+            sp.created_at || new Date().toISOString(),
+            spUpdatedAt
+        ]);
+        targetSpecId = res.rows[0].id;
+    } else {
+        const res = await pgClient.query(`
+            INSERT INTO make_product_specifications (
+                product_id, spec_code, spec_name, spec_details, is_active, image_url, created_at, updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            RETURNING id;
+        `, [
+            targetProductId,
+            sp.spec_code || null,
+            sp.spec_name || '',
+            sp.spec_details || null,
+            sp.is_active !== undefined ? sp.is_active : true,
+            sp.image_url || null,
+            sp.created_at || new Date().toISOString(),
+            spUpdatedAt
+        ]);
+        targetSpecId = res.rows[0].id;
+    }
+
+    await recordIdMapping(pgClient, 'make_product_specifications', sourceSpecIdStr, targetSpecId, sp.spec_code || sp.spec_name);
+    return { success: true, targetId: targetSpecId };
+}
+
+/**
+ * Idempotently applies a make_product_colors record to TrueNAS PostgreSQL.
+ * Resolves parent product and spec references to the true TrueNAS IDs.
+ * Records source-to-target color mapping and returns resolved target color ID.
+ */
+async function upsertColorRecord(pgClient, supabaseClient, cl, logger = console) {
+    const sourceColorIdStr = String(cl.id);
+
+    if (cl.is_deleted === true || cl.deleted_at) {
+        const targetColorId = (await getIdMapping(pgClient, 'make_product_colors', sourceColorIdStr)) || cl.id;
+        await pgClient.query('DELETE FROM make_product_colors WHERE id = $1', [targetColorId]);
+        await pgClient.query('DELETE FROM nas_replication_id_map WHERE entity_type = $1 AND source_id = $2', ['make_product_colors', sourceColorIdStr]);
+        return { deleted: true, targetId: targetColorId };
+    }
+
+    let targetProductId = null;
+    if (cl.product_id) {
+        try {
+            targetProductId = await resolveTargetProductId(pgClient, supabaseClient, cl.product_id, logger);
+        } catch (resolveErr) {
+            throw new Error(`Missing parent product ${cl.product_id} for color ${cl.id}`);
+        }
+    }
+
+    let targetSpecId = null;
+    if (cl.spec_id) {
+        try {
+            targetSpecId = await resolveTargetSpecId(pgClient, supabaseClient, cl.spec_id, logger);
+        } catch (resolveErr) {
+            throw new Error(`Missing parent specification ${cl.spec_id} for color ${cl.id}`);
+        }
+    }
+
+    let targetColorId = await getIdMapping(pgClient, 'make_product_colors', sourceColorIdStr);
+    let isExistingOnTarget = false;
+
+    if (!targetColorId) {
+        if (cl.color_name) {
+            const nameCheck = await pgClient.query(
+                'SELECT id, product_id, spec_id, color_name FROM make_product_colors WHERE product_id = $1 AND color_name = $2',
+                [targetProductId, cl.color_name]
+            );
+            if (nameCheck.rows && nameCheck.rows.length > 0) {
+                targetColorId = nameCheck.rows[0].id;
+                isExistingOnTarget = true;
+                if (!targetSpecId && nameCheck.rows[0].spec_id) {
+                    targetSpecId = nameCheck.rows[0].spec_id;
+                }
+            }
+        }
+        if (!targetColorId) {
+            const idCheck = await pgClient.query(
+                'SELECT id, product_id, spec_id, color_name FROM make_product_colors WHERE id = $1',
+                [cl.id]
+            );
+            if (idCheck.rows && idCheck.rows.length > 0) {
+                const existingRow = idCheck.rows[0];
+                if (Number(existingRow.product_id) === Number(targetProductId) && existingRow.color_name === cl.color_name) {
+                    targetColorId = cl.id;
+                    isExistingOnTarget = true;
+                    if (!targetSpecId && existingRow.spec_id) {
+                        targetSpecId = existingRow.spec_id;
+                    }
+                } else {
+                    targetColorId = null;
+                    isExistingOnTarget = false;
+                }
+            } else {
+                targetColorId = cl.id;
+                isExistingOnTarget = false;
+            }
+        }
+    } else {
+        isExistingOnTarget = true;
+    }
+
+    const clUpdatedAt = cl.updated_at || cl.created_at || new Date().toISOString();
+
+    if (isExistingOnTarget && targetColorId) {
+        await pgClient.query(`
+            UPDATE make_product_colors SET
+                product_id = $1,
+                spec_id = $2,
+                color_name = $3,
+                color_code = $4,
+                is_active = $5,
+                image_url = $6,
+                updated_at = $7
+            WHERE id = $8
+        `, [
+            targetProductId,
+            targetSpecId,
+            cl.color_name || '',
+            cl.color_code || null,
+            cl.is_active !== undefined ? cl.is_active : true,
+            cl.image_url || null,
+            clUpdatedAt,
+            targetColorId
+        ]);
+    } else if (targetColorId) {
+        const res = await pgClient.query(`
+            INSERT INTO make_product_colors (
+                id, product_id, spec_id, color_name, color_code, is_active, image_url, created_at, updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            ON CONFLICT (id) DO UPDATE SET
+                product_id = EXCLUDED.product_id,
+                spec_id = EXCLUDED.spec_id,
+                color_name = EXCLUDED.color_name,
+                color_code = EXCLUDED.color_code,
+                is_active = EXCLUDED.is_active,
+                image_url = EXCLUDED.image_url,
+                updated_at = EXCLUDED.updated_at
+            RETURNING id;
+        `, [
+            targetColorId,
+            targetProductId,
+            targetSpecId,
+            cl.color_name || '',
+            cl.color_code || null,
+            cl.is_active !== undefined ? cl.is_active : true,
+            cl.image_url || null,
+            cl.created_at || new Date().toISOString(),
+            clUpdatedAt
+        ]);
+        targetColorId = res.rows[0].id;
+    } else {
+        const res = await pgClient.query(`
+            INSERT INTO make_product_colors (
+                product_id, spec_id, color_name, color_code, is_active, image_url, created_at, updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            RETURNING id;
+        `, [
+            targetProductId,
+            targetSpecId,
+            cl.color_name || '',
+            cl.color_code || null,
+            cl.is_active !== undefined ? cl.is_active : true,
+            cl.image_url || null,
+            cl.created_at || new Date().toISOString(),
+            clUpdatedAt
+        ]);
+        targetColorId = res.rows[0].id;
+    }
+
+    await recordIdMapping(pgClient, 'make_product_colors', sourceColorIdStr, targetColorId, cl.color_name);
+    return { success: true, targetId: targetColorId };
 }
 
 /**
@@ -609,21 +1324,35 @@ async function pullBusinessData(supabaseClient, pgClient, options = {}) {
                             continue;
                         }
 
+                        // Resolve target entity ID via ID mapping if applicable
+                        let resolvedTargetId = targetId;
+                        if (['make_products', 'make_product_specifications', 'make_product_colors', 'make_product_categories'].includes(targetTable)) {
+                            const mapped = await getIdMapping(pgClient, targetTable, String(targetId));
+                            if (mapped) {
+                                resolvedTargetId = mapped;
+                            }
+                        }
+
                         // Foreign-key safe deletion in parent-before-child order
                         if (targetTable === 'make_orders') {
-                            await pgClient.query('DELETE FROM make_order_updates WHERE order_id = $1', [targetId]);
-                            await pgClient.query('DELETE FROM make_orders WHERE id = $1', [targetId]);
+                            await pgClient.query('DELETE FROM make_order_updates WHERE order_id = $1', [resolvedTargetId]);
+                            await pgClient.query('DELETE FROM make_orders WHERE id = $1', [resolvedTargetId]);
                         } else if (targetTable === 'make_products') {
-                            await pgClient.query('DELETE FROM make_product_colors WHERE product_id = $1', [targetId]);
-                            await pgClient.query('DELETE FROM make_product_specifications WHERE product_id = $1', [targetId]);
-                            await pgClient.query('DELETE FROM make_products WHERE id = $1', [targetId]);
+                            await pgClient.query('DELETE FROM make_product_colors WHERE product_id = $1', [resolvedTargetId]);
+                            await pgClient.query('DELETE FROM make_product_specifications WHERE product_id = $1', [resolvedTargetId]);
+                            await pgClient.query('DELETE FROM make_products WHERE id = $1', [resolvedTargetId]);
+                            await pgClient.query('DELETE FROM nas_replication_id_map WHERE entity_type = $1 AND source_id = $2', ['make_products', String(targetId)]);
                         } else if (targetTable === 'make_product_specifications') {
-                            await pgClient.query('DELETE FROM make_product_colors WHERE spec_id = $1', [targetId]);
-                            await pgClient.query('DELETE FROM make_product_specifications WHERE id = $1', [targetId]);
+                            await pgClient.query('DELETE FROM make_product_colors WHERE spec_id = $1', [resolvedTargetId]);
+                            await pgClient.query('DELETE FROM make_product_specifications WHERE id = $1', [resolvedTargetId]);
+                            await pgClient.query('DELETE FROM nas_replication_id_map WHERE entity_type = $1 AND source_id = $2', ['make_product_specifications', String(targetId)]);
+                        } else if (targetTable === 'make_product_colors') {
+                            await pgClient.query('DELETE FROM make_product_colors WHERE id = $1', [resolvedTargetId]);
+                            await pgClient.query('DELETE FROM nas_replication_id_map WHERE entity_type = $1 AND source_id = $2', ['make_product_colors', String(targetId)]);
                         } else {
-                            await pgClient.query(`DELETE FROM ${targetTable} WHERE id = $1`, [targetId]);
+                            await pgClient.query(`DELETE FROM ${targetTable} WHERE id = $1`, [resolvedTargetId]);
                         }
-                        logger.log(`[NAS-Pull-Worker] Processed verified tombstone: deleted ${targetTable} ID ${targetId}`);
+                        logger.log(`[NAS-Pull-Worker] Processed verified tombstone: deleted ${targetTable} source ID ${targetId} (target ID ${resolvedTargetId})`);
                     }
                     const tombAt = tomb.deleted_at || tomb.created_at || new Date().toISOString();
                     await updateCheckpoint(pgClient, 'replication_tombstones', String(tomb.id), tombAt, 1, null);
@@ -1054,66 +1783,7 @@ async function pullBusinessData(supabaseClient, pgClient, options = {}) {
                     const spUpdatedAt = sp.updated_at || sp.created_at || new Date().toISOString();
 
                     try {
-                        // Propagate soft-deletions if flagged
-                        if (sp.is_deleted === true || sp.deleted_at) {
-                            await pgClient.query('DELETE FROM make_product_colors WHERE spec_id = $1', [sp.id]);
-                            await pgClient.query('DELETE FROM make_product_specifications WHERE id = $1', [sp.id]);
-                            await updateCheckpoint(pgClient, 'make_product_specifications', spId, spUpdatedAt, 1, null);
-                            specsReplicated++;
-                            totalReplicated++;
-                            continue;
-                        }
-
-                        // Strict parent-before-child ordering: ensure parent product exists on TrueNAS
-                        if (sp.product_id) {
-                            const prodCheck = await pgClient.query('SELECT 1 FROM make_products WHERE id = $1', [sp.product_id]);
-                            if (!prodCheck.rows || prodCheck.rows.length === 0) {
-                                const { data: prodData, error: prodFetchErr } = await supabaseClient
-                                    .from('make_products')
-                                    .select('*')
-                                    .eq('id', sp.product_id)
-                                    .maybeSingle();
-
-                                if (prodFetchErr) {
-                                    throw new Error(`Failed to query parent product ${sp.product_id} for specification ${sp.id}: ${prodFetchErr.message}`);
-                                }
-
-                                if (!prodData) {
-                                    logger.warn(`[NAS-Pull-Worker] Missing parent product ${sp.product_id} for specification ${sp.id}. Halting specification stream.`);
-                                    throw new Error(`Missing parent product ${sp.product_id} for specification ${sp.id}`);
-                                }
-
-                                await upsertProductRecord(pgClient, supabaseClient, prodData, logger);
-                                logger.log(`[NAS-Pull-Worker] Resolved missing parent product ${sp.product_id} on-demand for specification ${sp.id}`);
-                            }
-                        }
-
-                        const upsertSpecSql = `
-                            INSERT INTO make_product_specifications (
-                                id, product_id, spec_code, spec_name, spec_details, is_active, image_url, created_at, updated_at
-                            )
-                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-                            ON CONFLICT (id) DO UPDATE SET
-                                product_id = EXCLUDED.product_id,
-                                spec_code = EXCLUDED.spec_code,
-                                spec_name = EXCLUDED.spec_name,
-                                spec_details = EXCLUDED.spec_details,
-                                is_active = EXCLUDED.is_active,
-                                image_url = EXCLUDED.image_url,
-                                updated_at = EXCLUDED.updated_at;
-                        `;
-                        await pgClient.query(upsertSpecSql, [
-                            sp.id,
-                            sp.product_id || null,
-                            sp.spec_code || null,
-                            sp.spec_name || '',
-                            sp.spec_details || null,
-                            sp.is_active !== undefined ? sp.is_active : true,
-                            sp.image_url || null,
-                            sp.created_at || new Date().toISOString(),
-                            spUpdatedAt
-                        ]);
-
+                        await upsertSpecificationRecord(pgClient, supabaseClient, sp, logger);
                         await updateCheckpoint(pgClient, 'make_product_specifications', spId, spUpdatedAt, 1, null);
                         specsReplicated++;
                         totalReplicated++;
@@ -1208,115 +1878,7 @@ async function pullBusinessData(supabaseClient, pgClient, options = {}) {
                     const clUpdatedAt = cl.updated_at || cl.created_at || new Date().toISOString();
 
                     try {
-                        // Propagate soft-deletions if flagged
-                        if (cl.is_deleted === true || cl.deleted_at) {
-                            await pgClient.query('DELETE FROM make_product_colors WHERE id = $1', [cl.id]);
-                            await updateCheckpoint(pgClient, 'make_product_colors', clId, clUpdatedAt, 1, null);
-                            colorsReplicated++;
-                            totalReplicated++;
-                            continue;
-                        }
-
-                        // Maintain parent spec reference validity
-                        if (cl.spec_id) {
-                            const specCheck = await pgClient.query('SELECT 1 FROM make_product_specifications WHERE id = $1', [cl.spec_id]);
-                            if (!specCheck.rows || specCheck.rows.length === 0) {
-                                const { data: specData, error: specFetchErr } = await supabaseClient
-                                    .from('make_product_specifications')
-                                    .select('*')
-                                    .eq('id', cl.spec_id)
-                                    .maybeSingle();
-
-                                if (!specFetchErr && specData) {
-                                    // Ensure spec's parent product exists before inserting spec
-                                    if (specData.product_id) {
-                                        const pCheck = await pgClient.query('SELECT 1 FROM make_products WHERE id = $1', [specData.product_id]);
-                                        if (!pCheck.rows || pCheck.rows.length === 0) {
-                                            const { data: pData, error: pErr } = await supabaseClient
-                                                .from('make_products')
-                                                .select('*')
-                                                .eq('id', specData.product_id)
-                                                .maybeSingle();
-                                            if (pErr) throw new Error(`Failed to query parent product ${specData.product_id} for spec ${specData.id}: ${pErr.message}`);
-                                            if (!pData) throw new Error(`Missing parent product ${specData.product_id} for spec ${specData.id}`);
-                                            await upsertProductRecord(pgClient, supabaseClient, pData, logger);
-                                        }
-                                    }
-
-                                    const upsertParentSpecSql = `
-                                        INSERT INTO make_product_specifications (
-                                            id, product_id, spec_code, spec_name, spec_details, is_active, image_url, created_at, updated_at
-                                        )
-                                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-                                        ON CONFLICT (id) DO UPDATE SET
-                                            product_id = EXCLUDED.product_id,
-                                            spec_code = EXCLUDED.spec_code,
-                                            spec_name = EXCLUDED.spec_name,
-                                            spec_details = EXCLUDED.spec_details,
-                                            is_active = EXCLUDED.is_active,
-                                            image_url = EXCLUDED.image_url,
-                                            updated_at = EXCLUDED.updated_at;
-                                    `;
-                                    await pgClient.query(upsertParentSpecSql, [
-                                        specData.id,
-                                        specData.product_id || null,
-                                        specData.spec_code || null,
-                                        specData.spec_name || '',
-                                        specData.spec_details || null,
-                                        specData.is_active !== undefined ? specData.is_active : true,
-                                        specData.image_url || null,
-                                        specData.created_at || new Date().toISOString(),
-                                        specData.updated_at || specData.created_at || new Date().toISOString()
-                                    ]);
-                                    logger.log(`[NAS-Pull-Worker] Resolved missing parent spec ${cl.spec_id} on-demand for color ${cl.id}`);
-                                } else {
-                                    throw new Error(`Missing parent specification ${cl.spec_id} for color ${cl.id}`);
-                                }
-                            }
-                        }
-
-                        // Maintain parent product reference validity on color itself
-                        if (cl.product_id) {
-                            const prodCheck = await pgClient.query('SELECT 1 FROM make_products WHERE id = $1', [cl.product_id]);
-                            if (!prodCheck.rows || prodCheck.rows.length === 0) {
-                                const { data: prodData, error: prodFetchErr } = await supabaseClient
-                                    .from('make_products')
-                                    .select('*')
-                                    .eq('id', cl.product_id)
-                                    .maybeSingle();
-                                if (prodFetchErr) throw new Error(`Failed to query parent product ${cl.product_id} for color ${cl.id}: ${prodFetchErr.message}`);
-                                if (!prodData) throw new Error(`Missing parent product ${cl.product_id} for color ${cl.id}`);
-                                await upsertProductRecord(pgClient, supabaseClient, prodData, logger);
-                                logger.log(`[NAS-Pull-Worker] Resolved missing parent product ${cl.product_id} on-demand for color ${cl.id}`);
-                            }
-                        }
-
-                        const upsertColorSql = `
-                            INSERT INTO make_product_colors (
-                                id, product_id, spec_id, color_name, color_code, is_active, image_url, created_at, updated_at
-                            )
-                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-                            ON CONFLICT (id) DO UPDATE SET
-                                product_id = EXCLUDED.product_id,
-                                spec_id = EXCLUDED.spec_id,
-                                color_name = EXCLUDED.color_name,
-                                color_code = EXCLUDED.color_code,
-                                is_active = EXCLUDED.is_active,
-                                image_url = EXCLUDED.image_url,
-                                updated_at = EXCLUDED.updated_at;
-                        `;
-                        await pgClient.query(upsertColorSql, [
-                            cl.id,
-                            cl.product_id || null,
-                            cl.spec_id || null,
-                            cl.color_name || '',
-                            cl.color_code || null,
-                            cl.is_active !== undefined ? cl.is_active : true,
-                            cl.image_url || null,
-                            cl.created_at || new Date().toISOString(),
-                            clUpdatedAt
-                        ]);
-
+                        await upsertColorRecord(pgClient, supabaseClient, cl, logger);
                         await updateCheckpoint(pgClient, 'make_product_colors', clId, clUpdatedAt, 1, null);
                         colorsReplicated++;
                         totalReplicated++;
@@ -2210,8 +2772,14 @@ module.exports = {
     updateCheckpoint,
     normalizeStorageObjectKey,
     isMissingColumnError,
+    getIdMapping,
+    recordIdMapping,
+    resolveTargetProductId,
+    resolveTargetSpecId,
     ensureProductCategory,
     upsertProductRecord,
+    upsertSpecificationRecord,
+    upsertColorRecord,
     discoverFromTable,
     pullBusinessData,
     pullAttachments,
