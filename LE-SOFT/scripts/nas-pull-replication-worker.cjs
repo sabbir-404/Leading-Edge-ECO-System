@@ -105,20 +105,34 @@ async function initCheckpoints(pgClient) {
  * Gets checkpoint for a specific table or stream
  */
 async function getCheckpoint(pgClient, tableName) {
+    // Keep PostgreSQL's full microsecond precision. node-postgres normally parses
+    // TIMESTAMPTZ into a JavaScript Date, which only retains milliseconds; truncating
+    // a watermark can make an already-processed row with fractional microseconds
+    // appear newer and be selected forever.
     const res = await pgClient.query(
-        'SELECT * FROM nas_replication_checkpoints WHERE table_name = $1',
+        `
+        SELECT
+            table_name,
+            last_replicated_id,
+            CASE
+                WHEN last_replicated_at IS NULL THEN NULL
+                ELSE to_char(
+                    last_replicated_at AT TIME ZONE 'UTC',
+                    'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+                )
+            END AS last_replicated_at,
+            items_replicated,
+            last_error,
+            updated_at
+        FROM nas_replication_checkpoints
+        WHERE table_name = $1
+        `,
         [tableName]
     );
     if (res.rows && res.rows.length > 0) {
-        const row = res.rows[0];
-        if (row.last_replicated_at instanceof Date) {
-            row.last_replicated_at = row.last_replicated_at.toISOString();
-        } else if (row.last_replicated_at) {
-            try {
-                row.last_replicated_at = new Date(row.last_replicated_at).toISOString();
-            } catch {}
-        }
-        return row;
+        // last_replicated_at is deliberately returned as text by SQL. Do not pass
+        // it through Date/toISOString(), which would discard the final 3 digits.
+        return res.rows[0];
     }
     return {
         table_name: tableName,
