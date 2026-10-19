@@ -410,9 +410,9 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
         expect(cp.last_replicated_at).toBe(precisionTimestamp);
 
         const selectSql = mockPg.query.mock.calls
-            .map((call: any[]) => call[0])
+            .map((call: any[]) => String(call[0]).replace(/\\s+/g, ' ').trim())
             .find((sql: string) =>
-                String(sql).includes('FROM nas_replication_checkpoints WHERE table_name = $1')
+                sql.includes('FROM nas_replication_checkpoints WHERE table_name = $1')
             );
         expect(String(selectSql)).toContain('to_char(');
         expect(String(selectSql)).toContain('SS.US');
