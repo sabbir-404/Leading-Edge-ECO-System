@@ -80,7 +80,7 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
                     return { rows: [] };
                 }
 
-                if (normalized.includes('SELECT * FROM nas_replication_checkpoints WHERE table_name = $1')) {
+                if (normalized.includes('FROM nas_replication_checkpoints WHERE table_name = $1')) {
                     const cp = mockCheckpoints.get(params[0]);
                     return { rows: cp ? [cp] : [] };
                 }
@@ -394,6 +394,29 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
         expect(cp.last_replicated_id).toBe('101');
         expect(cp.items_replicated).toBe(1);
         expect(cp.last_error).toBeNull();
+    });
+
+    it('preserves microsecond precision in replication checkpoint timestamps', async () => {
+        const precisionTimestamp = '2026-10-18T16:32:11.140255Z';
+        mockCheckpoints.set('replication_tombstones', {
+            table_name: 'replication_tombstones',
+            last_replicated_id: '3',
+            last_replicated_at: precisionTimestamp,
+            items_replicated: 1,
+            last_error: null
+        });
+
+        const cp = await getCheckpoint(mockPg, 'replication_tombstones');
+        expect(cp.last_replicated_at).toBe(precisionTimestamp);
+
+        const selectSql = mockPg.query.mock.calls
+            .map((call: any[]) => call[0])
+            .find((sql: string) =>
+                String(sql).includes('FROM nas_replication_checkpoints WHERE table_name = $1')
+            );
+        expect(String(selectSql)).toContain('to_char(');
+        expect(String(selectSql)).toContain('SS.US');
+        expect(String(selectSql)).toContain('AT TIME ZONE \'UTC\'');
     });
 
     // ── Test 2: Dependency-Ordered Business Data Pull ─────────────────────────
