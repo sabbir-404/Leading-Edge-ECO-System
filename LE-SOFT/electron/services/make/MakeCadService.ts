@@ -40,15 +40,15 @@ export interface MakeUploadResult {
 
 const ALLOWED_CAD_EXTENSIONS = new Set([
     'pdf', 'dwg', 'dxf', 'step', 'stp', 'iges', 'igs', 'skp', 'stl', 'obj',
-    'png', 'jpg', 'jpeg', 'webp'
+    'png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tiff', 'tif', 'avif', 'heic', 'heif'
 ]);
 
 const ALLOWED_PHOTO_EXTENSIONS = new Set([
-    'png', 'jpg', 'jpeg', 'webp'
+    'png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tiff', 'tif', 'avif', 'heic', 'heif'
 ]);
 
 const ALLOWED_INVOICE_EXTENSIONS = new Set([
-    'png', 'jpg', 'jpeg', 'webp', 'pdf'
+    'png', 'jpg', 'jpeg', 'webp', 'pdf', 'gif', 'bmp', 'tiff', 'tif', 'avif', 'heic', 'heif'
 ]);
 
 const MAX_CAD_FILE_SIZE = 50 * 1024 * 1024;    // 50 MB
@@ -93,6 +93,12 @@ export class MakeCadService {
             return { isValid: false, detectedMime: 'application/x-executable', error: 'Executable binaries are strictly forbidden.' };
         }
 
+        // Block script / HTML / SVG content masked as images or documents
+        const headerStr = buffer.toString('utf8', 0, Math.min(buffer.length, 512)).toLowerCase();
+        if (headerStr.includes('<script') || headerStr.includes('javascript:') || headerStr.startsWith('#!/')) {
+            return { isValid: false, detectedMime: 'text/plain', error: 'Executable scripts and active HTML content are strictly forbidden.' };
+        }
+
         const ext = extension.toLowerCase();
 
         // PDF (%PDF- / 0x25, 0x50, 0x44, 0x46, 0x2D)
@@ -131,6 +137,48 @@ export class MakeCadService {
             return { isValid: true, detectedMime: 'image/webp' };
         }
 
+        // GIF (GIF87a or GIF89a: 0x47, 0x49, 0x46, 0x38)
+        if (ext === 'gif') {
+            const isGif = buffer.length >= 6 && buffer.toString('ascii', 0, 4) === 'GIF8';
+            if (!isGif) {
+                return { isValid: false, detectedMime: 'application/octet-stream', error: 'Corrupted or invalid GIF image file.' };
+            }
+            return { isValid: true, detectedMime: 'image/gif' };
+        }
+
+        // BMP (0x42, 0x4D / BM)
+        if (ext === 'bmp') {
+            const isBmp = buffer.length >= 2 && buffer[0] === 0x42 && buffer[1] === 0x4D;
+            if (!isBmp) {
+                return { isValid: false, detectedMime: 'application/octet-stream', error: 'Corrupted or invalid BMP image file.' };
+            }
+            return { isValid: true, detectedMime: 'image/bmp' };
+        }
+
+        // TIFF (II*. / 0x49, 0x49, 0x2A, 0x00 or MM.* / 0x4D, 0x4D, 0x00, 0x2A)
+        if (ext === 'tiff' || ext === 'tif') {
+            const isTiffLE = buffer.length >= 4 && buffer[0] === 0x49 && buffer[1] === 0x49 && buffer[2] === 0x2A && buffer[3] === 0x00;
+            const isTiffBE = buffer.length >= 4 && buffer[0] === 0x4D && buffer[1] === 0x4D && buffer[2] === 0x00 && buffer[3] === 0x2A;
+            if (!isTiffLE && !isTiffBE) {
+                return { isValid: false, detectedMime: 'application/octet-stream', error: 'Corrupted or invalid TIFF image file.' };
+            }
+            return { isValid: true, detectedMime: 'image/tiff' };
+        }
+
+        // AVIF / HEIC / HEIF (ftyp at offset 4 with compatible brand)
+        if (ext === 'avif' || ext === 'heic' || ext === 'heif') {
+            const hasFtyp = buffer.length >= 12 && buffer.toString('ascii', 4, 8) === 'ftyp';
+            if (hasFtyp) {
+                const brand = buffer.toString('ascii', 8, 12).toLowerCase();
+                if (brand.includes('avif') || brand.includes('avis')) {
+                    return { isValid: true, detectedMime: 'image/avif' };
+                }
+                return { isValid: true, detectedMime: 'image/heic' };
+            }
+            // Allow general fallback for container formats
+            return { isValid: true, detectedMime: ext === 'avif' ? 'image/avif' : 'image/heic' };
+        }
+
         // DWG (AC10 / 0x41, 0x43, 0x31, 0x30)
         if (ext === 'dwg') {
             const isDwg = buffer.length >= 4 && buffer[0] === 0x41 && buffer[1] === 0x43 && buffer[2] === 0x31 && buffer[3] === 0x30;
@@ -161,16 +209,19 @@ export class MakeCadService {
             return { canceled: true, error: 'No active window found' };
         }
 
+        const commonImgExts = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tiff', 'tif', 'avif', 'heic', 'heif'];
+        const cadExts = ['pdf', 'dwg', 'dxf', 'step', 'stp', 'iges', 'igs', 'skp', 'stl', 'obj', ...commonImgExts];
+
         const filters = type === 'invoice_attachment'
             ? [
-                { name: 'Invoices & Documents', extensions: ['png', 'jpg', 'jpeg', 'webp', 'pdf'] },
+                { name: 'Invoices & Documents', extensions: ['pdf', ...commonImgExts] },
                 { name: 'PDF Documents', extensions: ['pdf'] },
-                { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }
+                { name: 'Images', extensions: commonImgExts }
               ]
             : (type === 'photo'
-                ? [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }]
+                ? [{ name: 'Images', extensions: commonImgExts }]
                 : [
-                    { name: 'Drawings & CAD Files', extensions: ['pdf', 'png', 'jpg', 'jpeg', 'webp', 'dwg', 'dxf', 'step', 'stp', 'iges', 'igs', 'skp', 'stl', 'obj'] },
+                    { name: 'Drawings & CAD Files', extensions: cadExts },
                     { name: 'All Supported Files', extensions: ['*'] }
                   ]);
 
@@ -397,6 +448,9 @@ export class MakeCadService {
         const nasStorageUrl = this.getNasStorageUrl();
 
         if (nasStorageUrl) {
+            const timeoutMs = Math.max(30000, Math.min(300000, Math.ceil(buffer.length / 200000) * 1000 + 30000));
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
             try {
                 const formData = new FormData();
                 formData.append('file', new Blob([new Uint8Array(buffer)], { type: mimeType }), storageFileName);
@@ -409,7 +463,7 @@ export class MakeCadService {
                         'x-subfolder': subfolder,
                         ...cfHeaders
                     },
-                    signal: AbortSignal.timeout(20000)
+                    signal: controller.signal
                 });
 
                 if (response.ok || (response as any).status === undefined) {
@@ -428,6 +482,8 @@ export class MakeCadService {
                 }
             } catch (nasErr: any) {
                 console.warn('[MakeCadService] NAS upload failed, attempting Supabase fallback:', nasErr.message);
+            } finally {
+                clearTimeout(timeoutId);
             }
         }
 
@@ -439,7 +495,7 @@ export class MakeCadService {
                 status: 'failed',
                 storagePath: '',
                 isPendingUpload: false,
-                error: 'Supabase Storage quota limit reached (600 MB / 1 GB ceiling).'
+                error: 'Supabase Storage quota limit reached (2.2 GB / 3 GB ceiling).'
             };
         }
 

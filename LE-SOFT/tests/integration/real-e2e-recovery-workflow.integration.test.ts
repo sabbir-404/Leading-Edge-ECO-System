@@ -460,15 +460,15 @@ describe('PR #41 Real-Engine E2E Recovery & Reconciliation Integration Suite', (
     });
 
     it.runIf(isApproved)('Step 9: Quota ceiling invariants & partition enforcement', async () => {
-        // Enforce hard ceiling definitions
-        expect(SupabaseQuotaManager.HARD_CEILING_BYTES).toBe(1_000_000_000);
-        expect(SupabaseQuotaManager.STORAGE_CEILING_BYTES).toBe(600_000_000);
-        expect(SupabaseQuotaManager.DATABASE_CEILING_BYTES).toBe(250_000_000);
-        expect(SupabaseQuotaManager.CRITICAL_RESERVE_BYTES).toBe(150_000_000);
+        // Enforce 3 GB forward quota ceiling definitions
+        expect(SupabaseQuotaManager.HARD_CEILING_BYTES).toBe(3_000_000_000);
+        expect(SupabaseQuotaManager.STORAGE_CEILING_BYTES).toBe(2_200_000_000);
+        expect(SupabaseQuotaManager.DATABASE_CEILING_BYTES).toBe(500_000_000);
+        expect(SupabaseQuotaManager.CRITICAL_RESERVE_BYTES).toBe(300_000_000);
 
-        // Attempting to reserve > 600 MB storage quota must be rejected by Postgres RPC
+        // Attempting to reserve single item exceeding 50 MB limit must be rejected by Postgres RPC
         const quotaMgr = new SupabaseQuotaManager(testUserId, authUserClient);
-        const overLimit = 650_000_000;
+        const overLimit = 60_000_000;
         const res = await quotaMgr.reserveStorageQuota(`e2e_over_${Date.now()}`, overLimit);
         expect(res).toBe(false);
 

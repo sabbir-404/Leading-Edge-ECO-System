@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Package, Plus, Search, Edit2, Trash2, 
   Layers, Maximize2, Palette, CheckCircle, AlertCircle, RefreshCw, X, Upload, Image as ImageIcon,
-  ShoppingCart, History as HistoryIcon, RotateCcw
+  ShoppingCart, History as HistoryIcon, RotateCcw, FileText
 } from 'lucide-react';
 import DashboardLayout from '../../components/DashboardLayout';
 import { canManageGlobalProductAttributes, getUserPricingPermissions } from '../../utils/permissions';
@@ -16,6 +16,7 @@ import {
 } from '../../utils/productCatalogDraft';
 import { ProductCreateModal } from './components/ProductCreateModal';
 import { resolveImageSrc, handleImageLoadError } from '../../utils/imageSrc';
+import { formatSizeDisplay } from '../../utils/formatSize';
 
 interface Size {
   id?: number;
@@ -58,6 +59,10 @@ interface Product {
   category?: string | null;
   description?: string;
   main_image?: string;
+  blueprint_url?: string | null;
+  size_id?: number | null;
+  size_label?: string | null;
+  size?: any | null;
   cost_price?: number | null;
   sale_price?: number | null;
   max_discount_type?: 'percent' | 'amount' | null;
@@ -889,10 +894,17 @@ const MakeProductCatalog: React.FC = () => {
                               <span style={{ fontSize: '0.68rem', color: 'var(--text-secondary)' }}>0 sold</span>
                             )}
                           </div>
-                          <div style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: '2px' }}>{p.product_name}</div>
+                          <div style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.product_name}</span>
+                            {(p.size_label || (p.sizes?.[0] ? formatSizeDisplay(p.sizes[0]) : null)) && (
+                              <span style={{ flexShrink: 0, fontSize: '0.68rem', fontWeight: 700, color: '#10b981', background: 'rgba(16,185,129,0.12)', padding: '1px 5px', borderRadius: '4px' }}>
+                                {p.size_label || (p.sizes?.[0] ? formatSizeDisplay(p.sizes[0]) : '')}
+                              </span>
+                            )}
+                          </div>
                           <div style={{ display: 'flex', gap: '8px', fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
                             <span>📋 {p.specifications?.length || 0} specs</span>
-                            <span>📏 {p.sizes?.length || 0} sizes</span>
+                            <span>📏 {p.size_label || (p.sizes?.[0] ? formatSizeDisplay(p.sizes[0]) : `${p.sizes?.length || 0} sizes`)}</span>
                             <span>🎨 {p.colors?.length || 0} colors</span>
                           </div>
                         </div>
@@ -970,9 +982,16 @@ const MakeProductCatalog: React.FC = () => {
                             <ShoppingCart size={12} /> {historyData?.totalQuantity || selectedProduct.purchased_count || 0} Units Purchased
                           </span>
                         </div>
-                        <h2 style={{ margin: '6px 0 4px', fontSize: '1.25rem', fontWeight: 800, color: 'var(--text-primary)', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
-                          {selectedProduct.product_name}
-                        </h2>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                          <h2 style={{ margin: '6px 0 4px', fontSize: '1.25rem', fontWeight: 800, color: 'var(--text-primary)', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
+                            {selectedProduct.product_name}
+                          </h2>
+                          {(selectedProduct.size_label || (selectedProduct.size ? formatSizeDisplay(selectedProduct.size) : (selectedProduct.sizes?.[0] ? formatSizeDisplay(selectedProduct.sizes[0]) : null))) && (
+                            <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#10b981', background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.25)', padding: '2px 8px', borderRadius: '6px' }}>
+                              📏 Size: {selectedProduct.size_label || (selectedProduct.size ? formatSizeDisplay(selectedProduct.size) : (selectedProduct.sizes?.[0] ? formatSizeDisplay(selectedProduct.sizes[0]) : ''))}
+                            </span>
+                          )}
+                        </div>
                         <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.85rem', maxWidth: '650px', wordBreak: 'break-word' }}>
                           {selectedProduct.description || 'No description provided.'}
                         </p>
@@ -1059,6 +1078,19 @@ const MakeProductCatalog: React.FC = () => {
                     </div>
 
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', flexShrink: 0 }}>
+                      {selectedProduct.blueprint_url && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const resolved = resolveImageSrc(selectedProduct.blueprint_url);
+                            window.open(resolved, '_blank');
+                          }}
+                          style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 12px', background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.3)', borderRadius: '8px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 700, color: '#3b82f6', whiteSpace: 'nowrap' }}
+                          title="View technical CAD blueprint or PDF drawing"
+                        >
+                          <FileText size={14} /> View Blueprint
+                        </button>
+                      )}
                       <button 
                         onClick={() => setActiveTab('history')}
                         style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 12px', background: activeTab === 'history' ? '#059669' : 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.3)', borderRadius: '8px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 700, color: activeTab === 'history' ? '#fff' : '#059669', whiteSpace: 'nowrap' }}>

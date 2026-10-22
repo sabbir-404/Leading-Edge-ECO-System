@@ -8,7 +8,7 @@
  */
 
 /** Parse the stored user once. Returns {} if not logged in. */
-const getUser = (): Record<string, any> => {
+export const getUser = (): Record<string, any> => {
     try {
         return JSON.parse(localStorage.getItem('user') || '{}');
     } catch {
@@ -17,10 +17,10 @@ const getUser = (): Record<string, any> => {
 };
 
 /** True if logged-in user is superadmin (bypasses all checks). */
-export const isSuperadmin = (): boolean => {
+export const isSuperadmin = (roleOverride?: string): boolean => {
     const u = getUser();
-    const roleFromUser = (u.role || '').toLowerCase();
-    const roleFromStorage = (localStorage.getItem('user_role') || '').toLowerCase();
+    const roleFromUser = (roleOverride || u.role || '').toLowerCase();
+    const roleFromStorage = (roleOverride || localStorage.getItem('user_role') || '').toLowerCase();
     return roleFromUser === 'superadmin' || roleFromStorage === 'superadmin';
 };
 
@@ -60,28 +60,41 @@ export const canAdjustBillPrice = (): boolean => hasPerm('adjust_bill_price');
 // ── User Group & Role Identification ────────────────────────────────────────
 
 /** True if user is Admin or Super Admin (can modify all information). */
-export const isAdmin = (): boolean => {
-    if (isSuperadmin()) return true;
+export const isAdmin = (roleOverride?: string): boolean => {
+    if (isSuperadmin(roleOverride)) return true;
     const u = getUser();
-    const roleFromUser = (u.role || '').toLowerCase();
-    const roleFromStorage = (localStorage.getItem('user_role') || '').toLowerCase();
-    const groupName = (u.user_group_name || u.user_groups?.name || '').toLowerCase();
+    const roleFromUser = (roleOverride || u.role || '').toLowerCase();
+    const roleFromStorage = (roleOverride || localStorage.getItem('user_role') || '').toLowerCase();
+    const groupName = (roleOverride || u.user_group_name || u.user_groups?.name || '').toLowerCase();
+
+    // Explicitly exclude non-admin roles even if they have "manager" in title (e.g. factory manager)
+    if (
+        roleFromUser === 'factory_manager' || roleFromUser === 'factory manager' || roleFromUser === 'factory' ||
+        roleFromStorage === 'factory_manager' || roleFromStorage === 'factory manager' || roleFromStorage === 'factory' ||
+        roleFromUser === 'designer' || roleFromUser === 'furniture_designer' || roleFromUser === 'furniture designer' ||
+        roleFromStorage === 'designer' || roleFromStorage === 'furniture_designer' || roleFromStorage === 'furniture designer' ||
+        roleFromUser === 'salesperson' || roleFromUser === 'salesman' ||
+        roleFromStorage === 'salesperson' || roleFromStorage === 'salesman'
+    ) {
+        return false;
+    }
+
     return (
         roleFromUser === 'admin' ||
         roleFromUser === 'manager' ||
         roleFromStorage === 'admin' ||
         roleFromStorage === 'manager' ||
         groupName.includes('admin') ||
-        groupName.includes('manager')
+        (groupName.includes('manager') && !groupName.includes('factory'))
     );
 };
 
 /** True if user belongs to the Furniture Designer group. */
-export const isFurnitureDesigner = (): boolean => {
-    if (isSuperadmin() || isAdmin()) return false;
+export const isFurnitureDesigner = (roleOverride?: string): boolean => {
+    if (isSuperadmin(roleOverride) || isAdmin(roleOverride)) return false;
     const u = getUser();
-    const role = (u.role || localStorage.getItem('user_role') || '').toLowerCase();
-    const groupName = (u.user_group_name || u.user_groups?.name || '').toLowerCase();
+    const role = (roleOverride || u.role || localStorage.getItem('user_role') || '').toLowerCase();
+    const groupName = (roleOverride || u.user_group_name || u.user_groups?.name || '').toLowerCase();
     const perms: Record<string, any> = typeof u.permissions === 'object' ? (u.permissions || {}) : {};
     return (
         role === 'furniture_designer' ||
@@ -94,15 +107,16 @@ export const isFurnitureDesigner = (): boolean => {
 };
 
 /** True if user belongs to the Salesperson / Salesman group. */
-export const isSalesperson = (): boolean => {
-    if (isSuperadmin() || isAdmin()) return false;
+export const isSalesperson = (roleOverride?: string): boolean => {
+    if (isSuperadmin(roleOverride) || isAdmin(roleOverride)) return false;
     const u = getUser();
-    const role = (u.role || localStorage.getItem('user_role') || '').toLowerCase();
-    const groupName = (u.user_group_name || u.user_groups?.name || '').toLowerCase();
+    const role = (roleOverride || u.role || localStorage.getItem('user_role') || '').toLowerCase();
+    const groupName = (roleOverride || u.user_group_name || u.user_groups?.name || '').toLowerCase();
     const perms: Record<string, any> = typeof u.permissions === 'object' ? (u.permissions || {}) : {};
     return (
         role === 'salesperson' ||
         role === 'salesman' ||
+        role === 'sales' ||
         groupName.includes('salesperson') ||
         groupName.includes('salesman') ||
         !!perms.access_make_sales_portal ||
@@ -111,11 +125,11 @@ export const isSalesperson = (): boolean => {
 };
 
 /** True if user belongs to the Factory Manager group. */
-export const isFactoryManager = (): boolean => {
-    if (isSuperadmin() || isAdmin()) return false;
+export const isFactoryManager = (roleOverride?: string): boolean => {
+    if (isSuperadmin(roleOverride) || isAdmin(roleOverride)) return false;
     const u = getUser();
-    const role = (u.role || localStorage.getItem('user_role') || '').toLowerCase();
-    const groupName = (u.user_group_name || u.user_groups?.name || '').toLowerCase();
+    const role = (roleOverride || u.role || localStorage.getItem('user_role') || '').toLowerCase();
+    const groupName = (roleOverride || u.user_group_name || u.user_groups?.name || '').toLowerCase();
     return (
         role === 'factory_manager' ||
         role === 'factory manager' ||
@@ -135,33 +149,81 @@ export const canModifyAllInfo = (): boolean => {
 
 /**
  * True if the current user can view the Cost Price of products/orders:
- * Allowed for Superadmin, Admin, Furniture Designer, and Factory Manager.
- * Salespersons are strictly forbidden from viewing the cost price.
+ * Superadmin and Admin always retain access.
+ * Cost is visible to designers, salespersons, and factory managers by workflow policy.
  */
-export const canViewCostPrice = (): boolean => {
-    if (isSuperadmin() || isAdmin()) return true;
-    if (isSalesperson()) return false;
-    return isFurnitureDesigner() || isFactoryManager() || hasPerm('set_make_cost_price') || hasPerm('view_cost_price');
+export const canViewCostPrice = (roleOverride?: string): boolean => {
+    if (isSuperadmin(roleOverride) || isAdmin(roleOverride)) return true;
+    if (isSalesperson(roleOverride) || isFurnitureDesigner(roleOverride) || isFactoryManager(roleOverride)) return true;
+    const u = getUser();
+    const perms: Record<string, any> = typeof u.permissions === 'object' ? (u.permissions || {}) : {};
+    if (perms['view_product_cost_price'] !== undefined) {
+        return !!perms['view_product_cost_price'];
+    }
+    return hasPerm('set_make_cost_price') || hasPerm('view_cost_price');
 };
+
+/** Alias for canViewCostPrice */
+export const canViewProductCostPrice = canViewCostPrice;
 
 /**
  * True if the current user can enter/edit the Cost Price:
  * Strictly Superadmin, Admin, and Furniture Designer.
  * Factory Manager and Salespersons cannot edit cost prices.
  */
-export const canEditCostPrice = (): boolean => {
-    if (isSuperadmin() || isAdmin()) return true;
-    if (isSalesperson() || isFactoryManager()) return false;
-    return isFurnitureDesigner() || hasPerm('set_make_cost_price');
+export const canEditCostPrice = (roleOverride?: string): boolean => {
+    if (isSuperadmin(roleOverride) || isAdmin(roleOverride)) return true;
+    if (isSalesperson(roleOverride) || isFactoryManager(roleOverride)) return false;
+    return isFurnitureDesigner(roleOverride) || hasPerm('set_make_cost_price');
 };
 
 /**
- * True if the current user can view Sale Price:
- * Strictly hidden for Factory Manager everywhere.
- * Visible for Superadmin, Admin, Furniture Designer, and Salesperson.
+ * Sale price is restricted to designers and administrators. Sales and factory roles
+ * must not gain visibility from incidental permission flags.
  */
-export const canViewSalePrice = (): boolean => {
-    if (isFactoryManager()) return false;
+export const canViewSalePrice = (roleOverride?: string): boolean => {
+    if (isSuperadmin(roleOverride) || isAdmin(roleOverride)) return true;
+    if (isSalesperson(roleOverride) || isFactoryManager(roleOverride)) return false;
+    if (isFurnitureDesigner(roleOverride)) return true;
+    const u = getUser();
+    const perms: Record<string, any> = typeof u.permissions === 'object' ? (u.permissions || {}) : {};
+    if (perms['view_product_sale_price'] !== undefined) {
+        return !!perms['view_product_sale_price'];
+    }
+    return false;
+};
+
+/** Alias for canViewSalePrice */
+export const canViewProductSalePrice = canViewSalePrice;
+
+/**
+ * True if the current user can view product blueprints and technical CAD drawings:
+ * Superadmin, Admin, and Furniture Designer retain access by default.
+ * Other roles require 'view_product_blueprint' permission.
+ */
+export const canViewProductBlueprint = (roleOverride?: string): boolean => {
+    if (isSuperadmin(roleOverride) || isAdmin(roleOverride)) return true;
+    const u = getUser();
+    const perms: Record<string, any> = typeof u.permissions === 'object' ? (u.permissions || {}) : {};
+    if (perms['view_product_blueprint'] !== undefined) {
+        return !!perms['view_product_blueprint'];
+    }
+    if (isFurnitureDesigner(roleOverride)) return true;
+    return false;
+};
+
+/**
+ * True if the current user can view maximum permitted discount limits on products:
+ * Configurable via 'view_product_max_discount'.
+ */
+export const canViewProductMaxDiscount = (roleOverride?: string): boolean => {
+    if (isSuperadmin(roleOverride) || isAdmin(roleOverride)) return true;
+    const u = getUser();
+    const perms: Record<string, any> = typeof u.permissions === 'object' ? (u.permissions || {}) : {};
+    if (perms['view_product_max_discount'] !== undefined) {
+        return !!perms['view_product_max_discount'];
+    }
+    if (isFactoryManager(roleOverride)) return false;
     return true;
 };
 
@@ -170,24 +232,38 @@ export const canViewSalePrice = (): boolean => {
  * Furniture Designer, Admin, and Superadmin can enter sale price.
  * Factory Manager and Salespersons cannot set sale prices directly.
  */
-export const canEditSalePrice = (): boolean => {
-    if (isSuperadmin() || isAdmin()) return true;
-    if (isSalesperson() || isFactoryManager()) return false;
-    return isFurnitureDesigner() || hasPerm('set_make_sale_price');
+export const canEditSalePrice = (roleOverride?: string): boolean => {
+    if (isSuperadmin(roleOverride) || isAdmin(roleOverride)) return true;
+    if (isSalesperson(roleOverride) || isFactoryManager(roleOverride)) return false;
+    return isFurnitureDesigner(roleOverride) || hasPerm('set_make_sale_price');
+};
+
+/**
+ * True if the user can enter an initial payment (Money Received) when placing an order:
+ * Furniture Designer, Salesperson, Admin, and Superadmin.
+ * Factory Manager and unauthorized roles cannot enter initial payments.
+ */
+export const canEnterInitialPayment = (roleOverride?: string): boolean => {
+    if (isSuperadmin(roleOverride) || isAdmin(roleOverride)) return true;
+    if (isFactoryManager(roleOverride)) return false;
+    return isFurnitureDesigner(roleOverride) || isSalesperson(roleOverride);
 };
 
 /** Helper to get comprehensive user role and pricing permissions snapshot */
-export const getUserPricingPermissions = () => {
-    const isSuper = isSuperadmin();
-    const admin = isAdmin();
-    const designer = isFurnitureDesigner();
-    const sales = isSalesperson();
-    const factory = isFactoryManager();
+export const getUserPricingPermissions = (roleOverride?: string) => {
+    const isSuper = isSuperadmin(roleOverride);
+    const admin = isAdmin(roleOverride);
+    const designer = isFurnitureDesigner(roleOverride);
+    const sales = isSalesperson(roleOverride);
+    const factory = isFactoryManager(roleOverride);
     const modifyAll = canModifyAllInfo();
-    const viewCost = canViewCostPrice();
-    const editCost = canEditCostPrice();
-    const viewSale = canViewSalePrice();
-    const editSale = canEditSalePrice();
+    const viewCost = canViewCostPrice(roleOverride);
+    const editCost = canEditCostPrice(roleOverride);
+    const viewSale = canViewSalePrice(roleOverride);
+    const editSale = canEditSalePrice(roleOverride);
+    const viewBlueprint = canViewProductBlueprint(roleOverride);
+    const viewMaxDiscount = canViewProductMaxDiscount(roleOverride);
+    const canEnterPayment = canEnterInitialPayment(roleOverride);
 
     let displayRoleName = 'User';
     if (isSuper) displayRoleName = 'Superadmin';
@@ -208,6 +284,11 @@ export const getUserPricingPermissions = () => {
         canEditCostPrice: editCost,
         canViewSalePrice: viewSale,
         canEditSalePrice: editSale,
+        canViewBlueprint: viewBlueprint,
+        canViewProductBlueprint: viewBlueprint,
+        canViewMaxDiscount: viewMaxDiscount,
+        canViewProductMaxDiscount: viewMaxDiscount,
+        canEnterInitialPayment: canEnterPayment,
         displayRoleName,
     };
 };

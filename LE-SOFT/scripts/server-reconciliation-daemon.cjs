@@ -44,6 +44,15 @@ function getPgConfig(env = process.env) {
     };
 }
 
+function isCatalogAsset(res) {
+    if (!res) return false;
+    return res.entity_type === 'make_products' ||
+           res.entity_type === 'catalog' ||
+           res.subfolder === 'catalog' ||
+           (typeof res.id === 'string' && (res.id.startsWith('catalog_') || res.id.startsWith('product_') || res.id.includes('_blueprint'))) ||
+           res.retention_policy === 'permanent_catalog';
+}
+
 /**
  * Reconcile a single committed reservation:
  * 1. Verifies cloud deletion before quota pruning.
@@ -59,7 +68,46 @@ async function reconcileReservation(res, supabaseAdmin, pgClient) {
         let isCloudCopyDeleted = false;
 
         if (res.resource_type === 'storage') {
-            // For storage fallback: inspect Supabase Storage bucket 'make-order-files'
+            // ── CATALOG EXCEPTION ────────────────────────────────────────────────
+            // Supabase must remain the authoritative source for catalog data and the
+            // durable source for catalog images and blueprints so the catalog remains
+            // fully accessible during NAS/Tailscale network outages.
+            // NEVER prune product catalog assets!
+            if (isCatalogAsset(res)) {
+                console.log(`[ReconciliationDaemon] Preserving durable catalog asset in Supabase Cloud: ${res.id}`);
+                return {
+                    success: true,
+                    pruned: false,
+                    preserved: true,
+                    reason: 'CATALOG_ASSET_PRESERVED_IN_CLOUD'
+                };
+            }
+
+            // ── VERIFY NAS PERSISTENCE BEFORE DELETION ──────────────────────────
+            // If pgClient is connected to TrueNAS, verify that this reservation has
+            // an active registered file replica or database association.
+            if (pgClient && typeof pgClient.query === 'function') {
+                try {
+                    const chkRes = await pgClient.query(`
+                        SELECT 1 FROM nas_replicated_files
+                        WHERE object_key LIKE $1 OR entity_id = $2
+                        LIMIT 1
+                    `, [`%${res.id}%`, String(res.id)]);
+
+                    // If file is not in nas_replicated_files, check if an order references it or if NAS verification option is supplied
+                    if (res.verify_nas === true && (!chkRes || !chkRes.rows || chkRes.rows.length === 0)) {
+                        return {
+                            success: false,
+                            pruned: false,
+                            error: `NAS replication unverified for ${res.id}; file not yet registered on TrueNAS`
+                        };
+                    }
+                } catch (pgErr) {
+                    // If nas_replicated_files does not exist, continue fallback check
+                }
+            }
+
+            // Inspect Supabase Storage bucket 'make-order-files'
             // Ensure cloud file is removed prior to quota pruning
             const subfolder = res.id.includes('cad') ? 'cad' : 'products';
             const { data: files, error: listErr } = await supabaseAdmin.storage
@@ -260,6 +308,7 @@ if (require.main === module) {
 
 module.exports = {
     getPgConfig,
+    isCatalogAsset,
     reconcileReservation,
     runReconciliationCycle
 };

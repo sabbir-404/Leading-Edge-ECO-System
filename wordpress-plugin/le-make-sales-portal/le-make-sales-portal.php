@@ -3,7 +3,7 @@
  * Plugin Name: LE-SOFT MAKE — Sales & Furniture Design Portal
  * Plugin URI:  https://leadingedge.me
  * Description: Connected Sales & Design Portal for LE-SOFT MAKE module with centralized Product Database, custom dimensional sizing, version-tracked approvals, and direct TrueNAS PostgREST / Supabase integration.
- * Version:     1.8.1
+ * Version:     1.8.13
  * Author:      Leading Edge Technologies
  * Author URI:  https://leadingedge.me
  * Text Domain: le-make-sales-portal
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
     exit; // Exit if accessed directly
 }
 
-define('LE_MAKE_PLUGIN_VERSION', '1.8.1');
+define('LE_MAKE_PLUGIN_VERSION', '1.8.13');
 define('LE_MAKE_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('LE_MAKE_PLUGIN_URL', plugin_dir_url(__FILE__));
 

@@ -103,7 +103,7 @@ describe('LESOFT v1.8.4 Real-World Clean-Install & Production Validation', () =>
         expect(hasSupabaseConfig()).toBe(false);
     });
 
-    it('3. Real Customer Flow: Confirm device ID, activate V2 license, bootstrap public Supabase, and query MAKE', async () => {
+    it('3. Real Customer Flow: Confirm device ID, activate V2 license, bootstrap public Supabase, and reject anonymous private reads', async () => {
         // Strip developer secrets completely
         delete process.env.LE_GENERATION_SECRET;
         delete process.env.LE_LICENSE_SIGNING_PRIVATE_KEY;
@@ -141,20 +141,17 @@ describe('LESOFT v1.8.4 Real-World Clean-Install & Production Validation', () =>
         // 3.5 Reinitialize client singletons
         reinitSupabaseClients();
 
-        // 3.6 Query Supabase via public client
+        // 3.6 Public credentials must not expose user or MAKE records.
         const { data: users, error: userErr } = await supabase.from('users').select('id,username,role').limit(3);
-        expect(userErr).toBeNull();
-        expect(users).toBeDefined();
-        expect(users!.length).toBeGreaterThan(0);
+        expect(userErr?.code).toBe('42501');
+        expect(users).toBeNull();
 
-        // 3.7 Confirm MAKE product catalog / categories readable
+        // 3.7 MAKE catalog access also requires an authenticated app session.
         const { data: categories, error: catErr } = await supabase.from('make_product_categories').select('id,name').limit(3);
-        // Table exists in production schema
-        expect(catErr).toBeNull();
-        expect(categories).toBeDefined();
+        expect(catErr?.code).toBe('42501');
+        expect(categories).toBeNull();
 
-        // 3.8 Confirm read-only verification (no mutations performed)
-        expect(userErr).toBeNull();
+        // 3.8 No mutations are performed by the anonymous client.
     }, 30000);
 
     it('4. Security Verification: Customer environment has zero developer secrets, zero private keys, and safe logs', () => {

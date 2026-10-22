@@ -15,6 +15,7 @@ import { MediaProtocolService } from './services/media/MediaProtocolService';
 import { NASConnectionManager } from './services/make/NASConnectionManager';
 import { WindowsNotificationService } from './services/WindowsNotificationService';
 import { WatchdogService } from './services/WatchdogService';
+import { getManualUpdateFeedUrl, selectManualUpdateRelease, type GitHubReleaseLike } from './services/updater/versionCompare';
 
 // Register privileged custom scheme for secure media loading before app is ready
 MediaProtocolService.registerSchemeAsPrivileged();
@@ -108,34 +109,30 @@ function setupAutoUpdater() {
         });
     }
 
-    // Helper: fallback update check for unsigned macOS builds
+    // Helper: fallback update check for unsigned macOS builds.
+    // Uses SemVer precedence (handles 1.8.13-rc.1 etc.). The releases *list* endpoint is used
+    // because /releases/latest excludes prereleases; selectManualUpdateRelease() only offers
+    // prereleases to installs that are themselves prereleases (same default as electron-updater).
     const performManualMacCheck = async () => {
         try {
-            const response = await fetch('https://api.github.com/repos/sabbir-404/Leading-Edge-ECO-System/releases/latest');
+            const response = await fetch(getManualUpdateFeedUrl('sabbir-404', 'Leading-Edge-ECO-System'));
             if (!response.ok) return;
-            const data = await response.json();
-            if (data && data.tag_name) {
-                const current = app.getVersion().replace('v', '').split('.').map(Number);
-                const latest = data.tag_name.replace('v', '').split('.').map(Number);
-                
-                let isNewer = false;
-                for (let i = 0; i < 3; i++) {
-                    if ((latest[i] || 0) > (current[i] || 0)) { isNewer = true; break; }
-                    if ((latest[i] || 0) < (current[i] || 0)) { break; }
-                }
+            const releases = (await response.json()) as GitHubReleaseLike[];
+            const currentVersion = app.getVersion();
+            const newer = selectManualUpdateRelease(currentVersion, releases);
 
-                if (isNewer) {
-                    broadcast({ 
-                        status: 'available', 
-                        isManual: true,
-                        info: { 
-                            version: data.tag_name, 
-                            releaseNotes: 'Automatic installation is unavailable because this Mac build is unsigned. Please download the latest version from the releases page manually.' 
-                        } 
-                    });
-                } else {
-                    broadcast({ status: 'up-to-date' });
-                }
+            if (newer) {
+                updaterLogger.info(`Manual fallback: ${newer.tag_name} available (current: v${currentVersion})`);
+                broadcast({
+                    status: 'available',
+                    isManual: true,
+                    info: {
+                        version: newer.tag_name,
+                        releaseNotes: 'Automatic installation is unavailable because this Mac build is unsigned. Please download the latest version from the releases page manually.'
+                    }
+                });
+            } else {
+                broadcast({ status: 'up-to-date' });
             }
         } catch (err: any) { updaterLogger.error(`Manual fallback fetch failed: ${sanitizeUpdaterLog(err?.message)}`); }
     };

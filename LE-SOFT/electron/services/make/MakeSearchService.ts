@@ -112,7 +112,7 @@ export class MakeSearchService {
             let baseQuery = supabase.from('make_products').select(`
                 *,
                 specifications:make_product_specifications(*),
-                sizes:make_product_sizes(*),
+                sizes:make_product_sizes!make_product_sizes_product_id_fkey(*),
                 colors:make_product_colors(*),
                 images:make_product_images(*)
             `).order('product_name', { ascending: true }).limit(limit);
@@ -131,7 +131,7 @@ export class MakeSearchService {
                 let q2 = supabase.from('make_products').select(`
                     *,
                     specifications:make_product_specifications(*),
-                    sizes:make_product_sizes(*),
+                    sizes:make_product_sizes!make_product_sizes_product_id_fkey(*),
                     colors:make_product_colors(*)
                 `).order('product_name', { ascending: true }).limit(limit);
                 if (activeOnly) q2 = q2.eq('is_active', true);
@@ -179,7 +179,7 @@ export class MakeSearchService {
                 const fullQuery = supabase.from('make_products').select(`
                     *,
                     specifications:make_product_specifications(*),
-                    sizes:make_product_sizes(*),
+                    sizes:make_product_sizes!make_product_sizes_product_id_fkey(*),
                     colors:make_product_colors(*),
                     images:make_product_images(*)
                 `);
@@ -189,7 +189,7 @@ export class MakeSearchService {
                     const fallback = await supabase.from('make_products').select(`
                         *,
                         specifications:make_product_specifications(*),
-                        sizes:make_product_sizes(*),
+                        sizes:make_product_sizes!make_product_sizes_product_id_fkey(*),
                         colors:make_product_colors(*)
                     `);
                     if (fallback.data) fallback.data.forEach((p: any) => { p.images = []; });
@@ -555,7 +555,7 @@ export class MakeSearchService {
         if (!normQuery) {
             let q = supabase
                 .from('make_orders')
-                .select('*, salesman:users(full_name), bill:bills(invoice_number)')
+                .select('*, salesman:users!make_orders_salesman_id_fkey(full_name), bill:bills!make_orders_bill_id_fkey(invoice_number)')
                 .order('created_at', { ascending: false });
 
             if (params.status && params.status !== 'All') {
@@ -580,7 +580,7 @@ export class MakeSearchService {
 
             const { data: baseData } = await supabase
                 .from('make_orders')
-                .select('*, salesman:users(full_name)')
+                .select('*, salesman:users!make_orders_salesman_id_fkey(full_name)')
                 .order('created_at', { ascending: false });
 
             return decryptRows(baseData || []).map((o: any) => ({
@@ -672,7 +672,7 @@ export class MakeSearchService {
         try {
             let q = supabase
                 .from('make_orders')
-                .select('*, salesman:users(full_name), bill:bills(invoice_number)')
+                .select('*, salesman:users!make_orders_salesman_id_fkey(full_name), bill:bills!make_orders_bill_id_fkey(invoice_number)')
                 .in('id', idList)
                 .order('created_at', { ascending: false });
 
@@ -698,7 +698,7 @@ export class MakeSearchService {
         // Fallback without bills join
         let baseQ = supabase
             .from('make_orders')
-            .select('*, salesman:users(full_name)')
+            .select('*, salesman:users!make_orders_salesman_id_fkey(full_name)')
             .in('id', idList)
             .order('created_at', { ascending: false });
 

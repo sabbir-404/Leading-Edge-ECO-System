@@ -149,6 +149,34 @@ class LEMakeApiController {
             'permission_callback' => array($this, 'check_user_permission'),
         ));
 
+        // Request Production Approval on held order
+        register_rest_route($this->namespace, '/orders/(?P<id>\d+)/request-approval', array(
+            'methods'             => 'POST',
+            'callback'            => array($this, 'request_production_approval'),
+            'permission_callback' => array($this, 'check_user_permission'),
+        ));
+
+        // Decide Production Approval (Approve/Reject override)
+        register_rest_route($this->namespace, '/orders/(?P<id>\d+)/decide-approval', array(
+            'methods'             => 'POST',
+            'callback'            => array($this, 'decide_production_approval'),
+            'permission_callback' => array($this, 'check_admin_permission'),
+        ));
+
+        // Record Order Payment
+        register_rest_route($this->namespace, '/orders/(?P<id>\d+)/payments', array(
+            'methods'             => 'POST',
+            'callback'            => array($this, 'record_order_payment'),
+            'permission_callback' => array($this, 'check_user_permission'),
+        ));
+
+        // Get Order Payments Ledger
+        register_rest_route($this->namespace, '/orders/(?P<id>\d+)/payments', array(
+            'methods'             => 'GET',
+            'callback'            => array($this, 'get_order_payments'),
+            'permission_callback' => array($this, 'check_user_permission'),
+        ));
+
         // In-Portal & Push Notifications
         register_rest_route($this->namespace, '/notifications', array(
             'methods'             => 'GET',
@@ -199,6 +227,10 @@ class LEMakeApiController {
 
     public function check_user_permission() {
         return is_user_logged_in();
+    }
+
+    public function check_admin_permission() {
+        return is_user_logged_in() && (current_user_can('manage_options') || current_user_can('administrator'));
     }
 
     /**
@@ -811,6 +843,7 @@ class LEMakeApiController {
         
         return rest_ensure_response(array(
             'nas_online'         => $client->is_nas_online(),
+            'nas_authorization_error' => $client->get_nas_authorization_error(),
             'active_tier'        => $client->get_connection_tier(),
             'active_url'         => $client->get_active_url(),
             'pending_orders'     => count($orders_queue),
@@ -1345,6 +1378,64 @@ class LEMakeApiController {
 
         echo $body;
         exit;
+    }
+
+    public function request_production_approval(WP_REST_Request $request) {
+        $order_id = intval($request->get_param('id'));
+        $body = $request->get_json_params() ?: $request->get_body_params();
+        $notes = sanitize_textarea_field($body['notes'] ?? '');
+
+        $client = LEMakeNasDbClient::get_instance();
+        $res = $client->request_production_approval($order_id, $notes, wp_get_current_user());
+        if (is_wp_error($res)) {
+            return new WP_REST_Response(array('error' => $res->get_error_message()), 400);
+        }
+        return new WP_REST_Response($res, 200);
+    }
+
+    public function decide_production_approval(WP_REST_Request $request) {
+        $order_id = intval($request->get_param('id'));
+        $body = $request->get_json_params() ?: $request->get_body_params();
+        $decision = sanitize_text_field($body['decision'] ?? '');
+        $notes = sanitize_textarea_field($body['notes'] ?? '');
+
+        if (!in_array($decision, array('approved', 'rejected'), true)) {
+            return new WP_REST_Response(array('error' => 'Decision must be approved or rejected'), 400);
+        }
+
+        $client = LEMakeNasDbClient::get_instance();
+        $res = $client->decide_production_approval($order_id, $decision, $notes, wp_get_current_user());
+        if (is_wp_error($res)) {
+            return new WP_REST_Response(array('error' => $res->get_error_message()), 400);
+        }
+        return new WP_REST_Response($res, 200);
+    }
+
+    public function record_order_payment(WP_REST_Request $request) {
+        $order_id = intval($request->get_param('id'));
+        $body = $request->get_json_params() ?: $request->get_body_params();
+        $amount = floatval($body['amount'] ?? 0);
+        $method = sanitize_text_field($body['payment_method'] ?? 'CASH');
+        $ref = sanitize_text_field($body['reference'] ?? '');
+        $notes = sanitize_textarea_field($body['notes'] ?? '');
+
+        if ($amount <= 0) {
+            return new WP_REST_Response(array('error' => 'Payment amount must be greater than zero'), 400);
+        }
+
+        $client = LEMakeNasDbClient::get_instance();
+        $res = $client->record_order_payment($order_id, $amount, $method, $ref, $notes, wp_get_current_user());
+        if (is_wp_error($res)) {
+            return new WP_REST_Response(array('error' => $res->get_error_message()), 400);
+        }
+        return new WP_REST_Response($res, 200);
+    }
+
+    public function get_order_payments(WP_REST_Request $request) {
+        $order_id = intval($request->get_param('id'));
+        $client = LEMakeNasDbClient::get_instance();
+        $res = $client->get_order_payments($order_id);
+        return new WP_REST_Response($res, 200);
     }
 }
 

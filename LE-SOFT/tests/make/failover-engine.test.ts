@@ -122,6 +122,15 @@ describe('DatabaseFailoverEngine — Dual Database Architecture & Reliability', 
 
       expect(fetchMock).toHaveBeenCalledWith('https://db.lenas.me', expect.objectContaining({ method: 'HEAD' }));
     });
+
+    it('treats a PostgREST authorization response as reachable but ignores an HTML gateway denial', async () => {
+      global.fetch = vi.fn()
+        .mockResolvedValueOnce({ status: 401, headers: { get: () => 'application/json' } })
+        .mockResolvedValueOnce({ status: 403, headers: { get: () => 'text/html' } }) as any;
+
+      expect(await (engine as any).pingUrl('http://nas/rest/v1/')).toBe(true);
+      expect(await (engine as any).pingUrl('https://db.example/')).toBe(false);
+    });
   });
 
   describe('2. NAS Timeout, Failure & Automatic Supabase Failover (Issue A)', () => {
@@ -180,6 +189,49 @@ describe('DatabaseFailoverEngine — Dual Database Architecture & Reliability', 
       engine.recordNasFailure(new Error('ECONNREFUSED'));
       expect(engine.getStatus().circuitState).toBe('degraded');
       expect(engine.getStatus().activeTarget).toBe('supabase');
+    });
+
+    it('keeps NAS marked reachable when its API rejects the database credential', () => {
+      engine.recordNasFailure(new Error('Database authorization rejected: 401 Unauthorized (PostgREST authentication error)'));
+
+      const status = engine.getStatus();
+      expect(status.isNasReachable).toBe(true);
+      expect(status.nasAuthorizationError).toContain('401 Unauthorized');
+      expect(status.activeTarget).toBe('supabase');
+      expect(status.circuitState).toBe('degraded');
+    });
+
+    it('routes reads to Supabase after a NAS authorization rejection', async () => {
+      (engine as any).circuitState = 'healthy';
+      const cloudRows = [{ id: 44 }];
+      const queryFn = vi.fn().mockImplementation((client: any) => client === mockNasClient
+        ? Promise.resolve({ data: null, error: { message: 'Database authorization rejected: 401 Unauthorized', status: 401 } })
+        : Promise.resolve({ data: cloudRows, error: null }));
+
+      const result = await engine.executeRead(queryFn, 'auth-fallback-read');
+
+      expect(result.databaseUsed).toBe('supabase');
+      expect(result.data).toEqual(cloudRows);
+      expect(engine.getStatus().isNasReachable).toBe(true);
+      expect(engine.getStatus().nasAuthorizationError).toContain('401 Unauthorized');
+    });
+
+    it('routes authorization-rejected writes once to Supabase and journals reconciliation', async () => {
+      (engine as any).circuitState = 'healthy';
+      const row = { id: 45, product_code: 'AUTH-FALLBACK' };
+      const writeFn = vi.fn().mockImplementation((client: any) => client === mockNasClient
+        ? Promise.resolve({ data: null, error: { message: 'Database authorization rejected: 401 Unauthorized', status: 401 } })
+        : Promise.resolve({ data: row, error: null }));
+
+      const result = await engine.executeWrite(writeFn, {
+        table: 'make_products', operation: 'insert', primaryKey: { name: 'id', value: 45 }, data: row
+      }, 'auth-fallback-write');
+
+      expect(result.databaseUsed).toBe('supabase');
+      expect(result.data).toEqual(row);
+      expect(writeFn).toHaveBeenCalledTimes(2);
+      expect(engine.getPendingJournalEntries().some(entry => entry.primaryKey?.value === 45)).toBe(true);
+      expect(engine.getStatus().isNasReachable).toBe(true);
     });
 
     it('routes subsequent reads immediately to Supabase Cloud when circuit is DEGRADED', async () => {
@@ -291,6 +343,54 @@ describe('DatabaseFailoverEngine — Dual Database Architecture & Reliability', 
       const retryResult = await engine.processPendingMirrorRetries();
       expect(retryResult.succeeded).toBe(1);
       expect(retryResult.failed).toBe(0);
+      expect(engine.getStatus().pendingMirrorRetriesCount).toBe(0);
+    });
+
+    it('retires mirror retries when their source record was deleted from NAS', async () => {
+      engine.journalMirrorRetry({
+        table: 'make_products',
+        operation: 'insert',
+        primaryKey: { name: 'id', value: 20 },
+        data: { id: 20, product_name: 'Deleted test product' }
+      });
+
+      const maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+      mockNasClient.from.mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({ maybeSingle })
+        })
+      });
+      const cloudUpsert = vi.fn().mockResolvedValue({ error: null });
+      mockSupabaseAdmin.from.mockReturnValue({ upsert: cloudUpsert });
+
+      const result = await engine.processPendingMirrorRetries();
+
+      expect(result).toEqual({ succeeded: 0, failed: 0, discarded: 1 });
+      expect(cloudUpsert).not.toHaveBeenCalled();
+      expect(engine.getStatus().pendingMirrorRetriesCount).toBe(0);
+    });
+
+    it('keeps a partial update retry when the source row still exists on NAS', async () => {
+      engine.journalMirrorRetry({
+        table: 'make_orders',
+        operation: 'update',
+        primaryKey: { name: 'id', value: 33 },
+        data: { status: 'Painting' }
+      });
+
+      const maybeSingle = vi.fn().mockResolvedValue({ data: { id: 33 }, error: null });
+      mockNasClient.from.mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({ maybeSingle })
+        })
+      });
+      const cloudUpsert = vi.fn().mockResolvedValue({ error: null });
+      mockSupabaseAdmin.from.mockReturnValue({ upsert: cloudUpsert });
+
+      const result = await engine.processPendingMirrorRetries();
+
+      expect(result).toEqual({ succeeded: 1, failed: 0, discarded: 0 });
+      expect(cloudUpsert).toHaveBeenCalledWith({ status: 'Painting' });
       expect(engine.getStatus().pendingMirrorRetriesCount).toBe(0);
     });
   });

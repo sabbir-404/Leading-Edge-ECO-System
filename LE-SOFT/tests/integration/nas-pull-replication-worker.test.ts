@@ -125,22 +125,75 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
                     return { rows: [updated] };
                 }
 
-                if (normalized.includes('INSERT INTO make_orders')) {
-                    const id = Number(params[0]);
-                    const orderRecord = {
-                        id,
-                        order_number: params[1],
-                        furniture_name: params[2],
-                        total_price: params[3],
+                if (normalized.includes('SELECT id, order_number FROM make_orders WHERE order_number = $1')) {
+                    for (const ord of mockTrueNasOrders.values()) {
+                        if (ord && ord.order_number === params[0]) {
+                            return { rows: [{ id: ord.id, order_number: ord.order_number }] };
+                        }
+                    }
+                    return { rows: [] };
+                }
+
+                if (normalized.includes('SELECT id, order_number FROM make_orders WHERE id = $1')) {
+                    const found = mockTrueNasOrders.get(Number(params[0]));
+                    return { rows: found ? [{ id: found.id, order_number: found.order_number }] : [] };
+                }
+
+                if (normalized.includes('UPDATE make_orders SET')) {
+                    const targetId = Number(params[params.length - 1]);
+                    const existing = mockTrueNasOrders.get(targetId) || { id: targetId };
+                    const updated = {
+                        ...existing,
+                        order_number: params[0],
+                        furniture_name: params[1],
+                        total_price: params[2],
+                        sale_price: params[3],
                         current_stage: params[4],
                         status: params[5],
                         invoice_attachment_urls: params[6],
                         current_stage_photo: params[7],
-                        created_at: params[8],
-                        updated_at: params[9]
+                        updated_at: params[8] || new Date().toISOString()
                     };
-                    mockTrueNasOrders.set(id, orderRecord);
-                    return { rows: [orderRecord] };
+                    mockTrueNasOrders.set(targetId, updated);
+                    return { rows: [updated], rowCount: 1 };
+                }
+
+                if (normalized.includes('INSERT INTO make_orders')) {
+                    if (normalized.includes('RETURNING id')) {
+                        const allocatedId = autoIncrementId++;
+                        const orderRecord = {
+                            id: allocatedId,
+                            order_number: params[0],
+                            furniture_name: params[1],
+                            total_price: params[2],
+                            sale_price: params[3],
+                            current_stage: params[4],
+                            status: params[5],
+                            invoice_attachment_urls: params[6],
+                            current_stage_photo: params[7],
+                            created_at: params[8],
+                            updated_at: params[9]
+                        };
+                        mockTrueNasOrders.set(allocatedId, orderRecord);
+                        return { rows: [{ id: allocatedId }] };
+                    } else {
+                        const id = Number(params[0]);
+                        const orderRecord = {
+                            id,
+                            order_number: params[1],
+                            furniture_name: params[2],
+                            total_price: params[3],
+                            sale_price: params[4],
+                            current_stage: params[5],
+                            status: params[6],
+                            invoice_attachment_urls: params[7],
+                            current_stage_photo: params[8],
+                            created_at: params[9],
+                            updated_at: params[10]
+                        };
+                        mockTrueNasOrders.set(id, orderRecord);
+                        return { rows: [orderRecord] };
+                    }
                 }
 
                 if (normalized.includes('DELETE FROM make_orders WHERE id = $1')) {
@@ -152,6 +205,28 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
                 if (normalized.includes('SELECT 1 FROM make_orders WHERE id = $1')) {
                     const id = Number(params[0]);
                     return { rows: mockTrueNasOrders.has(id) ? [{ 1: 1 }] : [] };
+                }
+
+                if (normalized.includes('INSERT INTO make_order_updates') && normalized.includes('RETURNING id')) {
+                    const id = autoIncrementId++;
+                    const updateRecord = {
+                        id,
+                        order_id: params[0],
+                        stage: params[1],
+                        note: params[2],
+                        photo_url: params[3],
+                        photo_urls: params[4],
+                        actor_name: params[5],
+                        actor_role: params[6],
+                        created_at: params[7]
+                    };
+                    mockTrueNasUpdates.set(id, updateRecord);
+                    return { rows: [{ id }], rowCount: 1 };
+                }
+
+                if (normalized.includes('SELECT id, order_id, stage, note, photo_url, photo_urls, actor_name, actor_role, created_at FROM make_order_updates WHERE id = $1')) {
+                    const found = mockTrueNasUpdates.get(Number(params[0]));
+                    return { rows: found ? [found] : [] };
                 }
 
                 if (normalized.includes('INSERT INTO make_order_updates')) {
@@ -1053,6 +1128,8 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
         // Seed TrueNAS PostgreSQL with orders 903 and 904
         mockTrueNasOrders.set(903, { id: 903, order_number: 'MAKE-903', furniture_name: 'Soft Delete Item' });
         mockTrueNasOrders.set(904, { id: 904, order_number: 'MAKE-904', furniture_name: 'Tombstone Delete Item' });
+        await recordIdMapping(mockPg, 'make_orders', '903', 903, 'MAKE-903');
+        await recordIdMapping(mockPg, 'make_orders', '904', 904, 'MAKE-904');
 
         // Case A: Soft-deletion / cancellation on make_orders
         mockSupabaseOrders.push({
@@ -2395,6 +2472,79 @@ describe('NAS-Side Pull Replication Worker Suite', () => {
             mockSupabase.from = originalFrom;
         }
     }); 
+    it('Unmapped cloud tombstone never deletes a same-number NAS order', async () => {
+        const collidingId = 98990;
+        mockTrueNasOrders.set(collidingId, {
+            id: collidingId,
+            order_number: 'ORD-LOCAL-COLLISION',
+            furniture_name: 'NAS order with an unrelated cloud ID'
+        });
+        mockSupabaseTombstones.push({
+            id: 99003,
+            table_name: 'make_orders',
+            record_id: collidingId,
+            deleted_at: '2026-10-18T12:00:00.000Z'
+        });
+
+        const logger = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
+        const result = await pullBusinessData(mockSupabase, mockPg, {
+            logger,
+            batchSize: 10,
+            throwOnError: false
+        });
+
+        expect(mockTrueNasOrders.get(collidingId)?.order_number).toBe('ORD-LOCAL-COLLISION');
+        expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('UNMAPPED_TOMBSTONE_SKIPPED'));
+        const cp = await getCheckpoint(mockPg, 'replication_tombstones');
+        expect(cp.last_replicated_id).toBe('99003');
+        expect(cp.last_error).toContain('UNMAPPED_TOMBSTONE_SKIPPED');
+        expect(result.success).toBe(false);
+    });
+
+    it('Replicated order updates avoid overwriting a same-numbered NAS update', async () => {
+        mockTrueNasOrders.set(7, { id: 7, order_number: 'ORD-NAS-7', furniture_name: 'Mapped parent' });
+        mockTrueNasUpdates.set(333, {
+            id: 333,
+            order_id: 900,
+            stage: 'Local-only stage',
+            note: 'Keep this unrelated NAS update',
+            photo_url: null,
+            photo_urls: [],
+            actor_name: 'NAS user',
+            actor_role: 'manager',
+            created_at: '2026-10-18T12:00:00.000Z'
+        });
+        await recordIdMapping(mockPg, 'make_orders', 700, 7, 'ORD-NAS-7');
+        mockSupabaseOrders.push({
+            id: 700,
+            order_number: 'ORD-CLOUD-700',
+            furniture_name: 'Mapped parent',
+            status: 'confirmed',
+            created_at: '2026-10-18T12:00:00.000Z',
+            updated_at: '2026-10-18T12:01:00.000Z'
+        });
+        mockSupabaseUpdates.push({
+            id: 333,
+            order_id: 700,
+            stage: 'Cloud stage',
+            note: 'Cloud update',
+            photo_url: null,
+            photo_urls: [],
+            actor_name: 'Cloud user',
+            actor_role: 'sales',
+            created_at: '2026-10-18T12:02:00.000Z'
+        });
+
+        const result = await pullBusinessData(mockSupabase, mockPg, { batchSize: 20 });
+
+        expect(result.success).toBe(true);
+        expect(mockTrueNasUpdates.get(333)?.note).toBe('Keep this unrelated NAS update');
+        const mappedUpdateId = await getIdMapping(mockPg, 'make_order_updates', 333);
+        expect(mappedUpdateId).not.toBe(333);
+        expect(mockTrueNasUpdates.get(mappedUpdateId)?.order_id).toBe(7);
+        expect(mockTrueNasUpdates.get(mappedUpdateId)?.note).toBe('Cloud update');
+    });
+
     it('34. Buffer pruning requires one unambiguous reservation-to-object match; unrelated and ambiguous objects are preserved', async () => {
         const reservationId = 'res_ambiguous_100';
         const firstPath = `products/${reservationId}_piece_a.webp`;

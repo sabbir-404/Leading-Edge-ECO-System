@@ -137,6 +137,38 @@ async function initCheckpoints(pgClient) {
         ALTER TABLE make_product_colors ADD COLUMN IF NOT EXISTS image_url TEXT;
         ALTER TABLE make_product_colors ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
         CREATE INDEX IF NOT EXISTS idx_make_colors_updated_at_id ON make_product_colors (updated_at ASC, id ASC);
+        ALTER TABLE make_orders ADD COLUMN IF NOT EXISTS discount_type VARCHAR(20) DEFAULT NULL;
+        ALTER TABLE make_orders ADD COLUMN IF NOT EXISTS discount_value NUMERIC(14, 2) DEFAULT 0.00;
+        ALTER TABLE make_orders ADD COLUMN IF NOT EXISTS discount_amount NUMERIC(14, 2) DEFAULT 0.00;
+        ALTER TABLE make_orders ADD COLUMN IF NOT EXISTS final_price NUMERIC(14, 2) DEFAULT NULL;
+        ALTER TABLE make_orders ADD COLUMN IF NOT EXISTS money_received NUMERIC(14, 2) DEFAULT 0.00;
+        ALTER TABLE make_orders ADD COLUMN IF NOT EXISTS amount_due NUMERIC(14, 2) DEFAULT 0.00;
+        ALTER TABLE make_orders ADD COLUMN IF NOT EXISTS payment_status VARCHAR(50) DEFAULT 'unpaid';
+        ALTER TABLE make_orders ADD COLUMN IF NOT EXISTS production_hold BOOLEAN DEFAULT FALSE;
+        ALTER TABLE make_orders ADD COLUMN IF NOT EXISTS hold_reason TEXT NULL;
+        ALTER TABLE make_orders ADD COLUMN IF NOT EXISTS admin_approval_status VARCHAR(50) DEFAULT 'none';
+        ALTER TABLE make_orders ADD COLUMN IF NOT EXISTS admin_approval_requested_by VARCHAR(100) NULL;
+        ALTER TABLE make_orders ADD COLUMN IF NOT EXISTS admin_approval_requested_at TIMESTAMPTZ NULL;
+        ALTER TABLE make_orders ADD COLUMN IF NOT EXISTS admin_approval_decision_by VARCHAR(100) NULL;
+        ALTER TABLE make_orders ADD COLUMN IF NOT EXISTS admin_approval_decision_at TIMESTAMPTZ NULL;
+        ALTER TABLE make_orders ADD COLUMN IF NOT EXISTS admin_approval_notes TEXT NULL;
+        ALTER TABLE make_order_items ADD COLUMN IF NOT EXISTS discount_type VARCHAR(20) DEFAULT NULL;
+        ALTER TABLE make_order_items ADD COLUMN IF NOT EXISTS discount_value NUMERIC(14, 2) DEFAULT 0.00;
+        ALTER TABLE make_order_items ADD COLUMN IF NOT EXISTS discount_amount NUMERIC(14, 2) DEFAULT 0.00;
+        ALTER TABLE make_order_items ADD COLUMN IF NOT EXISTS final_item_price NUMERIC(14, 2) DEFAULT NULL;
+        ALTER TABLE make_order_items ADD COLUMN IF NOT EXISTS max_discount_type VARCHAR(20) DEFAULT NULL;
+        ALTER TABLE make_order_items ADD COLUMN IF NOT EXISTS max_discount_value NUMERIC(14, 2) DEFAULT NULL;
+        CREATE TABLE IF NOT EXISTS make_order_payments (
+            id BIGSERIAL PRIMARY KEY,
+            order_id BIGINT NOT NULL,
+            amount NUMERIC(14, 2) NOT NULL,
+            payment_method VARCHAR(50) DEFAULT 'CASH',
+            reference VARCHAR(100) NULL,
+            notes TEXT NULL,
+            received_by VARCHAR(100) NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_make_order_payments_order_id ON make_order_payments(order_id);
         ALTER TABLE nas_replicated_files ADD COLUMN IF NOT EXISTS source_updated_at TIMESTAMPTZ;
     `);
 }
@@ -558,6 +590,191 @@ async function ensureProductCategory(pgClient, supabaseClient, categoryId, categ
 }
 
 /**
+ * Resolves the true TrueNAS order ID for a given Supabase Cloud order ID.
+ * Resolves via nas_replication_id_map, natural key order_number matching,
+ * and parent order fetching if not yet replicated.
+ */
+async function resolveTargetOrderId(pgClient, supabaseClient, sourceOrderId, logger = console) {
+    if (!sourceOrderId) return null;
+    const sourceOrdIdStr = String(sourceOrderId);
+
+    // 1. Check ID map table
+    const mapped = await getIdMapping(pgClient, 'make_orders', sourceOrdIdStr);
+    if (mapped) return mapped;
+
+    // 2. Fetch authoritative order from Supabase
+    const { data: ordData, error: ordErr } = await supabaseClient
+        .from('make_orders')
+        .select('*')
+        .eq('id', sourceOrderId)
+        .maybeSingle();
+
+    if (ordErr || !ordData) {
+        throw new Error(`Failed to query parent order ${sourceOrderId} from Supabase: ${ordErr ? ordErr.message : 'Not found'}`);
+    }
+
+    const { targetId } = await upsertOrderRecord(pgClient, supabaseClient, ordData, logger);
+    return targetId;
+}
+
+/**
+ * Idempotently applies a make_orders record to TrueNAS PostgreSQL with schema compatibility.
+ * Reconciles order_number natural keys without destroying conflicting local IDs.
+ * Records source-to-target order mapping and returns resolved target order ID.
+ */
+async function upsertOrderRecord(pgClient, supabaseClient, ord, logger = console) {
+    const sourceOrdIdStr = String(ord.id);
+    const ordNumber = ord.order_number || `ORD-${ord.id}`;
+    const ordUpdatedAt = ord.updated_at || ord.created_at || new Date().toISOString();
+
+    // Propagate soft-deletions safely via ID mapping
+    if (ord.is_deleted === true || ord.status === 'deleted' || ord.deleted_at) {
+        const targetId = await getIdMapping(pgClient, 'make_orders', sourceOrdIdStr);
+        if (!targetId) {
+            logger.warn(`[NAS-Pull-Worker] Skipping soft-delete for order ${sourceOrdIdStr}: no NAS ID mapping.`);
+            return { deleted: false, skipped: true, reason: 'UNMAPPED_SOFT_DELETE' };
+        }
+        await pgClient.query('DELETE FROM make_order_items WHERE order_id = $1', [targetId]);
+        await pgClient.query('DELETE FROM make_order_updates WHERE order_id = $1', [targetId]);
+        await pgClient.query('DELETE FROM make_orders WHERE id = $1', [targetId]);
+        await pgClient.query('DELETE FROM nas_replication_id_map WHERE entity_type = $1 AND source_id = $2', ['make_orders', sourceOrdIdStr]);
+        return { deleted: true, targetId };
+    }
+
+    // Identity Resolution:
+    let targetId = await getIdMapping(pgClient, 'make_orders', sourceOrdIdStr);
+    let isExistingOnTarget = false;
+
+    // Check if target order exists with matching order_number natural key
+    if (!targetId && ordNumber) {
+        const numCheck = await pgClient.query(
+            'SELECT id, order_number FROM make_orders WHERE order_number = $1',
+            [ordNumber]
+        );
+        if (numCheck.rows && numCheck.rows.length > 0) {
+            targetId = numCheck.rows[0].id;
+            isExistingOnTarget = true;
+            logger.log(`[NAS-Pull-Worker] Mapped source order ${ord.id} (${ordNumber}) to existing TrueNAS order ID ${targetId}`);
+        }
+    }
+
+    // If not mapped by order_number, check if target row exists with id = ord.id
+    if (!targetId) {
+        const idCheck = await pgClient.query(
+            'SELECT id, order_number FROM make_orders WHERE id = $1',
+            [ord.id]
+        );
+        if (idCheck.rows && idCheck.rows.length > 0) {
+            const existingRow = idCheck.rows[0];
+            if (existingRow.order_number === ordNumber) {
+                targetId = ord.id;
+                isExistingOnTarget = true;
+            } else {
+                // ID collision with a DIFFERENT order!
+                // (e.g. Supabase ID 15 is 'LE-ORD-20260909-JTYN' while TrueNAS ID 15 is 'MAKE-2026-613437')
+                // Do NOT overwrite existingRow! Allocate a new target ID using sequence.
+                logger.warn(`[NAS-Pull-Worker] ID collision: source order ${ord.id} (${ordNumber}) collides with target ID ${existingRow.id} (${existingRow.order_number}). Allocating distinct TrueNAS ID.`);
+                targetId = null;
+                isExistingOnTarget = false;
+            }
+        } else {
+            // Target ID is free and order_number does not collide
+            targetId = ord.id;
+            isExistingOnTarget = false;
+        }
+    } else {
+        isExistingOnTarget = true;
+    }
+
+    if (isExistingOnTarget && targetId) {
+        // Update existing TrueNAS order
+        const updateSql = `
+            UPDATE make_orders SET
+                order_number = $1,
+                furniture_name = $2,
+                total_price = $3,
+                sale_price = $4,
+                current_stage = $5,
+                status = $6,
+                invoice_attachment_urls = $7,
+                current_stage_photo = $8,
+                updated_at = $9
+            WHERE id = $10;
+        `;
+        await pgClient.query(updateSql, [
+            ordNumber,
+            ord.furniture_name || '',
+            ord.total_price || ord.sale_price || 0,
+            ord.sale_price || ord.total_price || 0,
+            ord.current_stage || ord.stage || 'Draft',
+            ord.status || 'Placed',
+            ord.invoice_attachment_urls || [],
+            ord.current_stage_photo || null,
+            ordUpdatedAt,
+            targetId
+        ]);
+    } else if (targetId !== null) {
+        // Free ID match: insert with explicit ID and advance sequence if needed
+        const insertSql = `
+            INSERT INTO make_orders (
+                id, order_number, furniture_name, total_price, sale_price, current_stage, status,
+                invoice_attachment_urls, current_stage_photo, created_at, updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11);
+        `;
+        await pgClient.query(insertSql, [
+            targetId,
+            ordNumber,
+            ord.furniture_name || '',
+            ord.total_price || ord.sale_price || 0,
+            ord.sale_price || ord.total_price || 0,
+            ord.current_stage || ord.stage || 'Draft',
+            ord.status || 'Placed',
+            ord.invoice_attachment_urls || [],
+            ord.current_stage_photo || null,
+            ord.created_at || new Date().toISOString(),
+            ordUpdatedAt
+        ]);
+        // Advance sequence past targetId so future local inserts don't collide
+        await pgClient.query(`
+            SELECT setval(
+                pg_get_serial_sequence('make_orders', 'id'),
+                GREATEST((SELECT COALESCE(MAX(id), 1) FROM make_orders), $1)
+            )
+        `, [targetId]).catch(() => {});
+    } else {
+        // Target ID was null because of collision: insert using sequence DEFAULT
+        const insertGenSql = `
+            INSERT INTO make_orders (
+                order_number, furniture_name, total_price, sale_price, current_stage, status,
+                invoice_attachment_urls, current_stage_photo, created_at, updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            RETURNING id;
+        `;
+        const insRes = await pgClient.query(insertGenSql, [
+            ordNumber,
+            ord.furniture_name || '',
+            ord.total_price || ord.sale_price || 0,
+            ord.sale_price || ord.total_price || 0,
+            ord.current_stage || ord.stage || 'Draft',
+            ord.status || 'Placed',
+            ord.invoice_attachment_urls || [],
+            ord.current_stage_photo || null,
+            ord.created_at || new Date().toISOString(),
+            ordUpdatedAt
+        ]);
+        targetId = insRes.rows[0].id;
+        logger.log(`[NAS-Pull-Worker] Inserted colliding source order ${ord.id} (${ordNumber}) as new TrueNAS order ID ${targetId}`);
+    }
+
+    // Durable source-to-target entity mapping
+    await recordIdMapping(pgClient, 'make_orders', sourceOrdIdStr, targetId, ordNumber);
+
+    return { targetId, deleted: false };
+}
+
+/**
  * Idempotently applies a make_products record to TrueNAS PostgreSQL with schema compatibility.
  * Reconciles product_code natural keys without destroying conflicting local IDs.
  * Records source-to-target product mapping and returns resolved target product ID.
@@ -566,7 +783,11 @@ async function upsertProductRecord(pgClient, supabaseClient, prod, logger = cons
     const sourceProdIdStr = String(prod.id);
 
     if (prod.is_deleted === true || prod.status === 'deleted' || prod.deleted_at) {
-        const targetId = (await getIdMapping(pgClient, 'make_products', sourceProdIdStr)) || prod.id;
+        const targetId = await getIdMapping(pgClient, 'make_products', sourceProdIdStr);
+        if (!targetId) {
+            logger.warn(`[NAS-Pull-Worker] Skipping soft-delete for product ${sourceProdIdStr}: no NAS ID mapping.`);
+            return { deleted: false, skipped: true, reason: 'UNMAPPED_SOFT_DELETE' };
+        }
         await pgClient.query('DELETE FROM make_product_colors WHERE product_id = $1', [targetId]);
         await pgClient.query('DELETE FROM make_product_specifications WHERE product_id = $1', [targetId]);
         await pgClient.query('DELETE FROM make_products WHERE id = $1', [targetId]);
@@ -950,7 +1171,11 @@ async function upsertSpecificationRecord(pgClient, supabaseClient, sp, logger = 
     const sourceSpecIdStr = String(sp.id);
 
     if (sp.is_deleted === true || sp.deleted_at) {
-        const targetSpecId = (await getIdMapping(pgClient, 'make_product_specifications', sourceSpecIdStr)) || sp.id;
+        const targetSpecId = await getIdMapping(pgClient, 'make_product_specifications', sourceSpecIdStr);
+        if (!targetSpecId) {
+            logger.warn(`[NAS-Pull-Worker] Skipping soft-delete for specification ${sourceSpecIdStr}: no NAS ID mapping.`);
+            return { deleted: false, skipped: true, reason: 'UNMAPPED_SOFT_DELETE' };
+        }
         await pgClient.query('DELETE FROM make_product_colors WHERE spec_id = $1', [targetSpecId]);
         await pgClient.query('DELETE FROM make_product_specifications WHERE id = $1', [targetSpecId]);
         await pgClient.query('DELETE FROM nas_replication_id_map WHERE entity_type = $1 AND source_id = $2', ['make_product_specifications', sourceSpecIdStr]);
@@ -1090,7 +1315,11 @@ async function upsertColorRecord(pgClient, supabaseClient, cl, logger = console)
     const sourceColorIdStr = String(cl.id);
 
     if (cl.is_deleted === true || cl.deleted_at) {
-        const targetColorId = (await getIdMapping(pgClient, 'make_product_colors', sourceColorIdStr)) || cl.id;
+        const targetColorId = await getIdMapping(pgClient, 'make_product_colors', sourceColorIdStr);
+        if (!targetColorId) {
+            logger.warn(`[NAS-Pull-Worker] Skipping soft-delete for color ${sourceColorIdStr}: no NAS ID mapping.`);
+            return { deleted: false, skipped: true, reason: 'UNMAPPED_SOFT_DELETE' };
+        }
         await pgClient.query('DELETE FROM make_product_colors WHERE id = $1', [targetColorId]);
         await pgClient.query('DELETE FROM nas_replication_id_map WHERE entity_type = $1 AND source_id = $2', ['make_product_colors', sourceColorIdStr]);
         return { deleted: true, targetId: targetColorId };
@@ -1250,6 +1479,7 @@ async function pullBusinessData(supabaseClient, pgClient, options = {}) {
     const logger = options.logger || console;
     let totalReplicated = 0;
     let ordersReplicated = 0;
+    let orderItemsReplicated = 0;
     let updatesReplicated = 0;
     let productsReplicated = 0;
     let specsReplicated = 0;
@@ -1260,6 +1490,7 @@ async function pullBusinessData(supabaseClient, pgClient, options = {}) {
 
     const ALLOWED_TOMBSTONE_TABLES = new Set([
         'make_orders',
+        'make_order_items',
         'make_order_updates',
         'make_products',
         'make_product_specifications',
@@ -1342,19 +1573,35 @@ async function pullBusinessData(supabaseClient, pgClient, options = {}) {
                             continue;
                         }
 
-                        // Resolve target entity ID via ID mapping if applicable
+                        // A cloud numeric ID is not a safe NAS ID: the databases allocate
+                        // IDs independently. Tombstones have no source row to reconcile by
+                        // natural key, so destructive operations require a persisted map.
                         let resolvedTargetId = targetId;
-                        if (['make_products', 'make_product_specifications', 'make_product_colors', 'make_product_categories'].includes(targetTable)) {
+                        const mappedEntityTables = ['make_products', 'make_product_specifications', 'make_product_colors', 'make_product_categories', 'make_orders', 'make_order_items', 'make_order_updates'];
+                        if (mappedEntityTables.includes(targetTable)) {
                             const mapped = await getIdMapping(pgClient, targetTable, String(targetId));
-                            if (mapped) {
-                                resolvedTargetId = mapped;
+                            if (!mapped) {
+                                const reason = `UNMAPPED_TOMBSTONE_SKIPPED: ${targetTable} source ID ${targetId} has no NAS ID mapping`;
+                                logger.warn(`[NAS-Pull-Worker] ${reason}; preserving NAS rows.`);
+                                streamErrors.set('replication_tombstones', reason);
+                                const tombAt = tomb.deleted_at || tomb.created_at || new Date().toISOString();
+                                await updateCheckpoint(pgClient, 'replication_tombstones', String(tomb.id), tombAt, 1, reason);
+                                tombstonesReplicated++;
+                                totalReplicated++;
+                                continue;
                             }
+                            resolvedTargetId = mapped;
                         }
 
                         // Foreign-key safe deletion in parent-before-child order
                         if (targetTable === 'make_orders') {
+                            await pgClient.query('DELETE FROM make_order_items WHERE order_id = $1', [resolvedTargetId]);
                             await pgClient.query('DELETE FROM make_order_updates WHERE order_id = $1', [resolvedTargetId]);
                             await pgClient.query('DELETE FROM make_orders WHERE id = $1', [resolvedTargetId]);
+                            await pgClient.query('DELETE FROM nas_replication_id_map WHERE entity_type = $1 AND source_id = $2', ['make_orders', String(targetId)]);
+                        } else if (targetTable === 'make_order_items') {
+                            await pgClient.query('DELETE FROM make_order_items WHERE id = $1', [resolvedTargetId]);
+                            await pgClient.query('DELETE FROM nas_replication_id_map WHERE entity_type = $1 AND source_id = $2', ['make_order_items', String(targetId)]);
                         } else if (targetTable === 'make_products') {
                             await pgClient.query('DELETE FROM make_product_colors WHERE product_id = $1', [resolvedTargetId]);
                             await pgClient.query('DELETE FROM make_product_specifications WHERE product_id = $1', [resolvedTargetId]);
@@ -1441,42 +1688,27 @@ async function pullBusinessData(supabaseClient, pgClient, options = {}) {
 
                 try {
                     // Propagate soft-deletions
+                    // Propagate soft-deletions safely via ID mapping
                     if (ord.is_deleted === true || ord.status === 'deleted' || ord.deleted_at) {
-                        await pgClient.query('DELETE FROM make_orders WHERE id = $1', [ord.id]);
+                        const targetId = await getIdMapping(pgClient, 'make_orders', ordId);
+                        if (!targetId) {
+                            logger.warn(`[NAS-Pull-Worker] Skipping soft-delete for order ${ordId}: no NAS ID mapping.`);
+                            await updateCheckpoint(pgClient, 'make_orders', ordId, ordUpdatedAt, 1, 'UNMAPPED_SOFT_DELETE');
+                            ordersReplicated++;
+                            totalReplicated++;
+                            continue;
+                        }
+                        await pgClient.query('DELETE FROM make_order_items WHERE order_id = $1', [targetId]);
+                        await pgClient.query('DELETE FROM make_order_updates WHERE order_id = $1', [targetId]);
+                        await pgClient.query('DELETE FROM make_orders WHERE id = $1', [targetId]);
+                        await pgClient.query('DELETE FROM nas_replication_id_map WHERE entity_type = $1 AND source_id = $2', ['make_orders', ordId]);
                         await updateCheckpoint(pgClient, 'make_orders', ordId, ordUpdatedAt, 1, null);
                         ordersReplicated++;
                         totalReplicated++;
                         continue;
                     }
 
-                    const upsertSql = `
-                        INSERT INTO make_orders (
-                            id, order_number, furniture_name, total_price, current_stage, status,
-                            invoice_attachment_urls, current_stage_photo, created_at, updated_at
-                        )
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-                        ON CONFLICT (id) DO UPDATE SET
-                            order_number = EXCLUDED.order_number,
-                            furniture_name = EXCLUDED.furniture_name,
-                            total_price = EXCLUDED.total_price,
-                            current_stage = EXCLUDED.current_stage,
-                            status = EXCLUDED.status,
-                            invoice_attachment_urls = EXCLUDED.invoice_attachment_urls,
-                            current_stage_photo = EXCLUDED.current_stage_photo,
-                            updated_at = EXCLUDED.updated_at;
-                    `;
-                    await pgClient.query(upsertSql, [
-                        ord.id,
-                        ord.order_number || `ORD-${ord.id}`,
-                        ord.furniture_name || '',
-                        ord.total_price || ord.sale_price || 0,
-                        ord.current_stage || ord.stage || 'Draft',
-                        ord.status || 'Placed',
-                        ord.invoice_attachment_urls || [],
-                        ord.current_stage_photo || null,
-                        ord.created_at || new Date().toISOString(),
-                        ordUpdatedAt
-                    ]);
+                    await upsertOrderRecord(pgClient, supabaseClient, ord, logger);
 
                     await updateCheckpoint(pgClient, 'make_orders', ordId, ordUpdatedAt, 1, null);
                     ordersReplicated++;
@@ -1504,6 +1736,178 @@ async function pullBusinessData(supabaseClient, pgClient, options = {}) {
         } catch {}
         if (options.throwOnError !== false) {
             throw orderEx;
+        }
+    }
+
+    // ── 2b. Pull Child Line Items (make_order_items) ─────────────────────────
+    try {
+        let hasMoreItems = true;
+        let itemPages = 0;
+        const maxItemPages = 1000;
+
+        while (hasMoreItems && itemPages < maxItemPages) {
+            itemPages++;
+            const itemCp = await getCheckpoint(pgClient, 'make_order_items');
+            let itemQuery = supabaseClient
+                .from('make_order_items')
+                .select('*');
+
+            if (itemCp.last_replicated_at) {
+                if (itemCp.last_replicated_id) {
+                    itemQuery = itemQuery.or(`created_at.gt.${itemCp.last_replicated_at},and(created_at.eq.${itemCp.last_replicated_at},id.gt.${itemCp.last_replicated_id})`);
+                } else {
+                    itemQuery = itemQuery.gt('created_at', itemCp.last_replicated_at);
+                }
+            } else if (itemCp.last_replicated_id) {
+                itemQuery = itemQuery.gt('id', itemCp.last_replicated_id);
+            }
+
+            itemQuery = itemQuery
+                .order('created_at', { ascending: true })
+                .order('id', { ascending: true })
+                .limit(batchSize);
+
+            const { data: newItems, error: itemErr } = await itemQuery;
+            if (itemErr) {
+                logger.error('[NAS-Pull-Worker] Error querying make_order_items from Supabase:', itemErr.message);
+                streamErrors.set('make_order_items', itemErr.message);
+                await updateCheckpoint(pgClient, 'make_order_items', null, null, 0, itemErr.message);
+                break;
+            }
+
+            if (!newItems || newItems.length === 0) {
+                hasMoreItems = false;
+                break;
+            }
+
+            for (const itm of newItems) {
+                const itmId = String(itm.id);
+                const itmCreatedAt = itm.created_at || new Date().toISOString();
+
+                try {
+                    // Resolve parent order ID via mapping
+                    const targetOrderId = await resolveTargetOrderId(pgClient, supabaseClient, itm.order_id, logger);
+                    if (!targetOrderId) {
+                        logger.warn(`[NAS-Pull-Worker] Missing parent order ${itm.order_id} for order item ${itm.id}. Halting item stream.`);
+                        throw new Error(`Missing parent order ${itm.order_id} for item ${itm.id}`);
+                    }
+
+                    // Resolve related product, spec, color if present
+                    const targetProdId = itm.product_id ? await getIdMapping(pgClient, 'make_products', String(itm.product_id)) : null;
+                    const targetSpecId = itm.spec_id ? await getIdMapping(pgClient, 'make_product_specifications', String(itm.spec_id)) : null;
+                    const targetColorId = itm.color_id ? await getIdMapping(pgClient, 'make_product_colors', String(itm.color_id)) : null;
+
+                    let targetItemId = await getIdMapping(pgClient, 'make_order_items', itmId);
+                    if (!targetItemId) {
+                        const exCheck = await pgClient.query('SELECT id, order_id FROM make_order_items WHERE id = $1', [itm.id]);
+                        if (exCheck.rows && exCheck.rows.length > 0) {
+                            if (exCheck.rows[0].order_id === targetOrderId) {
+                                targetItemId = itm.id;
+                            } else {
+                                targetItemId = null;
+                            }
+                        } else {
+                            targetItemId = itm.id;
+                        }
+                    }
+
+                    if (targetItemId) {
+                        await pgClient.query(`
+                            INSERT INTO make_order_items (
+                                id, order_id, product_id, spec_id, color_id, product_name, spec_name,
+                                size_label, color_name, quantity, item_cost_price, item_sale_price,
+                                is_customized, custom_dimensions, technical_drawing_url, created_at
+                            )
+                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                            ON CONFLICT (id) DO UPDATE SET
+                                order_id = EXCLUDED.order_id,
+                                product_id = EXCLUDED.product_id,
+                                spec_id = EXCLUDED.spec_id,
+                                color_id = EXCLUDED.color_id,
+                                product_name = EXCLUDED.product_name,
+                                spec_name = EXCLUDED.spec_name,
+                                size_label = EXCLUDED.size_label,
+                                color_name = EXCLUDED.color_name,
+                                quantity = EXCLUDED.quantity,
+                                item_cost_price = EXCLUDED.item_cost_price,
+                                item_sale_price = EXCLUDED.item_sale_price,
+                                is_customized = EXCLUDED.is_customized,
+                                custom_dimensions = EXCLUDED.custom_dimensions,
+                                technical_drawing_url = EXCLUDED.technical_drawing_url;
+                        `, [
+                            targetItemId,
+                            targetOrderId,
+                            targetProdId || itm.product_id || null,
+                            targetSpecId || itm.spec_id || null,
+                            targetColorId || itm.color_id || null,
+                            itm.product_name || '',
+                            itm.spec_name || '',
+                            itm.size_label || itm.dimensions_text || '',
+                            itm.color_name || '',
+                            itm.quantity || 1,
+                            itm.item_cost_price || 0,
+                            itm.item_sale_price || null,
+                            itm.is_customized || false,
+                            itm.custom_dimensions || null,
+                            itm.technical_drawing_url || null,
+                            itmCreatedAt
+                        ]);
+                    } else {
+                        const insRes = await pgClient.query(`
+                            INSERT INTO make_order_items (
+                                order_id, product_id, spec_id, color_id, product_name, spec_name,
+                                size_label, color_name, quantity, item_cost_price, item_sale_price,
+                                is_customized, custom_dimensions, technical_drawing_url, created_at
+                            )
+                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                            RETURNING id;
+                        `, [
+                            targetOrderId,
+                            targetProdId || itm.product_id || null,
+                            targetSpecId || itm.spec_id || null,
+                            targetColorId || itm.color_id || null,
+                            itm.product_name || '',
+                            itm.spec_name || '',
+                            itm.size_label || itm.dimensions_text || '',
+                            itm.color_name || '',
+                            itm.quantity || 1,
+                            itm.item_cost_price || 0,
+                            itm.item_sale_price || null,
+                            itm.is_customized || false,
+                            itm.custom_dimensions || null,
+                            itm.technical_drawing_url || null,
+                            itmCreatedAt
+                        ]);
+                        targetItemId = insRes.rows[0].id;
+                    }
+
+                    await recordIdMapping(pgClient, 'make_order_items', itmId, targetItemId);
+                    await updateCheckpoint(pgClient, 'make_order_items', itmId, itmCreatedAt, 1, null);
+                    orderItemsReplicated++;
+                    totalReplicated++;
+                } catch (itmRowErr) {
+                    logger.error(`[NAS-Pull-Worker] Failed to replicate order item ${itm.id}:`, itmRowErr.message);
+                    streamErrors.set('make_order_items', itmRowErr.message);
+                    await updateCheckpoint(pgClient, 'make_order_items', null, null, 0, itmRowErr.message).catch(() => {});
+                    throw itmRowErr;
+                }
+            }
+
+            if (newItems.length < batchSize) {
+                hasMoreItems = false;
+            }
+        }
+        if (orderItemsReplicated > 0) {
+            logger.log(`[NAS-Pull-Worker] Successfully pulled and applied ${orderItemsReplicated} order line items.`);
+        }
+    } catch (itemEx) {
+        logger.error('[NAS-Pull-Worker] Order item stream exception:', itemEx.message);
+        streamErrors.set('make_order_items', itemEx.message);
+        try {
+            await updateCheckpoint(pgClient, 'make_order_items', null, null, 0, itemEx.message);
+        } catch {}
+        if (options.throwOnError !== false) {
+            throw itemEx;
         }
     }
 
@@ -1553,65 +1957,15 @@ async function pullBusinessData(supabaseClient, pgClient, options = {}) {
                 const updCreatedAt = upd.created_at || new Date().toISOString();
 
                 try {
-                    // Strict parent-before-child ordering: ensure parent order exists on TrueNAS
-                    const parentCheck = await pgClient.query('SELECT 1 FROM make_orders WHERE id = $1', [upd.order_id]);
-                    if (!parentCheck.rows || parentCheck.rows.length === 0) {
-                        const { data: parentData, error: parentErr } = await supabaseClient
-                            .from('make_orders')
-                            .select('*')
-                            .eq('id', upd.order_id)
-                            .maybeSingle();
-
-                        if (!parentErr && parentData) {
-                            await pgClient.query(`
-                                INSERT INTO make_orders (
-                                    id, order_number, furniture_name, total_price, current_stage, status,
-                                    invoice_attachment_urls, current_stage_photo, created_at, updated_at
-                                )
-                                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-                                ON CONFLICT (id) DO UPDATE SET
-                                    order_number = EXCLUDED.order_number,
-                                    furniture_name = EXCLUDED.furniture_name,
-                                    total_price = EXCLUDED.total_price,
-                                    current_stage = EXCLUDED.current_stage,
-                                    status = EXCLUDED.status,
-                                    invoice_attachment_urls = EXCLUDED.invoice_attachment_urls,
-                                    current_stage_photo = EXCLUDED.current_stage_photo,
-                                    updated_at = EXCLUDED.updated_at;
-                            `, [
-                                parentData.id,
-                                parentData.order_number || `ORD-${parentData.id}`,
-                                parentData.furniture_name || '',
-                                parentData.total_price || parentData.sale_price || 0,
-                                parentData.current_stage || 'Draft',
-                                parentData.status || 'Placed',
-                                parentData.invoice_attachment_urls || [],
-                                parentData.current_stage_photo || null,
-                                parentData.created_at || new Date().toISOString(),
-                                parentData.updated_at || parentData.created_at || new Date().toISOString()
-                            ]);
-                        } else {
-                            logger.warn(`[NAS-Pull-Worker] Missing parent order ${upd.order_id} for update ${upd.id}. Halting update stream.`);
-                            throw new Error(`Missing parent order ${upd.order_id} for update ${upd.id}`);
-                        }
+                    // Strict parent-before-child ordering: resolve parent order via ID map / upsert
+                    const targetOrderId = await resolveTargetOrderId(pgClient, supabaseClient, upd.order_id, logger);
+                    if (!targetOrderId) {
+                        logger.warn(`[NAS-Pull-Worker] Missing parent order ${upd.order_id} for update ${upd.id}. Halting update stream.`);
+                        throw new Error(`Missing parent order ${upd.order_id} for update ${upd.id}`);
                     }
 
-                    const upsertUpdateSql = `
-                        INSERT INTO make_order_updates (
-                            id, order_id, stage, note, photo_url, photo_urls, actor_name, actor_role, created_at
-                        )
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-                        ON CONFLICT (id) DO UPDATE SET
-                            stage = EXCLUDED.stage,
-                            note = EXCLUDED.note,
-                            photo_url = EXCLUDED.photo_url,
-                            photo_urls = EXCLUDED.photo_urls,
-                            actor_name = EXCLUDED.actor_name,
-                            actor_role = EXCLUDED.actor_role;
-                    `;
-                    await pgClient.query(upsertUpdateSql, [
-                        upd.id,
-                        upd.order_id,
+                    const updateValues = [
+                        targetOrderId,
                         upd.stage || upd.status || 'In Progress',
                         upd.note || upd.notes || null,
                         upd.photo_url || null,
@@ -1619,7 +1973,63 @@ async function pullBusinessData(supabaseClient, pgClient, options = {}) {
                         upd.actor_name || null,
                         upd.actor_role || null,
                         updCreatedAt
-                    ]);
+                    ];
+                    let targetUpdateId = await getIdMapping(pgClient, 'make_order_updates', updId);
+
+                    if (!targetUpdateId) {
+                        // Reuse a same-numbered target row only when its complete business
+                        // identity matches. Otherwise allocate a NAS ID; source and target
+                        // sequences are independent and numeric collisions are possible.
+                        const existing = await pgClient.query(
+                            'SELECT id, order_id, stage, note, photo_url, photo_urls, actor_name, actor_role, created_at FROM make_order_updates WHERE id = $1',
+                            [upd.id]
+                        );
+                        const row = existing.rows && existing.rows[0];
+                        const sameIdentity = row &&
+                            String(row.order_id) === String(targetOrderId) &&
+                            String(row.stage || '') === String(updateValues[1] || '') &&
+                            String(row.note || '') === String(updateValues[2] || '') &&
+                            String(row.photo_url || '') === String(updateValues[3] || '') &&
+                            JSON.stringify(row.photo_urls || []) === JSON.stringify(updateValues[4] || []) &&
+                            String(row.actor_name || '') === String(updateValues[5] || '') &&
+                            String(row.actor_role || '') === String(updateValues[6] || '') &&
+                            new Date(row.created_at).getTime() === new Date(updCreatedAt).getTime();
+
+                        if (sameIdentity) {
+                            targetUpdateId = Number(row.id);
+                        } else if (!row) {
+                            targetUpdateId = Number(upd.id);
+                        } else {
+                            const inserted = await pgClient.query(
+                                `INSERT INTO make_order_updates (
+                                    order_id, stage, note, photo_url, photo_urls, actor_name, actor_role, created_at
+                                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+                                updateValues
+                            );
+                            targetUpdateId = Number(inserted.rows?.[0]?.id);
+                        }
+                    }
+
+                    if (!targetUpdateId) {
+                        throw new Error(`Could not allocate a NAS ID for order update ${upd.id}`);
+                    }
+
+                    const upsertUpdateSql = `
+                        INSERT INTO make_order_updates (
+                            id, order_id, stage, note, photo_url, photo_urls, actor_name, actor_role, created_at
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                        ON CONFLICT (id) DO UPDATE SET
+                            order_id = EXCLUDED.order_id,
+                            stage = EXCLUDED.stage,
+                            note = EXCLUDED.note,
+                            photo_url = EXCLUDED.photo_url,
+                            photo_urls = EXCLUDED.photo_urls,
+                            actor_name = EXCLUDED.actor_name,
+                            actor_role = EXCLUDED.actor_role;
+                    `;
+                    await pgClient.query(upsertUpdateSql, [targetUpdateId, ...updateValues]);
+
+                    await recordIdMapping(pgClient, 'make_order_updates', updId, targetUpdateId, `${targetOrderId}:${updCreatedAt}`);
 
                     await updateCheckpoint(pgClient, 'make_order_updates', updId, updCreatedAt, 1, null);
                     updatesReplicated++;
@@ -1953,7 +2363,24 @@ async function discoverFromTable(client, config, fileTasks, logger, bucketName, 
         ? configuredQueryVariants
         : [{ select, filterFn }];
     const cacheKey = `discovery:${table}`;
-    const cachedState = schemaCapabilityCache.get(cacheKey);
+    let cachedState = schemaCapabilityCache.get(cacheKey);
+
+    // If memory cache is empty, check durable PostgreSQL checkpoint to survive container/process restarts
+    if ((!cachedState || typeof cachedState.variantIndex !== 'number') && pgClient) {
+        try {
+            const dbCap = await getCheckpoint(pgClient, `schema_capability_${table}`);
+            if (dbCap && dbCap.last_replicated_id !== null && dbCap.last_replicated_id !== undefined) {
+                const savedIdx = Number(dbCap.last_replicated_id);
+                if (!isNaN(savedIdx) && savedIdx >= 0 && savedIdx < queryVariants.length) {
+                    cachedState = { variantIndex: savedIdx, persistedIdx: savedIdx };
+                    schemaCapabilityCache.set(cacheKey, cachedState);
+                }
+            }
+        } catch (dbCapErr) {
+            // Silently ignore checkpoint read errors
+        }
+    }
+
     let queryVariantIndex = (cachedState && typeof cachedState.variantIndex === 'number' && cachedState.variantIndex < queryVariants.length)
         ? cachedState.variantIndex
         : 0;
@@ -1999,6 +2426,8 @@ async function discoverFromTable(client, config, fileTasks, logger, bucketName, 
             q = q.order('id', { ascending: true }).limit(batchSize);
 
             queryResult = await q;
+
+            // Handle genuine missing column error: log once per variant, advance, and cache
             if (queryResult.error &&
                 isMissingColumnError(queryResult.error) &&
                 queryVariantIndex < queryVariants.length - 1) {
@@ -2015,11 +2444,29 @@ async function discoverFromTable(client, config, fileTasks, logger, bucketName, 
                 continue;
             }
 
-            // On success, store the verified compatible variant index in the cache
-            if (!queryResult.error && queryResult.data) {
+            // On success (no error and data returned as array/object): cache and persist
+            if (!queryResult.error && queryResult.data !== undefined && queryResult.data !== null) {
                 const currentState = schemaCapabilityCache.get(cacheKey) || {};
                 currentState.variantIndex = queryVariantIndex;
                 schemaCapabilityCache.set(cacheKey, currentState);
+
+                if (pgClient && currentState.persistedIdx !== queryVariantIndex) {
+                    currentState.persistedIdx = queryVariantIndex;
+                    await updateCheckpoint(
+                        pgClient,
+                        `schema_capability_${table}`,
+                        String(queryVariantIndex),
+                        new Date().toISOString(),
+                        queryVariantIndex,
+                        null
+                    ).catch(() => {});
+                }
+            } else if (queryResult.error && isMissingColumnError(queryResult.error)) {
+                // All fallback variants exhausted or unrecoverable schema mismatch
+                schemaCapabilityCache.delete(cacheKey);
+                if (pgClient) {
+                    await updateCheckpoint(pgClient, `schema_capability_${table}`, null, new Date().toISOString(), 0, queryResult.error.message).catch(() => {});
+                }
             }
             break;
         }
@@ -2141,12 +2588,12 @@ async function pullAttachments(supabaseClient, storageBasePath, pgClient, option
                         filterFn: q => q.neq('invoice_attachment_urls', '{}')
                     },
                     {
-                        select: 'id, invoice_attachment_urls, current_stage_photo, created_at',
-                        filterFn: q => q.or('invoice_attachment_urls.neq.{},current_stage_photo.not.is.null')
-                    },
-                    {
                         select: 'id, invoice_attachment_urls, created_at',
                         filterFn: q => q.neq('invoice_attachment_urls', '{}')
+                    },
+                    {
+                        select: 'id, invoice_attachment_urls, current_stage_photo, created_at',
+                        filterFn: q => q.or('invoice_attachment_urls.neq.{},current_stage_photo.not.is.null')
                     }
                 ],
                 batchSize,
@@ -2783,7 +3230,7 @@ if (require.main === module) {
         realtime: false
     });
 
-    const isDaemon = process.argv.includes('--daemon');
+    const isDaemon = process.argv.includes('--daemon') || process.env.DAEMON === 'true' || (Boolean(process.env.REPLICATION_INTERVAL_MS) && !process.argv.includes('--once'));
     const intervalMs = parseInt(process.env.REPLICATION_INTERVAL_MS || '15000', 10);
 
     if (isDaemon) {
@@ -2815,6 +3262,8 @@ module.exports = {
     resolveTargetProductId,
     resolveTargetSpecId,
     ensureProductCategory,
+    resolveTargetOrderId,
+    upsertOrderRecord,
     upsertProductRecord,
     upsertSpecificationRecord,
     upsertColorRecord,

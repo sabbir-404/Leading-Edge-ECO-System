@@ -418,14 +418,13 @@ describe('Feature B: Product Catalog Pricing and Order Discount Enforcement', ()
       expect(perms.canEditSalePrice).toBe(true);
     });
 
-    it('strictly forbids Salesperson from viewing or editing cost price', () => {
+    it('allows Salesperson to view cost price but hides sale price and forbids price edits', () => {
       localStorage.setItem('user', JSON.stringify({ role: 'salesperson' }));
 
       const perms = getUserPricingPermissions();
-      expect(perms.canViewCostPrice).toBe(false);
+      expect(perms.canViewCostPrice).toBe(true);
       expect(perms.canEditCostPrice).toBe(false);
-      // Salesperson can see sale price but cannot edit master catalog sale price directly
-      expect(perms.canViewSalePrice).toBe(true);
+      expect(perms.canViewSalePrice).toBe(false);
       expect(perms.canEditSalePrice).toBe(false);
     });
 

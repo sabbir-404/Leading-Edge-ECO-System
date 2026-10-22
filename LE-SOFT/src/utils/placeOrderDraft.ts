@@ -29,6 +29,10 @@ export interface CartItemDraft {
   item_sale_price?: number | string | null;
   max_discount_type?: 'percent' | 'amount' | null;
   max_discount_value?: number | null;
+  discount_type?: 'percent' | 'amount' | null;
+  discount_value?: number | string | null;
+  discount_amount?: number | null;
+  final_item_price?: number | null;
   notes?: string;
   attachedFile?: {
     name: string;
@@ -42,6 +46,9 @@ export interface PlaceOrderDraftData {
   priority?: string;
   targetDeliveryDate?: string;
   requestedDeliveryDate?: string;
+  targetDeliveryDays?: number | string | null;
+  requestedDeliveryDays?: number | string | null;
+  orderPlacementDate?: string | null;
   selectedSalesmanId?: string;
   
   // Customer & Delivery info
@@ -102,6 +109,7 @@ export interface PlaceOrderDraftData {
   // Order Discount
   discountType?: 'percent' | 'amount';
   discountValue?: number | string;
+  moneyReceived?: number | string;
 
   updatedAt?: number;
 }

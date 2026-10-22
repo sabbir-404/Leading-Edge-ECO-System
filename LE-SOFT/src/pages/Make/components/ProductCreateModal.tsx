@@ -49,6 +49,8 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
     category_id: null,
     category: null,
     main_image: '',
+    blueprint_url: '',
+    size_id: null,
     is_active: true,
     cost_price: '',
     sale_price: '',
@@ -69,6 +71,8 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
   const [saving, setSaving] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [uploadState, setUploadState] = useState<{ status: 'idle' | 'uploading' | 'success' | 'error'; error?: string | null }>({ status: 'idle' });
+  const [uploadingBlueprint, setUploadingBlueprint] = useState(false);
+  const [blueprintUploadState, setBlueprintUploadState] = useState<{ status: 'idle' | 'uploading' | 'success' | 'error'; error?: string | null }>({ status: 'idle' });
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Fetch global attributes if not provided or empty
@@ -119,6 +123,7 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
       prevProductIdRef.current = currentId;
 
       if (initialProduct) {
+        const initSizeId = initialProduct.size_id || (initialProduct.sizes?.[0]?.id) || null;
         setFormData({
           id: initialProduct.id,
           product_code: initialProduct.product_code || '',
@@ -127,6 +132,8 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
           category_id: initialProduct.category_id || null,
           category: initialProduct.category || null,
           main_image: initialProduct.main_image || '',
+          blueprint_url: initialProduct.blueprint_url || '',
+          size_id: initSizeId,
           is_active: initialProduct.is_active !== undefined ? initialProduct.is_active : true,
           cost_price: pricingPerms.canViewCostPrice ? (initialProduct.cost_price !== undefined && initialProduct.cost_price !== null ? initialProduct.cost_price : '') : '',
           sale_price: initialProduct.sale_price !== undefined && initialProduct.sale_price !== null ? initialProduct.sale_price : '',
@@ -138,7 +145,7 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
           : (initialProduct.category_id ? [initialProduct.category_id] : []);
         setSelectedCategoryIds(catIds);
         setSelectedSpecIds((initialProduct.specifications || []).map((s: any) => s.id));
-        setSelectedSizeIds((initialProduct.sizes || []).map((s: any) => s.id));
+        setSelectedSizeIds(initSizeId ? [initSizeId] : []);
         setSelectedColorIds((initialProduct.colors || []).map((c: any) => c.id));
       } else {
         setFormData({
@@ -148,6 +155,8 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
           category_id: null,
           category: null,
           main_image: '',
+          blueprint_url: '',
+          size_id: null,
           is_active: true,
           cost_price: '',
           sale_price: '',
@@ -160,6 +169,7 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
         setSelectedColorIds([]);
       }
       setUploadState({ status: 'idle', error: null });
+      setBlueprintUploadState({ status: 'idle', error: null });
       setErrorMessage(null);
       setInlineNewAttrType(null);
     }
@@ -219,6 +229,35 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
       setUploadState({ status: 'error', error: errText });
     } finally {
       setUploadingImage(false);
+    }
+  };
+
+  const handlePickAndUploadBlueprint = async () => {
+    if (uploadingBlueprint) return;
+    setUploadingBlueprint(true);
+    setBlueprintUploadState({ status: 'uploading', error: null });
+    try {
+      // @ts-ignore
+      const res = await window.electron.makePickAndUploadBlueprint({ productId: formData.id });
+      if (res && res.canceled) {
+        setBlueprintUploadState({ status: 'idle', error: null });
+        return;
+      }
+      if (res && res.success) {
+        const ref = res.durableKey || res.publicUrl;
+        handleFieldChange('blueprint_url', ref);
+        setBlueprintUploadState({ status: 'success', error: null });
+        setTimeout(() => {
+          setBlueprintUploadState(prev => prev.status === 'success' ? { status: 'idle', error: null } : prev);
+        }, 2500);
+      } else {
+        throw new Error(res?.error || 'Failed to upload blueprint');
+      }
+    } catch (e: any) {
+      console.error(e);
+      setBlueprintUploadState({ status: 'error', error: e.message || 'Failed to upload blueprint' });
+    } finally {
+      setUploadingBlueprint(false);
     }
   };
 
@@ -399,8 +438,10 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
         sale_price: saleVal,
         max_discount_type: maxDiscType,
         max_discount_value: maxDiscVal,
+        size_id: formData.size_id ? Number(formData.size_id) : null,
+        blueprint_url: formData.blueprint_url || null,
         specIds: selectedSpecIds,
-        sizeIds: selectedSizeIds,
+        sizeIds: formData.size_id ? [Number(formData.size_id)] : selectedSizeIds,
         colorIds: selectedColorIds
       };
 
@@ -744,6 +785,70 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
             )}
           </div>
 
+          {/* Blueprint Upload */}
+          <div>
+            <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+              PRODUCT BLUEPRINT (CAD / DRAWING / PDF)
+            </label>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <button
+                type="button"
+                onClick={handlePickAndUploadBlueprint}
+                disabled={uploadingBlueprint}
+                style={{
+                  padding: '9px 14px',
+                  background: blueprintUploadState.status === 'success' ? 'rgba(16,185,129,0.1)' : 'var(--bg-secondary)',
+                  border: `1px solid ${blueprintUploadState.status === 'success' ? '#10b981' : 'var(--border-color)'}`,
+                  borderRadius: '8px',
+                  color: blueprintUploadState.status === 'success' ? '#10b981' : 'var(--text-primary)',
+                  cursor: uploadingBlueprint ? 'not-allowed' : 'pointer',
+                  fontSize: '0.82rem',
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+              >
+                {uploadingBlueprint ? (
+                  <>
+                    <RefreshCw size={14} className="upload-spinner" />
+                    <span>Uploading Blueprint...</span>
+                  </>
+                ) : blueprintUploadState.status === 'success' ? (
+                  <>
+                    <Check size={14} />
+                    <span>Blueprint Uploaded</span>
+                  </>
+                ) : (
+                  <>
+                    <Upload size={14} />
+                    <span>{formData.blueprint_url ? 'Change Blueprint' : 'Upload Blueprint (PDF, DWG, DXF, STEP)'}</span>
+                  </>
+                )}
+              </button>
+              {formData.blueprint_url && (
+                <button
+                  type="button"
+                  onClick={() => { handleFieldChange('blueprint_url', ''); setBlueprintUploadState({ status: 'idle', error: null }); }}
+                  style={{ padding: '9px 12px', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.82rem' }}
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+            {blueprintUploadState.error && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: '#ef4444', marginTop: '4px', fontWeight: 500 }}>
+                <AlertCircle size={13} />
+                <span>{blueprintUploadState.error}</span>
+              </div>
+            )}
+            {formData.blueprint_url && (
+              <div style={{ marginTop: '6px', fontSize: '0.75rem', color: '#10b981', fontWeight: 600 }}>
+                ✓ Blueprint attached ({formData.blueprint_url.split('/').pop()})
+              </div>
+            )}
+          </div>
+
           {/* Attributes Assignment */}
           <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
             {/* Specifications */}
@@ -800,11 +905,11 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
               </div>
             </div>
 
-            {/* Sizes */}
+            {/* Sizes (1 Active Size) */}
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
                 <label style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)' }}>
-                  ASSIGN SIZES ({selectedSizeIds.length} selected)
+                  PRODUCT SIZE (1 ACTIVE SIZE)
                 </label>
                 {canManageGlobal && (
                   <button
@@ -830,28 +935,23 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
                 </div>
               )}
 
-              <div style={{ maxHeight: '110px', overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '6px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                {(!attrs?.sizes || attrs.sizes.length === 0) ? (
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>No global sizes found</span>
-                ) : (
-                  (attrs.sizes || []).map((sz: any) => (
-                    <label key={sz.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', cursor: 'pointer' }}>
-                      <input
-                        type="checkbox"
-                        checked={selectedSizeIds.includes(sz.id)}
-                        onChange={e => {
-                          const next = e.target.checked
-                            ? [...selectedSizeIds, sz.id]
-                            : selectedSizeIds.filter(id => id !== sz.id);
-                          setSelectedSizeIds(next);
-                          notifyDraftUpdate(formData, selectedCategoryIds, selectedSpecIds, next, selectedColorIds);
-                        }}
-                      />
-                      <span>{formatSizeDisplay(sz)}</span>
-                    </label>
-                  ))
-                )}
-              </div>
+              <select
+                value={formData.size_id || ''}
+                onChange={e => {
+                  const val = e.target.value ? Number(e.target.value) : null;
+                  handleFieldChange('size_id', val);
+                  setSelectedSizeIds(val ? [val] : []);
+                  notifyDraftUpdate(formData, selectedCategoryIds, selectedSpecIds, val ? [val] : [], selectedColorIds);
+                }}
+                style={{ width: '100%', padding: '9px 12px', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', fontSize: '0.85rem' }}
+              >
+                <option value="">-- No Specific Size (Standard / Unassigned) --</option>
+                {(attrs.sizes || []).map((sz: any) => (
+                  <option key={sz.id} value={sz.id}>
+                    {formatSizeDisplay(sz)}
+                  </option>
+                ))}
+              </select>
             </div>
 
             {/* Colors */}

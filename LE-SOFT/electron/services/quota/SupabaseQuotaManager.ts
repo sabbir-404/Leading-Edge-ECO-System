@@ -57,14 +57,14 @@ export interface QuotaBreakdown {
 export class SupabaseQuotaManager {
     private static instance: SupabaseQuotaManager | null = null;
 
-    // Hard ceiling definitions (in bytes)
-    public static readonly HARD_CEILING_BYTES = 1_000_000_000;         // 1 GB total
-    public static readonly STORAGE_CEILING_BYTES = 600_000_000;        // 600 MB for images/CAD
-    public static readonly DATABASE_CEILING_BYTES = 250_000_000;       // 250 MB for DB rows
-    public static readonly CRITICAL_RESERVE_BYTES = 150_000_000;       // 150 MB emergency floor
+    // Soft operational target & partition definitions (in bytes)
+    public static readonly HARD_CEILING_BYTES = 3_000_000_000;         // 3 GB soft operational target
+    public static readonly STORAGE_CEILING_BYTES = 2_200_000_000;      // 2.2 GB operational allocation for images/CAD
+    public static readonly DATABASE_CEILING_BYTES = 500_000_000;       // 500 MB operational allocation for DB rows
+    public static readonly CRITICAL_RESERVE_BYTES = 300_000_000;       // 300 MB emergency reserve floor
 
-    public static readonly WARNING_THRESHOLD_BYTES = 800_000_000;     // 800 MB (80%)
-    public static readonly CRITICAL_THRESHOLD_BYTES = 950_000_000;    // 950 MB (95%)
+    public static readonly WARNING_THRESHOLD_BYTES = 2_400_000_000;     // 2.4 GB (80%) - triggers accelerated reconciliation
+    public static readonly CRITICAL_THRESHOLD_BYTES = 2_850_000_000;    // 2.85 GB (95%)
 
     public clientId: string;
     private client: SupabaseClient | null = null;
@@ -119,6 +119,36 @@ export class SupabaseQuotaManager {
         this.reconciliationClient = client;
     }
 
+    /**
+     * Resolves the authoritative client identity expected by PostgreSQL RPC.
+     * When caller has an authenticated Supabase session, auth.uid() is authoritative.
+     * If no authenticated user is present (e.g. background worker or test environment),
+     * falls back to the configured clientId.
+     */
+    public async resolveAuthoritativeClientId(overrideClient?: SupabaseClient | null, explicitClientId?: string): Promise<string> {
+        if (explicitClientId && explicitClientId.trim()) {
+            return explicitClientId.trim();
+        }
+        const activeClient = overrideClient || this.client;
+        if (activeClient) {
+            try {
+                const sessionRes = await activeClient.auth.getSession();
+                const uid = sessionRes?.data?.session?.user?.id;
+                if (uid && typeof uid === 'string' && uid.trim().length > 0) {
+                    return uid.trim();
+                }
+            } catch {}
+            try {
+                const userRes = await activeClient.auth.getUser();
+                const uid = userRes?.data?.user?.id;
+                if (uid && typeof uid === 'string' && uid.trim().length > 0) {
+                    return uid.trim();
+                }
+            } catch {}
+        }
+        return this.clientId;
+    }
+
     public recordUsage(_source: string, storageBytes: number, dbBytes: number): void {
         this.measuredStorageBytes = storageBytes;
         this.measuredDatabaseBytes = dbBytes;
@@ -160,18 +190,20 @@ export class SupabaseQuotaManager {
     /**
      * Attempts to atomically reserve storage quota for a file upload.
      * Enforces shared server-side reservation across multiple desktop clients when client is registered.
+     * Uses authenticated auth.uid() by default to satisfy CLIENT_IDENTITY_MISMATCH constraints.
      * Returns true if reservation is accepted, false if capacity would be exceeded or uncertain.
      */
-    public async reserveStorageQuota(reservationId: string, bytesNeeded: number): Promise<boolean> {
+    public async reserveStorageQuota(reservationId: string, bytesNeeded: number, callerClientId?: string): Promise<boolean> {
         if (bytesNeeded <= 0) return true;
 
         // Shared server-side atomic reservation with PostgreSQL advisory locking
         if (this.client) {
             try {
+                const authoritativeClientId = await this.resolveAuthoritativeClientId(this.client, callerClientId);
                 // Call authoritative PostgreSQL RPC reserve_buffer_capacity
                 const { data, error } = await this.client.rpc('reserve_buffer_capacity', {
                     p_reservation_id: reservationId,
-                    p_client_id: this.clientId,
+                    p_client_id: authoritativeClientId,
                     p_resource_type: 'storage',
                     p_bytes: bytesNeeded
                 });
@@ -213,14 +245,15 @@ export class SupabaseQuotaManager {
         return true;
     }
 
-    public async releaseStorageQuota(reservationId: string, confirmedUploadedBytes = 0, statusOverride?: 'committed' | 'released' | 'pruned'): Promise<boolean> {
+    public async releaseStorageQuota(reservationId: string, confirmedUploadedBytes = 0, statusOverride?: 'committed' | 'released' | 'pruned', callerClientId?: string): Promise<boolean> {
         this.activeStorageReservations.delete(reservationId);
         if (this.client) {
             try {
                 const finalStatus = statusOverride || (confirmedUploadedBytes > 0 ? 'committed' : 'released');
+                const authoritativeClientId = await this.resolveAuthoritativeClientId(this.client, callerClientId);
                 const { data, error } = await this.client.rpc('release_buffer_capacity', {
                     p_reservation_id: reservationId,
-                    p_client_id: this.clientId,
+                    p_client_id: authoritativeClientId,
                     p_status: finalStatus,
                     p_actual_bytes: confirmedUploadedBytes
                 });
@@ -248,13 +281,14 @@ export class SupabaseQuotaManager {
         return true;
     }
 
-    public async pruneConfirmedStorage(reservationId: string, bytesPruned: number): Promise<boolean> {
+    public async pruneConfirmedStorage(reservationId: string, bytesPruned: number, callerClientId?: string): Promise<boolean> {
         const activeClient = this.reconciliationClient || this.client;
         if (activeClient) {
             try {
+                const authoritativeClientId = await this.resolveAuthoritativeClientId(activeClient, callerClientId);
                 const { data, error } = await activeClient.rpc('release_buffer_capacity', {
                     p_reservation_id: reservationId,
-                    p_client_id: this.clientId,
+                    p_client_id: authoritativeClientId,
                     p_status: 'pruned',
                     p_actual_bytes: 0
                 });
@@ -285,14 +319,15 @@ export class SupabaseQuotaManager {
     /**
      * Attempts to atomically reserve database quota for an offline fallback row batch.
      */
-    public async reserveDatabaseQuota(reservationId: string, estimatedBytes: number): Promise<boolean> {
+    public async reserveDatabaseQuota(reservationId: string, estimatedBytes: number, callerClientId?: string): Promise<boolean> {
         if (estimatedBytes <= 0) return true;
 
         if (this.client) {
             try {
+                const authoritativeClientId = await this.resolveAuthoritativeClientId(this.client, callerClientId);
                 const { data, error } = await this.client.rpc('reserve_buffer_capacity', {
                     p_reservation_id: reservationId,
-                    p_client_id: this.clientId,
+                    p_client_id: authoritativeClientId,
                     p_resource_type: 'database',
                     p_bytes: estimatedBytes
                 });
@@ -333,14 +368,15 @@ export class SupabaseQuotaManager {
         return true;
     }
 
-    public async releaseDatabaseQuota(reservationId: string, confirmedWrittenBytes = 0, statusOverride?: 'committed' | 'released' | 'pruned'): Promise<boolean> {
+    public async releaseDatabaseQuota(reservationId: string, confirmedWrittenBytes = 0, statusOverride?: 'committed' | 'released' | 'pruned', callerClientId?: string): Promise<boolean> {
         this.activeDatabaseReservations.delete(reservationId);
         if (this.client) {
             try {
                 const finalStatus = statusOverride || (confirmedWrittenBytes > 0 ? 'committed' : 'released');
+                const authoritativeClientId = await this.resolveAuthoritativeClientId(this.client, callerClientId);
                 const { data, error } = await this.client.rpc('release_buffer_capacity', {
                     p_reservation_id: reservationId,
-                    p_client_id: this.clientId,
+                    p_client_id: authoritativeClientId,
                     p_status: finalStatus,
                     p_actual_bytes: confirmedWrittenBytes
                 });
@@ -368,13 +404,14 @@ export class SupabaseQuotaManager {
         return true;
     }
 
-    public async pruneConfirmedDatabase(reservationId: string, bytesPruned: number): Promise<boolean> {
+    public async pruneConfirmedDatabase(reservationId: string, bytesPruned: number, callerClientId?: string): Promise<boolean> {
         const activeClient = this.reconciliationClient || this.client;
         if (activeClient) {
             try {
+                const authoritativeClientId = await this.resolveAuthoritativeClientId(activeClient, callerClientId);
                 const { data, error } = await activeClient.rpc('release_buffer_capacity', {
                     p_reservation_id: reservationId,
-                    p_client_id: this.clientId,
+                    p_client_id: authoritativeClientId,
                     p_status: 'pruned',
                     p_actual_bytes: 0
                 });
@@ -418,7 +455,7 @@ export class SupabaseQuotaManager {
 
     public canAcceptStorageUpload(bytesNeeded: number = 0): boolean {
         if (bytesNeeded < 0) return false;
-        if (this.isMeasurementStale && this.getCurrentTotalUsageBytes() > 750_000_000) return false;
+        if (this.isMeasurementStale && this.getCurrentTotalUsageBytes() > 2_250_000_000) return false;
         const currentReserved = this.getTotalReservedStorageBytes();
         const prospectiveStorageTotal = this.measuredStorageBytes + currentReserved + bytesNeeded;
         const prospectiveGrandTotal = this.getCurrentTotalUsageBytes() + bytesNeeded;
@@ -429,7 +466,7 @@ export class SupabaseQuotaManager {
 
     public canAcceptDatabaseWrite(bytesNeeded: number = 0): boolean {
         if (bytesNeeded < 0) return false;
-        if (this.isMeasurementStale && this.getCurrentTotalUsageBytes() > 750_000_000) return false;
+        if (this.isMeasurementStale && this.getCurrentTotalUsageBytes() > 2_250_000_000) return false;
         const currentReserved = this.getTotalReservedDatabaseBytes();
         const prospectiveDbTotal = this.measuredDatabaseBytes + currentReserved + bytesNeeded;
         const prospectiveGrandTotal = this.getCurrentTotalUsageBytes() + bytesNeeded;

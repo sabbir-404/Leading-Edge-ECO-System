@@ -38,6 +38,12 @@ export interface UploadEntityMeta {
     fieldName?: string;       // e.g. 'pdf_urls', 'technical_drawing_url', 'image_url'
 }
 
+/** Normalize persisted metadata from pre-schema-migration app versions. */
+export const normalizeDurableUploadFieldName = (entityType: string, fieldName: string): string =>
+    entityType === 'make_orders' && fieldName === 'stage_photo_url'
+        ? 'current_stage_photo'
+        : fieldName;
+
 export interface StagedUploadRecord {
     id: string;
     localPath: string;
@@ -414,7 +420,7 @@ export class DurableUploadService {
             const canBuffer = await quotaMgr.reserveStorageQuota(uploadId, row.size_bytes);
 
             if (!canBuffer) {
-                lastError = 'Supabase Storage quota limit reached or reservation failed (600 MB / 1 GB ceiling). File held safely in local staging.';
+                lastError = 'Supabase Storage quota limit reached or reservation failed (2.2 GB storage / 3 GB ceiling). File held safely in local staging.';
                 const nextRetry = (row.retry_count || 0) + 1;
                 this.db.prepare(`
                     UPDATE durable_uploads
@@ -646,6 +652,11 @@ export class DurableUploadService {
     ): boolean {
         if (!this.db || !identifier || !meta.entityType || !meta.entityId || !meta.fieldName) return false;
         try {
+            // Migrate associations written by older builds to the current schema.
+            const normalizedMeta = {
+                ...meta,
+                fieldName: normalizeDurableUploadFieldName(meta.entityType, meta.fieldName)
+            };
             let uploadId = identifier;
             const match = identifier.match(/(upl_[0-9]+_[0-9a-f]+)/i);
             if (match) {
@@ -656,7 +667,7 @@ export class DurableUploadService {
                 UPDATE durable_uploads
                 SET entity_type = ?, entity_id = ?, field_name = ?, updated_at = ?
                 WHERE id = ? OR id = ? OR local_path LIKE ? OR remote_url_supabase LIKE ? OR remote_url_nas LIKE ?
-            `).run(meta.entityType, String(meta.entityId), meta.fieldName, Date.now(), uploadId, identifier, `%${uploadId}%`, `%${uploadId}%`, `%${uploadId}%`);
+            `).run(normalizedMeta.entityType, String(normalizedMeta.entityId), normalizedMeta.fieldName, Date.now(), uploadId, identifier, `%${uploadId}%`, `%${uploadId}%`, `%${uploadId}%`);
 
             const associated = res.changes > 0;
             if (associated) {
@@ -679,13 +690,13 @@ export class DurableUploadService {
                             entity_id = excluded.entity_id,
                             field_name = excluded.field_name,
                             updated_at = excluded.updated_at
-                    `).run(identifier, meta.entityType, String(meta.entityId), meta.fieldName, Date.now(), Date.now());
+                    `).run(identifier, normalizedMeta.entityType, String(normalizedMeta.entityId), normalizedMeta.fieldName, Date.now(), Date.now());
                 } catch (dbErr: any) {
                     console.warn('[DurableUpload] Failed to persist pending_association:', dbErr.message);
                 }
-                this.pendingAssociations.set(uploadId, meta);
+                this.pendingAssociations.set(uploadId, normalizedMeta);
                 if (uploadId !== identifier) {
-                    this.pendingAssociations.set(identifier, meta);
+                    this.pendingAssociations.set(identifier, normalizedMeta);
                 }
             }
 
@@ -711,12 +722,13 @@ export class DurableUploadService {
                     uploadId = match[1];
                 }
 
+                const fieldName = normalizeDurableUploadFieldName(p.entity_type, p.field_name);
                 const res = this.db.prepare(`
                     UPDATE durable_uploads
                     SET entity_type = ?, entity_id = ?, field_name = ?, updated_at = ?
                     WHERE (id = ? OR id = ? OR local_path LIKE ? OR remote_url_supabase LIKE ? OR remote_url_nas LIKE ?)
                       AND (entity_type IS NULL OR entity_id IS NULL)
-                `).run(p.entity_type, String(p.entity_id), p.field_name, Date.now(), uploadId, p.identifier, `%${uploadId}%`, `%${uploadId}%`, `%${uploadId}%`);
+                `).run(p.entity_type, String(p.entity_id), fieldName, Date.now(), uploadId, p.identifier, `%${uploadId}%`, `%${uploadId}%`, `%${uploadId}%`);
 
                 if (res.changes > 0) {
                     this.db.prepare(`DELETE FROM pending_associations WHERE identifier = ?`).run(p.identifier);
@@ -751,6 +763,9 @@ export class DurableUploadService {
             console.warn(`[DurableUpload] Cannot update entity record: missing owner metadata (entityType: ${entityType}, entityId: ${entityId}, fieldName: ${fieldName})`);
             return false;
         }
+        // Old durable upload queues may still carry the pre-migration column name.
+        // Normalize it before selecting/updating the target row so these uploads retry.
+        const resolvedFieldName = normalizeDurableUploadFieldName(entityType, fieldName);
         const client = this.nasClient || this.supabaseClient;
         if (!client) {
             console.warn(`[DurableUpload] Cannot update entity record: No active client`);
@@ -761,7 +776,7 @@ export class DurableUploadService {
             // First verify the target record actually exists
             const { data: existing, error: selectErr } = await client
                 .from(entityType)
-                .select(`id, ${fieldName}`)
+                .select(`id, ${resolvedFieldName}`)
                 .eq('id', entityId)
                 .maybeSingle();
 
@@ -770,8 +785,8 @@ export class DurableUploadService {
                 return false;
             }
 
-            if (fieldName === 'pdf_urls' || fieldName === 'invoice_attachment_urls') {
-                const list: string[] = Array.isArray((existing as any)?.[fieldName]) ? (existing as any)[fieldName] : [];
+            if (resolvedFieldName === 'pdf_urls' || resolvedFieldName === 'invoice_attachment_urls') {
+                const list: string[] = Array.isArray((existing as any)?.[resolvedFieldName]) ? (existing as any)[resolvedFieldName] : [];
                 const uploadPrefix = uploadId ? `${uploadId}_` : null;
 
                 let replaced = false;
@@ -790,7 +805,7 @@ export class DurableUploadService {
                 const deduplicated = Array.from(new Set(updatedList));
                 const { data: updatedRows, error: updErr } = await client
                     .from(entityType)
-                    .update({ [fieldName]: deduplicated })
+                    .update({ [resolvedFieldName]: deduplicated })
                     .eq('id', entityId)
                     .select('id');
 
@@ -800,8 +815,8 @@ export class DurableUploadService {
                     return false;
                 }
             } else {
-                const updatePayload: Record<string, any> = { [fieldName]: newUrl };
-                if (entityType === 'make_order_items' && fieldName === 'technical_drawing_url') {
+                const updatePayload: Record<string, any> = { [resolvedFieldName]: newUrl };
+                if (entityType === 'make_order_items' && resolvedFieldName === 'technical_drawing_url') {
                     try {
                         const { data: item } = await client.from('make_order_items').select('pdf_urls').eq('id', entityId).maybeSingle();
                         if (item && Array.isArray(item.pdf_urls)) {
@@ -934,7 +949,7 @@ export class DurableUploadService {
         const cfHeaders = getCfAccessHeaders();
         const isTunnel = url.startsWith('https://');
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 20000);
+        const timeoutId = setTimeout(() => controller.abort(), 45000);
 
         try {
             const resp = await fetch(url, {
@@ -967,6 +982,34 @@ export class DurableUploadService {
         }
     }
 
+    /**
+     * Safely normalizes the remote storage URL returned by a TrueNAS storage service candidate.
+     * Prevents internal :8080 ports from breaking Tailscale/LAN access while preserving
+     * paths, query params, and candidate host alignment.
+     */
+    public static normalizeNasStorageUrl(rawUrl: string, candidateBase: string): string {
+        if (!rawUrl || typeof rawUrl !== 'string') return rawUrl;
+        try {
+            const candUrl = new URL(candidateBase);
+            const parsed = new URL(rawUrl, candidateBase);
+
+            // Only normalize legacy :8080 port for approved TrueNAS hosts or candidate host
+            if (parsed.port === '8080') {
+                const lowerHost = parsed.hostname.toLowerCase();
+                const candHost = candUrl.hostname.toLowerCase();
+                if (lowerHost === '100.88.85.6' || lowerHost === '192.168.1.14' || lowerHost === candHost) {
+                    parsed.port = candUrl.port || (candUrl.protocol === 'https:' ? '443' : '80');
+                    parsed.protocol = candUrl.protocol;
+                    parsed.hostname = candUrl.hostname;
+                }
+            }
+
+            return parsed.toString();
+        } catch {
+            return rawUrl;
+        }
+    }
+
     public async uploadToNasStorage(
         buffer: Buffer,
         fileName: string,
@@ -978,9 +1021,12 @@ export class DurableUploadService {
         const cfHeaders = getCfAccessHeaders();
         let lastError: string | null = null;
 
+        // Dynamic size-based timeout: minimum 30s, up to 300s for large files
+        const timeoutMs = Math.max(30000, Math.min(300000, Math.ceil(buffer.length / 200000) * 1000 + 30000));
+
         for (const candidateBase of candidates) {
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 20000); // 20s timeout spanning fetch and body read
+            const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
             try {
                 const formData = new FormData();
@@ -1001,8 +1047,9 @@ export class DurableUploadService {
 
                 if (response.ok) {
                     const data = (await response.json()) as any;
-                    if (data && data.success && (data.file_url || data.url)) {
-                        const url = (data.file_url || data.url) as string;
+                    if (data && data.success && (data.file_url || data.url || data.urlPath)) {
+                        const rawUrl = (data.file_url || data.url || (data.urlPath ? `/files/${String(data.urlPath).replace(/^\/?files\/?/, '')}` : '')) as string;
+                        const url = DurableUploadService.normalizeNasStorageUrl(rawUrl, candidateBase);
 
                         // Check if remote upload response provided an authoritative server-side digest
                         const remoteReportedHash = data.sha256 || data.checksum || data.digest;

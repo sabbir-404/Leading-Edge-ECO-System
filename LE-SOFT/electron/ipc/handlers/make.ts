@@ -42,7 +42,10 @@ import {
     GlobalAttributeSchema,
     normalizeGlobalAttributePayload,
     AssignProductAttributesSchema,
-    SearchCatalogProductsSchema
+    SearchCatalogProductsSchema,
+    RequestProductionApprovalSchema,
+    DecideProductionApprovalSchema,
+    RecordOrderPaymentSchema
 } from '../schemas/make.schema';
 
 export interface ValidatedDownloadUrlResult {
@@ -935,24 +938,70 @@ export function registerMakeHandlers(): void {
     }
 
     /**
-     * Verifies if the session user has permissions to view cost prices of products.
-     * Allowed for Superadmin, Admin, Furniture Designer, and Factory Manager.
-     * Salespersons are strictly forbidden.
+     * Verifies if the session user has permissions to view product blueprint files.
      */
-    function canViewCostPriceSession(session: UserSession): boolean {
+    function canViewBlueprintSession(session: UserSession): boolean {
         const role = (session.role || '').toLowerCase();
-        if (role === 'salesperson' || role === 'salesman' || role === 'sales') return false;
         if (role === 'admin' || role === 'superadmin' || role === 'manager') return true;
+        if (session.permissions && session.permissions['view_product_blueprint'] !== undefined) {
+            return !!session.permissions['view_product_blueprint'];
+        }
         if (
             role === 'furniture_designer' ||
             role === 'furniture designer' ||
             role === 'designer' ||
-            role === 'make_designer' ||
-            role === 'factory_manager' ||
-            role === 'factory manager' ||
-            role === 'factory'
+            role === 'make_designer'
         ) return true;
-        return !!(session.permissions && (session.permissions['view_cost_price'] || session.permissions['set_make_cost_price']));
+        return false;
+    }
+
+    /**
+     * Verifies if the session user has permissions to view cost prices of products.
+     */
+    function canViewCostPriceSession(session: UserSession): boolean {
+        const role = (session.role || '').toLowerCase();
+        if (role === 'admin' || role === 'superadmin' || role === 'manager') return true;
+        if (['salesperson', 'salesman', 'sales', 'factory_manager', 'factory manager', 'factory'].includes(role)) return true;
+        if (['furniture_designer', 'furniture designer', 'designer', 'make_designer'].includes(role)) return true;
+        if (session.permissions && session.permissions['view_product_cost_price'] !== undefined) {
+            return !!session.permissions['view_product_cost_price'];
+        }
+        return !!(session.permissions && (session.permissions['view_product_cost_price'] || session.permissions['view_cost_price'] || session.permissions['set_make_cost_price']));
+    }
+
+    /**
+     * Verifies if the session user has permissions to view sale prices of products.
+     */
+    function canViewSalePriceSession(session: UserSession): boolean {
+        const role = (session.role || '').toLowerCase();
+        if (role === 'admin' || role === 'superadmin' || role === 'manager') return true;
+        if (['salesperson', 'salesman', 'sales', 'factory_manager', 'factory manager', 'factory'].includes(role)) return false;
+        if (['furniture_designer', 'furniture designer', 'designer', 'make_designer'].includes(role)) return true;
+        if (session.permissions && session.permissions['view_product_sale_price'] !== undefined) {
+            return !!session.permissions['view_product_sale_price'];
+        }
+        return false;
+    }
+
+    function canRecordMakePayment(session: UserSession): boolean {
+        const role = (session.role || '').toLowerCase().trim();
+        if (['admin', 'superadmin', 'manager', 'salesperson', 'salesman', 'sales', 'furniture_designer', 'furniture designer', 'designer', 'make_designer'].includes(role)) return true;
+        return !!(session.permissions && session.permissions['make_record_payment']);
+    }
+
+    /**
+     * Verifies if the session user has permissions to view product maximum discount limits.
+     */
+    function canViewMaxDiscountSession(session: UserSession): boolean {
+        const role = (session.role || '').toLowerCase();
+        if (role === 'admin' || role === 'superadmin' || role === 'manager') return true;
+        if (session.permissions && session.permissions['view_product_max_discount'] !== undefined) {
+            return !!session.permissions['view_product_max_discount'];
+        }
+        if (role === 'factory_manager' || role === 'factory manager' || role === 'factory') {
+            return !!(session.permissions && session.permissions['view_product_max_discount']);
+        }
+        return true;
     }
 
     /**
@@ -979,7 +1028,7 @@ export function registerMakeHandlers(): void {
      */
     function canApproveOrder(session: UserSession): boolean {
         const role = session.role.toLowerCase();
-        if (role === 'admin' || role === 'superadmin' || role === 'salesperson' || role === 'sales' || role === 'manager') return true;
+        if (role === 'admin' || role === 'superadmin' || role === 'salesperson' || role === 'salesman' || role === 'sales' || role === 'manager') return true;
         return !!(session.permissions['make_approve'] || session.permissions['sales_approve']);
     }
 
@@ -1280,6 +1329,10 @@ export function registerMakeHandlers(): void {
                 throw new Error('Forbidden: Factory Manager is strictly prohibited from creating orders.');
             }
             const parsed = CreateMakeOrderSchema.parse(rawOrder);
+            const isAdmin = role === 'admin' || role === 'superadmin' || role === 'manager';
+            if (!isAdmin && rawOrder.salesman_id && Number(rawOrder.salesman_id) !== session.userId) {
+                throw new Error('Forbidden: Only administrators can place orders on behalf of another salesperson.');
+            }
             const result = await MakeOrderService.createOrder(parsed as any, session);
             if (!result.success) {
                 throw new Error(result.error);
@@ -1384,7 +1437,7 @@ export function registerMakeHandlers(): void {
                                 fileName,
                                 mimeType,
                                 `make-order-files/${parsed.orderId}/stages`,
-                                { entityType: 'make_orders', entityId: parsed.orderId, fieldName: 'stage_photo_url' }
+                                { entityType: 'make_orders', entityId: parsed.orderId, fieldName: 'current_stage_photo' }
                             );
                             if (uploadResult.success || uploadResult.isPendingUpload) {
                                 finalPhotoUrl = uploadResult.durableKey || uploadResult.publicUrl || null;
@@ -1527,7 +1580,7 @@ export function registerMakeHandlers(): void {
                 validation.sanitizedFileName,
                 validation.mimeType,
                 `make-order-files/${orderId}/stages`,
-                { entityType: 'make_orders', entityId: orderId, fieldName: 'stage_photo_url' }
+                { entityType: 'make_orders', entityId: orderId, fieldName: 'current_stage_photo' }
             );
 
             if (!uploadResult.success && !uploadResult.isPendingUpload) {
@@ -1942,7 +1995,7 @@ export function registerMakeHandlers(): void {
     ipcMain.handle('make-get-catalog-products', async (_e, { search, activeOnly }: any = {}) => {
         const queryFn = async (client: any) => {
             let q = client.from('make_products')
-                .select('*, specifications:make_product_specifications(*), sizes:make_product_sizes(*), colors:make_product_colors(*), images:make_product_images(*)')
+                .select('*, specifications:make_product_specifications(*), sizes:make_product_sizes!make_product_sizes_product_id_fkey(*), colors:make_product_colors(*), images:make_product_images(*)')
                 .order('created_at', { ascending: false });
 
             if (activeOnly) q = q.eq('is_active', true);
@@ -1954,7 +2007,7 @@ export function registerMakeHandlers(): void {
             if (res.error?.code === 'PGRST200' && res.error?.message?.includes('make_product_images')) {
                 console.warn('[make-get-catalog-products] make_product_images relationship missing (Cloud fallback), retrying without images join.');
                 let q2 = client.from('make_products')
-                    .select('*, specifications:make_product_specifications(*), sizes:make_product_sizes(*), colors:make_product_colors(*)')
+                    .select('*, specifications:make_product_specifications(*), sizes:make_product_sizes!make_product_sizes_product_id_fkey(*), colors:make_product_colors(*)')
                     .order('created_at', { ascending: false });
                 if (activeOnly) q2 = q2.eq('is_active', true);
                 if (search) q2 = q2.or(`product_name.ilike.%${search}%,product_code.ilike.%${search}%`);
@@ -2034,12 +2087,41 @@ export function registerMakeHandlers(): void {
             }
         }
 
-        // Enforce cost price visibility permissions
+        // Map single size and blueprint info
+        for (const p of products) {
+            if (p.size_id && p.sizes && Array.isArray(p.sizes)) {
+                p.size = p.sizes.find((s: any) => s.id === p.size_id) || p.sizes[0] || null;
+            } else if (p.sizes && Array.isArray(p.sizes) && p.sizes.length > 0) {
+                p.size = p.sizes[0];
+                p.size_id = p.size.id;
+            }
+            if (p.size) {
+                p.size_label = p.size.size_label || p.size.label || (p.size.length && p.size.width ? `${p.size.length}x${p.size.width}${p.size.height ? `x${p.size.height}` : ''} ${p.size.unit || 'mm'}` : null);
+            }
+        }
+
+        // Enforce permissions & redact fields
         const session = SessionManager.getSession();
         const canViewCost = session ? canViewCostPriceSession(session) : false;
-        if (!canViewCost) {
-            for (const p of products) {
+        const canViewSale = session ? canViewSalePriceSession(session) : false;
+        const canViewMaxDiscount = session ? canViewMaxDiscountSession(session) : false;
+        const canViewBlueprint = session ? canViewBlueprintSession(session) : false;
+
+        for (const p of products) {
+            if (!canViewCost) {
                 delete p.cost_price;
+            }
+            if (!canViewSale) {
+                delete p.sale_price;
+                delete p.base_price;
+                delete p.price;
+            }
+            if (!canViewMaxDiscount) {
+                delete p.max_discount_type;
+                delete p.max_discount_value;
+            }
+            if (!canViewBlueprint) {
+                delete p.blueprint_url;
             }
         }
 
@@ -2102,6 +2184,13 @@ export function registerMakeHandlers(): void {
             }
         }
 
+        const effectiveSizeId = (product as any).size_id !== undefined
+            ? ((product as any).size_id ? Number((product as any).size_id) : null)
+            : ((product as any).sizeId !== undefined ? ((product as any).sizeId ? Number((product as any).sizeId) : null) : undefined);
+        const effectiveBlueprintUrl = (product as any).blueprint_url !== undefined
+            ? (product as any).blueprint_url
+            : (product as any).blueprintUrl;
+
         const writePayload: any = isUpdate ? {
             product_code: product.product_code,
             product_name: product.product_name,
@@ -2129,6 +2218,12 @@ export function registerMakeHandlers(): void {
         };
         if (costPriceToWrite !== undefined) {
             writePayload.cost_price = costPriceToWrite;
+        }
+        if (effectiveSizeId !== undefined) {
+            writePayload.size_id = effectiveSizeId;
+        }
+        if (effectiveBlueprintUrl !== undefined) {
+            writePayload.blueprint_url = effectiveBlueprintUrl ? MakeOrderService.normalizeAttachmentReference(effectiveBlueprintUrl) : null;
         }
 
         let writeResult = await failoverEngine.executeWrite(
@@ -2545,15 +2640,56 @@ export function registerMakeHandlers(): void {
             };
         }));
 
-        const role = (session.role || '').toLowerCase();
-        if (role === 'factory_manager' || role === 'factory manager' || role === 'factory') {
-            return itemsWithDrawings.map((it: any) => {
-                const { item_sale_price, unit_sale_price, total_sale_price, ...rest } = it;
-                return rest;
-            });
-        }
+        const canViewCost = canViewCostPriceSession(session);
+        const canViewSale = canViewSalePriceSession(session);
+        const canViewMaxDiscount = canViewMaxDiscountSession(session);
 
-        return itemsWithDrawings;
+        return itemsWithDrawings.map((it: any) => {
+            const itemCopy = { ...it };
+            if (!canViewCost) {
+                delete itemCopy.item_cost_price;
+                delete itemCopy.cost_price;
+                delete itemCopy.total_cost;
+            }
+            if (!canViewSale) {
+                delete itemCopy.item_sale_price;
+                delete itemCopy.unit_sale_price;
+                delete itemCopy.total_sale_price;
+                delete itemCopy.final_item_price;
+                delete itemCopy.total_sale;
+            }
+            if (!canViewMaxDiscount) {
+                delete itemCopy.max_discount_type;
+                delete itemCopy.max_discount_value;
+                delete itemCopy.discount_type;
+                delete itemCopy.discount_value;
+                delete itemCopy.discount_amount;
+            }
+            return itemCopy;
+        });
+    });
+
+    ipcMain.handle('make-remove-order-item', async (_e, rawPayload: { orderId: number; itemId: number }) => {
+        const session = requireSession();
+        const result = await MakeOrderService.removeOrderItem({
+            orderId: Number(rawPayload?.orderId),
+            itemId: Number(rawPayload?.itemId),
+            actorSession: session
+        });
+        if (!result.success) return { success: false, error: result.error };
+        return { success: true };
+    });
+
+    ipcMain.handle('make-update-order-item-quantity', async (_e, rawPayload: { orderId: number; itemId: number; quantity: number }) => {
+        const session = requireSession();
+        const result = await MakeOrderService.updateDesignerOrderItemQuantity({
+            orderId: Number(rawPayload?.orderId),
+            itemId: Number(rawPayload?.itemId),
+            quantity: Number(rawPayload?.quantity),
+            actorSession: session
+        });
+        if (!result.success) return { success: false, error: result.error };
+        return { success: true };
     });
 
     // ── 14. Dashboard Stats ───────────────────────────────────────────────────
@@ -2644,7 +2780,11 @@ export function registerMakeHandlers(): void {
             const role = (session?.role || '').toLowerCase();
             if (role === 'factory_manager' || role === 'factory manager' || role === 'factory') {
                 return (orders || []).map((o: any) => {
-                    const { sale_price, custom_price, ...rest } = o;
+                    const { sale_price, custom_price, final_price, total_sale_price, money_received, amount_due, payment_status, ...rest } = o;
+                    if (rest.custom_details && typeof rest.custom_details === 'object') {
+                        const { subtotal, final_price: cFinal, money_received: cRec, amount_due: cDue, payment_status: cStat, ...safeDetails } = rest.custom_details;
+                        rest.custom_details = safeDetails;
+                    }
                     return rest;
                 });
             }
@@ -2999,6 +3139,52 @@ export function registerMakeHandlers(): void {
         }
     });
 
+    // ── 18.5 Native Secure Picker & In-Memory Upload for Product Blueprint ─────
+    ipcMain.handle('make-pick-and-upload-blueprint', async (_e, { productId }: { productId?: string | number } = {}) => {
+        try {
+            requireSession();
+            const focusedWin = BrowserWindow.getFocusedWindow();
+            const validation = await MakeCadService.pickAndValidateFile('cad', focusedWin);
+            if ('canceled' in validation) {
+                return { canceled: true, error: validation.error };
+            }
+
+            const subfolder = productId ? `make-catalog/blueprints/${productId}` : 'make-catalog/blueprints';
+            const uploadResult = await MakeCadService.uploadValidatedBuffer(
+                validation.fileBuffer,
+                validation.sanitizedFileName,
+                validation.mimeType,
+                subfolder,
+                productId ? { entityType: 'make_products', entityId: productId, fieldName: 'blueprint_url' } : undefined
+            );
+
+            if (!uploadResult.success && !uploadResult.isPendingUpload) {
+                return { success: false, error: uploadResult.error || 'Failed to upload product blueprint' };
+            }
+
+            const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+            if (!persistentRef) {
+                return { success: false, error: 'Failed to establish persistent blueprint reference' };
+            }
+
+            if (productId) {
+                await supabase.from('make_products').update({ blueprint_url: persistentRef }).eq('id', productId);
+            }
+
+            return {
+                success: true,
+                publicUrl: uploadResult.publicUrl || undefined,
+                durableKey: persistentRef,
+                isPendingUpload: uploadResult.isPendingUpload,
+                status: uploadResult.status,
+                fileName: validation.sanitizedFileName
+            };
+        } catch (err: any) {
+            console.error('[MAKE IPC] make-pick-and-upload-blueprint error:', err);
+            return { success: false, error: err.message };
+        }
+    });
+
     ipcMain.handle('make-upload-invoice-attachment-buffer', async (_e, payload: { fileName: string; fileBase64: string; orderId?: string | number; itemId?: string | number }) => {
         try {
             requireSession();
@@ -3193,6 +3379,76 @@ export function registerMakeHandlers(): void {
         } catch (err: any) {
             console.error('[MAKE IPC] make-get-customer-details error:', err);
             return { success: false, error: err.message };
+        }
+    });
+
+    // ── 22. Production Hold Approval & Order Payment Handlers ─────────────────
+    ipcMain.handle('make-request-production-approval', async (_e, rawPayload: any) => {
+        try {
+            const session = requireSession();
+            const payload = RequestProductionApprovalSchema.parse(rawPayload);
+            return await MakeOrderService.requestProductionApproval(
+                payload.order_id,
+                payload.notes,
+                session
+            );
+        } catch (err: any) {
+            console.error('[MAKE IPC] make-request-production-approval error:', err);
+            return { success: false, error: err.message || 'Failed to request production approval.' };
+        }
+    });
+
+    ipcMain.handle('make-decide-production-approval', async (_e, rawPayload: any) => {
+        try {
+            const session = requireSession();
+            const payload = DecideProductionApprovalSchema.parse(rawPayload);
+            return await MakeOrderService.decideProductionApproval(
+                payload.order_id,
+                payload.decision,
+                payload.notes,
+                session
+            );
+        } catch (err: any) {
+            console.error('[MAKE IPC] make-decide-production-approval error:', err);
+            return { success: false, error: err.message || 'Failed to record approval decision.' };
+        }
+    });
+
+    ipcMain.handle('make-record-order-payment', async (_e, rawPayload: any) => {
+        try {
+            const session = requireSession();
+            if (!canRecordMakePayment(session)) {
+                return { success: false, error: 'Forbidden: You cannot record MAKE order payments.' };
+            }
+            const payload = RecordOrderPaymentSchema.parse(rawPayload);
+            return await MakeOrderService.recordOrderPayment({
+                orderId: payload.order_id,
+                amount: payload.amount,
+                paymentMethod: payload.payment_method,
+                reference: payload.reference,
+                notes: payload.notes,
+                actorSession: session
+            });
+        } catch (err: any) {
+            console.error('[MAKE IPC] make-record-order-payment error:', err);
+            return { success: false, error: err.message || 'Failed to record order payment.' };
+        }
+    });
+
+    ipcMain.handle('make-get-order-payments', async (_e, orderId: number | string) => {
+        try {
+            const session = requireSession();
+            if (!canViewSalePriceSession(session)) {
+                return { success: false, error: 'Forbidden: You cannot view order payment ledgers.' };
+            }
+            const numId = Number(orderId);
+            if (!numId || isNaN(numId)) {
+                return { success: false, error: 'Invalid order ID.' };
+            }
+            return await MakeOrderService.getOrderPayments(numId);
+        } catch (err: any) {
+            console.error('[MAKE IPC] make-get-order-payments error:', err);
+            return { success: false, error: err.message || 'Failed to get order payments.' };
         }
     });
 }

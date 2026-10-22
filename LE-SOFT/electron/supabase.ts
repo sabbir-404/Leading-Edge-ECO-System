@@ -78,6 +78,7 @@ interface SupabaseConfig {
     serviceRoleKey?: string;
     nasUrl?: string;             // legacy Tailscale IP — kept for back-compat
     nasAnonKey?: string;
+    nasJwtToken?: string;        // short-lived NAS-authenticated JWT; never shipped in release artifacts
     nasStorageUrl?: string;      // legacy
     nasLocalUrl?: string;        // LAN: http://192.168.1.14:3001
     nasLocalStorageUrl?: string; // LAN: http://192.168.1.14:8081
@@ -96,6 +97,7 @@ const EMPTY_DEFAULTS: SupabaseConfig = {
     serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || '',
     nasUrl: process.env.NAS_URL || 'http://100.88.85.6:3001',
     nasAnonKey: process.env.NAS_ANON_KEY || PUBLIC_SUPABASE_ANON_KEY || '',
+    nasJwtToken: process.env.NAS_JWT_TOKEN || '',
     nasStorageUrl: process.env.NAS_STORAGE_URL || 'http://100.88.85.6:8081',
     nasLocalUrl: process.env.NAS_LOCAL_URL || 'http://192.168.1.14:3001',
     nasLocalStorageUrl: process.env.NAS_LOCAL_STORAGE_URL || 'http://192.168.1.14:8081',
@@ -199,6 +201,31 @@ export function loadConfig(): SupabaseConfig {
                 }
             }
 
+            // Decrypt or migrate the NAS bearer token (Privileged — never expose to renderer).
+            if (cfg.nasJwtToken) {
+                if (cfg.nasJwtToken.startsWith('enc:v1:safeStorage:')) {
+                    try {
+                        cfg.nasJwtToken = decryptPrivilegedSecret(cfg.nasJwtToken);
+                    } catch (err) {
+                        console.error('[SUPABASE] Failed to decrypt NAS JWT token.');
+                        cfg.nasJwtToken = '';
+                    }
+                } else if (cfg.nasJwtToken.startsWith('enc:v1:fallback:')) {
+                    console.error('[SUPABASE] Refusing NAS JWT token stored without OS-backed encryption.');
+                    cfg.nasJwtToken = '';
+                } else if (isSafeStorageAvailable()) {
+                    try {
+                        parsed.nasJwtToken = encryptPrivilegedSecret(cfg.nasJwtToken);
+                        needsMigration = true;
+                    } catch {
+                        cfg.nasJwtToken = '';
+                    }
+                } else {
+                    console.warn('[SUPABASE] Refusing to load a plaintext NAS JWT token without OS-backed encryption.');
+                    cfg.nasJwtToken = '';
+                }
+            }
+
             // Decrypt or migrate cfAccessClientId
             if (cfg.cfAccessClientId) {
                 if (cfg.cfAccessClientId.startsWith('enc:v1:')) {
@@ -248,6 +275,7 @@ export function loadConfig(): SupabaseConfig {
             if (!cfg.serviceRoleKey && EMPTY_DEFAULTS.serviceRoleKey) cfg.serviceRoleKey = EMPTY_DEFAULTS.serviceRoleKey;
             if (!cfg.cfAccessClientId && EMPTY_DEFAULTS.cfAccessClientId) cfg.cfAccessClientId = EMPTY_DEFAULTS.cfAccessClientId;
             if (!cfg.cfAccessClientSecret && EMPTY_DEFAULTS.cfAccessClientSecret) cfg.cfAccessClientSecret = EMPTY_DEFAULTS.cfAccessClientSecret;
+            if (!cfg.nasJwtToken && EMPTY_DEFAULTS.nasJwtToken) cfg.nasJwtToken = EMPTY_DEFAULTS.nasJwtToken;
             if (!cfg.nasTunnelUrl) cfg.nasTunnelUrl = EMPTY_DEFAULTS.nasTunnelUrl;
             if (!cfg.nasTunnelStorageUrl) cfg.nasTunnelStorageUrl = EMPTY_DEFAULTS.nasTunnelStorageUrl;
             if (cfg.nasLocalUrl === 'http://100.88.85.6:3001') cfg.nasLocalUrl = 'http://192.168.1.14:3001';
@@ -303,6 +331,13 @@ export function saveSupabaseConfig(config: Partial<SupabaseConfig>): void {
     if (merged.cfAccessClientSecret && merged.cfAccessClientSecret.trim()) {
         if (!merged.cfAccessClientSecret.startsWith('enc:v1:')) {
             diskPayload.cfAccessClientSecret = encryptPrivilegedSecret(merged.cfAccessClientSecret);
+        }
+    }
+
+    // Encrypt NAS bearer token using OS-backed secure storage; never persist it as plaintext.
+    if (merged.nasJwtToken && merged.nasJwtToken.trim()) {
+        if (!merged.nasJwtToken.startsWith('enc:v1:')) {
+            diskPayload.nasJwtToken = encryptPrivilegedSecret(merged.nasJwtToken);
         }
     }
 
@@ -587,13 +622,11 @@ function recreateNasClient(url: string) {
                 headers.set('Content-Type', 'application/json');
             }
 
-            // CRITICAL DATABASE AUTHENTICATION CONTRACT:
-            // Requests sent to NAS PostgREST must ALWAYS use the configured NAS database anon key.
-            // Under no circumstances may a user's Supabase Cloud Auth JWT be attached to a NAS PostgREST request,
-            // as NAS PostgREST only verifies signatures against the NAS database secret.
+            // The public anon key identifies this PostgREST project; NAS JWT authorizes the database role.
+            // Never use a Supabase service-role key as the NAS bearer token.
             const nasDbKey = config.nasAnonKey || config.anonKey || PUBLIC_SUPABASE_ANON_KEY;
             headers.set('apikey', nasDbKey);
-            headers.set('Authorization', `Bearer ${nasDbKey}`);
+            headers.set('Authorization', `Bearer ${config.nasJwtToken || nasDbKey}`);
 
             // Bounded 6000ms timeout for NAS requests to accommodate Tailscale WAN latency
             const controller = new AbortController();
@@ -658,32 +691,8 @@ function recreateNasClient(url: string) {
                     throw new Error(`[NAS:FETCH] Mutation operation (${method}) failed or timed out on NAS: ${errMsg}. Low-level replay rejected to protect database integrity.`);
                 }
 
-                // Safe fallback ONLY for idempotent READ requests (GET, HEAD)
-                if (config.url && config.anonKey) {
-                    try {
-                        const cleanPath = relativePath.startsWith('/rest/v1/') 
-                            ? relativePath 
-                            : `/rest/v1${relativePath.startsWith('/') ? relativePath : '/' + relativePath}`;
-                        const cloudUrl = new URL(cleanPath, config.url).toString();
-                        
-                        const cloudHeaders = new Headers(init?.headers);
-                        cloudHeaders.set('apikey', config.anonKey);
-                        if (!cloudHeaders.has('Authorization')) {
-                            cloudHeaders.set('Authorization', `Bearer ${config.anonKey}`);
-                        }
-                        cloudHeaders.delete('CF-Access-Client-Id');
-                        cloudHeaders.delete('CF-Access-Client-Secret');
-
-                        console.warn(`[NAS:FETCH] NAS read failed (${errMsg}). Routing read to Supabase Cloud:`, cloudUrl);
-                        return await fetch(cloudUrl, {
-                            ...init,
-                            headers: cloudHeaders
-                        });
-                    } catch (forwardErr: any) {
-                        console.error('[NAS:FETCH] Supabase Cloud auto-forward failed:', forwardErr.message);
-                    }
-                }
-
+                // Do not forward reads here. The caller must use DatabaseFailoverEngine so
+                // the response source is recorded correctly and health state stays truthful.
                 throw err;
             }
         };
@@ -695,7 +704,7 @@ function recreateNasClient(url: string) {
                 autoRefreshToken: false,
                 detectSessionInUrl: false
             },
-            accessToken: async () => nasKey,
+            accessToken: async () => config.nasJwtToken || nasKey,
             global: {
                 fetch: nasFetch,
                 headers: {

@@ -23035,6 +23035,7 @@ var init_DatabaseFailoverEngine = __esm({
       lastWorkingNasUrl = null;
       connectionStatePath;
       isNasReachable = false;
+      nasAuthorizationError = null;
       consecutiveFailures = 0;
       MAX_CONSECUTIVE_FAILURES = 2;
       // Require 2 consecutive failures before degrading to avoid false-positive on single transient timeout
@@ -23149,10 +23150,20 @@ var init_DatabaseFailoverEngine = __esm({
         }
         throw new Error("No database client available.");
       }
+      /**
+       * Redacts tokens, connection strings, passwords, and sensitive keys from error strings
+       */
+      static sanitizeError(err) {
+        if (!err) return "unknown";
+        const msg = typeof err === "string" ? err : err.message || JSON.stringify(err);
+        return msg.replace(/(Bearer\s+)[A-Za-z0-9\-_.]+/gi, "$1[REDACTED]").replace(/(apikey[:=]\s*)[A-Za-z0-9\-_.]+/gi, "$1[REDACTED]").replace(/(postgres:\/\/[^:]+:)[^@]+(@)/gi, "$1[REDACTED]$2").replace(/(password[:=]\s*)[^&\s]+/gi, "$1[REDACTED]");
+      }
       logDiagnostic(payload) {
         const cleanPayload = {
           timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-          ...payload
+          ...payload,
+          reason: payload.reason ? _DatabaseFailoverEngine.sanitizeError(payload.reason) : void 0,
+          error: payload.error ? _DatabaseFailoverEngine.sanitizeError(payload.error) : void 0
         };
         console.log(`[DB:DIAGNOSTIC] ${JSON.stringify(cleanPayload)}`);
         try {
@@ -23190,6 +23201,7 @@ var init_DatabaseFailoverEngine = __esm({
           connectionTier: this.connectionTier,
           activeNasUrl: this.activeNasUrl,
           isNasReachable: this.isNasReachable,
+          nasAuthorizationError: this.nasAuthorizationError,
           consecutiveFailures: this.consecutiveFailures,
           pendingReconciliationCount: this.getPendingJournalEntries().length,
           pendingMirrorRetriesCount: this.mirrorRetryEntries.length,
@@ -23231,18 +23243,22 @@ var init_DatabaseFailoverEngine = __esm({
        * Pings a specific URL with a bounded timeout using HEAD to avoid downloading schema bodies.
        */
       async pingUrl(url2, timeoutMs = 1200, headers = {}) {
+        let timeoutId;
         try {
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+          timeoutId = setTimeout(() => controller.abort(), timeoutMs);
           const res = await fetch(url2, {
             method: "HEAD",
             signal: controller.signal,
             headers
           });
-          clearTimeout(timeoutId);
-          return res.ok;
+          const contentType = res.headers?.get?.("content-type") || "";
+          if (res.status === 403 && contentType.toLowerCase().includes("text/html")) return false;
+          return true;
         } catch {
           return false;
+        } finally {
+          if (timeoutId) clearTimeout(timeoutId);
         }
       }
       /**
@@ -23369,6 +23385,9 @@ var init_DatabaseFailoverEngine = __esm({
           }
           if (!success2) {
             console.warn("[DB:RECOVERY] NAS real query failed:", queryError?.message || "unknown error");
+            if (_DatabaseFailoverEngine.isAuthorizationError(queryError)) {
+              this.recordNasAuthorizationFailure(queryError);
+            }
             return false;
           }
           const duration3 = Date.now() - t0;
@@ -23435,13 +23454,17 @@ var init_DatabaseFailoverEngine = __esm({
       }
       // ── Circuit Breaker Actions ──────────────────────────────────────────────────
       recordNasFailure(err) {
+        if (_DatabaseFailoverEngine.isAuthorizationError(err)) {
+          this.recordNasAuthorizationFailure(err);
+          return;
+        }
         if (this.isBackgroundBootstrap) {
           console.warn("[DB:FAILOVER] Ignoring NAS failure during background bootstrap (not penalizing primary health):", err?.message || "unknown");
           return;
         }
         this.consecutiveFailures++;
         this.metrics.failedNasQueries++;
-        const isHardFailure = err?.message && (err.message.includes("ECONNREFUSED") || err.message.includes("HTML response") || err.message.includes("proxy/gateway") || err.message.includes("authorization rejected") || err.message.includes("502") || err.message.includes("503") || err.message.includes("504"));
+        const isHardFailure = err?.message && (err.message.includes("ECONNREFUSED") || err.message.includes("HTML response") || err.message.includes("proxy/gateway") || err.message.includes("502") || err.message.includes("503") || err.message.includes("504"));
         const isTimeoutOrTransient = err?.message && (err.message.includes("fetch failed") || err.message.includes("ETIMEDOUT") || err.message.includes("network") || err.message.includes("timeout") || err.message.includes("Connection")) || err?.code === "PGRST000";
         const backoffStep = Math.min(4, Math.max(0, this.consecutiveFailures - 1));
         this.cooldownDurationMs = Math.min(12e4, 3e4 * Math.pow(1.5, backoffStep));
@@ -23478,8 +23501,28 @@ var init_DatabaseFailoverEngine = __esm({
           }
         }
       }
+      static isAuthorizationError(err) {
+        const status = Number(err?.status ?? err?.statusCode ?? err?.response?.status);
+        const message = String(err?.message || err || "").toLowerCase();
+        if (/html response|proxy\/gateway|proxy\/access blocked|unexpected html/.test(message)) return false;
+        return status === 401 || status === 403 || /database authorization rejected|postgrest authentication error|jwt (?:expired|invalid)|invalid jwt|permission denied|not authorized|unauthorized|forbidden/.test(message);
+      }
+      recordNasAuthorizationFailure(err) {
+        this.isNasReachable = true;
+        this.nasAuthorizationError = _DatabaseFailoverEngine.sanitizeError(err);
+        this.metrics.failedNasQueries++;
+        this.lastHealthCheckTime = Date.now();
+        this.consecutiveFailures = 0;
+        this.cooldownUntil = 0;
+        this.circuitState = "degraded";
+        this.activeTarget = "supabase";
+        this.broadcastStatus();
+        console.warn("[DB:FAILOVER] NAS is reachable but rejected database authorization. Routing database operations to Supabase until credentials are corrected.");
+      }
       recordNasSuccess(durationMs) {
         this.consecutiveFailures = 0;
+        this.isNasReachable = true;
+        this.nasAuthorizationError = null;
         this.cooldownUntil = 0;
         this.cooldownDurationMs = 3e4;
         if (typeof durationMs === "number" && durationMs >= 0) {
@@ -23521,10 +23564,14 @@ var init_DatabaseFailoverEngine = __esm({
               this.recordNasSuccess(duration3);
               return { data: res.data, error: null, databaseUsed: "nas" };
             }
-            if (res.error?.code && !["ECONNREFUSED", "ETIMEDOUT", "PGRST000"].includes(res.error.code)) {
-              return { data: res.data, error: res.error, databaseUsed: "nas" };
+            if (_DatabaseFailoverEngine.isAuthorizationError(res.error)) {
+              this.recordNasAuthorizationFailure(res.error);
+            } else {
+              if (res.error?.code && !["ECONNREFUSED", "ETIMEDOUT", "PGRST000"].includes(res.error.code)) {
+                return { data: res.data, error: res.error, databaseUsed: "nas" };
+              }
+              this.recordNasFailure(res.error);
             }
-            this.recordNasFailure(res.error);
           } catch (err) {
             this.recordNasFailure(err);
           }
@@ -23564,20 +23611,25 @@ var init_DatabaseFailoverEngine = __esm({
             );
             res = await Promise.race([writeFn(this.nasClient), timeoutPromise]);
           } catch (err) {
-            this.recordNasFailure(err);
-            console.error(`[DB:FAILOVER] Ambiguous write timeout on NAS for ${writeDesc} (${metadata.table}). Preventing duplicate replay to Supabase.`);
-            this.journalWrite({
-              table: metadata.table,
-              operation: metadata.operation,
-              primaryKey: metadata.primaryKey,
-              data: metadata.data,
-              filter: metadata.filter
-            });
-            return {
-              data: null,
-              error: new Error(`NAS write timeout on ${writeDesc}: operation sent to primary database but response timed out. Replay halted to prevent duplicate mutations.`),
-              databaseUsed: "nas"
-            };
+            if (_DatabaseFailoverEngine.isAuthorizationError(err)) {
+              this.recordNasAuthorizationFailure(err);
+              res = { data: null, error: err };
+            } else {
+              this.recordNasFailure(err);
+              console.error(`[DB:FAILOVER] Ambiguous write failure on NAS for ${writeDesc} (${metadata.table}). Preventing duplicate replay to Supabase.`);
+              this.journalWrite({
+                table: metadata.table,
+                operation: metadata.operation,
+                primaryKey: metadata.primaryKey,
+                data: metadata.data,
+                filter: metadata.filter
+              });
+              return {
+                data: null,
+                error: new Error(`NAS write timeout on ${writeDesc}: operation sent to primary database but response timed out. Replay halted to prevent duplicate mutations.`),
+                databaseUsed: "nas"
+              };
+            }
           }
           const duration3 = Date.now() - t0;
           this.metrics.lastQueryDurationMs = duration3;
@@ -23596,16 +23648,20 @@ var init_DatabaseFailoverEngine = __esm({
             });
             return { data: res.data, error: null, databaseUsed: "nas" };
           }
-          const isPgError = res.error?.code || res.error?.details || res.error?.hint;
-          if (isPgError) {
-            return { data: null, error: res.error, databaseUsed: "nas" };
+          if (_DatabaseFailoverEngine.isAuthorizationError(res.error)) {
+            this.recordNasAuthorizationFailure(res.error);
+          } else {
+            const isPgError = res.error?.code || res.error?.details || res.error?.hint;
+            if (isPgError) {
+              return { data: null, error: res.error, databaseUsed: "nas" };
+            }
+            this.recordNasFailure(res.error);
+            return {
+              data: null,
+              error: res.error,
+              databaseUsed: "nas"
+            };
           }
-          this.recordNasFailure(res.error);
-          return {
-            data: null,
-            error: res.error,
-            databaseUsed: "nas"
-          };
         }
         if (!this.supabaseClient) {
           return { data: null, error: new Error("Supabase fallback client is not configured"), databaseUsed: "supabase" };
@@ -23729,17 +23785,54 @@ var init_DatabaseFailoverEngine = __esm({
       getMirrorRetryEntries() {
         return [...this.mirrorRetryEntries];
       }
+      /**
+       * A cloud mirror retry is only valid while its source row still exists on the
+       * authoritative NAS. This also removes stale journal entries after an order
+       * or catalog purge, instead of retrying a guaranteed FK failure forever.
+       * If the NAS cannot be queried, keep the retry: absence must be confirmed.
+       */
+      async keepOnlyExistingNasRows(item) {
+        if (item.operation === "delete" || !this.nasClient) return true;
+        const rows = Array.isArray(item.data) ? item.data : [item.data];
+        const keyName = (rows.length === 1 ? item.primaryKey?.name : void 0) || (rows.every((row) => row && row.id !== void 0) ? "id" : void 0);
+        if (!keyName || rows.length === 0) return rows.length !== 0;
+        const keys = rows.map((row) => (rows.length === 1 ? item.primaryKey?.value : void 0) ?? row?.[keyName]).filter((value) => value !== void 0 && value !== null);
+        if (keys.length !== rows.length) return true;
+        try {
+          let query = this.nasClient.from(item.table).select(keyName);
+          query = keys.length === 1 ? query.eq(keyName, keys[0]) : query.in(keyName, keys);
+          const { data: data2, error: error51 } = keys.length === 1 && typeof query.maybeSingle === "function" ? await query.maybeSingle() : await query;
+          if (error51 || data2 === void 0) return true;
+          const existingKeys = new Set((Array.isArray(data2) ? data2 : data2 ? [data2] : []).map((row) => row?.[keyName]));
+          const survivingRows = rows.filter((_row, index2) => existingKeys.has(keys[index2]));
+          if (survivingRows.length === 0) {
+            console.info(`[DB:SYNC] Dropping stale cloud mirror retry for deleted NAS row(s) in ${item.table}.`);
+            return false;
+          }
+          if (survivingRows.length !== rows.length) {
+            item.data = Array.isArray(item.data) ? survivingRows : survivingRows[0];
+          }
+          return true;
+        } catch {
+          return true;
+        }
+      }
       async processPendingMirrorRetries() {
         const client = this.supabaseAdmin || this.supabaseClient;
         if (!client || this.mirrorRetryEntries.length === 0 || this.isRetryingMirror) {
-          return { succeeded: 0, failed: 0 };
+          return { succeeded: 0, failed: 0, discarded: 0 };
         }
         this.isRetryingMirror = true;
         let succeeded = 0;
         let failed = 0;
+        let discarded = 0;
         const remaining = [];
         for (const item of this.mirrorRetryEntries) {
           try {
+            if (!await this.keepOnlyExistingNasRows(item)) {
+              discarded++;
+              continue;
+            }
             await this.mirrorWriteToCloud(client, item, item.data);
             succeeded++;
           } catch (err) {
@@ -23753,7 +23846,7 @@ var init_DatabaseFailoverEngine = __esm({
         this.persistMirrorJournal();
         this.isRetryingMirror = false;
         this.broadcastStatus();
-        return { succeeded, failed };
+        return { succeeded, failed, discarded };
       }
       // ── Freshness & Bootstrap Engine ─────────────────────────────────────────────
       loadFreshness() {
@@ -24477,19 +24570,19 @@ var init_SupabaseQuotaManager = __esm({
     import_path5 = __toESM(require("path"), 1);
     SupabaseQuotaManager = class _SupabaseQuotaManager {
       static instance = null;
-      // Hard ceiling definitions (in bytes)
-      static HARD_CEILING_BYTES = 1e9;
-      // 1 GB total
-      static STORAGE_CEILING_BYTES = 6e8;
-      // 600 MB for images/CAD
-      static DATABASE_CEILING_BYTES = 25e7;
-      // 250 MB for DB rows
-      static CRITICAL_RESERVE_BYTES = 15e7;
-      // 150 MB emergency floor
-      static WARNING_THRESHOLD_BYTES = 8e8;
-      // 800 MB (80%)
-      static CRITICAL_THRESHOLD_BYTES = 95e7;
-      // 950 MB (95%)
+      // Soft operational target & partition definitions (in bytes)
+      static HARD_CEILING_BYTES = 3e9;
+      // 3 GB soft operational target
+      static STORAGE_CEILING_BYTES = 22e8;
+      // 2.2 GB operational allocation for images/CAD
+      static DATABASE_CEILING_BYTES = 5e8;
+      // 500 MB operational allocation for DB rows
+      static CRITICAL_RESERVE_BYTES = 3e8;
+      // 300 MB emergency reserve floor
+      static WARNING_THRESHOLD_BYTES = 24e8;
+      // 2.4 GB (80%) - triggers accelerated reconciliation
+      static CRITICAL_THRESHOLD_BYTES = 285e7;
+      // 2.85 GB (95%)
       clientId;
       client = null;
       reconciliationClient = null;
@@ -24534,6 +24627,37 @@ var init_SupabaseQuotaManager = __esm({
       registerReconciliationClient(client) {
         this.reconciliationClient = client;
       }
+      /**
+       * Resolves the authoritative client identity expected by PostgreSQL RPC.
+       * When caller has an authenticated Supabase session, auth.uid() is authoritative.
+       * If no authenticated user is present (e.g. background worker or test environment),
+       * falls back to the configured clientId.
+       */
+      async resolveAuthoritativeClientId(overrideClient, explicitClientId) {
+        if (explicitClientId && explicitClientId.trim()) {
+          return explicitClientId.trim();
+        }
+        const activeClient = overrideClient || this.client;
+        if (activeClient) {
+          try {
+            const sessionRes = await activeClient.auth.getSession();
+            const uid = sessionRes?.data?.session?.user?.id;
+            if (uid && typeof uid === "string" && uid.trim().length > 0) {
+              return uid.trim();
+            }
+          } catch {
+          }
+          try {
+            const userRes = await activeClient.auth.getUser();
+            const uid = userRes?.data?.user?.id;
+            if (uid && typeof uid === "string" && uid.trim().length > 0) {
+              return uid.trim();
+            }
+          } catch {
+          }
+        }
+        return this.clientId;
+      }
       recordUsage(_source, storageBytes, dbBytes) {
         this.measuredStorageBytes = storageBytes;
         this.measuredDatabaseBytes = dbBytes;
@@ -24572,15 +24696,17 @@ var init_SupabaseQuotaManager = __esm({
       /**
        * Attempts to atomically reserve storage quota for a file upload.
        * Enforces shared server-side reservation across multiple desktop clients when client is registered.
+       * Uses authenticated auth.uid() by default to satisfy CLIENT_IDENTITY_MISMATCH constraints.
        * Returns true if reservation is accepted, false if capacity would be exceeded or uncertain.
        */
-      async reserveStorageQuota(reservationId, bytesNeeded) {
+      async reserveStorageQuota(reservationId, bytesNeeded, callerClientId) {
         if (bytesNeeded <= 0) return true;
         if (this.client) {
           try {
+            const authoritativeClientId = await this.resolveAuthoritativeClientId(this.client, callerClientId);
             const { data: data2, error: error51 } = await this.client.rpc("reserve_buffer_capacity", {
               p_reservation_id: reservationId,
-              p_client_id: this.clientId,
+              p_client_id: authoritativeClientId,
               p_resource_type: "storage",
               p_bytes: bytesNeeded
             });
@@ -24613,14 +24739,15 @@ var init_SupabaseQuotaManager = __esm({
         this.activeStorageReservations.set(reservationId, bytesNeeded);
         return true;
       }
-      async releaseStorageQuota(reservationId, confirmedUploadedBytes = 0, statusOverride) {
+      async releaseStorageQuota(reservationId, confirmedUploadedBytes = 0, statusOverride, callerClientId) {
         this.activeStorageReservations.delete(reservationId);
         if (this.client) {
           try {
             const finalStatus = statusOverride || (confirmedUploadedBytes > 0 ? "committed" : "released");
+            const authoritativeClientId = await this.resolveAuthoritativeClientId(this.client, callerClientId);
             const { data: data2, error: error51 } = await this.client.rpc("release_buffer_capacity", {
               p_reservation_id: reservationId,
-              p_client_id: this.clientId,
+              p_client_id: authoritativeClientId,
               p_status: finalStatus,
               p_actual_bytes: confirmedUploadedBytes
             });
@@ -24644,13 +24771,14 @@ var init_SupabaseQuotaManager = __esm({
         }
         return true;
       }
-      async pruneConfirmedStorage(reservationId, bytesPruned) {
+      async pruneConfirmedStorage(reservationId, bytesPruned, callerClientId) {
         const activeClient = this.reconciliationClient || this.client;
         if (activeClient) {
           try {
+            const authoritativeClientId = await this.resolveAuthoritativeClientId(activeClient, callerClientId);
             const { data: data2, error: error51 } = await activeClient.rpc("release_buffer_capacity", {
               p_reservation_id: reservationId,
-              p_client_id: this.clientId,
+              p_client_id: authoritativeClientId,
               p_status: "pruned",
               p_actual_bytes: 0
             });
@@ -24677,13 +24805,14 @@ var init_SupabaseQuotaManager = __esm({
       /**
        * Attempts to atomically reserve database quota for an offline fallback row batch.
        */
-      async reserveDatabaseQuota(reservationId, estimatedBytes) {
+      async reserveDatabaseQuota(reservationId, estimatedBytes, callerClientId) {
         if (estimatedBytes <= 0) return true;
         if (this.client) {
           try {
+            const authoritativeClientId = await this.resolveAuthoritativeClientId(this.client, callerClientId);
             const { data: data2, error: error51 } = await this.client.rpc("reserve_buffer_capacity", {
               p_reservation_id: reservationId,
-              p_client_id: this.clientId,
+              p_client_id: authoritativeClientId,
               p_resource_type: "database",
               p_bytes: estimatedBytes
             });
@@ -24716,14 +24845,15 @@ var init_SupabaseQuotaManager = __esm({
         this.activeDatabaseReservations.set(reservationId, estimatedBytes);
         return true;
       }
-      async releaseDatabaseQuota(reservationId, confirmedWrittenBytes = 0, statusOverride) {
+      async releaseDatabaseQuota(reservationId, confirmedWrittenBytes = 0, statusOverride, callerClientId) {
         this.activeDatabaseReservations.delete(reservationId);
         if (this.client) {
           try {
             const finalStatus = statusOverride || (confirmedWrittenBytes > 0 ? "committed" : "released");
+            const authoritativeClientId = await this.resolveAuthoritativeClientId(this.client, callerClientId);
             const { data: data2, error: error51 } = await this.client.rpc("release_buffer_capacity", {
               p_reservation_id: reservationId,
-              p_client_id: this.clientId,
+              p_client_id: authoritativeClientId,
               p_status: finalStatus,
               p_actual_bytes: confirmedWrittenBytes
             });
@@ -24747,13 +24877,14 @@ var init_SupabaseQuotaManager = __esm({
         }
         return true;
       }
-      async pruneConfirmedDatabase(reservationId, bytesPruned) {
+      async pruneConfirmedDatabase(reservationId, bytesPruned, callerClientId) {
         const activeClient = this.reconciliationClient || this.client;
         if (activeClient) {
           try {
+            const authoritativeClientId = await this.resolveAuthoritativeClientId(activeClient, callerClientId);
             const { data: data2, error: error51 } = await activeClient.rpc("release_buffer_capacity", {
               p_reservation_id: reservationId,
-              p_client_id: this.clientId,
+              p_client_id: authoritativeClientId,
               p_status: "pruned",
               p_actual_bytes: 0
             });
@@ -24791,7 +24922,7 @@ var init_SupabaseQuotaManager = __esm({
       }
       canAcceptStorageUpload(bytesNeeded = 0) {
         if (bytesNeeded < 0) return false;
-        if (this.isMeasurementStale && this.getCurrentTotalUsageBytes() > 75e7) return false;
+        if (this.isMeasurementStale && this.getCurrentTotalUsageBytes() > 225e7) return false;
         const currentReserved = this.getTotalReservedStorageBytes();
         const prospectiveStorageTotal = this.measuredStorageBytes + currentReserved + bytesNeeded;
         const prospectiveGrandTotal = this.getCurrentTotalUsageBytes() + bytesNeeded;
@@ -24799,7 +24930,7 @@ var init_SupabaseQuotaManager = __esm({
       }
       canAcceptDatabaseWrite(bytesNeeded = 0) {
         if (bytesNeeded < 0) return false;
-        if (this.isMeasurementStale && this.getCurrentTotalUsageBytes() > 75e7) return false;
+        if (this.isMeasurementStale && this.getCurrentTotalUsageBytes() > 225e7) return false;
         const currentReserved = this.getTotalReservedDatabaseBytes();
         const prospectiveDbTotal = this.measuredDatabaseBytes + currentReserved + bytesNeeded;
         const prospectiveGrandTotal = this.getCurrentTotalUsageBytes() + bytesNeeded;
@@ -26206,9 +26337,10 @@ var init_DurableOutboxService = __esm({
 // electron/services/media/DurableUploadService.ts
 var DurableUploadService_exports = {};
 __export(DurableUploadService_exports, {
-  DurableUploadService: () => DurableUploadService
+  DurableUploadService: () => DurableUploadService,
+  normalizeDurableUploadFieldName: () => normalizeDurableUploadFieldName
 });
-var import_better_sqlite32, import_electron7, import_fs8, import_path8, import_crypto7, DurableUploadService;
+var import_better_sqlite32, import_electron7, import_fs8, import_path8, import_crypto7, normalizeDurableUploadFieldName, DurableUploadService;
 var init_DurableUploadService = __esm({
   "electron/services/media/DurableUploadService.ts"() {
     "use strict";
@@ -26219,6 +26351,7 @@ var init_DurableUploadService = __esm({
     import_crypto7 = __toESM(require("crypto"), 1);
     init_SupabaseQuotaManager();
     init_supabase();
+    normalizeDurableUploadFieldName = (entityType, fieldName) => entityType === "make_orders" && fieldName === "stage_photo_url" ? "current_stage_photo" : fieldName;
     DurableUploadService = class _DurableUploadService {
       static instance = null;
       db = null;
@@ -26521,7 +26654,7 @@ var init_DurableUploadService = __esm({
           const quotaMgr = SupabaseQuotaManager.getInstance();
           const canBuffer = await quotaMgr.reserveStorageQuota(uploadId, row.size_bytes);
           if (!canBuffer) {
-            lastError = "Supabase Storage quota limit reached or reservation failed (600 MB / 1 GB ceiling). File held safely in local staging.";
+            lastError = "Supabase Storage quota limit reached or reservation failed (2.2 GB storage / 3 GB ceiling). File held safely in local staging.";
             const nextRetry = (row.retry_count || 0) + 1;
             this.db.prepare(`
                     UPDATE durable_uploads
@@ -26720,6 +26853,10 @@ var init_DurableUploadService = __esm({
       associateUploadWithEntity(identifier, meta3) {
         if (!this.db || !identifier || !meta3.entityType || !meta3.entityId || !meta3.fieldName) return false;
         try {
+          const normalizedMeta = {
+            ...meta3,
+            fieldName: normalizeDurableUploadFieldName(meta3.entityType, meta3.fieldName)
+          };
           let uploadId = identifier;
           const match = identifier.match(/(upl_[0-9]+_[0-9a-f]+)/i);
           if (match) {
@@ -26729,7 +26866,7 @@ var init_DurableUploadService = __esm({
                 UPDATE durable_uploads
                 SET entity_type = ?, entity_id = ?, field_name = ?, updated_at = ?
                 WHERE id = ? OR id = ? OR local_path LIKE ? OR remote_url_supabase LIKE ? OR remote_url_nas LIKE ?
-            `).run(meta3.entityType, String(meta3.entityId), meta3.fieldName, Date.now(), uploadId, identifier, `%${uploadId}%`, `%${uploadId}%`, `%${uploadId}%`);
+            `).run(normalizedMeta.entityType, String(normalizedMeta.entityId), normalizedMeta.fieldName, Date.now(), uploadId, identifier, `%${uploadId}%`, `%${uploadId}%`, `%${uploadId}%`);
           const associated = res.changes > 0;
           if (associated) {
             try {
@@ -26752,13 +26889,13 @@ var init_DurableUploadService = __esm({
                             entity_id = excluded.entity_id,
                             field_name = excluded.field_name,
                             updated_at = excluded.updated_at
-                    `).run(identifier, meta3.entityType, String(meta3.entityId), meta3.fieldName, Date.now(), Date.now());
+                    `).run(identifier, normalizedMeta.entityType, String(normalizedMeta.entityId), normalizedMeta.fieldName, Date.now(), Date.now());
             } catch (dbErr) {
               console.warn("[DurableUpload] Failed to persist pending_association:", dbErr.message);
             }
-            this.pendingAssociations.set(uploadId, meta3);
+            this.pendingAssociations.set(uploadId, normalizedMeta);
             if (uploadId !== identifier) {
-              this.pendingAssociations.set(identifier, meta3);
+              this.pendingAssociations.set(identifier, normalizedMeta);
             }
           }
           return associated;
@@ -26781,12 +26918,13 @@ var init_DurableUploadService = __esm({
             if (match) {
               uploadId = match[1];
             }
+            const fieldName = normalizeDurableUploadFieldName(p.entity_type, p.field_name);
             const res = this.db.prepare(`
                     UPDATE durable_uploads
                     SET entity_type = ?, entity_id = ?, field_name = ?, updated_at = ?
                     WHERE (id = ? OR id = ? OR local_path LIKE ? OR remote_url_supabase LIKE ? OR remote_url_nas LIKE ?)
                       AND (entity_type IS NULL OR entity_id IS NULL)
-                `).run(p.entity_type, String(p.entity_id), p.field_name, Date.now(), uploadId, p.identifier, `%${uploadId}%`, `%${uploadId}%`, `%${uploadId}%`);
+                `).run(p.entity_type, String(p.entity_id), fieldName, Date.now(), uploadId, p.identifier, `%${uploadId}%`, `%${uploadId}%`, `%${uploadId}%`);
             if (res.changes > 0) {
               this.db.prepare(`DELETE FROM pending_associations WHERE identifier = ?`).run(p.identifier);
               this.pendingAssociations.delete(p.identifier);
@@ -26811,19 +26949,20 @@ var init_DurableUploadService = __esm({
           console.warn(`[DurableUpload] Cannot update entity record: missing owner metadata (entityType: ${entityType}, entityId: ${entityId}, fieldName: ${fieldName})`);
           return false;
         }
+        const resolvedFieldName = normalizeDurableUploadFieldName(entityType, fieldName);
         const client = this.nasClient || this.supabaseClient;
         if (!client) {
           console.warn(`[DurableUpload] Cannot update entity record: No active client`);
           return false;
         }
         try {
-          const { data: existing, error: selectErr } = await client.from(entityType).select(`id, ${fieldName}`).eq("id", entityId).maybeSingle();
+          const { data: existing, error: selectErr } = await client.from(entityType).select(`id, ${resolvedFieldName}`).eq("id", entityId).maybeSingle();
           if (selectErr || !existing) {
             console.warn(`[DurableUpload] Target record does not exist for ${entityType} ID ${entityId}:`, selectErr?.message || "Record not found");
             return false;
           }
-          if (fieldName === "pdf_urls" || fieldName === "invoice_attachment_urls") {
-            const list = Array.isArray(existing?.[fieldName]) ? existing[fieldName] : [];
+          if (resolvedFieldName === "pdf_urls" || resolvedFieldName === "invoice_attachment_urls") {
+            const list = Array.isArray(existing?.[resolvedFieldName]) ? existing[resolvedFieldName] : [];
             const uploadPrefix = uploadId ? `${uploadId}_` : null;
             let replaced = false;
             const updatedList = list.map((item) => {
@@ -26837,15 +26976,15 @@ var init_DurableUploadService = __esm({
               updatedList.push(newUrl);
             }
             const deduplicated = Array.from(new Set(updatedList));
-            const { data: updatedRows, error: updErr } = await client.from(entityType).update({ [fieldName]: deduplicated }).eq("id", entityId).select("id");
+            const { data: updatedRows, error: updErr } = await client.from(entityType).update({ [resolvedFieldName]: deduplicated }).eq("id", entityId).select("id");
             const rowsAffected = Array.isArray(updatedRows) ? updatedRows.length : updatedRows ? 1 : 0;
             if (updErr || rowsAffected === 0) {
               console.warn(`[DurableUpload] Could not update entity array for ${entityType} ID ${entityId} (affected ${rowsAffected} rows):`, updErr?.message);
               return false;
             }
           } else {
-            const updatePayload = { [fieldName]: newUrl };
-            if (entityType === "make_order_items" && fieldName === "technical_drawing_url") {
+            const updatePayload = { [resolvedFieldName]: newUrl };
+            if (entityType === "make_order_items" && resolvedFieldName === "technical_drawing_url") {
               try {
                 const { data: item } = await client.from("make_order_items").select("pdf_urls").eq("id", entityId).maybeSingle();
                 if (item && Array.isArray(item.pdf_urls)) {
@@ -26958,7 +27097,7 @@ var init_DurableUploadService = __esm({
         const cfHeaders = getCfAccessHeaders();
         const isTunnel = url2.startsWith("https://");
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 2e4);
+        const timeoutId = setTimeout(() => controller.abort(), 45e3);
         try {
           const resp = await fetch(url2, {
             method: "GET",
@@ -26985,13 +27124,38 @@ var init_DurableUploadService = __esm({
           clearTimeout(timeoutId);
         }
       }
+      /**
+       * Safely normalizes the remote storage URL returned by a TrueNAS storage service candidate.
+       * Prevents internal :8080 ports from breaking Tailscale/LAN access while preserving
+       * paths, query params, and candidate host alignment.
+       */
+      static normalizeNasStorageUrl(rawUrl, candidateBase) {
+        if (!rawUrl || typeof rawUrl !== "string") return rawUrl;
+        try {
+          const candUrl = new URL(candidateBase);
+          const parsed = new URL(rawUrl, candidateBase);
+          if (parsed.port === "8080") {
+            const lowerHost = parsed.hostname.toLowerCase();
+            const candHost = candUrl.hostname.toLowerCase();
+            if (lowerHost === "100.88.85.6" || lowerHost === "192.168.1.14" || lowerHost === candHost) {
+              parsed.port = candUrl.port || (candUrl.protocol === "https:" ? "443" : "80");
+              parsed.protocol = candUrl.protocol;
+              parsed.hostname = candUrl.hostname;
+            }
+          }
+          return parsed.toString();
+        } catch {
+          return rawUrl;
+        }
+      }
       async uploadToNasStorage(buffer, fileName, mimeType, subfolder, expectedSha256) {
         const candidates = getNasStorageCandidates();
         const cfHeaders = getCfAccessHeaders();
         let lastError = null;
+        const timeoutMs = Math.max(3e4, Math.min(3e5, Math.ceil(buffer.length / 2e5) * 1e3 + 3e4));
         for (const candidateBase of candidates) {
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 2e4);
+          const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
           try {
             const formData = new FormData();
             formData.append("file", new Blob([new Uint8Array(buffer)], { type: mimeType }), fileName);
@@ -27008,8 +27172,9 @@ var init_DurableUploadService = __esm({
             });
             if (response.ok) {
               const data2 = await response.json();
-              if (data2 && data2.success && (data2.file_url || data2.url)) {
-                const url2 = data2.file_url || data2.url;
+              if (data2 && data2.success && (data2.file_url || data2.url || data2.urlPath)) {
+                const rawUrl = data2.file_url || data2.url || (data2.urlPath ? `/files/${String(data2.urlPath).replace(/^\/?files\/?/, "")}` : "");
+                const url2 = _DurableUploadService.normalizeNasStorageUrl(rawUrl, candidateBase);
                 const remoteReportedHash = data2.sha256 || data2.checksum || data2.digest;
                 if (remoteReportedHash) {
                   const hashStr = String(remoteReportedHash).toUpperCase();
@@ -27532,6 +27697,29 @@ function loadConfig() {
           }
         }
       }
+      if (cfg.nasJwtToken) {
+        if (cfg.nasJwtToken.startsWith("enc:v1:safeStorage:")) {
+          try {
+            cfg.nasJwtToken = decryptPrivilegedSecret(cfg.nasJwtToken);
+          } catch (err) {
+            console.error("[SUPABASE] Failed to decrypt NAS JWT token.");
+            cfg.nasJwtToken = "";
+          }
+        } else if (cfg.nasJwtToken.startsWith("enc:v1:fallback:")) {
+          console.error("[SUPABASE] Refusing NAS JWT token stored without OS-backed encryption.");
+          cfg.nasJwtToken = "";
+        } else if (isSafeStorageAvailable()) {
+          try {
+            parsed.nasJwtToken = encryptPrivilegedSecret(cfg.nasJwtToken);
+            needsMigration = true;
+          } catch {
+            cfg.nasJwtToken = "";
+          }
+        } else {
+          console.warn("[SUPABASE] Refusing to load a plaintext NAS JWT token without OS-backed encryption.");
+          cfg.nasJwtToken = "";
+        }
+      }
       if (cfg.cfAccessClientId) {
         if (cfg.cfAccessClientId.startsWith("enc:v1:")) {
           try {
@@ -27579,6 +27767,7 @@ function loadConfig() {
       if (!cfg.serviceRoleKey && EMPTY_DEFAULTS.serviceRoleKey) cfg.serviceRoleKey = EMPTY_DEFAULTS.serviceRoleKey;
       if (!cfg.cfAccessClientId && EMPTY_DEFAULTS.cfAccessClientId) cfg.cfAccessClientId = EMPTY_DEFAULTS.cfAccessClientId;
       if (!cfg.cfAccessClientSecret && EMPTY_DEFAULTS.cfAccessClientSecret) cfg.cfAccessClientSecret = EMPTY_DEFAULTS.cfAccessClientSecret;
+      if (!cfg.nasJwtToken && EMPTY_DEFAULTS.nasJwtToken) cfg.nasJwtToken = EMPTY_DEFAULTS.nasJwtToken;
       if (!cfg.nasTunnelUrl) cfg.nasTunnelUrl = EMPTY_DEFAULTS.nasTunnelUrl;
       if (!cfg.nasTunnelStorageUrl) cfg.nasTunnelStorageUrl = EMPTY_DEFAULTS.nasTunnelStorageUrl;
       if (cfg.nasLocalUrl === "http://100.88.85.6:3001") cfg.nasLocalUrl = "http://192.168.1.14:3001";
@@ -27620,6 +27809,11 @@ function saveSupabaseConfig(config2) {
   if (merged.cfAccessClientSecret && merged.cfAccessClientSecret.trim()) {
     if (!merged.cfAccessClientSecret.startsWith("enc:v1:")) {
       diskPayload.cfAccessClientSecret = encryptPrivilegedSecret(merged.cfAccessClientSecret);
+    }
+  }
+  if (merged.nasJwtToken && merged.nasJwtToken.trim()) {
+    if (!merged.nasJwtToken.startsWith("enc:v1:")) {
+      diskPayload.nasJwtToken = encryptPrivilegedSecret(merged.nasJwtToken);
     }
   }
   if (merged.cfAccessClientId && merged.cfAccessClientId.trim()) {
@@ -27805,7 +27999,7 @@ function recreateNasClient(url2) {
       }
       const nasDbKey = config2.nasAnonKey || config2.anonKey || PUBLIC_SUPABASE_ANON_KEY;
       headers.set("apikey", nasDbKey);
-      headers.set("Authorization", `Bearer ${nasDbKey}`);
+      headers.set("Authorization", `Bearer ${config2.nasJwtToken || nasDbKey}`);
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 6e3);
       if (init?.signal) {
@@ -27850,26 +28044,6 @@ function recreateNasClient(url2) {
         if (!isRead) {
           throw new Error(`[NAS:FETCH] Mutation operation (${method}) failed or timed out on NAS: ${errMsg}. Low-level replay rejected to protect database integrity.`);
         }
-        if (config2.url && config2.anonKey) {
-          try {
-            const cleanPath = relativePath.startsWith("/rest/v1/") ? relativePath : `/rest/v1${relativePath.startsWith("/") ? relativePath : "/" + relativePath}`;
-            const cloudUrl = new URL(cleanPath, config2.url).toString();
-            const cloudHeaders = new Headers(init?.headers);
-            cloudHeaders.set("apikey", config2.anonKey);
-            if (!cloudHeaders.has("Authorization")) {
-              cloudHeaders.set("Authorization", `Bearer ${config2.anonKey}`);
-            }
-            cloudHeaders.delete("CF-Access-Client-Id");
-            cloudHeaders.delete("CF-Access-Client-Secret");
-            console.warn(`[NAS:FETCH] NAS read failed (${errMsg}). Routing read to Supabase Cloud:`, cloudUrl);
-            return await fetch(cloudUrl, {
-              ...init,
-              headers: cloudHeaders
-            });
-          } catch (forwardErr) {
-            console.error("[NAS:FETCH] Supabase Cloud auto-forward failed:", forwardErr.message);
-          }
-        }
         throw err;
       }
     };
@@ -27880,7 +28054,7 @@ function recreateNasClient(url2) {
         autoRefreshToken: false,
         detectSessionInUrl: false
       },
-      accessToken: async () => nasKey,
+      accessToken: async () => config2.nasJwtToken || nasKey,
       global: {
         fetch: nasFetch,
         headers: {
@@ -28039,6 +28213,7 @@ var init_supabase = __esm({
       serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || "",
       nasUrl: process.env.NAS_URL || "http://100.88.85.6:3001",
       nasAnonKey: process.env.NAS_ANON_KEY || PUBLIC_SUPABASE_ANON_KEY || "",
+      nasJwtToken: process.env.NAS_JWT_TOKEN || "",
       nasStorageUrl: process.env.NAS_STORAGE_URL || "http://100.88.85.6:8081",
       nasLocalUrl: process.env.NAS_LOCAL_URL || "http://192.168.1.14:3001",
       nasLocalStorageUrl: process.env.NAS_LOCAL_STORAGE_URL || "http://192.168.1.14:8081",
@@ -115253,6 +115428,9 @@ init_supabase();
 init_supabase();
 
 // electron/services/make/MakePricingService.ts
+function round2(num) {
+  return Math.round((num + Number.EPSILON) * 100) / 100;
+}
 var MakePricingService = class {
   /**
    * Validates an individual item's cost and sale prices.
@@ -115267,18 +115445,110 @@ var MakePricingService = class {
     if (salePrice < costPrice) {
       return { isValid: false, costPrice, salePrice, error: "Sale price cannot be less than cost price without managerial override" };
     }
-    return { isValid: true, costPrice, salePrice, margin: salePrice - costPrice };
+    return { isValid: true, costPrice, salePrice, margin: round2(salePrice - costPrice) };
   }
   /**
-   * Authoritatively recalculates and validates item prices and order totals.
+   * Validates catalog product pricing, discount limits, and calculates lowest permitted sale price.
    */
-  static calculateAndValidateTotals(items) {
+  static validateCatalogProductPricing(product) {
+    const rawCost = product.cost_price !== void 0 && product.cost_price !== null && product.cost_price !== "" ? Number(product.cost_price) : 0;
+    const rawSale = product.sale_price !== void 0 && product.sale_price !== null && product.sale_price !== "" ? Number(product.sale_price) : 0;
+    const rawDiscountType = product.max_discount_type === "amount" ? "amount" : "percent";
+    const rawDiscountVal = product.max_discount_value !== void 0 && product.max_discount_value !== null && product.max_discount_value !== "" ? Number(product.max_discount_value) : 0;
+    if (isNaN(rawCost) || rawCost < 0) {
+      return {
+        isValid: false,
+        error: "Cost price cannot be negative.",
+        costPrice: 0,
+        salePrice: rawSale,
+        maxDiscountType: rawDiscountType,
+        maxDiscountValue: 0,
+        lowestPermittedSalePrice: rawSale,
+        maxDiscountAmount: 0
+      };
+    }
+    if (isNaN(rawSale) || rawSale < 0) {
+      return {
+        isValid: false,
+        error: "Sale price cannot be negative.",
+        costPrice: rawCost,
+        salePrice: 0,
+        maxDiscountType: rawDiscountType,
+        maxDiscountValue: 0,
+        lowestPermittedSalePrice: 0,
+        maxDiscountAmount: 0
+      };
+    }
+    if (isNaN(rawDiscountVal) || rawDiscountVal < 0) {
+      return {
+        isValid: false,
+        error: "Maximum discount value cannot be negative.",
+        costPrice: rawCost,
+        salePrice: rawSale,
+        maxDiscountType: rawDiscountType,
+        maxDiscountValue: 0,
+        lowestPermittedSalePrice: rawSale,
+        maxDiscountAmount: 0
+      };
+    }
+    let maxDiscountAmount = 0;
+    let lowestPermittedSalePrice = rawSale;
+    if (rawDiscountType === "percent") {
+      if (rawDiscountVal > 100) {
+        return {
+          isValid: false,
+          error: "Maximum discount percentage cannot exceed 100%.",
+          costPrice: rawCost,
+          salePrice: rawSale,
+          maxDiscountType: rawDiscountType,
+          maxDiscountValue: rawDiscountVal,
+          lowestPermittedSalePrice: rawSale,
+          maxDiscountAmount: 0
+        };
+      }
+      maxDiscountAmount = round2(rawSale * (rawDiscountVal / 100));
+      lowestPermittedSalePrice = Math.max(0, round2(rawSale - maxDiscountAmount));
+    } else {
+      if (rawDiscountVal > rawSale) {
+        return {
+          isValid: false,
+          error: `Fixed maximum discount (\u09F3${rawDiscountVal.toLocaleString()}) cannot exceed the sale price (\u09F3${rawSale.toLocaleString()}).`,
+          costPrice: rawCost,
+          salePrice: rawSale,
+          maxDiscountType: rawDiscountType,
+          maxDiscountValue: rawDiscountVal,
+          lowestPermittedSalePrice: rawSale,
+          maxDiscountAmount: 0
+        };
+      }
+      maxDiscountAmount = round2(rawDiscountVal);
+      lowestPermittedSalePrice = Math.max(0, round2(rawSale - maxDiscountAmount));
+    }
+    return {
+      isValid: true,
+      costPrice: round2(rawCost),
+      salePrice: round2(rawSale),
+      maxDiscountType: rawDiscountType,
+      maxDiscountValue: round2(rawDiscountVal),
+      lowestPermittedSalePrice,
+      maxDiscountAmount
+    };
+  }
+  /**
+   * Authoritatively recalculates and validates item prices, order discount, and totals.
+   */
+  static calculateAndValidateTotals(items, discountInput) {
     if (!Array.isArray(items) || items.length === 0) {
       return {
         isValid: false,
         error: "Order must contain at least one item.",
+        subtotal: null,
+        discountType: null,
+        discountValue: 0,
+        discountAmount: 0,
         totalCostPrice: 0,
         totalSalePrice: null,
+        finalPrice: null,
         marginAmount: null,
         totalMargin: null,
         isLossMaking: false,
@@ -115286,17 +115556,24 @@ var MakePricingService = class {
       };
     }
     let totalCost = 0;
-    let totalSale = 0;
+    let subtotal = 0;
     let hasAnySalePrice = false;
     const processedItems = [];
+    let totalAllowedDiscountAmount = 0;
+    let hasAnyConfiguredDiscountLimit = false;
     for (const item of items) {
       const qty = Number(item.quantity);
       if (isNaN(qty) || qty <= 0) {
         return {
           isValid: false,
           error: `Invalid quantity (${item.quantity}) for item: ${item.product_name || "Unnamed item"}. Quantity must be greater than 0.`,
+          subtotal: null,
+          discountType: null,
+          discountValue: 0,
+          discountAmount: 0,
           totalCostPrice: 0,
           totalSalePrice: null,
+          finalPrice: null,
           marginAmount: null,
           totalMargin: null,
           isLossMaking: false,
@@ -115308,8 +115585,13 @@ var MakePricingService = class {
         return {
           isValid: false,
           error: `Cost price for item "${item.product_name}" cannot be negative (${rawCost}).`,
+          subtotal: null,
+          discountType: null,
+          discountValue: 0,
+          discountAmount: 0,
           totalCostPrice: 0,
           totalSalePrice: null,
+          finalPrice: null,
           marginAmount: null,
           totalMargin: null,
           isLossMaking: false,
@@ -115324,8 +115606,13 @@ var MakePricingService = class {
           return {
             isValid: false,
             error: `Sale price for item "${item.product_name}" cannot be negative (${rawSale}).`,
+            subtotal: null,
+            discountType: null,
+            discountValue: 0,
+            discountAmount: 0,
             totalCostPrice: 0,
             totalSalePrice: null,
+            finalPrice: null,
             marginAmount: null,
             totalMargin: null,
             isLossMaking: false,
@@ -115333,32 +115620,359 @@ var MakePricingService = class {
           };
         }
         hasAnySalePrice = true;
-        if (totalSale !== null) {
-          totalSale += rawSale * qty;
+        if (subtotal !== null) {
+          subtotal += rawSale * qty;
         }
       }
       const itemCostTotal = rawCost * qty;
       const itemSaleTotal = rawSale !== null ? rawSale * qty : null;
       totalCost += itemCostTotal;
+      let itemDiscType = null;
+      let itemDiscVal = 0;
+      let itemDiscAmount = 0;
+      let itemFinalPrice = itemSaleTotal;
+      const isCatalogProduct = Boolean(item.product_id) || item.max_discount_percent !== void 0 || item.max_discount_amount !== void 0 || item.max_discount_type !== void 0 || Boolean(item.product_code);
+      const hasProduct = isCatalogProduct;
+      const isCustomOrNonCatalog = item.is_custom === true || !isCatalogProduct;
+      const rawItemDiscVal = item.discount_value !== void 0 && item.discount_value !== null && item.discount_value !== "" ? Number(item.discount_value) : 0;
+      const rawItemDiscAmt = item.discount_amount !== void 0 && item.discount_amount !== null && item.discount_amount !== "" ? Number(item.discount_amount) : 0;
+      if (isCustomOrNonCatalog && (rawItemDiscVal > 0 || rawItemDiscAmt > 0)) {
+        return {
+          isValid: false,
+          error: `Discounts are not permitted on custom or non-catalog item "${item.product_name}".`,
+          subtotal: null,
+          discountType: null,
+          discountValue: 0,
+          discountAmount: 0,
+          totalCostPrice: 0,
+          totalSalePrice: null,
+          finalPrice: null,
+          marginAmount: null,
+          totalMargin: null,
+          isLossMaking: false,
+          items: []
+        };
+      }
+      if (hasProduct && rawSale !== null && item.discount_value !== void 0 && item.discount_value !== null && item.discount_value !== "") {
+        const parsedItemDisc = Number(item.discount_value);
+        if (isNaN(parsedItemDisc) || parsedItemDisc < 0) {
+          return {
+            isValid: false,
+            error: `Discount value for item "${item.product_name}" cannot be negative (${item.discount_value}).`,
+            subtotal: null,
+            discountType: null,
+            discountValue: 0,
+            discountAmount: 0,
+            totalCostPrice: 0,
+            totalSalePrice: null,
+            finalPrice: null,
+            marginAmount: null,
+            totalMargin: null,
+            isLossMaking: false,
+            items: []
+          };
+        }
+        itemDiscType = item.discount_type === "amount" ? "amount" : "percent";
+        itemDiscVal = round2(parsedItemDisc);
+        const maxLimitType = item.max_discount_type || (item.max_discount_amount !== void 0 && item.max_discount_amount !== null && item.max_discount_amount !== "" ? "amount" : "percent");
+        const maxLimitValRaw = item.max_discount_value !== void 0 && item.max_discount_value !== null && item.max_discount_value !== "" ? item.max_discount_value : maxLimitType === "amount" ? item.max_discount_amount : item.max_discount_percent;
+        const hasConfiguredLimit = maxLimitValRaw !== void 0 && maxLimitValRaw !== null && maxLimitValRaw !== "";
+        if (hasConfiguredLimit) {
+          const maxLimitVal = Number(maxLimitValRaw);
+          if (maxLimitType === "amount") {
+            if (itemDiscType === "amount") {
+              if (itemDiscVal > maxLimitVal + 1e-3) {
+                return {
+                  isValid: false,
+                  error: `Discount amount (\u09F3${itemDiscVal}) for item "${item.product_name}" exceeds the maximum permitted discount limit of \u09F3${maxLimitVal}.`,
+                  subtotal: null,
+                  discountType: null,
+                  discountValue: 0,
+                  discountAmount: 0,
+                  totalCostPrice: 0,
+                  totalSalePrice: null,
+                  finalPrice: null,
+                  marginAmount: null,
+                  totalMargin: null,
+                  isLossMaking: false,
+                  items: []
+                };
+              }
+            } else {
+              const maxPct = rawSale > 0 ? round2(maxLimitVal / rawSale * 100) : 0;
+              if (itemDiscVal > maxPct + 1e-3) {
+                return {
+                  isValid: false,
+                  error: `Discount (${itemDiscVal}%) for item "${item.product_name}" exceeds the maximum permitted discount limit of ${maxPct}% (\u09F3${maxLimitVal}).`,
+                  subtotal: null,
+                  discountType: null,
+                  discountValue: 0,
+                  discountAmount: 0,
+                  totalCostPrice: 0,
+                  totalSalePrice: null,
+                  finalPrice: null,
+                  marginAmount: null,
+                  totalMargin: null,
+                  isLossMaking: false,
+                  items: []
+                };
+              }
+            }
+          } else {
+            const maxPct = Math.min(100, Math.max(0, maxLimitVal));
+            if (itemDiscType === "percent") {
+              if (itemDiscVal > maxPct + 1e-3) {
+                return {
+                  isValid: false,
+                  error: `Discount (${itemDiscVal}%) for item "${item.product_name}" exceeds the maximum permitted discount limit of ${maxPct}%.`,
+                  subtotal: null,
+                  discountType: null,
+                  discountValue: 0,
+                  discountAmount: 0,
+                  totalCostPrice: 0,
+                  totalSalePrice: null,
+                  finalPrice: null,
+                  marginAmount: null,
+                  totalMargin: null,
+                  isLossMaking: false,
+                  items: []
+                };
+              }
+            } else {
+              const maxAmt = round2(rawSale * (maxPct / 100));
+              if (itemDiscVal > maxAmt + 1e-3) {
+                return {
+                  isValid: false,
+                  error: `Discount amount (\u09F3${itemDiscVal}) for item "${item.product_name}" exceeds the maximum permitted discount limit of \u09F3${maxAmt} (${maxPct}%).`,
+                  subtotal: null,
+                  discountType: null,
+                  discountValue: 0,
+                  discountAmount: 0,
+                  totalCostPrice: 0,
+                  totalSalePrice: null,
+                  finalPrice: null,
+                  marginAmount: null,
+                  totalMargin: null,
+                  isLossMaking: false,
+                  items: []
+                };
+              }
+            }
+          }
+        } else {
+          if (itemDiscType === "percent" && itemDiscVal > 100) {
+            return {
+              isValid: false,
+              error: `Discount percentage cannot exceed 100% for item "${item.product_name}".`,
+              subtotal: null,
+              discountType: null,
+              discountValue: 0,
+              discountAmount: 0,
+              totalCostPrice: 0,
+              totalSalePrice: null,
+              finalPrice: null,
+              marginAmount: null,
+              totalMargin: null,
+              isLossMaking: false,
+              items: []
+            };
+          }
+          if (itemDiscType === "amount" && itemDiscVal > rawSale) {
+            return {
+              isValid: false,
+              error: `Discount amount (\u09F3${itemDiscVal}) cannot exceed the unit sale price (\u09F3${rawSale}) for item "${item.product_name}".`,
+              subtotal: null,
+              discountType: null,
+              discountValue: 0,
+              discountAmount: 0,
+              totalCostPrice: 0,
+              totalSalePrice: null,
+              finalPrice: null,
+              marginAmount: null,
+              totalMargin: null,
+              isLossMaking: false,
+              items: []
+            };
+          }
+        }
+        if (itemDiscType === "percent") {
+          itemDiscAmount = round2(rawSale * (itemDiscVal / 100) * qty);
+        } else {
+          itemDiscAmount = round2(itemDiscVal * qty);
+        }
+        itemFinalPrice = Math.max(0, round2(rawSale * qty - itemDiscAmount));
+      }
+      if (rawSale !== null && hasProduct) {
+        const itemSub = rawSale * qty;
+        const aggLimitType = item.max_discount_type || (item.max_discount_amount !== void 0 && item.max_discount_amount !== null && item.max_discount_amount !== "" ? "amount" : "percent");
+        const aggLimitRaw = item.max_discount_value !== void 0 && item.max_discount_value !== null && item.max_discount_value !== "" ? item.max_discount_value : aggLimitType === "amount" ? item.max_discount_amount : item.max_discount_percent;
+        const hasItemLimit = aggLimitRaw !== void 0 && aggLimitRaw !== null && aggLimitRaw !== "";
+        if (hasItemLimit) {
+          hasAnyConfiguredDiscountLimit = true;
+          const maxVal = Number(aggLimitRaw);
+          if (aggLimitType === "amount") {
+            totalAllowedDiscountAmount += Math.min(itemSub, maxVal * qty);
+          } else {
+            const pct = Math.min(100, Math.max(0, maxVal));
+            totalAllowedDiscountAmount += itemSub * (pct / 100);
+          }
+        } else {
+          totalAllowedDiscountAmount += itemSub;
+        }
+      }
       processedItems.push({
         product_name: item.product_name,
         quantity: qty,
         cost_price: rawCost,
         sale_price: rawSale,
+        discount_type: itemDiscType,
+        discount_value: itemDiscVal,
+        discount_amount: itemDiscAmount,
+        final_item_price: itemFinalPrice,
         total_cost: itemCostTotal,
         total_sale: itemSaleTotal
       });
     }
-    const finalSalePrice = hasAnySalePrice ? totalSale : null;
-    const isLossMaking = finalSalePrice !== null && finalSalePrice < totalCost;
-    const marginAmount = finalSalePrice !== null ? finalSalePrice - totalCost : null;
+    const undiscountedSubtotal = hasAnySalePrice ? round2(subtotal || 0) : null;
+    totalAllowedDiscountAmount = round2(totalAllowedDiscountAmount);
+    const totalAllowedDiscountPercent = undiscountedSubtotal && undiscountedSubtotal > 0 ? round2(totalAllowedDiscountAmount / undiscountedSubtotal * 100) : 0;
+    const totalLineDiscountAmount = round2(processedItems.reduce((acc, it) => acc + (it.discount_amount || 0), 0));
+    let discType = null;
+    let discValue = 0;
+    let orderDiscountAmount = 0;
+    if (discountInput && discountInput.discount_value !== void 0 && discountInput.discount_value !== null && discountInput.discount_value !== "") {
+      const parsedVal = Number(discountInput.discount_value);
+      if (isNaN(parsedVal) || parsedVal < 0) {
+        return {
+          isValid: false,
+          error: `Discount value cannot be negative (${discountInput.discount_value}).`,
+          subtotal: undiscountedSubtotal,
+          discountType: null,
+          discountValue: 0,
+          discountAmount: 0,
+          totalCostPrice: round2(totalCost),
+          totalSalePrice: undiscountedSubtotal,
+          finalPrice: undiscountedSubtotal,
+          marginAmount: null,
+          totalMargin: null,
+          isLossMaking: false,
+          items: processedItems
+        };
+      }
+      discType = discountInput.discount_type === "amount" ? "amount" : "percent";
+      discValue = round2(parsedVal);
+      if (undiscountedSubtotal === null && discValue > 0) {
+        return {
+          isValid: false,
+          error: "Cannot apply discount when items do not have defined sale prices.",
+          subtotal: null,
+          discountType: discType,
+          discountValue: discValue,
+          discountAmount: 0,
+          totalCostPrice: round2(totalCost),
+          totalSalePrice: null,
+          finalPrice: null,
+          marginAmount: null,
+          totalMargin: null,
+          isLossMaking: false,
+          items: processedItems
+        };
+      }
+      if (discType === "percent") {
+        if (discValue > 100) {
+          return {
+            isValid: false,
+            error: "Discount percentage cannot exceed 100%.",
+            subtotal: undiscountedSubtotal,
+            discountType: discType,
+            discountValue: discValue,
+            discountAmount: 0,
+            totalCostPrice: round2(totalCost),
+            totalSalePrice: undiscountedSubtotal,
+            finalPrice: undiscountedSubtotal,
+            marginAmount: null,
+            totalMargin: null,
+            isLossMaking: false,
+            items: processedItems
+          };
+        }
+        if (hasAnyConfiguredDiscountLimit && discValue > totalAllowedDiscountPercent + 1e-3) {
+          return {
+            isValid: false,
+            error: `Discount (${discValue}%) exceeds the maximum permitted discount limit of ${totalAllowedDiscountPercent}%.`,
+            subtotal: undiscountedSubtotal,
+            discountType: discType,
+            discountValue: discValue,
+            discountAmount: 0,
+            totalCostPrice: round2(totalCost),
+            totalSalePrice: undiscountedSubtotal,
+            finalPrice: undiscountedSubtotal,
+            marginAmount: null,
+            totalMargin: null,
+            isLossMaking: false,
+            maxAllowedDiscountAmount: totalAllowedDiscountAmount,
+            maxAllowedDiscountPercent: totalAllowedDiscountPercent,
+            items: processedItems
+          };
+        }
+        orderDiscountAmount = undiscountedSubtotal !== null ? round2(undiscountedSubtotal * (discValue / 100)) : 0;
+      } else {
+        if (undiscountedSubtotal !== null && discValue > undiscountedSubtotal) {
+          return {
+            isValid: false,
+            error: `Discount amount (\u09F3${discValue.toLocaleString()}) cannot exceed the order subtotal (\u09F3${undiscountedSubtotal.toLocaleString()}).`,
+            subtotal: undiscountedSubtotal,
+            discountType: discType,
+            discountValue: discValue,
+            discountAmount: 0,
+            totalCostPrice: round2(totalCost),
+            totalSalePrice: undiscountedSubtotal,
+            finalPrice: undiscountedSubtotal,
+            marginAmount: null,
+            totalMargin: null,
+            isLossMaking: false,
+            items: processedItems
+          };
+        }
+        if (hasAnyConfiguredDiscountLimit && discValue > totalAllowedDiscountAmount + 1e-3) {
+          return {
+            isValid: false,
+            error: `Discount amount (\u09F3${discValue.toLocaleString()}) exceeds the maximum permitted discount limit of \u09F3${totalAllowedDiscountAmount.toLocaleString()}.`,
+            subtotal: undiscountedSubtotal,
+            discountType: discType,
+            discountValue: discValue,
+            discountAmount: 0,
+            totalCostPrice: round2(totalCost),
+            totalSalePrice: undiscountedSubtotal,
+            finalPrice: undiscountedSubtotal,
+            marginAmount: null,
+            totalMargin: null,
+            isLossMaking: false,
+            maxAllowedDiscountAmount: totalAllowedDiscountAmount,
+            maxAllowedDiscountPercent: totalAllowedDiscountPercent,
+            items: processedItems
+          };
+        }
+        orderDiscountAmount = round2(discValue);
+      }
+    }
+    const finalSalePrice = undiscountedSubtotal !== null ? Math.max(0, round2(undiscountedSubtotal - orderDiscountAmount)) : null;
+    const isLossMaking = finalSalePrice !== null && finalSalePrice < round2(totalCost);
+    const marginAmount = finalSalePrice !== null ? round2(finalSalePrice - totalCost) : null;
     return {
       isValid: true,
-      totalCostPrice: Math.round(totalCost * 100) / 100,
-      totalSalePrice: finalSalePrice !== null ? Math.round(finalSalePrice * 100) / 100 : null,
-      marginAmount: marginAmount !== null ? Math.round(marginAmount * 100) / 100 : null,
-      totalMargin: marginAmount !== null ? Math.round(marginAmount * 100) / 100 : null,
+      subtotal: undiscountedSubtotal,
+      discountType: discType,
+      discountValue: discValue,
+      discountAmount: orderDiscountAmount > 0 ? orderDiscountAmount : totalLineDiscountAmount,
+      totalCostPrice: round2(totalCost),
+      totalSalePrice: finalSalePrice,
+      finalPrice: finalSalePrice,
+      marginAmount,
+      totalMargin: marginAmount,
       isLossMaking,
+      maxAllowedDiscountAmount: hasAnyConfiguredDiscountLimit ? totalAllowedDiscountAmount : void 0,
+      maxAllowedDiscountPercent: hasAnyConfiguredDiscountLimit ? totalAllowedDiscountPercent : void 0,
       items: processedItems
     };
   }
@@ -115393,6 +116007,196 @@ var MakePricingService = class {
       return { allowed: true, requiresOverride: true };
     }
     return { allowed: true };
+  }
+  /**
+   * Calculates the amount due given an order total and money received.
+   * Enforces non-negative results and 2 decimal places precision.
+   */
+  static calculateAmountDue(orderTotal, moneyReceived) {
+    const total = round2(Math.max(0, Number(orderTotal || 0)));
+    const received = round2(Math.max(0, Number(moneyReceived || 0)));
+    return round2(Math.max(0, total - received));
+  }
+  /**
+   * Authoritatively calculates payment status, amount due, and production hold.
+   * Enforces currency rounding, decimal precision, and payment constraints.
+   */
+  static calculatePaymentStatus(finalPrice, rawMoneyReceived) {
+    const orderTotal = round2(Math.max(0, Number(finalPrice || 0)));
+    if (rawMoneyReceived === void 0 || rawMoneyReceived === null || rawMoneyReceived === "") {
+      return {
+        isValid: true,
+        finalPrice: orderTotal,
+        moneyReceived: 0,
+        amountDue: orderTotal,
+        paymentStatus: orderTotal === 0 ? "paid" : "unpaid",
+        productionHold: orderTotal > 0,
+        holdReason: orderTotal > 0 ? `Outstanding balance of \u09F3${orderTotal.toLocaleString()} due.` : null
+      };
+    }
+    if (typeof rawMoneyReceived === "string") {
+      const trimmed = rawMoneyReceived.trim();
+      if (trimmed.startsWith("-")) {
+        return {
+          isValid: false,
+          error: "Money received cannot be negative.",
+          finalPrice: orderTotal,
+          moneyReceived: 0,
+          amountDue: orderTotal,
+          paymentStatus: "unpaid",
+          productionHold: orderTotal > 0,
+          holdReason: orderTotal > 0 ? `Outstanding balance of \u09F3${orderTotal.toLocaleString()} due.` : null
+        };
+      }
+      const parsed = Number(trimmed);
+      if (isNaN(parsed) || !/^\d+(\.\d+)?$/.test(trimmed)) {
+        return {
+          isValid: false,
+          error: "Money received must be a valid non-negative number.",
+          finalPrice: orderTotal,
+          moneyReceived: 0,
+          amountDue: orderTotal,
+          paymentStatus: "unpaid",
+          productionHold: orderTotal > 0,
+          holdReason: orderTotal > 0 ? `Outstanding balance of \u09F3${orderTotal.toLocaleString()} due.` : null
+        };
+      }
+      if (trimmed.includes(".")) {
+        const decPart = trimmed.split(".")[1];
+        if (decPart && decPart.length > 2) {
+          return {
+            isValid: false,
+            error: "Money received cannot have more than 2 decimal places.",
+            finalPrice: orderTotal,
+            moneyReceived: 0,
+            amountDue: orderTotal,
+            paymentStatus: "unpaid",
+            productionHold: orderTotal > 0,
+            holdReason: orderTotal > 0 ? `Outstanding balance of \u09F3${orderTotal.toLocaleString()} due.` : null
+          };
+        }
+      }
+    } else if (typeof rawMoneyReceived === "number") {
+      if (isNaN(rawMoneyReceived) || rawMoneyReceived < 0) {
+        return {
+          isValid: false,
+          error: rawMoneyReceived < 0 ? "Money received cannot be negative." : "Money received must be a valid non-negative number.",
+          finalPrice: orderTotal,
+          moneyReceived: 0,
+          amountDue: orderTotal,
+          paymentStatus: "unpaid",
+          productionHold: orderTotal > 0,
+          holdReason: orderTotal > 0 ? `Outstanding balance of \u09F3${orderTotal.toLocaleString()} due.` : null
+        };
+      }
+      const strVal = rawMoneyReceived.toString();
+      if (strVal.includes(".")) {
+        const decPart = strVal.split(".")[1];
+        if (decPart && decPart.length > 2 && Math.abs(round2(rawMoneyReceived) - rawMoneyReceived) > 1e-6) {
+          return {
+            isValid: false,
+            error: "Money received cannot have more than 2 decimal places.",
+            finalPrice: orderTotal,
+            moneyReceived: 0,
+            amountDue: orderTotal,
+            paymentStatus: "unpaid",
+            productionHold: orderTotal > 0,
+            holdReason: orderTotal > 0 ? `Outstanding balance of \u09F3${orderTotal.toLocaleString()} due.` : null
+          };
+        }
+      }
+    }
+    const received = Number(rawMoneyReceived);
+    const roundedReceived = round2(received);
+    if (roundedReceived > orderTotal) {
+      return {
+        isValid: false,
+        error: `Money received (\u09F3${roundedReceived.toLocaleString()}) cannot exceed the order total (\u09F3${orderTotal.toLocaleString()}).`,
+        finalPrice: orderTotal,
+        moneyReceived: roundedReceived,
+        amountDue: 0,
+        paymentStatus: "paid",
+        productionHold: false,
+        holdReason: null
+      };
+    }
+    const amountDue = round2(Math.max(0, orderTotal - roundedReceived));
+    let paymentStatus = "unpaid";
+    if (amountDue === 0 && (orderTotal > 0 ? roundedReceived >= orderTotal : true)) {
+      paymentStatus = "paid";
+    } else if (roundedReceived > 0 && amountDue > 0) {
+      paymentStatus = "partial";
+    } else {
+      paymentStatus = "unpaid";
+    }
+    const productionHold = amountDue > 0;
+    const holdReason = productionHold ? `Outstanding balance of \u09F3${amountDue.toLocaleString()} due.` : null;
+    return {
+      isValid: true,
+      finalPrice: orderTotal,
+      moneyReceived: roundedReceived,
+      amountDue,
+      paymentStatus,
+      productionHold,
+      holdReason
+    };
+  }
+  /**
+   * Authoritatively validates and sanitizes line pricing based on the actor's user role:
+   * - Designer / Admin: Can enter cost price and sale price for any line.
+   * - Salesman:
+   *   - Cannot set or view cost price (strictly scrubbed to 0).
+   *   - Catalog products: Sale price is locked to catalog sale price; line discount is allowed up to product limit.
+   *   - Non-catalog products: Can enter sale price; cannot edit cost price.
+   * - Factory Manager: Strictly prohibited from placing orders or entering prices.
+   */
+  static validateRolePricingPermissions(items, userRole, catalogProductsMap) {
+    const normRole = (userRole || "").toLowerCase();
+    const isFactoryManager = normRole === "factory_manager" || normRole === "factory manager" || normRole === "factory";
+    if (isFactoryManager) {
+      return {
+        isValid: false,
+        error: "Factory Managers are strictly restricted from placing orders or modifying order pricing.",
+        sanitizedItems: []
+      };
+    }
+    const isSalesperson = normRole === "salesperson" || normRole === "salesman" || normRole === "sales";
+    const sanitizedItems = [];
+    for (const it of items) {
+      const isCatalog = Boolean(it.product_id && (catalogProductsMap ? catalogProductsMap[Number(it.product_id)] : true));
+      const catalogProd = it.product_id && catalogProductsMap ? catalogProductsMap[Number(it.product_id)] : null;
+      if (isSalesperson) {
+        const sanitizedCost = 0;
+        let sanitizedSale = it.item_sale_price;
+        if (isCatalog && catalogProd) {
+          sanitizedSale = catalogProd.sale_price;
+        } else if (!isCatalog) {
+          if (sanitizedSale === void 0 || sanitizedSale === null || sanitizedSale === "") {
+            sanitizedSale = null;
+          } else if (Number(sanitizedSale) < 0) {
+            return {
+              isValid: false,
+              error: `Sale price for non-catalog item "${it.product_name}" cannot be negative.`,
+              sanitizedItems: []
+            };
+          }
+        }
+        sanitizedItems.push({
+          ...it,
+          item_cost_price: sanitizedCost,
+          item_sale_price: sanitizedSale,
+          max_discount_type: it.max_discount_type || catalogProd?.max_discount_type || null,
+          max_discount_value: it.max_discount_value !== void 0 && it.max_discount_value !== null ? it.max_discount_value : catalogProd?.max_discount_value ?? null
+        });
+      } else {
+        sanitizedItems.push({
+          ...it,
+          max_discount_type: it.max_discount_type || catalogProd?.max_discount_type || null,
+          max_discount_value: it.max_discount_value !== void 0 && it.max_discount_value !== null ? it.max_discount_value : catalogProd?.max_discount_value ?? null
+        });
+      }
+    }
+    return { isValid: true, sanitizedItems };
   }
 };
 
@@ -115553,7 +116357,7 @@ var MakeSearchService = class {
       let baseQuery = supabase.from("make_products").select(`
                 *,
                 specifications:make_product_specifications(*),
-                sizes:make_product_sizes(*),
+                sizes:make_product_sizes!make_product_sizes_product_id_fkey(*),
                 colors:make_product_colors(*),
                 images:make_product_images(*)
             `).order("product_name", { ascending: true }).limit(limit);
@@ -115568,7 +116372,7 @@ var MakeSearchService = class {
         let q2 = supabase.from("make_products").select(`
                     *,
                     specifications:make_product_specifications(*),
-                    sizes:make_product_sizes(*),
+                    sizes:make_product_sizes!make_product_sizes_product_id_fkey(*),
                     colors:make_product_colors(*)
                 `).order("product_name", { ascending: true }).limit(limit);
         if (activeOnly) q2 = q2.eq("is_active", true);
@@ -115614,7 +116418,7 @@ var MakeSearchService = class {
         const fullQuery = supabase.from("make_products").select(`
                     *,
                     specifications:make_product_specifications(*),
-                    sizes:make_product_sizes(*),
+                    sizes:make_product_sizes!make_product_sizes_product_id_fkey(*),
                     colors:make_product_colors(*),
                     images:make_product_images(*)
                 `);
@@ -115623,7 +116427,7 @@ var MakeSearchService = class {
           const fallback = await supabase.from("make_products").select(`
                         *,
                         specifications:make_product_specifications(*),
-                        sizes:make_product_sizes(*),
+                        sizes:make_product_sizes!make_product_sizes_product_id_fkey(*),
                         colors:make_product_colors(*)
                     `);
           if (fallback.data) fallback.data.forEach((p) => {
@@ -115925,7 +116729,7 @@ var MakeSearchService = class {
     const strippedQuery = this.stripPunctuation(rawQuery);
     const limit = params.limit || 200;
     if (!normQuery) {
-      let q = supabase.from("make_orders").select("*, salesman:users(full_name), bill:bills(invoice_number)").order("created_at", { ascending: false });
+      let q = supabase.from("make_orders").select("*, salesman:users!make_orders_salesman_id_fkey(full_name), bill:bills!make_orders_bill_id_fkey(invoice_number)").order("created_at", { ascending: false });
       if (params.status && params.status !== "All") {
         q = q.eq("status", params.status);
       }
@@ -115944,7 +116748,7 @@ var MakeSearchService = class {
       } catch (err) {
         console.warn("[MakeSearchService.searchOrders] Default query error:", err.message);
       }
-      const { data: baseData2 } = await supabase.from("make_orders").select("*, salesman:users(full_name)").order("created_at", { ascending: false });
+      const { data: baseData2 } = await supabase.from("make_orders").select("*, salesman:users!make_orders_salesman_id_fkey(full_name)").order("created_at", { ascending: false });
       return decryptRows(baseData2 || []).map((o) => ({
         ...o,
         salesman_name: o.salesman?.full_name || "Unassigned",
@@ -115997,7 +116801,7 @@ var MakeSearchService = class {
       return [];
     }
     try {
-      let q = supabase.from("make_orders").select("*, salesman:users(full_name), bill:bills(invoice_number)").in("id", idList).order("created_at", { ascending: false });
+      let q = supabase.from("make_orders").select("*, salesman:users!make_orders_salesman_id_fkey(full_name), bill:bills!make_orders_bill_id_fkey(invoice_number)").in("id", idList).order("created_at", { ascending: false });
       if (params.status && params.status !== "All") {
         q = q.eq("status", params.status);
       }
@@ -116015,7 +116819,7 @@ var MakeSearchService = class {
     } catch (err) {
       console.warn("[MakeSearchService.searchOrders] Joined fetch error, falling back:", err.message);
     }
-    let baseQ = supabase.from("make_orders").select("*, salesman:users(full_name)").in("id", idList).order("created_at", { ascending: false });
+    let baseQ = supabase.from("make_orders").select("*, salesman:users!make_orders_salesman_id_fkey(full_name)").in("id", idList).order("created_at", { ascending: false });
     if (params.status && params.status !== "All") {
       baseQ = baseQ.eq("status", params.status);
     }
@@ -116179,9 +116983,65 @@ var MakeOrderService = class _MakeOrderService {
         return { success: false, error: "Invalid customer phone number format or dummy placeholder. Provide a valid phone number or leave empty." };
       }
     }
-    const pricing = MakePricingService.calculateAndValidateTotals(input.items);
+    const productIds = (input.items || []).map((it) => it.product_id).filter(Boolean);
+    let productsMap = {};
+    if (productIds.length > 0) {
+      try {
+        const { data: dbProds } = await supabase.from("make_products").select("id, cost_price, sale_price, max_discount_type, max_discount_value").in("id", productIds);
+        if (dbProds && dbProds.length > 0) {
+          productsMap = Object.fromEntries(dbProds.map((p) => [p.id, p]));
+        }
+      } catch (err) {
+        console.warn("[MakeOrderService] Could not prefetch product discount rules:", err);
+      }
+    }
+    const enrichedItems = input.items.map((it) => {
+      const dbProd = it.product_id ? productsMap[it.product_id] : null;
+      return {
+        ...it,
+        max_discount_type: it.max_discount_type || dbProd?.max_discount_type || null,
+        max_discount_value: it.max_discount_value !== void 0 && it.max_discount_value !== null && it.max_discount_value !== "" ? it.max_discount_value : dbProd?.max_discount_value ?? null
+      };
+    });
+    const rolePricing = MakePricingService.validateRolePricingPermissions(
+      enrichedItems,
+      actorSession.role,
+      productsMap
+    );
+    if (!rolePricing.isValid) {
+      return { success: false, error: rolePricing.error };
+    }
+    const pricing = MakePricingService.calculateAndValidateTotals(rolePricing.sanitizedItems, {
+      discount_type: input.discount_type,
+      discount_value: input.discount_value
+    });
     if (!pricing.isValid) {
       return { success: false, error: pricing.error };
+    }
+    const rawReceived = input.money_received !== void 0 ? input.money_received : input.moneyReceived;
+    const normRole = (actorSession.role || "").toLowerCase().trim();
+    const isInitialPaymentAllowed = [
+      "furniture_designer",
+      "furniture designer",
+      "designer",
+      "make_designer",
+      "salesperson",
+      "salesman",
+      "sales",
+      "admin",
+      "superadmin",
+      "manager"
+    ].includes(normRole);
+    const hasNonZeroPayment = rawReceived !== void 0 && rawReceived !== null && rawReceived !== "" && Number(rawReceived) > 0;
+    if (!isInitialPaymentAllowed && hasNonZeroPayment) {
+      return {
+        success: false,
+        error: "Forbidden: You do not have permission to enter initial payments."
+      };
+    }
+    const payment = MakePricingService.calculatePaymentStatus(pricing.finalPrice, rawReceived);
+    if (!payment.isValid) {
+      return { success: false, error: payment.error };
     }
     let resolvedCustId = null;
     if (input.customer_id || input.customer_phone || input.customer_name) {
@@ -116196,11 +117056,32 @@ var MakeOrderService = class _MakeOrderService {
         resolvedCustId = resolved.id;
       }
     }
+    const isAdminUser = ["admin", "superadmin", "manager"].includes((actorSession.role || "").toLowerCase().trim());
+    let effectiveSalesmanId = null;
+    if (isAdminUser) {
+      effectiveSalesmanId = input.salesman_id !== void 0 ? input.salesman_id ? Number(input.salesman_id) : null : actorSession.userId || null;
+    } else {
+      effectiveSalesmanId = actorSession.userId || (input.salesman_id ? Number(input.salesman_id) : null);
+    }
     const orderNumber = await this.generateUniqueOrderNumber();
     const totalQty = input.items.reduce((sum, item) => sum + (Number(item.quantity) || 1), 0);
-    const initialStatus = input.salesman_id ? "Pending Approval" : "Placed";
-    const isApproved = !input.salesman_id;
+    const initialStatus = effectiveSalesmanId ? "Pending Approval" : "Placed";
+    const isApproved = !effectiveSalesmanId;
     const initialApprovalStatus = isApproved ? "sales_approved" : "awaiting_designer";
+    const customDetails = {
+      subtotal: pricing.subtotal,
+      discount_type: pricing.discountType,
+      discount_value: pricing.discountValue,
+      discount_amount: pricing.discountAmount,
+      final_price: pricing.finalPrice,
+      money_received: payment.moneyReceived,
+      amount_due: payment.amountDue,
+      payment_status: payment.paymentStatus,
+      production_hold: payment.productionHold,
+      hold_reason: payment.holdReason,
+      admin_approval_status: "none",
+      items: pricing.items
+    };
     const orderHeaderPayload = {
       order_number: orderNumber,
       furniture_name: input.furniture_name.trim(),
@@ -116212,7 +117093,7 @@ var MakeOrderService = class _MakeOrderService {
       delivery_date: input.delivery_date || input.target_delivery_date || null,
       target_delivery_date: input.target_delivery_date || input.delivery_date || null,
       requested_delivery_date: input.requested_delivery_date || null,
-      salesman_id: input.salesman_id || null,
+      salesman_id: effectiveSalesmanId,
       customer_id: resolvedCustId,
       invoice_attachment_urls: (Array.isArray(input.invoice_attachment_urls) && input.invoice_attachment_urls.length > 0 ? input.invoice_attachment_urls : Array.isArray(input.invoice_attachments) ? input.invoice_attachments : []).map((u) => typeof u === "string" ? _MakeOrderService.normalizeAttachmentReference(u) : u).filter(Boolean),
       is_approved: isApproved,
@@ -116223,8 +117104,20 @@ var MakeOrderService = class _MakeOrderService {
       location_landmark: input.location_landmark?.trim() || null,
       receiver_name: input.receiver_name?.trim() || null,
       receiver_phone: input.receiver_phone?.trim() || null,
+      created_by: actorSession.fullName || actorSession.username || null,
       cost_price: pricing.totalCostPrice,
       sale_price: pricing.totalSalePrice,
+      discount_type: pricing.discountType,
+      discount_value: pricing.discountValue,
+      discount_amount: pricing.discountAmount,
+      final_price: pricing.finalPrice,
+      money_received: payment.moneyReceived,
+      amount_due: payment.amountDue,
+      payment_status: payment.paymentStatus,
+      production_hold: payment.productionHold,
+      hold_reason: payment.holdReason,
+      admin_approval_status: "none",
+      custom_details: customDetails,
       approval_status: initialApprovalStatus,
       current_version: 1,
       created_at: (/* @__PURE__ */ new Date()).toISOString()
@@ -116233,12 +117126,35 @@ var MakeOrderService = class _MakeOrderService {
       orderHeaderPayload.reference_bill_no = input.reference_bill_no.trim();
     }
     let { data: createdOrder, error: orderErr } = await supabase.from("make_orders").insert(orderHeaderPayload).select("id, order_number").single();
-    if (orderErr && orderErr.message && orderErr.message.includes("reference_bill_no")) {
-      const fallbackPayload = { ...orderHeaderPayload };
-      delete fallbackPayload.reference_bill_no;
-      const retryRes = await supabase.from("make_orders").insert(fallbackPayload).select("id, order_number").single();
-      createdOrder = retryRes.data;
-      orderErr = retryRes.error;
+    if (orderErr && orderErr.message) {
+      const errMessage = orderErr.message;
+      const optionalCols = [
+        "discount_type",
+        "discount_value",
+        "discount_amount",
+        "final_price",
+        "reference_bill_no",
+        "money_received",
+        "amount_due",
+        "payment_status",
+        "production_hold",
+        "hold_reason",
+        "admin_approval_status",
+        "created_by"
+      ];
+      const hasOptionalMissing = optionalCols.some((c) => errMessage.includes(c));
+      if (hasOptionalMissing) {
+        console.warn("[MakeOrderService] Detected missing optional column on make_orders, retrying with fallback payload...");
+        const fallbackPayload = { ...orderHeaderPayload };
+        for (const c of optionalCols) {
+          if (errMessage.includes(c)) {
+            delete fallbackPayload[c];
+          }
+        }
+        const retryRes = await supabase.from("make_orders").insert(fallbackPayload).select("id, order_number").single();
+        createdOrder = retryRes.data;
+        orderErr = retryRes.error;
+      }
     }
     if (orderErr || !createdOrder) {
       return { success: false, error: `Failed to create order header: ${orderErr?.message || "Database error"}` };
@@ -116268,7 +117184,13 @@ var MakeOrderService = class _MakeOrderService {
         pdf_urls: normPdfs,
         item_cost_price: item.item_cost_price !== void 0 && item.item_cost_price !== null && item.item_cost_price !== "" ? Math.max(0, Number(item.item_cost_price)) : 0,
         item_sale_price: item.item_sale_price !== void 0 && item.item_sale_price !== null && item.item_sale_price !== "" ? Math.max(0, Number(item.item_sale_price)) : null,
+        discount_type: item.discount_type || null,
+        discount_value: item.discount_value !== void 0 && item.discount_value !== null && item.discount_value !== "" ? Number(item.discount_value) : null,
+        discount_amount: item.discount_amount !== void 0 && item.discount_amount !== null && item.discount_amount !== "" ? Number(item.discount_amount) : 0,
+        final_item_price: item.final_item_price !== void 0 && item.final_item_price !== null && item.final_item_price !== "" ? Number(item.final_item_price) : null,
         is_customized: !!(item.is_customized || item.is_custom),
+        max_discount_type: item.max_discount_type || null,
+        max_discount_value: item.max_discount_value !== void 0 && item.max_discount_value !== null && item.max_discount_value !== "" ? Number(item.max_discount_value) : null,
         designer_notes: item.designer_notes || item.custom_notes || null
       };
     });
@@ -116285,6 +117207,12 @@ var MakeOrderService = class _MakeOrderService {
           delete sanitized.designer_notes;
           delete sanitized.technical_drawing_url;
           delete sanitized.pdf_urls;
+          delete sanitized.max_discount_type;
+          delete sanitized.max_discount_value;
+          delete sanitized.discount_type;
+          delete sanitized.discount_value;
+          delete sanitized.discount_amount;
+          delete sanitized.final_item_price;
         }
         return sanitized;
       });
@@ -116297,11 +117225,44 @@ var MakeOrderService = class _MakeOrderService {
       await supabase.from("make_orders").delete().eq("id", orderId);
       return { success: false, error: `Order creation rolled back due to item insertion error: ${itemsErr.message}` };
     }
+    if (payment.moneyReceived > 0) {
+      try {
+        const initRef = input.reference_bill_no || "INITIAL_PAYMENT";
+        const { data: existingInit } = await supabase.from("make_order_payments").select("id, amount").eq("order_id", orderId).eq("reference", initRef).maybeSingle();
+        if (!existingInit) {
+          const { error: payErr } = await supabase.from("make_order_payments").insert({
+            order_id: orderId,
+            amount: payment.moneyReceived,
+            payment_method: "CASH",
+            reference: initRef,
+            notes: "Initial payment recorded at order placement",
+            received_by: actorSession.fullName || actorSession.username || "System"
+          });
+          if (payErr) {
+            const tableMissing = payErr.code === "42P01" || /relation.*does not exist/i.test(payErr.message);
+            if (!tableMissing) {
+              console.error("[MakeOrderService] Could not insert initial payment record into make_order_payments:", payErr.message);
+              await supabase.from("make_order_items").delete().eq("order_id", orderId);
+              await supabase.from("make_orders").delete().eq("id", orderId);
+              return { success: false, error: `Failed to persist initial payment in payment ledger: ${payErr.message}` };
+            }
+          }
+        }
+      } catch (payErr) {
+        console.error("[MakeOrderService] Exception persisting initial payment record into make_order_payments:", payErr);
+        await supabase.from("make_order_items").delete().eq("order_id", orderId);
+        await supabase.from("make_orders").delete().eq("id", orderId);
+        return { success: false, error: `Failed to persist initial payment: ${payErr?.message || "Database error"}` };
+      }
+    }
     const collectedItemNotes = input.items.map((it, idx) => {
       const note = it.designer_notes || it.custom_notes;
       return note ? `Item #${idx + 1} (${it.product_name}): ${note}` : null;
     }).filter(Boolean);
-    const baseTimelineNote = input.salesman_id ? "Order created, awaiting salesperson approval" : "Order placed and approved";
+    let baseTimelineNote = input.salesman_id ? "Order created, awaiting salesperson approval" : "Order placed and approved";
+    if (payment.productionHold) {
+      baseTimelineNote += ` [PRODUCTION HOLD: Outstanding balance of \u09F3${payment.amountDue.toLocaleString()} due]`;
+    }
     const finalTimelineNote = collectedItemNotes.length > 0 ? `${baseTimelineNote} [Item Notes: ${collectedItemNotes.join("; ")}]` : baseTimelineNote;
     await supabase.from("make_order_updates").insert({
       order_id: orderId,
@@ -116322,6 +117283,26 @@ var MakeOrderService = class _MakeOrderService {
         });
       } catch (notifErr) {
         console.warn("[MakeOrderService] Notification error (non-fatal):", notifErr);
+      }
+    }
+    if (payment.productionHold) {
+      try {
+        const { data: adminUsers } = await supabase.from("users").select("id").in("role", ["admin", "superadmin"]).eq("is_active", 1);
+        if (adminUsers && adminUsers.length > 0) {
+          for (const adm of adminUsers) {
+            await supabase.from("notifications").insert({
+              title: "Order on Production Hold (Payment Due)",
+              message: `Order ${orderNumber} ("${input.furniture_name}") placed with outstanding balance of \u09F3${payment.amountDue.toLocaleString()}. Production is on hold.`,
+              recipient_id: adm.id,
+              sender_id: actorSession.userId,
+              action_path: "/make/track",
+              action_label: "Review Order Hold",
+              metadata: { type: "make_order_hold", order_id: orderId, amount_due: payment.amountDue }
+            });
+          }
+        }
+      } catch (holdNotifErr) {
+        console.warn("[MakeOrderService] Hold notification error (non-fatal):", holdNotifErr);
       }
     }
     const failedAssociations = [];
@@ -116401,6 +117382,15 @@ var MakeOrderService = class _MakeOrderService {
     if (!pricingValidation.allowed) {
       return { success: false, error: pricingValidation.error };
     }
+    const dueAmount = Number(order.amount_due || 0);
+    const isAdminActor = ["admin", "superadmin", "manager"].includes((actorSession.role || "").toLowerCase().trim());
+    const hasAdminApproval = order.admin_approval_status === "approved";
+    if ((dueAmount > 0 || order.production_hold) && !isAdminActor && !hasAdminApproval) {
+      return {
+        success: false,
+        error: `Cannot start processing order with outstanding balance (\u09F3${dueAmount.toLocaleString()}). Submit a Request for Admin Review.`
+      };
+    }
     const actorName = actorSession.fullName || actorSession.username;
     const actorRole = actorSession.role;
     const versionResult = await MakeVersionService.createSnapshot({
@@ -116413,7 +117403,7 @@ var MakeOrderService = class _MakeOrderService {
     if (!versionResult.success) {
       return { success: false, error: `Failed to create version snapshot: ${versionResult.error}` };
     }
-    await MakeVersionService.recordApprovalAudit({
+    const approvalAudit = await MakeVersionService.recordApprovalAudit({
       orderId,
       versionNumber: 1,
       action: "approved",
@@ -116421,6 +117411,9 @@ var MakeOrderService = class _MakeOrderService {
       userRole: actorRole,
       notesOrReason: notes || override?.overrideReason || "Order approved and placed into factory queue"
     });
+    if (!approvalAudit.success) {
+      return { success: false, error: `Failed to record approval audit: ${approvalAudit.error || "unknown database error"}` };
+    }
     const { error: updErr } = await supabase.from("make_orders").update({
       status: "Placed",
       approval_status: "sales_approved",
@@ -116466,11 +117459,13 @@ var MakeOrderService = class _MakeOrderService {
   static async saveDesignerSpecsAndPricing(params) {
     const { orderId, costPrice, salePrice, items, actorSession, modificationReason } = params;
     const { data: current, error: fetchErr } = await supabase.from("make_orders").select("*").eq("id", orderId).maybeSingle();
-    if (fetchErr || !current) return { success: false, error: "Order not found" };
+    if (fetchErr) return { success: false, error: `Failed to load order: ${fetchErr.message}` };
+    if (!current) return { success: false, error: "Order not found" };
     let calcCostPrice = 0;
     let calcSalePrice = 0;
     let hasItemCost = false;
     let hasItemSale = false;
+    const itemUpdates = [];
     if (Array.isArray(items) && items.length > 0) {
       for (const item of items) {
         const itemQty = Math.max(1, Number(item.quantity) || 1);
@@ -116483,19 +117478,7 @@ var MakeOrderService = class _MakeOrderService {
           calcSalePrice += parsedSale * itemQty;
           hasItemSale = true;
         }
-        if (item.id) {
-          await supabase.from("make_order_items").update({
-            quantity: itemQty,
-            item_cost_price: itemCost,
-            item_sale_price: hasSale ? Number(item.item_sale_price) : null,
-            spec_name: item.spec_name || "",
-            size_label: item.size_label || "",
-            color_name: item.color_name || "",
-            salesperson_note: item.salesperson_note || null,
-            designer_notes: item.designer_notes || null,
-            technical_drawing_url: item.technical_drawing_url || null
-          }).eq("id", item.id);
-        }
+        if (item.id) itemUpdates.push({ item, itemQty, itemCost, hasSale });
       }
     }
     const finalCostPrice = hasItemCost ? calcCostPrice : Number(costPrice) || 0;
@@ -116503,19 +117486,34 @@ var MakeOrderService = class _MakeOrderService {
     if (finalCostPrice <= 0) {
       return { success: false, error: "Cost price must be greater than 0." };
     }
+    if (itemUpdates.length > 0) {
+      const itemIds = itemUpdates.map(({ item }) => String(item.id));
+      const { data: ownedItems, error: ownedItemsErr } = await supabase.from("make_order_items").select("id").eq("order_id", orderId).in("id", itemIds);
+      if (ownedItemsErr) {
+        return { success: false, error: `Failed to validate order items: ${ownedItemsErr.message}` };
+      }
+      const ownedIds = new Set((ownedItems || []).map((row) => String(row.id)));
+      const missingId = itemIds.find((id) => !ownedIds.has(id));
+      if (missingId) {
+        return { success: false, error: `Order item ${missingId} is no longer part of this order. Refresh Track Orders and try again.` };
+      }
+    }
     const isReModification = current.approved_version !== null && (current.approval_status === "sales_approved" || current.status === "Placed");
     const nextVersion = isReModification ? (current.current_version || 1) + 1 : current.current_version || 1;
     const actorName = actorSession.fullName || actorSession.username;
     const actorRole = actorSession.role;
     if (isReModification) {
-      await MakeVersionService.createSnapshot({
+      const snapshotResult = await MakeVersionService.createSnapshot({
         orderId,
         versionNumber: current.current_version || 1,
         changeReason: modificationReason || "Designer modified product specifications/pricing after approval",
         actorName,
         actorRole
       });
-      await supabase.from("make_order_alteration_log").insert({
+      if (!snapshotResult.success) {
+        return { success: false, error: `Could not save the prior order version: ${snapshotResult.error || "snapshot failed"}` };
+      }
+      const { error: auditErr } = await supabase.from("make_order_alteration_log").insert({
         order_id: orderId,
         altered_by: actorName,
         user_role: actorRole,
@@ -116524,6 +117522,26 @@ var MakeOrderService = class _MakeOrderService {
         new_value: `v${nextVersion}: Cost \u09F3${finalCostPrice}, Sale \u09F3${finalSalePrice || 0}`,
         reason: modificationReason || "Designer adjusted individual product specifications/pricing"
       });
+      if (auditErr) return { success: false, error: `Could not record order modification audit: ${auditErr.message}` };
+    }
+    for (const { item, itemQty, itemCost, hasSale } of itemUpdates) {
+      const { data: updatedItem, error: itemUpdateErr } = await supabase.from("make_order_items").update({
+        quantity: itemQty,
+        item_cost_price: itemCost,
+        item_sale_price: hasSale ? Number(item.item_sale_price) : null,
+        spec_name: item.spec_name ?? "",
+        size_label: item.size_label ?? "",
+        color_name: item.color_name ?? "",
+        salesperson_note: item.salesperson_note || null,
+        designer_notes: item.designer_notes || null,
+        technical_drawing_url: item.technical_drawing_url || null
+      }).eq("id", item.id).eq("order_id", orderId).select("id").maybeSingle();
+      if (itemUpdateErr) {
+        return { success: false, error: `Failed to save order item ${item.id}: ${itemUpdateErr.message}` };
+      }
+      if (!updatedItem) {
+        return { success: false, error: `Order item ${item.id} was not updated. Refresh Track Orders and try again.` };
+      }
     }
     const { error: updErr } = await supabase.from("make_orders").update({
       cost_price: finalCostPrice,
@@ -116536,12 +117554,13 @@ var MakeOrderService = class _MakeOrderService {
       updated_at: (/* @__PURE__ */ new Date()).toISOString()
     }).eq("id", orderId);
     if (updErr) return { success: false, error: updErr.message };
-    await supabase.from("make_order_updates").insert({
+    const { error: timelineErr } = await supabase.from("make_order_updates").insert({
       order_id: orderId,
       status: isReModification ? "Modification Pending Approval" : "Awaiting Salesperson Approval",
       note: `Cost price set to \u09F3${finalCostPrice.toLocaleString()}${finalSalePrice ? ` | Sale price: \u09F3${finalSalePrice.toLocaleString()}` : ""}${isReModification ? ` (v${nextVersion} requires re-approval)` : ""}`,
       updated_by: `${actorName} (${actorRole})`
     });
+    if (timelineErr) console.error("[MakeOrderService] Failed to add designer pricing timeline entry:", timelineErr);
     if (current.salesman_id) {
       try {
         await supabase.from("notifications").insert({
@@ -116796,8 +117815,11 @@ var MakeOrderService = class _MakeOrderService {
       filteredOrderChanges.cost_price = totalCost;
       filteredOrderChanges.total_sale_price = totalSale;
       filteredOrderChanges.sale_price = totalSale;
-      filteredOrderChanges.total_amount = totalSale;
       filteredOrderChanges.remaining_balance = Math.max(0, totalSale - Number(current.advance_amount || 0));
+      const historicalMoneyReceived = Number(current.money_received || 0);
+      filteredOrderChanges.money_received = historicalMoneyReceived;
+      filteredOrderChanges.amount_due = Math.max(0, Math.round((totalSale - historicalMoneyReceived + Number.EPSILON) * 100) / 100);
+      filteredOrderChanges.payment_status = filteredOrderChanges.amount_due <= 0 ? "paid" : historicalMoneyReceived > 0 ? "partial" : "unpaid";
       if (allItems.length === 1 && allItems[0].product_name) {
         filteredOrderChanges.furniture_name = allItems[0].product_name;
       }
@@ -116924,6 +117946,319 @@ var MakeOrderService = class _MakeOrderService {
       return { success: false, error: err.message || "Transaction error during order deletion" };
     }
   }
+  /**
+   * Request administrator approval to proceed with production despite an unpaid balance / production hold.
+   */
+  static async requestProductionApproval(orderId, notes, actorSession) {
+    const { data: order, error: fetchErr } = await supabase.from("make_orders").select("id, order_number, furniture_name, amount_due, production_hold, admin_approval_status").eq("id", orderId).maybeSingle();
+    if (fetchErr) return { success: false, error: `Failed to load order: ${fetchErr.message}` };
+    if (!order) return { success: false, error: "Order not found." };
+    const role = (actorSession.role || "").toLowerCase().trim();
+    if (!["salesperson", "salesman", "sales", "admin", "superadmin", "manager"].includes(role)) {
+      return { success: false, error: "Only Sales or Admin can request production release for an order with a due balance." };
+    }
+    const due = Number(order.amount_due || 0);
+    if (due <= 0) return { success: false, error: "This order has no outstanding payment due." };
+    if (order.admin_approval_status === "approved") {
+      return { success: false, error: "Admin has already approved this order for production." };
+    }
+    const requester = actorSession.fullName || actorSession.username || "Staff";
+    const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+    const { error: updErr } = await supabase.from("make_orders").update({
+      admin_approval_status: "pending",
+      admin_approval_requested_by: requester,
+      admin_approval_requested_at: nowIso,
+      admin_approval_notes: notes || null,
+      updated_at: nowIso
+    }).eq("id", orderId);
+    if (updErr) {
+      return { success: false, error: `Failed to update approval status: ${updErr.message}` };
+    }
+    const noteText = `Production release approval requested from Admin${notes ? ": " + notes : ""}`;
+    const { error: timelineErr } = await supabase.from("make_order_updates").insert({
+      order_id: orderId,
+      status: "Pending Admin Approval",
+      note: noteText,
+      updated_by: requester
+    });
+    if (timelineErr) console.error("[MakeOrderService] Failed to add production approval request to timeline:", timelineErr);
+    try {
+      const { data: adminUsers } = await supabase.from("users").select("id").in("role", ["admin", "superadmin"]).eq("is_active", 1);
+      if (adminUsers && adminUsers.length > 0) {
+        const balMsg = order.amount_due ? `\u09F3${Number(order.amount_due).toLocaleString()}` : "unpaid balance";
+        for (const adm of adminUsers) {
+          await supabase.from("notifications").insert({
+            title: "Production Approval Requested",
+            message: `${requester} requested production approval for Order ${order.order_number} ("${order.furniture_name}") with ${balMsg} due.${notes ? " Note: " + notes : ""}`,
+            recipient_id: adm.id,
+            sender_id: actorSession.userId,
+            action_path: "/make/track",
+            action_label: "Review Approval Request",
+            metadata: { type: "make_production_approval_requested", order_id: orderId }
+          });
+        }
+      }
+    } catch (notifErr) {
+      console.warn("[MakeOrderService] Error sending approval request notifications:", notifErr);
+    }
+    return { success: true, message: "Production approval request submitted to Administrators." };
+  }
+  /**
+   * Authoritatively decide (approve or reject) production release on a held order.
+   * Strictly restricted to Administrators and Superadmins.
+   */
+  static async decideProductionApproval(orderId, decision, notes, actorSession) {
+    const role = (actorSession.role || "").toLowerCase();
+    const isAdmin = role === "admin" || role === "superadmin";
+    if (!isAdmin) {
+      return { success: false, error: "Forbidden: Only Administrators can decide production approval." };
+    }
+    const { data: order, error: fetchErr } = await supabase.from("make_orders").select("id, order_number, furniture_name, amount_due, production_hold, admin_approval_status, created_by").eq("id", orderId).maybeSingle();
+    if (fetchErr) return { success: false, error: `Failed to load order: ${fetchErr.message}` };
+    if (!order) return { success: false, error: "Order not found." };
+    const approver = actorSession.fullName || actorSession.username || "Admin";
+    const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+    const isApproved = decision === "approved";
+    const updatePayload = {
+      admin_approval_status: decision,
+      admin_approval_decision_by: approver,
+      admin_approval_decision_at: nowIso,
+      admin_approval_notes: notes || null,
+      // If approved, release the production hold override; if rejected, keep production hold active
+      production_hold: !isApproved,
+      updated_at: nowIso
+    };
+    const { error: updErr } = await supabase.from("make_orders").update(updatePayload).eq("id", orderId);
+    if (updErr) {
+      return { success: false, error: `Failed to record approval decision: ${updErr.message}` };
+    }
+    const actionText = isApproved ? "APPROVED" : "REJECTED";
+    const noteText = `Production release ${actionText} by ${approver}${notes ? ": " + notes : ""}${isApproved ? " (Production hold override active)" : ""}`;
+    await supabase.from("make_order_updates").insert({
+      order_id: orderId,
+      status: isApproved ? "Approved for Production" : "Hold Confirmed",
+      note: noteText,
+      updated_by: approver
+    });
+    if (order.created_by) {
+      try {
+        await supabase.from("notifications").insert({
+          title: `Production Approval ${actionText}`,
+          message: `Production release for Order ${order.order_number} ("${order.furniture_name}") was ${actionText.toLowerCase()} by ${approver}.${notes ? " Note: " + notes : ""}`,
+          recipient_id: order.created_by,
+          sender_id: actorSession.userId,
+          action_path: "/make/track",
+          action_label: "View Order",
+          metadata: { type: "make_production_approval_decision", order_id: orderId, decision }
+        });
+      } catch (notifErr) {
+        console.warn("[MakeOrderService] Error notifying creator:", notifErr);
+      }
+    }
+    return {
+      success: true,
+      decision,
+      message: `Production approval successfully ${decision}.`
+    };
+  }
+  /**
+   * Authoritatively record an order payment, update amount due, and evaluate production hold.
+   */
+  static async recordOrderPayment(params) {
+    const { orderId, amount, paymentMethod, reference, notes, actorSession } = params;
+    if (typeof amount !== "number" || isNaN(amount) || amount <= 0) {
+      return { success: false, error: "Payment amount must be a positive number." };
+    }
+    const { data: order, error: fetchErr } = await supabase.from("make_orders").select("id, order_number, furniture_name, status, final_price, sale_price, money_received, amount_due, payment_status, production_hold, admin_approval_status").eq("id", orderId).maybeSingle();
+    if (fetchErr || !order) {
+      return { success: false, error: "Order not found." };
+    }
+    const totalOrderPrice = order.final_price !== null && order.final_price !== void 0 ? Number(order.final_price) : Number(order.sale_price || 0);
+    const currentReceived = Number(order.money_received || 0);
+    const newReceived = Math.round((currentReceived + amount + Number.EPSILON) * 100) / 100;
+    if (totalOrderPrice > 0 && newReceived > totalOrderPrice + 0.01) {
+      return {
+        success: false,
+        error: `Total payments (\u09F3${newReceived.toLocaleString()}) cannot exceed the order price (\u09F3${totalOrderPrice.toLocaleString()}).`
+      };
+    }
+    const newAmountDue = Math.max(0, Math.round((totalOrderPrice - newReceived + Number.EPSILON) * 100) / 100);
+    const newPaymentStatus = newAmountDue <= 0 ? "paid" : newReceived > 0 ? "partial" : "unpaid";
+    const newProductionHold = newAmountDue > 0 && order.admin_approval_status !== "approved";
+    const receiver = actorSession.fullName || actorSession.username || "Staff";
+    const { data: paymentRow, error: payErr } = await supabase.from("make_order_payments").insert({
+      order_id: orderId,
+      amount,
+      payment_method: paymentMethod || "CASH",
+      reference: reference || null,
+      notes: notes || null,
+      received_by: receiver
+    }).select("id").single();
+    if (payErr) {
+      return { success: false, error: `Payment was not recorded in the payment ledger: ${payErr.message}` };
+    }
+    const { error: updErr } = await supabase.from("make_orders").update({
+      money_received: newReceived,
+      amount_due: newAmountDue,
+      payment_status: newPaymentStatus,
+      production_hold: newProductionHold,
+      hold_reason: newProductionHold ? `Outstanding balance of \u09F3${newAmountDue.toLocaleString()} due` : null,
+      updated_at: (/* @__PURE__ */ new Date()).toISOString()
+    }).eq("id", orderId);
+    if (updErr) {
+      if (paymentRow?.id) {
+        const { error: rollbackErr } = await supabase.from("make_order_payments").delete().eq("id", paymentRow.id);
+        if (rollbackErr) console.error("[MakeOrderService] Failed to remove payment ledger row after order update failure:", rollbackErr);
+      }
+      return { success: false, error: `Failed to update order financial status: ${updErr.message}` };
+    }
+    const timelineMsg = `Payment of \u09F3${amount.toLocaleString()} received (${paymentMethod || "CASH"}${reference ? ", Ref: " + reference : ""}). Remaining balance: \u09F3${newAmountDue.toLocaleString()}${newProductionHold ? " [HOLD ACTIVE]" : " [HOLD RELEASED]"}`;
+    const { error: timelineErr } = await supabase.from("make_order_updates").insert({
+      order_id: orderId,
+      status: newProductionHold ? "Production Hold" : order.status || "Payment Received",
+      note: timelineMsg,
+      updated_by: receiver
+    });
+    if (timelineErr) console.error("[MakeOrderService] Failed to add payment timeline entry:", timelineErr);
+    return {
+      success: true,
+      moneyReceived: newReceived,
+      amountDue: newAmountDue,
+      paymentStatus: newPaymentStatus,
+      productionHold: newProductionHold
+    };
+  }
+  /**
+   * Remove a line item during the designer's initial review, before the
+   * salesperson approves the order. This avoids altering issued invoices,
+   * approved versions, or an order with received payments.
+   */
+  static async removeOrderItem(params) {
+    const { orderId, itemId, actorSession } = params;
+    const role = (actorSession.role || "").toLowerCase().trim();
+    const isDesigner = ["furniture_designer", "furniture designer", "designer", "make_designer"].includes(role);
+    const isAdmin = ["admin", "superadmin", "manager"].includes(role);
+    if (!isDesigner && !isAdmin) return { success: false, error: "Only Furniture Designers or Administrators can remove an order item." };
+    const { data: order, error: orderErr } = await supabase.from("make_orders").select("id, order_number, furniture_name, status, approval_status, bill_id, bill_item_id, money_received, custom_details").eq("id", orderId).maybeSingle();
+    if (orderErr) return { success: false, error: `Failed to load order: ${orderErr.message}` };
+    if (!order) return { success: false, error: "Order not found." };
+    if (order.approval_status !== "awaiting_designer") {
+      return { success: false, error: "Items can only be removed during the initial designer review, before Sales approval. Use the order alteration workflow for later changes." };
+    }
+    if (order.bill_id || order.bill_item_id) return { success: false, error: "This order is linked to a bill and its items cannot be removed here." };
+    if (Number(order.money_received || 0) > 0) return { success: false, error: "This order has received payment. Reconcile the payment before removing an item." };
+    const { data: items, error: itemsErr } = await supabase.from("make_order_items").select("*").eq("order_id", orderId).order("id", { ascending: true });
+    if (itemsErr) return { success: false, error: `Failed to load order items: ${itemsErr.message}` };
+    const allItems = items || [];
+    const target = allItems.find((item) => String(item.id) === String(itemId));
+    if (!target) return { success: false, error: "The selected item is no longer part of this order. Refresh Track Orders." };
+    if (allItems.length <= 1) return { success: false, error: "An order must keep at least one product. Cancel the entire order if it should not proceed." };
+    const actorName = actorSession.fullName || actorSession.username || "User";
+    const remaining = allItems.filter((item) => String(item.id) !== String(itemId));
+    const { error: auditErr } = await supabase.from("make_order_alteration_log").insert({
+      order_id: orderId,
+      order_number: order.order_number || "",
+      altered_by: actorName,
+      user_role: role,
+      action_type: "product_removed_during_designer_review",
+      field_name: "make_order_items",
+      old_value: `${target.product_name} (Qty: ${target.quantity})`,
+      new_value: "Removed during designer review",
+      reason: "Designer review before Sales approval",
+      altered_at: (/* @__PURE__ */ new Date()).toISOString()
+    });
+    if (auditErr) return { success: false, error: `Could not record the item removal audit: ${auditErr.message}` };
+    const { data: deleted, error: deleteErr } = await supabase.from("make_order_items").delete().eq("id", itemId).eq("order_id", orderId).select("id").maybeSingle();
+    if (deleteErr) return { success: false, error: `Failed to remove order item: ${deleteErr.message}` };
+    if (!deleted) return { success: false, error: "The item was not removed. Refresh Track Orders and try again." };
+    const totalQuantity = remaining.reduce((sum, item) => sum + (Number(item.quantity) || 1), 0);
+    const updatedDetails = order.custom_details && typeof order.custom_details === "object" ? { ...order.custom_details, items: remaining } : order.custom_details;
+    const { error: updateErr } = await supabase.from("make_orders").update({
+      quantity: totalQuantity,
+      furniture_name: remaining.length === 1 ? remaining[0].product_name : order.furniture_name,
+      custom_details: updatedDetails,
+      updated_at: (/* @__PURE__ */ new Date()).toISOString()
+    }).eq("id", orderId);
+    if (updateErr) return { success: false, error: `Item was removed, but order summary could not be refreshed: ${updateErr.message}. Contact an administrator before approval.` };
+    const { error: timelineErr } = await supabase.from("make_order_updates").insert({
+      order_id: orderId,
+      status: order.status,
+      note: `Furniture Designer removed ${target.product_name} (Qty: ${target.quantity}) during initial review.`,
+      updated_by: `${actorName} (${role})`
+    });
+    if (timelineErr) console.error("[MakeOrderService] Failed to add item removal timeline entry:", timelineErr);
+    return { success: true };
+  }
+  static async updateDesignerOrderItemQuantity(params) {
+    const { orderId, itemId, quantity, actorSession } = params;
+    const role = (actorSession.role || "").toLowerCase().trim();
+    if (!["furniture_designer", "furniture designer", "designer", "make_designer", "admin", "superadmin", "manager"].includes(role)) {
+      return { success: false, error: "Only Furniture Designers or Administrators can change item quantities during initial review." };
+    }
+    if (!Number.isInteger(quantity) || quantity < 1) return { success: false, error: "Quantity must be a positive whole number." };
+    const { data: order, error: orderErr } = await supabase.from("make_orders").select("id, order_number, status, approval_status, bill_id, bill_item_id, money_received, custom_details").eq("id", orderId).maybeSingle();
+    if (orderErr) return { success: false, error: `Failed to load order: ${orderErr.message}` };
+    if (!order) return { success: false, error: "Order not found." };
+    if (order.approval_status !== "awaiting_designer") return { success: false, error: "Item quantities can only be changed during initial designer review, before Sales approval." };
+    if (order.bill_id || order.bill_item_id) return { success: false, error: "This order is linked to a bill and its items cannot be changed here." };
+    if (Number(order.money_received || 0) > 0) return { success: false, error: "This order has received payment. Reconcile the payment before changing item quantities." };
+    const { data: items, error: itemsErr } = await supabase.from("make_order_items").select("*").eq("order_id", orderId).order("id", { ascending: true });
+    if (itemsErr) return { success: false, error: `Failed to load order items: ${itemsErr.message}` };
+    const allItems = items || [];
+    const target = allItems.find((item) => String(item.id) === String(itemId));
+    if (!target) return { success: false, error: "The selected item is no longer part of this order. Refresh Track Orders." };
+    const oldQuantity = Number(target.quantity) || 1;
+    if (oldQuantity === quantity) return { success: true };
+    const actorName = actorSession.fullName || actorSession.username || "User";
+    const { error: auditErr } = await supabase.from("make_order_alteration_log").insert({
+      order_id: orderId,
+      order_number: order.order_number || "",
+      altered_by: actorName,
+      user_role: role,
+      action_type: "quantity_change_during_designer_review",
+      field_name: `quantity (item #${itemId})`,
+      old_value: String(oldQuantity),
+      new_value: String(quantity),
+      reason: "Designer review before Sales approval",
+      altered_at: (/* @__PURE__ */ new Date()).toISOString()
+    });
+    if (auditErr) return { success: false, error: `Could not record the quantity-change audit: ${auditErr.message}` };
+    const { data: changedItem, error: itemErr } = await supabase.from("make_order_items").update({ quantity }).eq("id", itemId).eq("order_id", orderId).select("id").maybeSingle();
+    if (itemErr) return { success: false, error: `Failed to update item quantity: ${itemErr.message}` };
+    if (!changedItem) return { success: false, error: "The item was not updated. Refresh Track Orders and try again." };
+    const updatedItems = allItems.map((item) => String(item.id) === String(itemId) ? { ...item, quantity } : item);
+    const totalQuantity = updatedItems.reduce((sum, item) => sum + (Number(item.quantity) || 1), 0);
+    const updatedDetails = order.custom_details && typeof order.custom_details === "object" ? { ...order.custom_details, items: updatedItems } : order.custom_details;
+    const { error: orderUpdateErr } = await supabase.from("make_orders").update({
+      quantity: totalQuantity,
+      custom_details: updatedDetails,
+      updated_at: (/* @__PURE__ */ new Date()).toISOString()
+    }).eq("id", orderId);
+    if (orderUpdateErr) return { success: false, error: `Item quantity changed, but the order summary could not be refreshed: ${orderUpdateErr.message}. Contact an administrator before approval.` };
+    const { error: timelineErr } = await supabase.from("make_order_updates").insert({
+      order_id: orderId,
+      status: order.status,
+      note: `${target.product_name} quantity changed from ${oldQuantity} to ${quantity} during designer review.`,
+      updated_by: `${actorName} (${role})`
+    });
+    if (timelineErr) console.error("[MakeOrderService] Failed to add item quantity timeline entry:", timelineErr);
+    return { success: true };
+  }
+  /**
+   * Retrieve payment ledger history for an order.
+   */
+  static async getOrderPayments(orderId) {
+    try {
+      const { data: data2, error: error51 } = await supabase.from("make_order_payments").select("*").eq("order_id", orderId).order("created_at", { ascending: false });
+      if (error51) {
+        console.warn("[MakeOrderService] getOrderPayments error:", error51.message);
+        return { success: false, payments: [], error: error51.message };
+      }
+      return { success: true, payments: data2 || [] };
+    } catch (err) {
+      return { success: false, payments: [], error: err.message || "Failed to load payment history." };
+    }
+  }
 };
 
 // electron/services/make/MakeProductionService.ts
@@ -116966,7 +118301,22 @@ var LEGACY_STAGE_INDEX_MAP = {
   "Packaging & QC": 4,
   "Dispatch": 6
 };
-var MakeProductionService = class {
+var MakeProductionService = class _MakeProductionService {
+  static supportsCurrentStagePhoto = null;
+  static setSupportsCurrentStagePhoto(supported) {
+    _MakeProductionService.supportsCurrentStagePhoto = supported;
+  }
+  static getSupportsCurrentStagePhoto() {
+    return _MakeProductionService.supportsCurrentStagePhoto;
+  }
+  static isMissingColumnError(err, colName) {
+    if (!err) return false;
+    const msg = String(err.message || "").toLowerCase();
+    const details = String(err.details || "").toLowerCase();
+    const code = String(err.code || "");
+    const target = colName.toLowerCase();
+    return code === "PGRST204" || code === "42703" || msg.includes(target) || details.includes(target) || msg.includes(`could not find the '${target}' column`) || msg.includes(`column make_orders.${target} does not exist`) || details.includes(`column ${target} does not exist`);
+  }
   /**
    * Resolves the canonical stage index (0-5) for any stage string (canonical or legacy).
    * Returns -1 if the stage string is not recognized.
@@ -116986,9 +118336,17 @@ var MakeProductionService = class {
   /**
    * Authoritatively validates whether an order can advance from its current status to targetStage.
    */
-  static validateTransition(currentStatus, targetStage) {
+  static validateTransition(currentStatus, targetStage, options) {
     const curIdx = this.getStageIndex(currentStatus);
     const targetIdx = this.getStageIndex(targetStage);
+    if (options?.productionHold && options.adminApprovalStatus !== "approved") {
+      return {
+        allowed: false,
+        error: "Order is on Production Hold due to outstanding balance. Administrator approval is required before factory production can proceed.",
+        currentStageIndex: curIdx,
+        targetStageIndex: targetIdx
+      };
+    }
     if (targetIdx === -1) {
       return {
         allowed: false,
@@ -117060,10 +118418,12 @@ var MakeProductionService = class {
           status: targetStage,
           current_stage: targetStage,
           updated_at: (/* @__PURE__ */ new Date()).toISOString(),
-          current_stage_photo: finalPhotoUrl2,
           factory_manager_name: actorName,
           factory_manager_id: actorUserId || null
         };
+        if (finalPhotoUrl2 && _MakeProductionService.supportsCurrentStagePhoto !== false) {
+          deferredOrderUpdates.current_stage_photo = finalPhotoUrl2;
+        }
         const childUpdateOpId = outbox.enqueueSingle({
           entityType: "make_order_updates",
           operation: "insert",
@@ -117094,7 +118454,19 @@ var MakeProductionService = class {
         error: `Parent order "${orderId}" does not exist in database or pending outbox.`
       };
     }
-    const validation = this.validateTransition(order.status, targetStage);
+    if (order.production_hold && order.admin_approval_status !== "approved") {
+      const dueMsg = order.amount_due ? ` (Outstanding balance: \u09F3${Number(order.amount_due).toLocaleString()})` : "";
+      return {
+        success: false,
+        stage: targetStage,
+        photo_url: null,
+        error: `Cannot advance production stage: Order is on Production Hold${dueMsg}. Administrator approval is required to proceed.`
+      };
+    }
+    const validation = this.validateTransition(order.status, targetStage, {
+      productionHold: order.production_hold,
+      adminApprovalStatus: order.admin_approval_status
+    });
     if (!validation.allowed) {
       return { success: false, stage: targetStage, photo_url: null, error: validation.error };
     }
@@ -117111,7 +118483,16 @@ var MakeProductionService = class {
     }
     const roleLabel = actorRole || "Factory Manager";
     const formattedActor = `${actorName} (${roleLabel})`;
-    const finalPhotoUrl = photoUrl || order.current_stage_photo || null;
+    let finalPhotoUrl = photoUrl || order.current_stage_photo || null;
+    if (!finalPhotoUrl) {
+      try {
+        const { data: latestUpdate } = await supabase.from("make_order_updates").select("photo_url").eq("order_id", orderId).not("photo_url", "is", null).order("created_at", { ascending: false }).limit(1).maybeSingle();
+        if (latestUpdate?.photo_url) {
+          finalPhotoUrl = latestUpdate.photo_url;
+        }
+      } catch {
+      }
+    }
     const updateRow = {
       order_id: orderId,
       status: targetStage,
@@ -117131,19 +118512,29 @@ var MakeProductionService = class {
         error: `Failed to insert production update: ${insErr.message}`
       };
     }
-    const orderUpdates = {
+    const baseOrderUpdates = {
       status: targetStage,
       current_stage: targetStage,
       updated_at: (/* @__PURE__ */ new Date()).toISOString()
     };
-    if (finalPhotoUrl) {
+    if (actorUserId) {
+      baseOrderUpdates.factory_manager_id = actorUserId;
+    }
+    baseOrderUpdates.factory_manager_name = actorName;
+    const orderUpdates = { ...baseOrderUpdates };
+    if (finalPhotoUrl && _MakeProductionService.supportsCurrentStagePhoto !== false) {
       orderUpdates.current_stage_photo = finalPhotoUrl;
     }
-    if (actorUserId) {
-      orderUpdates.factory_manager_id = actorUserId;
+    let { error: updErr } = await supabase.from("make_orders").update(orderUpdates).eq("id", orderId);
+    if (updErr && orderUpdates.current_stage_photo && _MakeProductionService.isMissingColumnError(updErr, "current_stage_photo")) {
+      console.warn(`[MakeProductionService] 'current_stage_photo' not found on make_orders schema. Retrying update without optional column while preserving photo in make_order_updates.`);
+      _MakeProductionService.supportsCurrentStagePhoto = false;
+      delete orderUpdates.current_stage_photo;
+      const retryResult = await supabase.from("make_orders").update(orderUpdates).eq("id", orderId);
+      updErr = retryResult.error;
+    } else if (!updErr && orderUpdates.current_stage_photo) {
+      _MakeProductionService.supportsCurrentStagePhoto = true;
     }
-    orderUpdates.factory_manager_name = actorName;
-    const { error: updErr } = await supabase.from("make_orders").update(orderUpdates).eq("id", orderId);
     if (updErr) {
       return {
         success: false,
@@ -117209,20 +118600,41 @@ var ALLOWED_CAD_EXTENSIONS = /* @__PURE__ */ new Set([
   "png",
   "jpg",
   "jpeg",
-  "webp"
+  "webp",
+  "gif",
+  "bmp",
+  "tiff",
+  "tif",
+  "avif",
+  "heic",
+  "heif"
 ]);
 var ALLOWED_PHOTO_EXTENSIONS = /* @__PURE__ */ new Set([
   "png",
   "jpg",
   "jpeg",
-  "webp"
+  "webp",
+  "gif",
+  "bmp",
+  "tiff",
+  "tif",
+  "avif",
+  "heic",
+  "heif"
 ]);
 var ALLOWED_INVOICE_EXTENSIONS = /* @__PURE__ */ new Set([
   "png",
   "jpg",
   "jpeg",
   "webp",
-  "pdf"
+  "pdf",
+  "gif",
+  "bmp",
+  "tiff",
+  "tif",
+  "avif",
+  "heic",
+  "heif"
 ]);
 var MAX_CAD_FILE_SIZE = 50 * 1024 * 1024;
 var MAX_PHOTO_FILE_SIZE = 15 * 1024 * 1024;
@@ -117260,6 +118672,10 @@ var MakeCadService = class {
     if (buffer.length >= 4 && buffer[0] === 127 && buffer[1] === 69 && buffer[2] === 76 && buffer[3] === 70) {
       return { isValid: false, detectedMime: "application/x-executable", error: "Executable binaries are strictly forbidden." };
     }
+    const headerStr = buffer.toString("utf8", 0, Math.min(buffer.length, 512)).toLowerCase();
+    if (headerStr.includes("<script") || headerStr.includes("javascript:") || headerStr.startsWith("#!/")) {
+      return { isValid: false, detectedMime: "text/plain", error: "Executable scripts and active HTML content are strictly forbidden." };
+    }
     const ext = extension2.toLowerCase();
     if (ext === "pdf") {
       const isPdf = buffer.length >= 5 && buffer[0] === 37 && buffer[1] === 80 && buffer[2] === 68 && buffer[3] === 70 && buffer[4] === 45;
@@ -117289,6 +118705,39 @@ var MakeCadService = class {
       }
       return { isValid: true, detectedMime: "image/webp" };
     }
+    if (ext === "gif") {
+      const isGif = buffer.length >= 6 && buffer.toString("ascii", 0, 4) === "GIF8";
+      if (!isGif) {
+        return { isValid: false, detectedMime: "application/octet-stream", error: "Corrupted or invalid GIF image file." };
+      }
+      return { isValid: true, detectedMime: "image/gif" };
+    }
+    if (ext === "bmp") {
+      const isBmp = buffer.length >= 2 && buffer[0] === 66 && buffer[1] === 77;
+      if (!isBmp) {
+        return { isValid: false, detectedMime: "application/octet-stream", error: "Corrupted or invalid BMP image file." };
+      }
+      return { isValid: true, detectedMime: "image/bmp" };
+    }
+    if (ext === "tiff" || ext === "tif") {
+      const isTiffLE = buffer.length >= 4 && buffer[0] === 73 && buffer[1] === 73 && buffer[2] === 42 && buffer[3] === 0;
+      const isTiffBE = buffer.length >= 4 && buffer[0] === 77 && buffer[1] === 77 && buffer[2] === 0 && buffer[3] === 42;
+      if (!isTiffLE && !isTiffBE) {
+        return { isValid: false, detectedMime: "application/octet-stream", error: "Corrupted or invalid TIFF image file." };
+      }
+      return { isValid: true, detectedMime: "image/tiff" };
+    }
+    if (ext === "avif" || ext === "heic" || ext === "heif") {
+      const hasFtyp = buffer.length >= 12 && buffer.toString("ascii", 4, 8) === "ftyp";
+      if (hasFtyp) {
+        const brand = buffer.toString("ascii", 8, 12).toLowerCase();
+        if (brand.includes("avif") || brand.includes("avis")) {
+          return { isValid: true, detectedMime: "image/avif" };
+        }
+        return { isValid: true, detectedMime: "image/heic" };
+      }
+      return { isValid: true, detectedMime: ext === "avif" ? "image/avif" : "image/heic" };
+    }
     if (ext === "dwg") {
       const isDwg = buffer.length >= 4 && buffer[0] === 65 && buffer[1] === 67 && buffer[2] === 49 && buffer[3] === 48;
       return { isValid: true, detectedMime: isDwg ? "application/acad" : "application/octet-stream" };
@@ -117310,12 +118759,14 @@ var MakeCadService = class {
     if (!win) {
       return { canceled: true, error: "No active window found" };
     }
+    const commonImgExts = ["png", "jpg", "jpeg", "webp", "gif", "bmp", "tiff", "tif", "avif", "heic", "heif"];
+    const cadExts = ["pdf", "dwg", "dxf", "step", "stp", "iges", "igs", "skp", "stl", "obj", ...commonImgExts];
     const filters2 = type === "invoice_attachment" ? [
-      { name: "Invoices & Documents", extensions: ["png", "jpg", "jpeg", "webp", "pdf"] },
+      { name: "Invoices & Documents", extensions: ["pdf", ...commonImgExts] },
       { name: "PDF Documents", extensions: ["pdf"] },
-      { name: "Images", extensions: ["png", "jpg", "jpeg", "webp"] }
-    ] : type === "photo" ? [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp"] }] : [
-      { name: "Drawings & CAD Files", extensions: ["pdf", "png", "jpg", "jpeg", "webp", "dwg", "dxf", "step", "stp", "iges", "igs", "skp", "stl", "obj"] },
+      { name: "Images", extensions: commonImgExts }
+    ] : type === "photo" ? [{ name: "Images", extensions: commonImgExts }] : [
+      { name: "Drawings & CAD Files", extensions: cadExts },
       { name: "All Supported Files", extensions: ["*"] }
     ];
     const title = type === "invoice_attachment" ? "Select Invoice Attachment / Document" : type === "photo" ? "Select Stage Completion Photo" : "Select Technical Drawing / CAD Blueprint";
@@ -117485,6 +118936,9 @@ var MakeCadService = class {
     const storagePath = `${subfolder}/${storageFileName}`;
     const nasStorageUrl = this.getNasStorageUrl();
     if (nasStorageUrl) {
+      const timeoutMs = Math.max(3e4, Math.min(3e5, Math.ceil(buffer.length / 2e5) * 1e3 + 3e4));
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
       try {
         const formData = new FormData();
         formData.append("file", new Blob([new Uint8Array(buffer)], { type: mimeType }), storageFileName);
@@ -117496,7 +118950,7 @@ var MakeCadService = class {
             "x-subfolder": subfolder,
             ...cfHeaders
           },
-          signal: AbortSignal.timeout(2e4)
+          signal: controller.signal
         });
         if (response.ok || response.status === void 0) {
           const data2 = await response.json();
@@ -117514,6 +118968,8 @@ var MakeCadService = class {
         }
       } catch (nasErr) {
         console.warn("[MakeCadService] NAS upload failed, attempting Supabase fallback:", nasErr.message);
+      } finally {
+        clearTimeout(timeoutId);
       }
     }
     const quotaMgr = SupabaseQuotaManager.getInstance();
@@ -117523,7 +118979,7 @@ var MakeCadService = class {
         status: "failed",
         storagePath: "",
         isPendingUpload: false,
-        error: "Supabase Storage quota limit reached (600 MB / 1 GB ceiling)."
+        error: "Supabase Storage quota limit reached (2.2 GB / 3 GB ceiling)."
       };
     }
     const canBuffer = await quotaMgr.reserveStorageQuota(storageFileName, buffer.length);
@@ -132100,9 +133556,26 @@ var MakeOrderItemInputSchema = external_exports.object({
   quantity: external_exports.number().positive("Quantity must be greater than zero").default(1),
   item_cost_price: external_exports.union([external_exports.number().nonnegative(), external_exports.string(), external_exports.null()]).optional(),
   item_sale_price: external_exports.union([external_exports.number().nonnegative(), external_exports.string(), external_exports.null()]).optional(),
+  discount_type: external_exports.enum(["percent", "amount"]).nullable().optional(),
+  discount_value: external_exports.union([external_exports.number().nonnegative(), external_exports.string(), external_exports.null()]).optional(),
+  discount_amount: external_exports.union([external_exports.number().nonnegative(), external_exports.string(), external_exports.null()]).optional(),
+  final_item_price: external_exports.union([external_exports.number().nonnegative(), external_exports.string(), external_exports.null()]).optional(),
+  max_discount_type: external_exports.enum(["percent", "amount"]).nullable().optional(),
+  max_discount_value: external_exports.union([external_exports.number().nonnegative(), external_exports.string(), external_exports.null()]).optional(),
   is_customized: external_exports.boolean().default(false),
   custom_dimensions: external_exports.string().nullable().optional(),
   designer_notes: external_exports.string().nullable().optional()
+}).refine((item) => {
+  const hasProduct = Boolean(item.product_id) || Boolean(item.max_discount_type) || item.max_discount_value !== void 0 && item.max_discount_value !== null;
+  const discountVal = Number(item.discount_value || 0);
+  const discountAmt = Number(item.discount_amount || 0);
+  if (!hasProduct && (discountVal > 0 || discountAmt > 0)) {
+    return false;
+  }
+  return true;
+}, {
+  message: "Discounts are not permitted on custom or non-catalog items",
+  path: ["discount_value"]
 });
 var CreateMakeOrderSchema = external_exports.object({
   furniture_name: external_exports.string().min(1, "Order furniture title is required").max(255),
@@ -132131,8 +133604,20 @@ var CreateMakeOrderSchema = external_exports.object({
   special_instructions: external_exports.string().nullable().optional(),
   cost_price: external_exports.union([external_exports.number().nonnegative(), external_exports.string(), external_exports.null()]).optional(),
   sale_price: external_exports.union([external_exports.number().nonnegative(), external_exports.string(), external_exports.null()]).optional(),
+  discount_type: external_exports.enum(["percent", "amount"]).nullable().optional(),
+  discount_value: external_exports.union([external_exports.number().nonnegative(), external_exports.string(), external_exports.null()]).optional(),
+  discount_amount: external_exports.union([external_exports.number().nonnegative(), external_exports.string(), external_exports.null()]).optional(),
+  final_price: external_exports.union([external_exports.number().nonnegative(), external_exports.string(), external_exports.null()]).optional(),
+  money_received: external_exports.union([external_exports.number().nonnegative(), external_exports.string(), external_exports.null()]).optional(),
+  moneyReceived: external_exports.union([external_exports.number().nonnegative(), external_exports.string(), external_exports.null()]).optional(),
+  amount_due: external_exports.union([external_exports.number(), external_exports.string(), external_exports.null()]).optional(),
+  payment_status: external_exports.string().optional(),
+  production_hold: external_exports.boolean().optional(),
+  hold_reason: external_exports.string().nullable().optional(),
+  admin_approval_status: external_exports.string().optional(),
   reference_bill_no: external_exports.string().nullable().optional(),
   invoice_attachments: external_exports.array(external_exports.string()).optional(),
+  invoice_attachment_urls: external_exports.array(external_exports.string()).optional(),
   items: external_exports.array(MakeOrderItemInputSchema).min(1, "At least one product item must be included in the order.")
 });
 var ApproveMakeOrderSchema = external_exports.object({
@@ -132154,9 +133639,11 @@ var DesignerSaveSpecsAndPricingSchema = external_exports.object({
     quantity: external_exports.number().positive(),
     item_cost_price: external_exports.union([external_exports.number().nonnegative(), external_exports.string()]).optional(),
     item_sale_price: external_exports.union([external_exports.number().nonnegative(), external_exports.string(), external_exports.null()]).optional(),
-    spec_name: external_exports.string().optional(),
-    size_label: external_exports.string().optional(),
-    color_name: external_exports.string().optional(),
+    // Existing/legacy order rows may legitimately have no catalog attribute.
+    // Track Orders sends those database nulls back when saving designer pricing.
+    spec_name: external_exports.string().nullable().optional(),
+    size_label: external_exports.string().nullable().optional(),
+    color_name: external_exports.string().nullable().optional(),
     salesperson_note: external_exports.string().nullable().optional(),
     designer_notes: external_exports.string().nullable().optional(),
     technical_drawing_url: external_exports.string().nullable().optional()
@@ -132220,6 +133707,14 @@ var CatalogProductSchema = external_exports.object({
   categoryIds: external_exports.array(external_exports.union([external_exports.number(), external_exports.string()])).optional(),
   main_image: external_exports.string().nullable().optional(),
   is_active: external_exports.boolean().default(true),
+  cost_price: external_exports.union([external_exports.number().nonnegative(), external_exports.string(), external_exports.null()]).optional(),
+  sale_price: external_exports.union([external_exports.number().nonnegative(), external_exports.string(), external_exports.null()]).optional(),
+  max_discount_type: external_exports.enum(["percent", "amount"]).nullable().optional(),
+  max_discount_value: external_exports.union([external_exports.number().nonnegative(), external_exports.string(), external_exports.null()]).optional(),
+  size_id: external_exports.union([external_exports.number().int().positive(), external_exports.string(), external_exports.null()]).optional(),
+  sizeId: external_exports.union([external_exports.number().int().positive(), external_exports.string(), external_exports.null()]).optional(),
+  blueprint_url: external_exports.string().nullable().optional(),
+  blueprintUrl: external_exports.string().nullable().optional(),
   specIds: external_exports.array(external_exports.union([external_exports.number(), external_exports.string()])).optional(),
   sizeIds: external_exports.array(external_exports.union([external_exports.number(), external_exports.string()])).optional(),
   colorIds: external_exports.array(external_exports.union([external_exports.number(), external_exports.string()])).optional()
@@ -132385,6 +133880,64 @@ var DeleteItemPdfSchema = external_exports.object({
 }).refine((data2) => !hasUnsupportedStorageScheme(data2.storagePath), {
   message: "Invalid storagePath: Unsupported storage reference scheme"
 });
+var RequestProductionApprovalSchema = external_exports.object({
+  orderId: external_exports.union([
+    external_exports.number().int().positive("Order ID must be a positive integer"),
+    external_exports.string().regex(/^\d+$/, "Order ID must be a numeric integer").transform(Number)
+  ]).optional(),
+  order_id: external_exports.union([
+    external_exports.number().int().positive("Order ID must be a positive integer"),
+    external_exports.string().regex(/^\d+$/, "Order ID must be a numeric integer").transform(Number)
+  ]).optional(),
+  notes: external_exports.string().optional()
+}).transform((val2) => ({
+  orderId: val2.orderId || val2.order_id || 0,
+  order_id: val2.orderId || val2.order_id || 0,
+  notes: val2.notes
+})).refine((val2) => val2.orderId > 0, { message: "Valid orderId is required" });
+var DecideProductionApprovalSchema = external_exports.object({
+  orderId: external_exports.union([
+    external_exports.number().int().positive("Order ID must be a positive integer"),
+    external_exports.string().regex(/^\d+$/, "Order ID must be a numeric integer").transform(Number)
+  ]).optional(),
+  order_id: external_exports.union([
+    external_exports.number().int().positive("Order ID must be a positive integer"),
+    external_exports.string().regex(/^\d+$/, "Order ID must be a numeric integer").transform(Number)
+  ]).optional(),
+  decision: external_exports.enum(["approved", "rejected"]),
+  notes: external_exports.string().optional()
+}).transform((val2) => ({
+  orderId: val2.orderId || val2.order_id || 0,
+  order_id: val2.orderId || val2.order_id || 0,
+  decision: val2.decision,
+  notes: val2.notes
+})).refine((val2) => val2.orderId > 0, { message: "Valid orderId is required" });
+var RecordOrderPaymentSchema = external_exports.object({
+  orderId: external_exports.union([
+    external_exports.number().int().positive("Order ID must be a positive integer"),
+    external_exports.string().regex(/^\d+$/, "Order ID must be a numeric integer").transform(Number)
+  ]).optional(),
+  order_id: external_exports.union([
+    external_exports.number().int().positive("Order ID must be a positive integer"),
+    external_exports.string().regex(/^\d+$/, "Order ID must be a numeric integer").transform(Number)
+  ]).optional(),
+  amount: external_exports.union([
+    external_exports.number().positive("Payment amount must be greater than zero"),
+    external_exports.string().regex(/^\d+(\.\d+)?$/).transform(Number)
+  ]),
+  paymentMethod: external_exports.string().optional(),
+  payment_method: external_exports.string().optional(),
+  reference: external_exports.string().optional(),
+  notes: external_exports.string().optional()
+}).transform((val2) => ({
+  orderId: val2.orderId || val2.order_id || 0,
+  order_id: val2.orderId || val2.order_id || 0,
+  amount: val2.amount,
+  paymentMethod: val2.paymentMethod || val2.payment_method || "CASH",
+  payment_method: val2.paymentMethod || val2.payment_method || "CASH",
+  reference: val2.reference,
+  notes: val2.notes
+})).refine((val2) => val2.orderId > 0, { message: "Valid orderId is required" });
 
 // electron/ipc/handlers/make.ts
 function isApprovedNasHost(hostname3, port) {
@@ -132968,9 +134521,62 @@ function registerMakeHandlers() {
     if (role === "admin" || role === "superadmin" || role === "manager") return true;
     return !!(session2.permissions && session2.permissions["manage_global_product_attributes"]);
   }
+  function canViewBlueprintSession(session2) {
+    const role = (session2.role || "").toLowerCase();
+    if (role === "admin" || role === "superadmin" || role === "manager") return true;
+    if (session2.permissions && session2.permissions["view_product_blueprint"] !== void 0) {
+      return !!session2.permissions["view_product_blueprint"];
+    }
+    if (role === "furniture_designer" || role === "furniture designer" || role === "designer" || role === "make_designer") return true;
+    return false;
+  }
+  function canViewCostPriceSession(session2) {
+    const role = (session2.role || "").toLowerCase();
+    if (role === "admin" || role === "superadmin" || role === "manager") return true;
+    if (["salesperson", "salesman", "sales", "factory_manager", "factory manager", "factory"].includes(role)) return true;
+    if (["furniture_designer", "furniture designer", "designer", "make_designer"].includes(role)) return true;
+    if (session2.permissions && session2.permissions["view_product_cost_price"] !== void 0) {
+      return !!session2.permissions["view_product_cost_price"];
+    }
+    return !!(session2.permissions && (session2.permissions["view_product_cost_price"] || session2.permissions["view_cost_price"] || session2.permissions["set_make_cost_price"]));
+  }
+  function canViewSalePriceSession(session2) {
+    const role = (session2.role || "").toLowerCase();
+    if (role === "admin" || role === "superadmin" || role === "manager") return true;
+    if (["salesperson", "salesman", "sales", "factory_manager", "factory manager", "factory"].includes(role)) return false;
+    if (["furniture_designer", "furniture designer", "designer", "make_designer"].includes(role)) return true;
+    if (session2.permissions && session2.permissions["view_product_sale_price"] !== void 0) {
+      return !!session2.permissions["view_product_sale_price"];
+    }
+    return false;
+  }
+  function canRecordMakePayment(session2) {
+    const role = (session2.role || "").toLowerCase().trim();
+    if (["admin", "superadmin", "manager", "salesperson", "salesman", "sales", "furniture_designer", "furniture designer", "designer", "make_designer"].includes(role)) return true;
+    return !!(session2.permissions && session2.permissions["make_record_payment"]);
+  }
+  function canViewMaxDiscountSession(session2) {
+    const role = (session2.role || "").toLowerCase();
+    if (role === "admin" || role === "superadmin" || role === "manager") return true;
+    if (session2.permissions && session2.permissions["view_product_max_discount"] !== void 0) {
+      return !!session2.permissions["view_product_max_discount"];
+    }
+    if (role === "factory_manager" || role === "factory manager" || role === "factory") {
+      return !!(session2.permissions && session2.permissions["view_product_max_discount"]);
+    }
+    return true;
+  }
+  function canEditCostPriceSession(session2) {
+    const role = (session2.role || "").toLowerCase();
+    if (role === "salesperson" || role === "salesman" || role === "sales") return false;
+    if (role === "factory_manager" || role === "factory manager" || role === "factory") return false;
+    if (role === "admin" || role === "superadmin" || role === "manager") return true;
+    if (role === "furniture_designer" || role === "furniture designer" || role === "designer" || role === "make_designer") return true;
+    return !!(session2.permissions && session2.permissions["set_make_cost_price"]);
+  }
   function canApproveOrder(session2) {
     const role = session2.role.toLowerCase();
-    if (role === "admin" || role === "superadmin" || role === "salesperson" || role === "sales" || role === "manager") return true;
+    if (role === "admin" || role === "superadmin" || role === "salesperson" || role === "salesman" || role === "sales" || role === "manager") return true;
     return !!(session2.permissions["make_approve"] || session2.permissions["sales_approve"]);
   }
   function canOverridePricing(session2) {
@@ -133183,6 +134789,10 @@ function registerMakeHandlers() {
         throw new Error("Forbidden: Factory Manager is strictly prohibited from creating orders.");
       }
       const parsed = CreateMakeOrderSchema.parse(rawOrder);
+      const isAdmin = role === "admin" || role === "superadmin" || role === "manager";
+      if (!isAdmin && rawOrder.salesman_id && Number(rawOrder.salesman_id) !== session2.userId) {
+        throw new Error("Forbidden: Only administrators can place orders on behalf of another salesperson.");
+      }
       const result = await MakeOrderService.createOrder(parsed, session2);
       if (!result.success) {
         throw new Error(result.error);
@@ -133269,7 +134879,7 @@ function registerMakeHandlers() {
                 fileName,
                 mimeType,
                 `make-order-files/${parsed.orderId}/stages`,
-                { entityType: "make_orders", entityId: parsed.orderId, fieldName: "stage_photo_url" }
+                { entityType: "make_orders", entityId: parsed.orderId, fieldName: "current_stage_photo" }
               );
               if (uploadResult.success || uploadResult.isPendingUpload) {
                 finalPhotoUrl = uploadResult.durableKey || uploadResult.publicUrl || null;
@@ -133388,7 +134998,7 @@ function registerMakeHandlers() {
         validation.sanitizedFileName,
         validation.mimeType,
         `make-order-files/${orderId}/stages`,
-        { entityType: "make_orders", entityId: orderId, fieldName: "stage_photo_url" }
+        { entityType: "make_orders", entityId: orderId, fieldName: "current_stage_photo" }
       );
       if (!uploadResult.success && !uploadResult.isPendingUpload) {
         return { success: false, error: uploadResult.error || "Failed to upload photo" };
@@ -133692,13 +135302,13 @@ function registerMakeHandlers() {
   });
   import_electron18.ipcMain.handle("make-get-catalog-products", async (_e, { search: search2, activeOnly } = {}) => {
     const queryFn = async (client) => {
-      let q = client.from("make_products").select("*, specifications:make_product_specifications(*), sizes:make_product_sizes(*), colors:make_product_colors(*), images:make_product_images(*)").order("created_at", { ascending: false });
+      let q = client.from("make_products").select("*, specifications:make_product_specifications(*), sizes:make_product_sizes!make_product_sizes_product_id_fkey(*), colors:make_product_colors(*), images:make_product_images(*)").order("created_at", { ascending: false });
       if (activeOnly) q = q.eq("is_active", true);
       if (search2) q = q.or(`product_name.ilike.%${search2}%,product_code.ilike.%${search2}%`);
       const res = await q;
       if (res.error?.code === "PGRST200" && res.error?.message?.includes("make_product_images")) {
         console.warn("[make-get-catalog-products] make_product_images relationship missing (Cloud fallback), retrying without images join.");
-        let q2 = client.from("make_products").select("*, specifications:make_product_specifications(*), sizes:make_product_sizes(*), colors:make_product_colors(*)").order("created_at", { ascending: false });
+        let q2 = client.from("make_products").select("*, specifications:make_product_specifications(*), sizes:make_product_sizes!make_product_sizes_product_id_fkey(*), colors:make_product_colors(*)").order("created_at", { ascending: false });
         if (activeOnly) q2 = q2.eq("is_active", true);
         if (search2) q2 = q2.or(`product_name.ilike.%${search2}%,product_code.ilike.%${search2}%`);
         const fallbackRes = await q2;
@@ -133765,6 +135375,39 @@ function registerMakeHandlers() {
         p.categories = p.category_id ? [{ id: p.category_id, name: p.category || "" }] : [];
       }
     }
+    for (const p of products) {
+      if (p.size_id && p.sizes && Array.isArray(p.sizes)) {
+        p.size = p.sizes.find((s2) => s2.id === p.size_id) || p.sizes[0] || null;
+      } else if (p.sizes && Array.isArray(p.sizes) && p.sizes.length > 0) {
+        p.size = p.sizes[0];
+        p.size_id = p.size.id;
+      }
+      if (p.size) {
+        p.size_label = p.size.size_label || p.size.label || (p.size.length && p.size.width ? `${p.size.length}x${p.size.width}${p.size.height ? `x${p.size.height}` : ""} ${p.size.unit || "mm"}` : null);
+      }
+    }
+    const session2 = SessionManager.getSession();
+    const canViewCost = session2 ? canViewCostPriceSession(session2) : false;
+    const canViewSale = session2 ? canViewSalePriceSession(session2) : false;
+    const canViewMaxDiscount = session2 ? canViewMaxDiscountSession(session2) : false;
+    const canViewBlueprint = session2 ? canViewBlueprintSession(session2) : false;
+    for (const p of products) {
+      if (!canViewCost) {
+        delete p.cost_price;
+      }
+      if (!canViewSale) {
+        delete p.sale_price;
+        delete p.base_price;
+        delete p.price;
+      }
+      if (!canViewMaxDiscount) {
+        delete p.max_discount_type;
+        delete p.max_discount_value;
+      }
+      if (!canViewBlueprint) {
+        delete p.blueprint_url;
+      }
+    }
     return products;
   });
   import_electron18.ipcMain.handle("make-save-catalog-product", async (_e, rawProduct) => {
@@ -133773,6 +135416,20 @@ function registerMakeHandlers() {
       throw new Error("Forbidden: Catalog modification requires Administrator or Furniture Designer privileges.");
     }
     const product = CatalogProductSchema.parse(rawProduct);
+    const validPricing = MakePricingService.validateCatalogProductPricing(product);
+    if (!validPricing.isValid) {
+      throw new Error(validPricing.error);
+    }
+    const isUpdate = Boolean(product.id);
+    const canEditCost = canEditCostPriceSession(session2);
+    let costPriceToWrite = validPricing.costPrice;
+    if (!canEditCost) {
+      if (isUpdate) {
+        costPriceToWrite = void 0;
+      } else {
+        costPriceToWrite = 0;
+      }
+    }
     const rawCatIds = product.category_ids || product.categoryIds || (product.category_id ? [product.category_id] : []);
     const categoryIds = rawCatIds.map(Number).filter((id) => !isNaN(id) && id > 0);
     let resolvedCategoryId = null;
@@ -133799,7 +135456,8 @@ function registerMakeHandlers() {
         resolvedCategoryName = product.category.trim();
       }
     }
-    const isUpdate = Boolean(product.id);
+    const effectiveSizeId = product.size_id !== void 0 ? product.size_id ? Number(product.size_id) : null : product.sizeId !== void 0 ? product.sizeId ? Number(product.sizeId) : null : void 0;
+    const effectiveBlueprintUrl = product.blueprint_url !== void 0 ? product.blueprint_url : product.blueprintUrl;
     const writePayload = isUpdate ? {
       product_code: product.product_code,
       product_name: product.product_name,
@@ -133808,6 +135466,9 @@ function registerMakeHandlers() {
       category: resolvedCategoryName,
       main_image: product.main_image || null,
       is_active: product.is_active !== void 0 ? product.is_active : true,
+      sale_price: validPricing.salePrice,
+      max_discount_type: validPricing.maxDiscountType,
+      max_discount_value: validPricing.maxDiscountValue,
       updated_at: (/* @__PURE__ */ new Date()).toISOString()
     } : {
       product_code: product.product_code,
@@ -133817,9 +135478,21 @@ function registerMakeHandlers() {
       category: resolvedCategoryName,
       main_image: product.main_image || null,
       is_active: product.is_active !== void 0 ? product.is_active : true,
+      sale_price: validPricing.salePrice,
+      max_discount_type: validPricing.maxDiscountType,
+      max_discount_value: validPricing.maxDiscountValue,
       created_by: session2.fullName || session2.username
     };
-    const writeResult = await failoverEngine.executeWrite(
+    if (costPriceToWrite !== void 0) {
+      writePayload.cost_price = costPriceToWrite;
+    }
+    if (effectiveSizeId !== void 0) {
+      writePayload.size_id = effectiveSizeId;
+    }
+    if (effectiveBlueprintUrl !== void 0) {
+      writePayload.blueprint_url = effectiveBlueprintUrl ? MakeOrderService.normalizeAttachmentReference(effectiveBlueprintUrl) : null;
+    }
+    let writeResult = await failoverEngine.executeWrite(
       async (client) => {
         if (isUpdate) {
           return await client.from("make_products").update(writePayload).eq("id", product.id).select().single();
@@ -133835,6 +135508,33 @@ function registerMakeHandlers() {
       },
       isUpdate ? "update-product" : "insert-product"
     );
+    if (writeResult.error) {
+      const msg = writeResult.error.message || "";
+      if (/cost_price|sale_price|max_discount/i.test(msg)) {
+        console.warn("[make-save-catalog-product] Fallback: DB schema missing pricing/discount columns, retrying without them.");
+        const fallbackPayload = { ...writePayload };
+        delete fallbackPayload.cost_price;
+        delete fallbackPayload.sale_price;
+        delete fallbackPayload.max_discount_type;
+        delete fallbackPayload.max_discount_value;
+        writeResult = await failoverEngine.executeWrite(
+          async (client) => {
+            if (isUpdate) {
+              return await client.from("make_products").update(fallbackPayload).eq("id", product.id).select().single();
+            } else {
+              return await client.from("make_products").insert(fallbackPayload).select().single();
+            }
+          },
+          {
+            table: "make_products",
+            operation: isUpdate ? "update" : "insert",
+            primaryKey: isUpdate ? { name: "id", value: product.id } : void 0,
+            data: fallbackPayload
+          },
+          isUpdate ? "update-product-fallback" : "insert-product-fallback"
+        );
+      }
+    }
     if (writeResult.error) throw writeResult.error;
     const savedData = writeResult.data;
     const specIds = product.specIds;
@@ -134152,14 +135852,53 @@ function registerMakeHandlers() {
         drawings: drawings.filter((d) => d.url || d.isPending)
       };
     }));
-    const role = (session2.role || "").toLowerCase();
-    if (role === "factory_manager" || role === "factory manager" || role === "factory") {
-      return itemsWithDrawings.map((it) => {
-        const { item_sale_price, unit_sale_price, total_sale_price, ...rest } = it;
-        return rest;
-      });
-    }
-    return itemsWithDrawings;
+    const canViewCost = canViewCostPriceSession(session2);
+    const canViewSale = canViewSalePriceSession(session2);
+    const canViewMaxDiscount = canViewMaxDiscountSession(session2);
+    return itemsWithDrawings.map((it) => {
+      const itemCopy = { ...it };
+      if (!canViewCost) {
+        delete itemCopy.item_cost_price;
+        delete itemCopy.cost_price;
+        delete itemCopy.total_cost;
+      }
+      if (!canViewSale) {
+        delete itemCopy.item_sale_price;
+        delete itemCopy.unit_sale_price;
+        delete itemCopy.total_sale_price;
+        delete itemCopy.final_item_price;
+        delete itemCopy.total_sale;
+      }
+      if (!canViewMaxDiscount) {
+        delete itemCopy.max_discount_type;
+        delete itemCopy.max_discount_value;
+        delete itemCopy.discount_type;
+        delete itemCopy.discount_value;
+        delete itemCopy.discount_amount;
+      }
+      return itemCopy;
+    });
+  });
+  import_electron18.ipcMain.handle("make-remove-order-item", async (_e, rawPayload) => {
+    const session2 = requireSession();
+    const result = await MakeOrderService.removeOrderItem({
+      orderId: Number(rawPayload?.orderId),
+      itemId: Number(rawPayload?.itemId),
+      actorSession: session2
+    });
+    if (!result.success) return { success: false, error: result.error };
+    return { success: true };
+  });
+  import_electron18.ipcMain.handle("make-update-order-item-quantity", async (_e, rawPayload) => {
+    const session2 = requireSession();
+    const result = await MakeOrderService.updateDesignerOrderItemQuantity({
+      orderId: Number(rawPayload?.orderId),
+      itemId: Number(rawPayload?.itemId),
+      quantity: Number(rawPayload?.quantity),
+      actorSession: session2
+    });
+    if (!result.success) return { success: false, error: result.error };
+    return { success: true };
   });
   import_electron18.ipcMain.handle("make-get-dashboard-stats", async () => {
     const { data: allOrders } = await supabase.from("make_orders").select("status, priority, created_at, furniture_name, designer_name, id").order("created_at", { ascending: false });
@@ -134231,7 +135970,11 @@ function registerMakeHandlers() {
       const role = (session2?.role || "").toLowerCase();
       if (role === "factory_manager" || role === "factory manager" || role === "factory") {
         return (orders || []).map((o) => {
-          const { sale_price, custom_price, ...rest } = o;
+          const { sale_price, custom_price, final_price, total_sale_price, money_received, amount_due, payment_status, ...rest } = o;
+          if (rest.custom_details && typeof rest.custom_details === "object") {
+            const { subtotal, final_price: cFinal, money_received: cRec, amount_due: cDue, payment_status: cStat, ...safeDetails } = rest.custom_details;
+            rest.custom_details = safeDetails;
+          }
           return rest;
         });
       }
@@ -134542,6 +136285,45 @@ function registerMakeHandlers() {
       return { success: false, error: err.message };
     }
   });
+  import_electron18.ipcMain.handle("make-pick-and-upload-blueprint", async (_e, { productId } = {}) => {
+    try {
+      requireSession();
+      const focusedWin = import_electron18.BrowserWindow.getFocusedWindow();
+      const validation = await MakeCadService.pickAndValidateFile("cad", focusedWin);
+      if ("canceled" in validation) {
+        return { canceled: true, error: validation.error };
+      }
+      const subfolder = productId ? `make-catalog/blueprints/${productId}` : "make-catalog/blueprints";
+      const uploadResult = await MakeCadService.uploadValidatedBuffer(
+        validation.fileBuffer,
+        validation.sanitizedFileName,
+        validation.mimeType,
+        subfolder,
+        productId ? { entityType: "make_products", entityId: productId, fieldName: "blueprint_url" } : void 0
+      );
+      if (!uploadResult.success && !uploadResult.isPendingUpload) {
+        return { success: false, error: uploadResult.error || "Failed to upload product blueprint" };
+      }
+      const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+      if (!persistentRef) {
+        return { success: false, error: "Failed to establish persistent blueprint reference" };
+      }
+      if (productId) {
+        await supabase.from("make_products").update({ blueprint_url: persistentRef }).eq("id", productId);
+      }
+      return {
+        success: true,
+        publicUrl: uploadResult.publicUrl || void 0,
+        durableKey: persistentRef,
+        isPendingUpload: uploadResult.isPendingUpload,
+        status: uploadResult.status,
+        fileName: validation.sanitizedFileName
+      };
+    } catch (err) {
+      console.error("[MAKE IPC] make-pick-and-upload-blueprint error:", err);
+      return { success: false, error: err.message };
+    }
+  });
   import_electron18.ipcMain.handle("make-upload-invoice-attachment-buffer", async (_e, payload) => {
     try {
       requireSession();
@@ -134690,6 +136472,71 @@ function registerMakeHandlers() {
     } catch (err) {
       console.error("[MAKE IPC] make-get-customer-details error:", err);
       return { success: false, error: err.message };
+    }
+  });
+  import_electron18.ipcMain.handle("make-request-production-approval", async (_e, rawPayload) => {
+    try {
+      const session2 = requireSession();
+      const payload = RequestProductionApprovalSchema.parse(rawPayload);
+      return await MakeOrderService.requestProductionApproval(
+        payload.order_id,
+        payload.notes,
+        session2
+      );
+    } catch (err) {
+      console.error("[MAKE IPC] make-request-production-approval error:", err);
+      return { success: false, error: err.message || "Failed to request production approval." };
+    }
+  });
+  import_electron18.ipcMain.handle("make-decide-production-approval", async (_e, rawPayload) => {
+    try {
+      const session2 = requireSession();
+      const payload = DecideProductionApprovalSchema.parse(rawPayload);
+      return await MakeOrderService.decideProductionApproval(
+        payload.order_id,
+        payload.decision,
+        payload.notes,
+        session2
+      );
+    } catch (err) {
+      console.error("[MAKE IPC] make-decide-production-approval error:", err);
+      return { success: false, error: err.message || "Failed to record approval decision." };
+    }
+  });
+  import_electron18.ipcMain.handle("make-record-order-payment", async (_e, rawPayload) => {
+    try {
+      const session2 = requireSession();
+      if (!canRecordMakePayment(session2)) {
+        return { success: false, error: "Forbidden: You cannot record MAKE order payments." };
+      }
+      const payload = RecordOrderPaymentSchema.parse(rawPayload);
+      return await MakeOrderService.recordOrderPayment({
+        orderId: payload.order_id,
+        amount: payload.amount,
+        paymentMethod: payload.payment_method,
+        reference: payload.reference,
+        notes: payload.notes,
+        actorSession: session2
+      });
+    } catch (err) {
+      console.error("[MAKE IPC] make-record-order-payment error:", err);
+      return { success: false, error: err.message || "Failed to record order payment." };
+    }
+  });
+  import_electron18.ipcMain.handle("make-get-order-payments", async (_e, orderId) => {
+    try {
+      const session2 = requireSession();
+      if (!canViewSalePriceSession(session2)) {
+        return { success: false, error: "Forbidden: You cannot view order payment ledgers." };
+      }
+      const numId = Number(orderId);
+      if (!numId || isNaN(numId)) {
+        return { success: false, error: "Invalid order ID." };
+      }
+      return await MakeOrderService.getOrderPayments(numId);
+    } catch (err) {
+      console.error("[MAKE IPC] make-get-order-payments error:", err);
+      return { success: false, error: err.message || "Failed to get order payments." };
     }
   });
 }
@@ -137737,7 +139584,7 @@ function registerHandlers() {
     return { success: true, id: order.id, exchange_number: order.exchange_number, difference_amount: differenceAmount };
   });
   import_electron24.ipcMain.handle("get-exchange-orders", async () => {
-    const { data: data2, error: error51 } = await supabase_default.from("exchange_orders").select("*, customer:billing_customers(name, phone), bill:bills(invoice_number)").order("created_at", { ascending: false });
+    const { data: data2, error: error51 } = await supabase_default.from("exchange_orders").select("*, customer:billing_customers(name, phone), bill:bills!exchange_orders_bill_id_fkey(invoice_number)").order("created_at", { ascending: false });
     if (error51) throw error51;
     return (data2 || []).map((ex) => ({
       ...decryptObject(ex),
@@ -138454,6 +140301,7 @@ function registerHandlers() {
       connectionState: status.connectionTier,
       activeNasUrl: status.activeNasUrl,
       isNasOnline: status.isNasReachable,
+      nasAuthorizationError: status.nasAuthorizationError,
       activeTarget: status.activeTarget,
       circuitState: status.circuitState,
       pendingReconciliationCount: status.pendingReconciliationCount,
@@ -138504,7 +140352,8 @@ function registerHandlers() {
         cfAccessClientId: cfg.cfAccessClientId || "",
         // Mask the client secret if present so the UI can show •••••••• without receiving the secret
         cfAccessClientSecret: cfg.cfAccessClientSecret ? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" : "",
-        hasServiceRoleKey: !!cfg.serviceRoleKey
+        hasServiceRoleKey: !!cfg.serviceRoleKey,
+        hasNasJwtToken: !!cfg.nasJwtToken
       };
     } catch (e2) {
       return {
@@ -138522,6 +140371,16 @@ function registerHandlers() {
       const configToSave = { ...newConfig };
       if (configToSave.cfAccessClientSecret === "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022") {
         delete configToSave.cfAccessClientSecret;
+      }
+      if (configToSave.nasJwtToken !== void 0) {
+        if (typeof configToSave.nasJwtToken !== "string" || configToSave.nasJwtToken.length > 16384) {
+          throw new Error("NAS database credential must be a valid JWT string.");
+        }
+        const token = configToSave.nasJwtToken.trim();
+        if (token && token.split(".").length !== 3) {
+          throw new Error("NAS database credential must be a valid JWT string.");
+        }
+        configToSave.nasJwtToken = token;
       }
       saveSupabaseConfig(configToSave);
       return { success: true };
@@ -138677,7 +140536,7 @@ function registerHandlers() {
       return await uploadOptimizedImage(import_fs21.default.readFileSync(filePath), import_path21.default.basename(filePath, import_path21.default.extname(filePath)) || "product");
     } catch (e2) {
       console.error("[IPC] Product image upload failed:", e2);
-      return null;
+      throw new Error(`Upload failed: ${e2?.message || "Storage upload error"}`);
     }
   });
   import_electron24.ipcMain.handle("pick-chat-file", async () => {
@@ -138742,14 +140601,70 @@ function registerHandlers() {
   import_electron24.ipcMain.handle("get-make-orders", async () => {
     const session2 = SessionManager.getSession();
     const role = (session2?.role || "").toLowerCase();
-    const isFactoryManager = role === "factory_manager" || role === "factory manager" || role === "factory";
+    const isAdmin = role === "admin" || role === "superadmin" || role === "manager";
+    const isSales = role === "salesperson" || role === "salesman" || role === "sales";
+    const isFactory = role === "factory_manager" || role === "factory manager" || role === "factory";
+    const isDesigner = role === "furniture_designer" || role === "furniture designer" || role === "designer" || role === "make_designer";
+    const canViewCost = isAdmin || isSales || isFactory || isDesigner || !!session2?.permissions?.view_product_cost_price;
+    const canViewSale = isAdmin || isDesigner || !isSales && !isFactory && !!session2?.permissions?.view_product_sale_price;
+    const canViewBalance = isAdmin || isSales || isDesigner;
+    const canViewMaxDiscount = isAdmin || (session2?.permissions?.view_product_max_discount !== void 0 ? !!session2.permissions.view_product_max_discount : role !== "factory_manager" && role !== "factory manager" && role !== "factory");
     const sanitizeOrder = (o) => {
-      if (!isFactoryManager) return o;
-      const { sale_price, custom_price, ...rest } = o;
-      return rest;
+      const copy = { ...o };
+      if (!canViewCost) {
+        delete copy.cost_price;
+        delete copy.total_cost_price;
+        if (copy.custom_details && typeof copy.custom_details === "object") {
+          const { cost_price: _c, total_cost: _tc, ...restDetails } = copy.custom_details;
+          copy.custom_details = restDetails;
+        }
+      }
+      if (!canViewSale) {
+        delete copy.sale_price;
+        delete copy.custom_price;
+        delete copy.final_price;
+        delete copy.total_sale_price;
+        delete copy.money_received;
+        if (copy.custom_details && typeof copy.custom_details === "object") {
+          const { subtotal: _s, final_price: _fp, money_received: _mr, ...restDetails } = copy.custom_details;
+          copy.custom_details = restDetails;
+        }
+      }
+      if (!canViewBalance) {
+        delete copy.amount_due;
+        delete copy.payment_status;
+        if (copy.custom_details && typeof copy.custom_details === "object") {
+          const { amount_due: _ad, payment_status: _ps, ...restDetails } = copy.custom_details;
+          copy.custom_details = restDetails;
+        }
+      }
+      if (!canViewSale && copy.custom_details && typeof copy.custom_details === "object" && Array.isArray(copy.custom_details.items)) {
+        copy.custom_details = {
+          ...copy.custom_details,
+          items: copy.custom_details.items.map((item) => {
+            const safeItem = { ...item };
+            delete safeItem.item_sale_price;
+            delete safeItem.unit_sale_price;
+            delete safeItem.sale_price;
+            delete safeItem.final_item_price;
+            delete safeItem.total_sale_price;
+            return safeItem;
+          })
+        };
+      }
+      if (!canViewMaxDiscount) {
+        delete copy.discount_type;
+        delete copy.discount_value;
+        delete copy.discount_amount;
+        if (copy.custom_details && typeof copy.custom_details === "object") {
+          const { discount_type: _dt, discount_value: _dv, discount_amount: _da, ...restDetails } = copy.custom_details;
+          copy.custom_details = restDetails;
+        }
+      }
+      return copy;
     };
     try {
-      const { data: data2, error: error51 } = await supabase_default.from("make_orders").select("*, salesman:users(full_name), bill:bills(invoice_number)").order("created_at", { ascending: false });
+      const { data: data2, error: error51 } = await supabase_default.from("make_orders").select("*, salesman:users!make_orders_salesman_id_fkey(full_name), bill:bills!make_orders_bill_id_fkey(invoice_number)").order("created_at", { ascending: false });
       if (!error51 && data2) {
         return decryptRows(data2).map((o) => sanitizeOrder({
           ...o,
@@ -138763,7 +140678,7 @@ function registerHandlers() {
     } catch (err) {
       console.warn("[MAKE] get-make-orders join exception:", err.message);
     }
-    const { data: baseData, error: baseErr } = await supabase_default.from("make_orders").select("*, salesman:users(full_name)").order("created_at", { ascending: false });
+    const { data: baseData, error: baseErr } = await supabase_default.from("make_orders").select("*, salesman:users!make_orders_salesman_id_fkey(full_name)").order("created_at", { ascending: false });
     if (baseErr) throw baseErr;
     return decryptRows(baseData || []).map((o) => sanitizeOrder({
       ...o,
@@ -138772,10 +140687,19 @@ function registerHandlers() {
     }));
   });
   import_electron24.ipcMain.handle("get-salesmen", async () => {
-    const { data: grp } = await supabase_default.from("user_groups").select("id").eq("name", "Salesman").maybeSingle();
-    if (!grp) return [];
-    const { data: data2, error: error51 } = await supabase_default.from("users").select("id, username, full_name, email").eq("group_id", grp.id).eq("is_active", 1);
-    if (error51) throw error51;
+    const { data: grps } = await supabase_default.from("user_groups").select("id, name").in("name", ["Salesman", "Salesperson"]);
+    const groupIds = (grps || []).map((g) => g.id);
+    let query = supabase_default.from("users").select("id, username, full_name, email, role, group_id").eq("is_active", 1);
+    if (groupIds.length > 0) {
+      query = query.or(`group_id.in.(${groupIds.join(",")}),role.in.(salesman,salesperson)`);
+    } else {
+      query = query.in("role", ["salesman", "salesperson"]);
+    }
+    const { data: data2, error: error51 } = await query;
+    if (error51) {
+      const { data: fallbackUsers } = await supabase_default.from("users").select("id, username, full_name, email").in("role", ["salesman", "salesperson"]).eq("is_active", 1);
+      return decryptRows(fallbackUsers || []);
+    }
     return decryptRows(data2 || []);
   });
   import_electron24.ipcMain.handle("set-make-order-price", async (_e, { orderId, customPrice }) => {
@@ -138796,7 +140720,7 @@ function registerHandlers() {
       note: `Price set to \u09F3${customPrice}`,
       updated_by: actor
     });
-    const { data: order, error: fetchErr } = await supabase_default.from("make_orders").select("designer_name, furniture_name, bill_id, bill:bills(invoice_number)").eq("id", orderId).maybeSingle();
+    const { data: order, error: fetchErr } = await supabase_default.from("make_orders").select("designer_name, furniture_name, bill_id, bill:bills!make_orders_bill_id_fkey(invoice_number)").eq("id", orderId).maybeSingle();
     if (!fetchErr && order) {
       const invoiceNumber = order.bill?.invoice_number || "N/A";
       const { data: designer } = await supabase_default.from("users").select("id").or(`username.eq."${order.designer_name}",full_name.eq."${order.designer_name}"`).maybeSingle();
@@ -138901,7 +140825,8 @@ function registerHandlers() {
     return { success: true };
   });
   import_electron24.ipcMain.handle("get-make-order-updates", async (_e, orderId) => {
-    const { data: data2 } = await supabase_default.from("make_order_updates").select("*").eq("order_id", orderId).order("created_at");
+    const { data: data2, error: error51 } = await supabase_default.from("make_order_updates").select("*").eq("order_id", orderId).order("created_at");
+    if (error51) throw error51;
     return decryptRows(data2 || []);
   });
   import_electron24.ipcMain.handle("get-make-furniture-names", async () => {
@@ -141199,6 +143124,72 @@ function registerHandlers() {
 init_field_encryption();
 init_supabase();
 init_MediaProtocolService();
+
+// electron/services/updater/versionCompare.ts
+var SEMVER_RE = /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+function parseVersion(input) {
+  if (typeof input !== "string") return null;
+  const m2 = SEMVER_RE.exec(input.trim());
+  if (!m2) return null;
+  const prerelease = m2[4] ? m2[4].split(".").map((id) => /^\d+$/.test(id) ? Number(id) : id) : [];
+  return { major: Number(m2[1]), minor: Number(m2[2]), patch: Number(m2[3]), prerelease };
+}
+function isPrereleaseVersion(input) {
+  const p = parseVersion(input);
+  return !!p && p.prerelease.length > 0;
+}
+function compareIdentifiers(a, b) {
+  const aNum = typeof a === "number";
+  const bNum = typeof b === "number";
+  if (aNum && bNum) return a === b ? 0 : a < b ? -1 : 1;
+  if (aNum) return -1;
+  if (bNum) return 1;
+  return a === b ? 0 : a < b ? -1 : 1;
+}
+function compareVersions(a, b) {
+  const pa = parseVersion(a);
+  const pb = parseVersion(b);
+  if (!pa || !pb) return null;
+  for (const key of ["major", "minor", "patch"]) {
+    if (pa[key] !== pb[key]) return pa[key] > pb[key] ? 1 : -1;
+  }
+  const aPre = pa.prerelease;
+  const bPre = pb.prerelease;
+  if (aPre.length === 0 && bPre.length === 0) return 0;
+  if (aPre.length === 0) return 1;
+  if (bPre.length === 0) return -1;
+  const len = Math.max(aPre.length, bPre.length);
+  for (let i2 = 0; i2 < len; i2++) {
+    if (i2 >= aPre.length) return -1;
+    if (i2 >= bPre.length) return 1;
+    const c = compareIdentifiers(aPre[i2], bPre[i2]);
+    if (c !== 0) return c;
+  }
+  return 0;
+}
+function isNewerVersion(candidate, current) {
+  return compareVersions(candidate, current) === 1;
+}
+function getManualUpdateFeedUrl(owner, repo) {
+  return `https://api.github.com/repos/${owner}/${repo}/releases?per_page=30`;
+}
+function selectManualUpdateRelease(currentVersion, releases) {
+  if (!parseVersion(currentVersion) || !Array.isArray(releases)) return null;
+  const allowPrerelease = isPrereleaseVersion(currentVersion);
+  let best = null;
+  for (const rel of releases) {
+    if (!rel || rel.draft) continue;
+    const tag = rel.tag_name;
+    if (!parseVersion(tag)) continue;
+    const isPre = rel.prerelease === true || isPrereleaseVersion(tag);
+    if (isPre && !allowPrerelease) continue;
+    if (!isNewerVersion(tag, currentVersion)) continue;
+    if (!best || compareVersions(tag, best.tag_name) === 1) best = rel;
+  }
+  return best;
+}
+
+// electron/main.ts
 MediaProtocolService.registerSchemeAsPrivileged();
 function sanitizeUpdaterLog(msg) {
   if (typeof msg !== "string") {
@@ -141282,34 +143273,23 @@ function setupAutoUpdater() {
   }
   const performManualMacCheck = async () => {
     try {
-      const response = await fetch("https://api.github.com/repos/sabbir-404/Leading-Edge-ECO-System/releases/latest");
+      const response = await fetch(getManualUpdateFeedUrl("sabbir-404", "Leading-Edge-ECO-System"));
       if (!response.ok) return;
-      const data2 = await response.json();
-      if (data2 && data2.tag_name) {
-        const current = import_electron25.app.getVersion().replace("v", "").split(".").map(Number);
-        const latest = data2.tag_name.replace("v", "").split(".").map(Number);
-        let isNewer = false;
-        for (let i2 = 0; i2 < 3; i2++) {
-          if ((latest[i2] || 0) > (current[i2] || 0)) {
-            isNewer = true;
-            break;
+      const releases = await response.json();
+      const currentVersion = import_electron25.app.getVersion();
+      const newer = selectManualUpdateRelease(currentVersion, releases);
+      if (newer) {
+        updaterLogger.info(`Manual fallback: ${newer.tag_name} available (current: v${currentVersion})`);
+        broadcast({
+          status: "available",
+          isManual: true,
+          info: {
+            version: newer.tag_name,
+            releaseNotes: "Automatic installation is unavailable because this Mac build is unsigned. Please download the latest version from the releases page manually."
           }
-          if ((latest[i2] || 0) < (current[i2] || 0)) {
-            break;
-          }
-        }
-        if (isNewer) {
-          broadcast({
-            status: "available",
-            isManual: true,
-            info: {
-              version: data2.tag_name,
-              releaseNotes: "Automatic installation is unavailable because this Mac build is unsigned. Please download the latest version from the releases page manually."
-            }
-          });
-        } else {
-          broadcast({ status: "up-to-date" });
-        }
+        });
+      } else {
+        broadcast({ status: "up-to-date" });
       }
     } catch (err) {
       updaterLogger.error(`Manual fallback fetch failed: ${sanitizeUpdaterLog(err?.message)}`);

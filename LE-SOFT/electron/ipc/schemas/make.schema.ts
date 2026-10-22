@@ -19,11 +19,26 @@ export const MakeOrderItemInputSchema = z.object({
     quantity: z.number().positive('Quantity must be greater than zero').default(1),
     item_cost_price: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
     item_sale_price: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
+    discount_type: z.enum(['percent', 'amount']).nullable().optional(),
+    discount_value: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
+    discount_amount: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
+    final_item_price: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
     max_discount_type: z.enum(['percent', 'amount']).nullable().optional(),
     max_discount_value: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
     is_customized: z.boolean().default(false),
     custom_dimensions: z.string().nullable().optional(),
     designer_notes: z.string().nullable().optional()
+}).refine(item => {
+    const hasProduct = Boolean(item.product_id) || Boolean(item.max_discount_type) || (item.max_discount_value !== undefined && item.max_discount_value !== null);
+    const discountVal = Number(item.discount_value || 0);
+    const discountAmt = Number(item.discount_amount || 0);
+    if (!hasProduct && (discountVal > 0 || discountAmt > 0)) {
+        return false;
+    }
+    return true;
+}, {
+    message: 'Discounts are not permitted on custom or non-catalog items',
+    path: ['discount_value']
 });
 
 export const CreateMakeOrderSchema = z.object({
@@ -59,8 +74,16 @@ export const CreateMakeOrderSchema = z.object({
     discount_value: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
     discount_amount: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
     final_price: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
+    money_received: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
+    moneyReceived: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
+    amount_due: z.union([z.number(), z.string(), z.null()]).optional(),
+    payment_status: z.string().optional(),
+    production_hold: z.boolean().optional(),
+    hold_reason: z.string().nullable().optional(),
+    admin_approval_status: z.string().optional(),
     reference_bill_no: z.string().nullable().optional(),
     invoice_attachments: z.array(z.string()).optional(),
+    invoice_attachment_urls: z.array(z.string()).optional(),
     items: z.array(MakeOrderItemInputSchema).min(1, 'At least one product item must be included in the order.')
 });
 
@@ -84,9 +107,11 @@ export const DesignerSaveSpecsAndPricingSchema = z.object({
         quantity: z.number().positive(),
         item_cost_price: z.union([z.number().nonnegative(), z.string()]).optional(),
         item_sale_price: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
-        spec_name: z.string().optional(),
-        size_label: z.string().optional(),
-        color_name: z.string().optional(),
+        // Existing/legacy order rows may legitimately have no catalog attribute.
+        // Track Orders sends those database nulls back when saving designer pricing.
+        spec_name: z.string().nullable().optional(),
+        size_label: z.string().nullable().optional(),
+        color_name: z.string().nullable().optional(),
         salesperson_note: z.string().nullable().optional(),
         designer_notes: z.string().nullable().optional(),
         technical_drawing_url: z.string().nullable().optional()
@@ -159,6 +184,10 @@ export const CatalogProductSchema = z.object({
     sale_price: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
     max_discount_type: z.enum(['percent', 'amount']).nullable().optional(),
     max_discount_value: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
+    size_id: z.union([z.number().int().positive(), z.string(), z.null()]).optional(),
+    sizeId: z.union([z.number().int().positive(), z.string(), z.null()]).optional(),
+    blueprint_url: z.string().nullable().optional(),
+    blueprintUrl: z.string().nullable().optional(),
     specIds: z.array(z.union([z.number(), z.string()])).optional(),
     sizeIds: z.array(z.union([z.number(), z.string()])).optional(),
     colorIds: z.array(z.union([z.number(), z.string()])).optional()
@@ -368,4 +397,67 @@ export const DeleteItemPdfSchema = z.object({
 }).refine(data => !hasUnsupportedStorageScheme(data.storagePath), {
     message: 'Invalid storagePath: Unsupported storage reference scheme'
 });
+
+export const RequestProductionApprovalSchema = z.object({
+    orderId: z.union([
+        z.number().int().positive('Order ID must be a positive integer'),
+        z.string().regex(/^\d+$/, 'Order ID must be a numeric integer').transform(Number)
+    ]).optional(),
+    order_id: z.union([
+        z.number().int().positive('Order ID must be a positive integer'),
+        z.string().regex(/^\d+$/, 'Order ID must be a numeric integer').transform(Number)
+    ]).optional(),
+    notes: z.string().optional()
+}).transform(val => ({
+    orderId: val.orderId || val.order_id || 0,
+    order_id: val.orderId || val.order_id || 0,
+    notes: val.notes
+})).refine(val => val.orderId > 0, { message: 'Valid orderId is required' });
+
+export const DecideProductionApprovalSchema = z.object({
+    orderId: z.union([
+        z.number().int().positive('Order ID must be a positive integer'),
+        z.string().regex(/^\d+$/, 'Order ID must be a numeric integer').transform(Number)
+    ]).optional(),
+    order_id: z.union([
+        z.number().int().positive('Order ID must be a positive integer'),
+        z.string().regex(/^\d+$/, 'Order ID must be a numeric integer').transform(Number)
+    ]).optional(),
+    decision: z.enum(['approved', 'rejected']),
+    notes: z.string().optional()
+}).transform(val => ({
+    orderId: val.orderId || val.order_id || 0,
+    order_id: val.orderId || val.order_id || 0,
+    decision: val.decision,
+    notes: val.notes
+})).refine(val => val.orderId > 0, { message: 'Valid orderId is required' });
+
+export const RecordOrderPaymentSchema = z.object({
+    orderId: z.union([
+        z.number().int().positive('Order ID must be a positive integer'),
+        z.string().regex(/^\d+$/, 'Order ID must be a numeric integer').transform(Number)
+    ]).optional(),
+    order_id: z.union([
+        z.number().int().positive('Order ID must be a positive integer'),
+        z.string().regex(/^\d+$/, 'Order ID must be a numeric integer').transform(Number)
+    ]).optional(),
+    amount: z.union([
+        z.number().positive('Payment amount must be greater than zero'),
+        z.string().regex(/^\d+(\.\d+)?$/).transform(Number)
+    ]),
+    paymentMethod: z.string().optional(),
+    payment_method: z.string().optional(),
+    reference: z.string().optional(),
+    notes: z.string().optional()
+}).transform(val => ({
+    orderId: val.orderId || val.order_id || 0,
+    order_id: val.orderId || val.order_id || 0,
+    amount: val.amount,
+    paymentMethod: val.paymentMethod || val.payment_method || 'CASH',
+    payment_method: val.paymentMethod || val.payment_method || 'CASH',
+    reference: val.reference,
+    notes: val.notes
+})).refine(val => val.orderId > 0, { message: 'Valid orderId is required' });
+
+export const ProductionApprovalDecisionSchema = DecideProductionApprovalSchema;
 

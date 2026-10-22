@@ -4,7 +4,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { 
   ClipboardList, ChevronDown, ChevronUp, CheckCircle, Trash2, Send, 
   FileText, Download, Eye, X, Edit2, Ruler, MapPin, 
-  User, History, Layers, ArrowRight, RefreshCw, Upload, Search, Copy, Paperclip
+  User, History, Layers, ArrowRight, RefreshCw, Upload, Search, Copy, Paperclip,
+  CreditCard, Shield, DollarSign, AlertCircle
 } from 'lucide-react';
 import DashboardLayout from '../../components/DashboardLayout';
 import { useAutoRefresh } from '../../hooks/useAutoRefresh';
@@ -12,18 +13,23 @@ import AlterOrder from './AlterOrder';
 import { getUserPricingPermissions } from '../../utils/permissions';
 import { resolveImageSrc, handleImageLoadError } from '../../utils/imageSrc';
 
-const STATUSES = [
+export const TRACK_ORDERS_FILTERS = [
+  'All',
   'Draft',
-  'Awaiting Pricing',
-  'Pricing Done',
-  'Pending Approval',
-  'Placed',
-  'In Production',
-  'Welding',
-  'Painting',
-  'Ready for Dispatch',
+  'Awaiting Price',
+  'Pricing done',
+  'Pending approved',
+  'Work in process',
+  'Production On Going',
+  'Primary QC',
+  'Color Ongoing (oven)',
+  'QC Final',
+  'Packaging',
+  'Ready to Ship',
   'Delivered'
-];
+] as const;
+
+export type TrackOrderFilter = typeof TRACK_ORDERS_FILTERS[number];
 
 const PRODUCTION_STAGES = [
   'Work in process',
@@ -47,19 +53,30 @@ const LEGACY_STAGE_INDEX_MAP: Record<string, number> = {
   'Ready to Ship': 6,
   'Delivered': 7,
 
-  // Historical variants
+  // Historical variants & WordPress plugin variants
   'Color Ongoing': 3,
   'Color Ongoing (Oven)': 3,
   'color ongoing': 3,
+  'In Production': 1,
+  'Production Ongoing': 1,
+  'Work In Progress': 0,
+  'WIP': 0,
+  'Placed': 0,
+  'Welding': 1,
+  'Painting': 3,
+  'Ready for Dispatch': 6,
+  'Dispatch': 6,
+  'Completed': 7,
+
+  // Historical 6-stage fallback mapping
   'Cutting & Woodworking': 0,
   'Metalwork': 1,
   'Polish & Paint': 3,
   'Upholstery': 4,
-  'Packaging & QC': 5,
-  'Dispatch': 6
+  'Packaging & QC': 5
 };
 
-const getStageIndex = (stage?: string | null): number => {
+export const getStageIndex = (stage?: string | null): number => {
   if (!stage) return -1;
   const trimmed = stage.trim();
   if (trimmed in LEGACY_STAGE_INDEX_MAP) return LEGACY_STAGE_INDEX_MAP[trimmed];
@@ -68,6 +85,70 @@ const getStageIndex = (stage?: string | null): number => {
     if (key.toLowerCase() === lower) return idx;
   }
   return -1;
+};
+
+export const orderMatchesFilter = (order: Order, filter: string): boolean => {
+  if (!filter || filter === 'All') return true;
+
+  const rawStatus = (order.status || '').trim();
+  const lowerStatus = rawStatus.toLowerCase();
+  const rawApproval = (order.approval_status || '').trim().toLowerCase();
+  const rawStage = (order.current_stage || '').trim();
+
+  if (filter === 'Draft') {
+    return lowerStatus === 'draft' || rawApproval === 'draft';
+  }
+
+  if (filter === 'Awaiting Price') {
+    return (
+      lowerStatus === 'awaiting price' ||
+      lowerStatus === 'awaiting pricing' ||
+      lowerStatus === 'pending_pricing' ||
+      rawApproval === 'pending_pricing'
+    );
+  }
+
+  if (filter === 'Pricing done') {
+    return (
+      lowerStatus === 'pricing done' ||
+      lowerStatus === 'priced' ||
+      rawApproval === 'priced'
+    );
+  }
+
+  if (filter === 'Pending approved') {
+    return (
+      lowerStatus === 'pending approved' ||
+      lowerStatus === 'pending approval' ||
+      rawApproval === 'pending' ||
+      rawApproval === 'pending_approval' ||
+      rawApproval === 'modification_pending_approval'
+    );
+  }
+
+  // Canonical factory production stages:
+  const targetStageIdx = PRODUCTION_STAGES.indexOf(filter);
+  if (targetStageIdx !== -1) {
+    if (
+      lowerStatus === 'draft' ||
+      rawApproval === 'draft' ||
+      rawApproval === 'pending_pricing' ||
+      rawApproval === 'priced' ||
+      rawApproval === 'pending' ||
+      rawApproval === 'pending_approval' ||
+      rawApproval === 'modification_pending_approval'
+    ) {
+      if (rawStage) {
+        return getStageIndex(rawStage) === targetStageIdx;
+      }
+      return false;
+    }
+
+    const stageIdx = getStageIndex(rawStage || rawStatus);
+    return stageIdx === targetStageIdx;
+  }
+
+  return rawStatus === filter;
 };
 
 const statusColors: Record<string, string> = {
@@ -84,8 +165,11 @@ const statusColors: Record<string, string> = {
 
   // Order lifecycle & Historical stages
   'Draft': '#6b7280',
+  'Awaiting Price': '#ca8a04',
   'Awaiting Pricing': '#ca8a04',
+  'Pricing done': '#3b82f6',
   'Pricing Done': '#3b82f6',
+  'Pending approved': '#fb923c',
   'Pending Approval': '#fb923c',
   'Placed': '#8b5cf6',
   'In Production': '#3b82f6',
@@ -105,6 +189,7 @@ const statusColors: Record<string, string> = {
 const approvalBadgeColors: Record<string, { bg: string; text: string; border: string; label: string }> = {
   'pending_pricing': { bg: 'rgba(234, 179, 8, 0.1)', text: '#ca8a04', border: 'rgba(234, 179, 8, 0.3)', label: 'Awaiting Cost Pricing' },
   'priced': { bg: 'rgba(59, 130, 246, 0.1)', text: '#3b82f6', border: 'rgba(59, 130, 246, 0.3)', label: 'Priced (Awaiting Sales Approval)' },
+  'awaiting_sales_approval': { bg: 'rgba(59, 130, 246, 0.1)', text: '#3b82f6', border: 'rgba(59, 130, 246, 0.3)', label: 'Designer Reviewed (Awaiting Sales Approval)' },
   'approved': { bg: 'rgba(34, 197, 94, 0.1)', text: '#16a34a', border: 'rgba(34, 197, 94, 0.3)', label: 'Salesperson Approved' },
   'sales_approved': { bg: 'rgba(34, 197, 94, 0.1)', text: '#16a34a', border: 'rgba(34, 197, 94, 0.3)', label: 'Salesperson Approved' },
   'modification_pending_approval': { bg: 'rgba(249, 115, 22, 0.12)', text: '#ea580c', border: 'rgba(249, 115, 22, 0.4)', label: 'Modification Pending Approval' },
@@ -178,6 +263,16 @@ interface Order {
   factory_manager_name?: string | null;
   current_stage_photo?: string | null;
   invoice_attachment_urls?: string[] | null;
+  production_hold?: boolean;
+  hold_reason?: string | null;
+  admin_approval_status?: 'none' | 'pending' | 'approved' | 'rejected' | string;
+  admin_approval_by?: number | null;
+  admin_approval_at?: string | null;
+  admin_approval_notes?: string | null;
+  money_received?: number;
+  amount_due?: number;
+  payment_status?: 'unpaid' | 'partial' | 'paid' | string;
+  final_price?: number;
 }
 
 interface StatusUpdate { 
@@ -199,6 +294,8 @@ const TrackOrders: React.FC = () => {
   const pricingPerms = getUserPricingPermissions();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+  const [ordersLoadError, setOrdersLoadError] = useState<string | null>(null);
+  const [expandedLoadError, setExpandedLoadError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [updates, setUpdates] = useState<StatusUpdate[]>([]);
   const [statusFilter, setStatusFilter] = useState('All');
@@ -249,6 +346,27 @@ const TrackOrders: React.FC = () => {
   const [updatingStage, setUpdatingStage] = useState(false);
   const [approving, setApproving] = useState(false);
 
+  // Payment & Hold Modals state
+  const [paymentModalOrder, setPaymentModalOrder] = useState<Order | null>(null);
+  const [paymentAmount, setPaymentAmount] = useState<string>('');
+  const [paymentMethod, setPaymentMethod] = useState<string>('Cash');
+  const [paymentRef, setPaymentRef] = useState<string>('');
+  const [paymentNotes, setPaymentNotes] = useState<string>('');
+  const [submittingPayment, setSubmittingPayment] = useState(false);
+
+  const [requestApprovalModalOrder, setRequestApprovalModalOrder] = useState<Order | null>(null);
+  const [requestApprovalNotes, setRequestApprovalNotes] = useState<string>('');
+  const [submittingApprovalRequest, setSubmittingApprovalRequest] = useState(false);
+
+  const [decideApprovalModalOrder, setDecideApprovalModalOrder] = useState<Order | null>(null);
+  const [decideApprovalDecision, setDecideApprovalDecision] = useState<'approved' | 'rejected'>('approved');
+  const [decideApprovalNotes, setDecideApprovalNotes] = useState<string>('');
+  const [submittingDecision, setSubmittingDecision] = useState(false);
+
+  const [viewPaymentsOrder, setViewPaymentsOrder] = useState<Order | null>(null);
+  const [orderPayments, setOrderPayments] = useState<any[]>([]);
+  const [loadingPayments, setLoadingPayments] = useState(false);
+
   const rawRole = (localStorage.getItem('user_role') || '').trim();
   const userRole = (!rawRole || rawRole === 'undefined' || rawRole === 'null') ? 'admin' : rawRole.toLowerCase();
   const userName = localStorage.getItem('user_name') || 'Unknown';
@@ -270,6 +388,8 @@ const TrackOrders: React.FC = () => {
     if (userRole === 'admin' || userRole === 'superadmin' || userRole === 'manager') return true;
     return !!userPermissions[key];
   };
+  const canApproveMakeOrder = ['admin', 'superadmin', 'manager', 'salesperson', 'salesman', 'sales'].includes(userRole) ||
+    hasPermission('approve_make_order') || hasPermission('sales_approve') || hasPermission('make_approve');
 
   const handleDuplicateOrder = async (orderToDuplicate: Order) => {
     let items = orderToDuplicate.items || [];
@@ -287,7 +407,135 @@ const TrackOrders: React.FC = () => {
     navigate('/make/place-order', { state: { duplicateFromOrder: { ...orderToDuplicate, items } } });
   };
 
-  const isDesigner = userRole === 'designer' || userRole === 'furniture designer' || userRole === 'make_designer';
+  const handleOpenPaymentModal = (order: Order) => {
+    setPaymentModalOrder(order);
+    const balance = order.amount_due ?? (order.sale_price ? Math.max(0, order.sale_price - (order.money_received || 0)) : 0);
+    setPaymentAmount(balance > 0 ? String(balance) : '');
+    setPaymentMethod('Cash');
+    setPaymentRef('');
+    setPaymentNotes('');
+  };
+
+  const handleRecordPayment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!paymentModalOrder) return;
+    const amt = Number(paymentAmount);
+    if (isNaN(amt) || amt <= 0) {
+      alert('Please enter a valid positive payment amount.');
+      return;
+    }
+    setSubmittingPayment(true);
+    try {
+      if (window.electron?.makeRecordOrderPayment) {
+        const res = await window.electron.makeRecordOrderPayment({
+          orderId: paymentModalOrder.id,
+          amount: amt,
+          paymentMethod: paymentMethod,
+          reference: paymentRef || undefined,
+          notes: paymentNotes || undefined
+        });
+        if (res && res.error) {
+          alert('Failed to record payment: ' + res.error);
+        } else {
+          setPaymentModalOrder(null);
+          await fetchOrders();
+          if (expandedId === paymentModalOrder.id && window.electron?.makeGetOrderPayments) {
+            const freshPaymentsRes = await window.electron.makeGetOrderPayments(paymentModalOrder.id);
+            setOrderPayments(freshPaymentsRes?.payments || []);
+          }
+        }
+      }
+    } catch (err: any) {
+      console.error(err);
+      alert('Error recording payment: ' + (err?.message || 'Unknown error'));
+    } finally {
+      setSubmittingPayment(false);
+    }
+  };
+
+  const handleOpenRequestApproval = (order: Order) => {
+    setRequestApprovalModalOrder(order);
+    setRequestApprovalNotes('');
+  };
+
+  const handleSubmitApprovalRequest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!requestApprovalModalOrder) return;
+    setSubmittingApprovalRequest(true);
+    try {
+      if (window.electron?.makeRequestProductionApproval) {
+        const res = await window.electron.makeRequestProductionApproval({
+          orderId: requestApprovalModalOrder.id,
+          notes: requestApprovalNotes || undefined
+        });
+        if (res && res.error) {
+          alert('Failed to request approval: ' + res.error);
+        } else {
+          setRequestApprovalModalOrder(null);
+          await fetchOrders();
+        }
+      }
+    } catch (err: any) {
+      console.error(err);
+      alert('Error requesting approval: ' + (err?.message || 'Unknown error'));
+    } finally {
+      setSubmittingApprovalRequest(false);
+    }
+  };
+
+  const handleOpenDecideApproval = (order: Order, decision: 'approved' | 'rejected') => {
+    setDecideApprovalModalOrder(order);
+    setDecideApprovalDecision(decision);
+    setDecideApprovalNotes('');
+  };
+
+  const handleSubmitApprovalDecision = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!decideApprovalModalOrder) return;
+    setSubmittingDecision(true);
+    try {
+      if (window.electron?.makeDecideProductionApproval) {
+        const res = await window.electron.makeDecideProductionApproval({
+          orderId: decideApprovalModalOrder.id,
+          decision: decideApprovalDecision,
+          notes: decideApprovalNotes || undefined
+        });
+        if (res && res.error) {
+          alert('Failed to record decision: ' + res.error);
+        } else {
+          setDecideApprovalModalOrder(null);
+          await fetchOrders();
+        }
+      }
+    } catch (err: any) {
+      console.error(err);
+      alert('Error recording decision: ' + (err?.message || 'Unknown error'));
+    } finally {
+      setSubmittingDecision(false);
+    }
+  };
+
+  const handleViewPayments = async (order: Order) => {
+    setViewPaymentsOrder(order);
+    setLoadingPayments(true);
+    try {
+      if (window.electron?.makeGetOrderPayments) {
+        const res = await window.electron.makeGetOrderPayments(order.id);
+        if (res?.error || res?.success === false) {
+          alert('Could not load payment history: ' + (res.error || 'Database request failed.'));
+          return;
+        }
+        setOrderPayments(res?.payments || []);
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Could not load payment history. Check the database connection and try again.');
+    } finally {
+      setLoadingPayments(false);
+    }
+  };
+
+  const isDesigner = userRole === 'designer' || userRole === 'furniture_designer' || userRole === 'furniture designer' || userRole === 'make_designer';
   const canDeleteOrder = userRole === 'admin' || userRole === 'superadmin' || isDesigner || hasPermission('delete_make_order') || hasPermission('make_delete');
 
   const fetchOrders = async () => {
@@ -295,7 +543,11 @@ const TrackOrders: React.FC = () => {
       // @ts-ignore
       const data = await window.electron.getMakeOrders();
       setOrders(Array.isArray(data) ? data : ((data as any)?.orders || []));
-    } catch (e) { console.error(e); }
+      setOrdersLoadError(null);
+    } catch (e: any) {
+      console.error('[TrackOrders] Failed to load orders:', e);
+      setOrdersLoadError(e?.message || 'Could not load orders from the database.');
+    }
     finally { setLoading(false); }
   };
 
@@ -352,6 +604,7 @@ const TrackOrders: React.FC = () => {
   const loadExpanded = async (orderId: number) => {
     if (expandedId === orderId) { setExpandedId(null); return; }
     setExpandedId(orderId);
+    setExpandedLoadError(null);
     setPdfs([]); setParts([]); setOrderItems([]);
     setLoadingItems(true);
 
@@ -371,6 +624,15 @@ const TrackOrders: React.FC = () => {
       setPdfs(pdfData || []);
       setParts(partsData || []);
       setOrderItems(itemsData || []);
+
+      if (window.electron?.makeGetOrderPayments && pricingPerms.canViewSalePrice) {
+        try {
+          const res = await window.electron.makeGetOrderPayments(orderId);
+          setOrderPayments(res?.payments || []);
+        } catch {
+          setOrderPayments([]);
+        }
+      }
 
       // Populate item-level prices and notes
       const costMap: Record<number, string> = {};
@@ -412,8 +674,9 @@ const TrackOrders: React.FC = () => {
         setStagePhotoPreview(null);
         setStagePhotoUrl(null);
       }
-    } catch (e) { 
-      console.error(e); 
+    } catch (e: any) {
+      console.error('[TrackOrders] Failed to load order details:', e);
+      setExpandedLoadError(e?.message || 'Could not load this order’s database details.');
     } finally {
       setLoadingItems(false);
     }
@@ -450,6 +713,10 @@ const TrackOrders: React.FC = () => {
       return;
     }
     const order = orders.find(o => o.id === orderId);
+    if (order && order.production_hold && order.admin_approval_status !== 'approved') {
+      alert(`Cannot advance production stage: Order #${order.order_number || order.id} is on Production Hold due to an unpaid balance. Full payment must be recorded or an Admin must approve production release before factory work can proceed.`);
+      return;
+    }
     const curIdx = getStageIndex(order?.status || '');
     const targetIdx = PRODUCTION_STAGES.indexOf(selectedStage);
     if (targetIdx === -1) {
@@ -538,6 +805,50 @@ const TrackOrders: React.FC = () => {
     }
   };
 
+  const handleRemoveOrderItem = async (orderId: number, item: OrderItem) => {
+    if (orderItems.length <= 1) {
+      alert('An order must keep at least one product. Cancel the entire order if it should not proceed.');
+      return;
+    }
+    if (!confirm(`Remove “${item.product_name}” (Qty: ${item.quantity}) from this order? This is recorded in the order audit.`)) return;
+    try {
+      const res = await window.electron?.makeRemoveOrderItem?.({ orderId, itemId: item.id });
+      if (!res?.success) {
+        alert(res?.error || 'Could not remove the product from this order.');
+        return;
+      }
+      const freshItems = await window.electron?.makeGetOrderItems(orderId);
+      setOrderItems(freshItems || []);
+      await fetchOrders();
+    } catch (err: any) {
+      console.error('[TrackOrders] Item removal failed:', err);
+      alert('Could not remove the product: ' + (err?.message || 'Database request failed.'));
+    }
+  };
+
+  const handleChangeOrderItemQuantity = async (orderId: number, item: OrderItem) => {
+    const entered = window.prompt(`Set quantity for “${item.product_name}”:`, String(item.quantity || 1));
+    if (entered === null) return;
+    const quantity = Number(entered.trim());
+    if (!Number.isInteger(quantity) || quantity < 1) {
+      alert('Enter a positive whole-number quantity.');
+      return;
+    }
+    try {
+      const res = await window.electron?.makeUpdateOrderItemQuantity?.({ orderId, itemId: item.id, quantity });
+      if (!res?.success) {
+        alert(res?.error || 'Could not update this product quantity.');
+        return;
+      }
+      const freshItems = await window.electron?.makeGetOrderItems(orderId);
+      setOrderItems(freshItems || []);
+      await fetchOrders();
+    } catch (err: any) {
+      console.error('[TrackOrders] Item quantity update failed:', err);
+      alert('Could not update the product quantity: ' + (err?.message || 'Database request failed.'));
+    }
+  };
+
   const handleDesignerSavePricing = async (orderId: number) => {
     const order = orders.find(o => o.id === orderId);
     if (!order) return;
@@ -621,10 +932,22 @@ const TrackOrders: React.FC = () => {
     setApproving(true);
     try {
       // @ts-ignore
-      await window.electron.approveMakeOrder({ orderId, approvedBy: userName });
+      const result = await window.electron.approveMakeOrder({ orderId, approvedBy: userName });
+      if (result?.error) {
+        alert(result.error);
+        return;
+      }
+      if (result?.success === false) {
+        alert(result.error || 'Order approval failed.');
+        return;
+      }
+      alert('Order approved and sent to production.');
       await fetchOrders();
       if (expandedId === orderId) await loadExpanded(orderId);
-    } catch (e) { console.error(e); }
+    } catch (e: any) {
+      console.error(e);
+      alert('Order approval failed: ' + (e?.message || 'Unknown error'));
+    }
     finally { setApproving(false); }
   };
 
@@ -769,7 +1092,7 @@ const TrackOrders: React.FC = () => {
   };
 
   const baseOrders = searchResults !== null ? searchResults : orders;
-  const filtered = statusFilter === 'All' ? baseOrders : baseOrders.filter(o => o.status === statusFilter);
+  const filtered = statusFilter === 'All' ? baseOrders : baseOrders.filter(o => orderMatchesFilter(o, statusFilter));
 
   const chipStyle = (color: string): React.CSSProperties => ({
     display: 'inline-flex', alignItems: 'center', gap: '4px',
@@ -849,16 +1172,20 @@ const TrackOrders: React.FC = () => {
         {/* Header & Filter Bar */}
         <div data-tutorial="make-track-orders" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.25rem' }}>
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-            {['All', ...STATUSES].map(s => (
-              <button key={s} onClick={() => setStatusFilter(s)} style={{
-                padding: '6px 14px', borderRadius: '20px', border: 'none', cursor: 'pointer',
-                fontSize: '0.8rem', fontWeight: 600,
-                background: statusFilter === s ? 'var(--accent-color)' : 'var(--input-bg, #f0f0f0)',
-                color: statusFilter === s ? 'white' : 'var(--text-secondary)', transition: 'all 0.15s'
-              }}>
-                {s} {s !== 'All' && `(${baseOrders.filter(o => o.status === s).length})`}
-              </button>
-            ))}
+            {TRACK_ORDERS_FILTERS.map(s => {
+              const count = s === 'All' ? baseOrders.length : baseOrders.filter(o => orderMatchesFilter(o, s)).length;
+              const isActive = statusFilter === s;
+              return (
+                <button key={s} onClick={() => setStatusFilter(s)} style={{
+                  padding: '6px 14px', borderRadius: '20px', border: 'none', cursor: 'pointer',
+                  fontSize: '0.8rem', fontWeight: 600,
+                  background: isActive ? 'var(--accent-color)' : 'var(--input-bg, #f0f0f0)',
+                  color: isActive ? 'white' : 'var(--text-secondary)', transition: 'all 0.15s'
+                }}>
+                  {s} {s !== 'All' && `(${count})`}
+                </button>
+              );
+            })}
           </div>
           <button onClick={fetchOrders} style={{ ...smallBtn(), padding: '8px 14px' }}>
             <RefreshCw size={15} /> Refresh Orders
@@ -867,6 +1194,11 @@ const TrackOrders: React.FC = () => {
 
         {loading ? (
           <div style={{ textAlign: 'center', padding: '4rem', color: 'var(--text-secondary)' }}>Loading orders...</div>
+        ) : ordersLoadError ? (
+          <div role="alert" style={{ padding: '1.25rem', marginTop: '1rem', borderRadius: 10, color: '#b91c1c', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)' }}>
+            <strong>Could not load Track Orders.</strong> {ordersLoadError}
+            <button type="button" onClick={() => { setLoading(true); void fetchOrders(); }} style={{ marginLeft: 12, ...smallBtn('#b91c1c') }}>Retry</button>
+          </div>
         ) : filtered.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '4rem', background: 'var(--card-bg)', borderRadius: '16px', border: '1px solid var(--border-color)' }}>
             <ClipboardList size={48} style={{ opacity: 0.3, marginBottom: '12px', color: 'var(--accent-color)' }} />
@@ -918,6 +1250,49 @@ const TrackOrders: React.FC = () => {
                         <span style={{ fontSize: '0.72rem', fontWeight: 600, padding: '2px 7px', background: 'var(--input-bg)', borderRadius: '12px', color: 'var(--text-secondary)' }}>
                           v{order.current_version || 1} {order.approved_version ? `(Approved v${order.approved_version})` : ''}
                         </span>
+
+                        {/* Hold & Admin Override Badges */}
+                        {order.production_hold && order.admin_approval_status !== 'approved' && (
+                          <span style={{
+                            fontSize: '0.72rem', fontWeight: 800, padding: '3px 9px', borderRadius: '20px',
+                            background: 'rgba(239, 68, 68, 0.12)', color: '#dc2626', border: '1px solid rgba(239, 68, 68, 0.35)',
+                            display: 'inline-flex', alignItems: 'center', gap: '4px'
+                          }}>
+                            ⛔ HOLD ACTIVE
+                          </span>
+                        )}
+
+                        {order.production_hold && order.admin_approval_status === 'pending' && (
+                          <span style={{
+                            fontSize: '0.72rem', fontWeight: 800, padding: '3px 9px', borderRadius: '20px',
+                            background: 'rgba(99, 102, 241, 0.12)', color: '#6366f1', border: '1px solid rgba(99, 102, 241, 0.35)',
+                            display: 'inline-flex', alignItems: 'center', gap: '4px'
+                          }}>
+                            ⏳ APPROVAL PENDING
+                          </span>
+                        )}
+
+                        {order.admin_approval_status === 'approved' && (
+                          <span style={{
+                            fontSize: '0.72rem', fontWeight: 800, padding: '3px 9px', borderRadius: '20px',
+                            background: 'rgba(16, 185, 129, 0.12)', color: '#059669', border: '1px solid rgba(16, 185, 129, 0.35)',
+                            display: 'inline-flex', alignItems: 'center', gap: '4px'
+                          }}>
+                            ✓ OVERRIDE APPROVED
+                          </span>
+                        )}
+
+                        {pricingPerms.canViewSalePrice && order.payment_status && (
+                          <span style={{
+                            fontSize: '0.70rem', fontWeight: 700, padding: '2px 8px', borderRadius: '12px',
+                            textTransform: 'uppercase',
+                            background: order.payment_status === 'paid' ? 'rgba(16, 185, 129, 0.12)' : (order.payment_status === 'partial' ? 'rgba(245, 158, 11, 0.12)' : 'rgba(239, 68, 68, 0.1)'),
+                            color: order.payment_status === 'paid' ? '#059669' : (order.payment_status === 'partial' ? '#d97706' : '#dc2626'),
+                            border: `1px solid ${order.payment_status === 'paid' ? 'rgba(16, 185, 129, 0.25)' : (order.payment_status === 'partial' ? 'rgba(245, 158, 11, 0.25)' : 'rgba(239, 68, 68, 0.25)')}`
+                          }}>
+                            {order.payment_status}
+                          </span>
+                        )}
                       </div>
 
                       {/* Meta info tags */}
@@ -963,11 +1338,22 @@ const TrackOrders: React.FC = () => {
                             Sale: ৳{Number(order.sale_price).toLocaleString()}
                           </span>
                         )}
+                        {order.amount_due !== undefined && order.amount_due > 0 && (
+                          <span style={{ color: '#ea580c', fontWeight: 700 }}>
+                            Due: ৳{Number(order.amount_due).toLocaleString()}
+                          </span>
+                        )}
                       </div>
                     </div>
 
                     {/* Action buttons */}
                     <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }} onClick={e => e.stopPropagation()}>
+                      {pricingPerms.canEnterInitialPayment && (
+                        <button onClick={() => handleOpenPaymentModal(order)} style={{ ...smallBtn('#10b981'), display: 'flex', alignItems: 'center', gap: '4px' }} title="Record Payment">
+                          <DollarSign size={13} /> Pay
+                        </button>
+                      )}
+
                       {!isFactoryManager && (
                         <button onClick={() => handleDuplicateOrder(order)} style={{ ...smallBtn('var(--accent-color)'), display: 'flex', alignItems: 'center', gap: '4px' }} title="Duplicate Order to new Place Order draft">
                           <Copy size={13} /> Duplicate
@@ -978,7 +1364,7 @@ const TrackOrders: React.FC = () => {
                         <History size={14} /> Diff
                       </button>
 
-                      {order.approval_status === 'priced' && hasPermission('approve_make_order') && (
+                      {['priced', 'awaiting_sales_approval', 'modification_pending_approval'].includes((order.approval_status || '').toLowerCase()) && canApproveMakeOrder && (Number(order.amount_due || 0) <= 0 || order.admin_approval_status === 'approved') && (
                         <button onClick={() => handleApprove(order.id)} disabled={approving} style={smallBtn('#22c55e')}>
                           <CheckCircle size={14} /> {approving ? 'Approving...' : 'Approve'}
                         </button>
@@ -1007,6 +1393,11 @@ const TrackOrders: React.FC = () => {
                         style={{ overflow: 'hidden', borderTop: '1px solid var(--border-color)', background: 'var(--bg-secondary, rgba(0,0,0,0.01))' }}>
                         <div style={{ padding: '24px' }}>
 
+                          {expandedLoadError && (
+                            <div role="alert" style={{ padding: '12px 14px', marginBottom: 16, borderRadius: 8, color: '#b91c1c', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)' }}>
+                              Could not load all database details for this order: {expandedLoadError}
+                            </div>
+                          )}
                           {/* ── TOP ROW: LOGISTICS & ORDER SPECS SUMMARY ── */}
                           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 1fr))', gap: '16px', marginBottom: '20px' }}>
                             
@@ -1351,6 +1742,16 @@ const TrackOrders: React.FC = () => {
                                             <div style={{ padding: '4px 14px', background: 'var(--input-bg)', borderRadius: '20px', border: '1px solid var(--border-color)', fontWeight: 800, fontSize: '0.85rem', color: 'var(--text-primary)' }}>
                                               Qty: {item.quantity}
                                             </div>
+                                            {(isDesigner || isAdmin) && order.approval_status === 'awaiting_designer' && (
+                                              <button type="button" onClick={() => handleChangeOrderItemQuantity(order.id, item)} style={smallBtn('#2563eb')} title="Change product quantity during designer review">
+                                                <Edit2 size={13} /> Change Qty
+                                              </button>
+                                            )}
+                                            {(isDesigner || isAdmin) && order.approval_status === 'awaiting_designer' && orderItems.length > 1 && (
+                                              <button type="button" onClick={() => handleRemoveOrderItem(order.id, item)} style={smallBtn('#ef4444')} title="Remove this product during designer review">
+                                                <Trash2 size={13} /> Remove Product
+                                              </button>
+                                            )}
                                           </div>
 
                                           {/* Individual Technical Drawings for this Catalog Item */}
@@ -1613,6 +2014,237 @@ const TrackOrders: React.FC = () => {
                             );
                           })()}
 
+                          {/* Financial, Payment & Production Hold Controls */}
+                          <div style={{
+                            marginBottom: '20px',
+                            padding: '16px 20px',
+                            background: 'var(--card-bg)',
+                            border: `1px solid ${order.production_hold && order.admin_approval_status !== 'approved' ? 'rgba(245, 158, 11, 0.4)' : 'var(--border-color)'}`,
+                            borderRadius: '12px',
+                            boxShadow: '0 2px 8px rgba(0,0,0,0.03)'
+                          }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <CreditCard size={18} color="var(--accent-color)" />
+                                <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                                  Payment, Balance &amp; Production Hold Status
+                                </h4>
+                              </div>
+
+                              {/* Action buttons */}
+                              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                                {pricingPerms.canEnterInitialPayment && (
+                                  <>
+                                    <motion.button
+                                      whileHover={{ scale: 1.02 }}
+                                      whileTap={{ scale: 0.98 }}
+                                      onClick={() => handleOpenPaymentModal(order)}
+                                      style={{
+                                        display: 'inline-flex', alignItems: 'center', gap: '6px',
+                                        padding: '7px 14px', background: 'linear-gradient(135deg, #10b981, #059669)',
+                                        color: 'white', border: 'none', borderRadius: '7px', fontWeight: 600, fontSize: '0.8rem', cursor: 'pointer'
+                                      }}
+                                    >
+                                      <DollarSign size={14} /> Record Payment
+                                    </motion.button>
+
+                                    {pricingPerms.canViewSalePrice && <button
+                                      type="button"
+                                      onClick={() => handleViewPayments(order)}
+                                      style={{
+                                        display: 'inline-flex', alignItems: 'center', gap: '5px',
+                                        padding: '7px 12px', background: 'var(--input-bg)', border: '1px solid var(--border-color)',
+                                        borderRadius: '7px', color: 'var(--text-primary)', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer'
+                                      }}
+                                    >
+                                      <History size={13} /> Payment Logs
+                                    </button>}
+                                  </>
+                                )}
+
+                                {/* Admin Approval request for staff */}
+                                {order.production_hold && order.admin_approval_status !== 'approved' && order.admin_approval_status !== 'pending' && (
+                                  <motion.button
+                                    whileHover={{ scale: 1.02 }}
+                                    whileTap={{ scale: 0.98 }}
+                                    onClick={() => handleOpenRequestApproval(order)}
+                                    style={{
+                                      display: 'inline-flex', alignItems: 'center', gap: '6px',
+                                      padding: '7px 14px', background: 'rgba(99,102,241,0.12)', color: 'var(--accent-color)',
+                                      border: '1px solid rgba(99,102,241,0.3)', borderRadius: '7px', fontWeight: 600, fontSize: '0.8rem', cursor: 'pointer'
+                                    }}
+                                  >
+                                    <Shield size={14} /> Request Admin Approval
+                                  </motion.button>
+                                )}
+
+                                {/* Admin Decision Controls for Admins */}
+                                {(userRole === 'admin' || userRole === 'superadmin' || pricingPerms.isAdmin || pricingPerms.isSuperadmin) && order.production_hold && (
+                                  <>
+                                    {order.admin_approval_status !== 'approved' && (
+                                      <motion.button
+                                        whileHover={{ scale: 1.02 }}
+                                        whileTap={{ scale: 0.98 }}
+                                        onClick={() => handleOpenDecideApproval(order, 'approved')}
+                                        style={{
+                                          display: 'inline-flex', alignItems: 'center', gap: '6px',
+                                          padding: '7px 14px', background: 'linear-gradient(135deg, #059669, #047857)',
+                                          color: 'white', border: 'none', borderRadius: '7px', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer'
+                                        }}
+                                      >
+                                        <CheckCircle size={14} /> Approve Production Release
+                                      </motion.button>
+                                    )}
+
+                                    {order.admin_approval_status === 'pending' && (
+                                      <motion.button
+                                        whileHover={{ scale: 1.02 }}
+                                        whileTap={{ scale: 0.98 }}
+                                        onClick={() => handleOpenDecideApproval(order, 'rejected')}
+                                        style={{
+                                          display: 'inline-flex', alignItems: 'center', gap: '6px',
+                                          padding: '7px 14px', background: 'rgba(239, 68, 68, 0.1)', color: '#dc2626',
+                                          border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: '7px', fontWeight: 600, fontSize: '0.8rem', cursor: 'pointer'
+                                        }}
+                                      >
+                                        <X size={14} /> Reject Request
+                                      </motion.button>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Financial breakdown values */}
+                            {pricingPerms.canEnterInitialPayment && !pricingPerms.canViewSalePrice && (
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '12px 14px', marginBottom: 14, borderRadius: 9, background: Number(order.amount_due || 0) > 0 ? 'rgba(234, 88, 12, 0.08)' : 'rgba(16, 185, 129, 0.08)' }}>
+                                <span style={{ fontWeight: 700 }}>Payment status: {order.payment_status || 'unpaid'}</span>
+                                <span style={{ fontWeight: 800, color: Number(order.amount_due || 0) > 0 ? '#ea580c' : '#059669' }}>Due: ৳{Number(order.amount_due || 0).toLocaleString()}</span>
+                              </div>
+                            )}
+                            {pricingPerms.canViewSalePrice && (() => {
+                              const orderTotalVal = Math.round((Number(order.final_price ?? order.sale_price ?? 0) + Number.EPSILON) * 100) / 100;
+                              const moneyReceivedVal = Math.round((Number(order.money_received || 0) + Number.EPSILON) * 100) / 100;
+                              const amountDueVal = order.amount_due !== undefined && order.amount_due !== null
+                                ? Math.max(0, Math.round((Number(order.amount_due) + Number.EPSILON) * 100) / 100)
+                                : Math.max(0, Math.round((orderTotalVal - moneyReceivedVal + Number.EPSILON) * 100) / 100);
+
+                              let paymentStatusVal: 'PAID' | 'PARTIAL' | 'UNPAID' = 'UNPAID';
+                              if (order.payment_status) {
+                                const norm = String(order.payment_status).toUpperCase();
+                                if (norm === 'PAID') paymentStatusVal = 'PAID';
+                                else if (norm === 'PARTIAL') paymentStatusVal = 'PARTIAL';
+                                else paymentStatusVal = 'UNPAID';
+                              } else {
+                                if (amountDueVal === 0 && (orderTotalVal > 0 || moneyReceivedVal > 0)) {
+                                  paymentStatusVal = 'PAID';
+                                } else if (moneyReceivedVal > 0 && amountDueVal > 0) {
+                                  paymentStatusVal = 'PARTIAL';
+                                } else {
+                                  paymentStatusVal = 'UNPAID';
+                                }
+                              }
+
+                              return (
+                                <div style={{
+                                  display: 'grid',
+                                  gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                                  gap: '12px',
+                                  marginBottom: '14px',
+                                  background: 'var(--bg-secondary)',
+                                  padding: '12px 16px',
+                                  borderRadius: '10px',
+                                  border: '1px solid var(--border-color)'
+                                }}>
+                                  <div>
+                                    <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: 700 }}>Order Total</div>
+                                    <div style={{ fontSize: '1.15rem', fontWeight: 800, color: 'var(--accent-color)' }}>
+                                      ৳{orderTotalVal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </div>
+                                  </div>
+                                  <div>
+                                    <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: 700 }}>Money Received / Amount Paid</div>
+                                    <div style={{ fontSize: '1.15rem', fontWeight: 800, color: '#059669' }}>
+                                      ৳{moneyReceivedVal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </div>
+                                  </div>
+                                  <div>
+                                    <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: 700 }}>Amount Due</div>
+                                    <div style={{ fontSize: '1.15rem', fontWeight: 800, color: amountDueVal > 0 ? '#ea580c' : '#059669' }}>
+                                      ৳{amountDueVal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </div>
+                                  </div>
+                                  <div>
+                                    <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: 700 }}>Payment Status</div>
+                                    <div style={{ marginTop: '2px' }}>
+                                      <span style={{
+                                        display: 'inline-block',
+                                        padding: '3px 10px',
+                                        borderRadius: '12px',
+                                        fontWeight: 800,
+                                        fontSize: '0.74rem',
+                                        textTransform: 'uppercase',
+                                        background: paymentStatusVal === 'PAID' ? 'rgba(16, 185, 129, 0.15)' : (paymentStatusVal === 'PARTIAL' ? 'rgba(245, 158, 11, 0.15)' : 'rgba(239, 68, 68, 0.15)'),
+                                        color: paymentStatusVal === 'PAID' ? '#059669' : (paymentStatusVal === 'PARTIAL' ? '#d97706' : '#dc2626'),
+                                        border: `1px solid ${paymentStatusVal === 'PAID' ? 'rgba(16, 185, 129, 0.3)' : (paymentStatusVal === 'PARTIAL' ? 'rgba(245, 158, 11, 0.3)' : 'rgba(239, 68, 68, 0.3)')}`
+                                      }}>
+                                        {paymentStatusVal}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })()}
+
+                            {/* Production Hold Status Notification Box */}
+                            {order.production_hold && order.admin_approval_status !== 'approved' ? (
+                              <div style={{
+                                padding: '12px 14px',
+                                borderRadius: '8px',
+                                background: 'rgba(245, 158, 11, 0.1)',
+                                border: '1px solid rgba(245, 158, 11, 0.35)',
+                                display: 'flex',
+                                alignItems: 'flex-start',
+                                gap: '10px'
+                              }}>
+                                <AlertCircle size={18} color="#d97706" style={{ flexShrink: 0, marginTop: '2px' }} />
+                                <div style={{ fontSize: '0.82rem', color: '#b45309', lineHeight: 1.45 }}>
+                                  <strong>⛔ Production Hold Active:</strong> {order.hold_reason || `An outstanding balance of ৳${(order.amount_due || 0).toLocaleString()} remains unpaid.`} Workshop production cannot advance until the balance is cleared or an Admin approves an override.
+                                  {order.admin_approval_status === 'pending' && (
+                                    <div style={{ marginTop: '4px', fontWeight: 700, color: '#6366f1' }}>
+                                      ⏳ Staff requested Admin Approval for production release. Awaiting decision.
+                                    </div>
+                                  )}
+                                  {order.admin_approval_status === 'rejected' && (
+                                    <div style={{ marginTop: '4px', fontWeight: 700, color: '#dc2626' }}>
+                                      ❌ Previous production release request was rejected by admin.
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            ) : order.admin_approval_status === 'approved' ? (
+                              <div style={{
+                                padding: '12px 14px',
+                                borderRadius: '8px',
+                                background: 'rgba(16, 185, 129, 0.1)',
+                                border: '1px solid rgba(16, 185, 129, 0.35)',
+                                display: 'flex',
+                                alignItems: 'flex-start',
+                                gap: '10px'
+                              }}>
+                                <CheckCircle size={18} color="#059669" style={{ flexShrink: 0, marginTop: '2px' }} />
+                                <div style={{ fontSize: '0.82rem', color: '#047857', lineHeight: 1.45 }}>
+                                  <strong>✓ Production Override Active:</strong> Admin approved production release. Factory manager is authorized to begin and advance manufacturing stages.
+                                  {order.admin_approval_notes && (
+                                    <div style={{ marginTop: '3px', fontStyle: 'italic', color: '#065f46' }}>
+                                      Note: {order.admin_approval_notes}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+
                           {/* Lower Grid: Timeline + Update Status */}
                           <div className="make-responsive-grid-2" style={{ gap: '24px' }}>
 
@@ -1665,24 +2297,28 @@ const TrackOrders: React.FC = () => {
                               </div>
 
                               {/* Latest Stage Live Photo Banner */}
-                              {order.current_stage_photo && (
-                                <div style={{ marginBottom: '14px', position: 'relative', borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--border-color)', background: 'var(--input-bg)' }}>
-                                  <img 
-                                    src={resolveImageSrc(order.current_stage_photo)} 
-                                    onError={e => handleImageLoadError(e, order.current_stage_photo)} 
-                                    alt="Current Stage" 
-                                    onClick={() => setPdfViewer({ url: order.current_stage_photo!, name: `${order.status} Live Photo`, path: '' })}
-                                    style={{ width: '100%', height: '140px', objectFit: 'cover', display: 'block', cursor: 'pointer' }}
-                                    title="Click to inspect latest stage photo"
-                                  />
-                                  <div style={{ position: 'absolute', bottom: 0, insetInline: 0, padding: '6px 10px', background: 'linear-gradient(transparent, rgba(0,0,0,0.85))', color: '#fff', fontSize: '0.78rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <span style={{ fontWeight: 600 }}>Latest Photo ({order.status})</span>
-                                    <span style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', fontSize: '0.74rem' }} onClick={() => setPdfViewer({ url: order.current_stage_photo!, name: `${order.status} Live Photo`, path: '' })}>
-                                      <Eye size={13} /> View Enlarge
-                                    </span>
+                              {(() => {
+                                const displayPhoto = order.current_stage_photo || (updates || []).slice().reverse().find(u => u.photo_url)?.photo_url;
+                                if (!displayPhoto) return null;
+                                return (
+                                  <div style={{ marginBottom: '14px', position: 'relative', borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--border-color)', background: 'var(--input-bg)' }}>
+                                    <img
+                                      src={resolveImageSrc(displayPhoto)}
+                                      onError={e => handleImageLoadError(e, displayPhoto)}
+                                      alt="Current Stage"
+                                      onClick={() => setPdfViewer({ url: displayPhoto, name: `${order.status} Live Photo`, path: '' })}
+                                      style={{ width: '100%', height: '140px', objectFit: 'cover', display: 'block', cursor: 'pointer' }}
+                                      title="Click to inspect latest stage photo"
+                                    />
+                                    <div style={{ position: 'absolute', bottom: 0, insetInline: 0, padding: '6px 10px', background: 'linear-gradient(transparent, rgba(0,0,0,0.85))', color: '#fff', fontSize: '0.78rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                      <span style={{ fontWeight: 600 }}>Latest Photo ({order.status})</span>
+                                      <span style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', fontSize: '0.74rem' }} onClick={() => setPdfViewer({ url: displayPhoto, name: `${order.status} Live Photo`, path: '' })}>
+                                        <Eye size={13} /> View Enlarge
+                                      </span>
+                                    </div>
                                   </div>
-                                </div>
-                              )}
+                                );
+                              })()}
 
                               {order.status === 'Delivered' ? (
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#059669', fontSize: '0.9rem', padding: '12px', background: 'rgba(5,150,105,0.08)', borderRadius: '10px' }}>
@@ -1770,19 +2406,38 @@ const TrackOrders: React.FC = () => {
                                         />
                                       </div>
 
-                                      <motion.button 
-                                        onClick={() => handleUpdateProductionStage(order.id)} 
-                                        disabled={updatingStage} 
-                                        whileHover={{ scale: 1.01 }} 
-                                        whileTap={{ scale: 0.98 }}
-                                        style={{ 
-                                          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', 
-                                          padding: '11px', background: statusColors[selectedStage] || 'var(--accent-color)', 
-                                          color: 'white', border: 'none', borderRadius: '8px', fontWeight: 600, fontSize: '0.88rem', 
-                                          cursor: updatingStage ? 'not-allowed' : 'pointer', opacity: updatingStage ? 0.7 : 1,
+                                      {order.production_hold && order.admin_approval_status !== 'approved' && (
+                                        <div style={{
+                                          padding: '10px 12px',
+                                          background: 'rgba(239, 68, 68, 0.1)',
+                                          border: '1px solid rgba(239, 68, 68, 0.3)',
+                                          borderRadius: '8px',
+                                          color: '#dc2626',
+                                          fontSize: '0.8rem',
+                                          marginBottom: '8px',
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          gap: '6px'
+                                        }}>
+                                          <AlertCircle size={15} />
+                                          <span><strong>Stage Advance Locked:</strong> Order is on Production Hold due to unpaid balance. Admin approval or payment is required to advance.</span>
+                                        </div>
+                                      )}
+
+                                      <motion.button
+                                        onClick={() => handleUpdateProductionStage(order.id)}
+                                        disabled={updatingStage || Boolean(order.production_hold && order.admin_approval_status !== 'approved')}
+                                        whileHover={{ scale: (updatingStage || (order.production_hold && order.admin_approval_status !== 'approved')) ? 1 : 1.01 }}
+                                        whileTap={{ scale: (updatingStage || (order.production_hold && order.admin_approval_status !== 'approved')) ? 1 : 0.98 }}
+                                        style={{
+                                          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                                          padding: '11px', background: (order.production_hold && order.admin_approval_status !== 'approved') ? '#94a3b8' : (statusColors[selectedStage] || 'var(--accent-color)'),
+                                          color: 'white', border: 'none', borderRadius: '8px', fontWeight: 600, fontSize: '0.88rem',
+                                          cursor: (updatingStage || (order.production_hold && order.admin_approval_status !== 'approved')) ? 'not-allowed' : 'pointer',
+                                          opacity: (updatingStage || (order.production_hold && order.admin_approval_status !== 'approved')) ? 0.6 : 1,
                                           boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
                                         }}>
-                                        <Send size={15} /> {updatingStage ? 'Updating Stage & Notifying...' : `Update Stage to "${selectedStage}"`}
+                                        <Send size={15} /> {updatingStage ? 'Updating Stage & Notifying...' : (order.production_hold && order.admin_approval_status !== 'approved') ? 'Locked by Production Hold' : `Update Stage to "${selectedStage}"`}
                                       </motion.button>
                                     </>
                                   ) : (
@@ -2124,6 +2779,271 @@ const TrackOrders: React.FC = () => {
       <AnimatePresence>
         {alterOrder && (
           <AlterOrder key={alterOrder.id} order={alterOrder} onClose={() => setAlterOrder(null)} onSaved={fetchOrders} />
+        )}
+      </AnimatePresence>
+
+      {/* Record Payment Modal */}
+      <AnimatePresence>
+        {paymentModalOrder && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            style={{ position: 'fixed', inset: 0, zIndex: 1200, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
+            <motion.div initial={{ scale: 0.95, y: 10 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 10 }}
+              style={{ width: '100%', maxWidth: '480px', background: 'var(--card-bg)', borderRadius: '16px', border: '1px solid var(--border-color)', boxShadow: '0 20px 40px rgba(0,0,0,0.25)', overflow: 'hidden' }}>
+              <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <DollarSign size={20} color="#10b981" />
+                  <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800 }}>Record Order Payment</h3>
+                </div>
+                <button type="button" onClick={() => setPaymentModalOrder(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                  <X size={18} />
+                </button>
+              </div>
+
+              <form onSubmit={handleRecordPayment} style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div style={{ background: 'var(--bg-secondary)', padding: '10px 14px', borderRadius: '8px', fontSize: '0.85rem' }}>
+                  <div>Order: <strong>#{paymentModalOrder.order_number || paymentModalOrder.id}</strong> ({paymentModalOrder.furniture_name})</div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
+                    {pricingPerms.canViewSalePrice && <span style={{ color: 'var(--text-secondary)' }}>Total: ৳{Number(paymentModalOrder.final_price || paymentModalOrder.sale_price || 0).toLocaleString()}</span>}
+                    <span style={{ color: '#ea580c', fontWeight: 700 }}>Due: ৳{Number(paymentModalOrder.amount_due ?? 0).toLocaleString()}</span>
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, marginBottom: '6px' }}>Payment Amount (৳) *</label>
+                  <input
+                    type="number"
+                    min="1"
+                    step="any"
+                    required
+                    value={paymentAmount}
+                    onChange={e => setPaymentAmount(e.target.value)}
+                    placeholder="e.g. 5000"
+                    style={{ width: '100%', padding: '10px 14px', background: 'var(--input-bg)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', fontSize: '0.95rem', fontWeight: 700, boxSizing: 'border-box' }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, marginBottom: '6px' }}>Payment Method</label>
+                  <select
+                    value={paymentMethod}
+                    onChange={e => setPaymentMethod(e.target.value)}
+                    style={{ width: '100%', padding: '10px 14px', background: 'var(--input-bg)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', fontSize: '0.88rem', fontWeight: 600, boxSizing: 'border-box' }}
+                  >
+                    <option value="Cash">Cash</option>
+                    <option value="Bank Transfer">Bank Transfer / EFT</option>
+                    <option value="bKash">bKash</option>
+                    <option value="Nagad">Nagad</option>
+                    <option value="POS / Card">POS / Credit Card</option>
+                    <option value="Cheque">Cheque</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, marginBottom: '6px' }}>Reference / Transaction ID</label>
+                  <input
+                    type="text"
+                    value={paymentRef}
+                    onChange={e => setPaymentRef(e.target.value)}
+                    placeholder="e.g. TrxID / Cheque # / Deposit Slip #"
+                    style={{ width: '100%', padding: '10px 14px', background: 'var(--input-bg)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', fontSize: '0.85rem', boxSizing: 'border-box' }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, marginBottom: '6px' }}>Notes / Remarks</label>
+                  <textarea
+                    rows={2}
+                    value={paymentNotes}
+                    onChange={e => setPaymentNotes(e.target.value)}
+                    placeholder="Optional notes regarding this payment..."
+                    style={{ width: '100%', padding: '10px 14px', background: 'var(--input-bg)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', fontSize: '0.85rem', resize: 'none', boxSizing: 'border-box' }}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '6px' }}>
+                  <button type="button" onClick={() => setPaymentModalOrder(null)} style={{ padding: '10px 18px', background: 'var(--input-bg)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-secondary)', fontWeight: 600, cursor: 'pointer' }}>
+                    Cancel
+                  </button>
+                  <button type="submit" disabled={submittingPayment} style={{ padding: '10px 22px', background: 'linear-gradient(135deg, #10b981, #059669)', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 700, cursor: submittingPayment ? 'not-allowed' : 'pointer', opacity: submittingPayment ? 0.7 : 1 }}>
+                    {submittingPayment ? 'Saving...' : 'Record Payment'}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Request Admin Approval Modal */}
+      <AnimatePresence>
+        {requestApprovalModalOrder && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            style={{ position: 'fixed', inset: 0, zIndex: 1200, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
+            <motion.div initial={{ scale: 0.95, y: 10 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 10 }}
+              style={{ width: '100%', maxWidth: '460px', background: 'var(--card-bg)', borderRadius: '16px', border: '1px solid var(--border-color)', boxShadow: '0 20px 40px rgba(0,0,0,0.25)', overflow: 'hidden' }}>
+              <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Shield size={20} color="var(--accent-color)" />
+                  <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800 }}>Request Production Approval</h3>
+                </div>
+                <button type="button" onClick={() => setRequestApprovalModalOrder(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                  <X size={18} />
+                </button>
+              </div>
+
+              <form onSubmit={handleSubmitApprovalRequest} style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.45 }}>
+                  This order is on hold with an unpaid balance of <strong>৳{Number(requestApprovalModalOrder.amount_due || 0).toLocaleString()}</strong>. Submit a justification note to request an administrative override to commence factory production.
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, marginBottom: '6px' }}>Justification / Notes *</label>
+                  <textarea
+                    rows={3}
+                    required
+                    value={requestApprovalNotes}
+                    onChange={e => setRequestApprovalNotes(e.target.value)}
+                    placeholder="e.g. VIP client agreed to balance payment on delivery; urgent event deadline..."
+                    style={{ width: '100%', padding: '10px 14px', background: 'var(--input-bg)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', fontSize: '0.85rem', resize: 'none', boxSizing: 'border-box' }}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '6px' }}>
+                  <button type="button" onClick={() => setRequestApprovalModalOrder(null)} style={{ padding: '10px 18px', background: 'var(--input-bg)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-secondary)', fontWeight: 600, cursor: 'pointer' }}>
+                    Cancel
+                  </button>
+                  <button type="submit" disabled={submittingApprovalRequest} style={{ padding: '10px 22px', background: 'var(--accent-color)', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 700, cursor: submittingApprovalRequest ? 'not-allowed' : 'pointer', opacity: submittingApprovalRequest ? 0.7 : 1 }}>
+                    {submittingApprovalRequest ? 'Submitting...' : 'Submit Request'}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Decide Admin Approval Modal */}
+      <AnimatePresence>
+        {decideApprovalModalOrder && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            style={{ position: 'fixed', inset: 0, zIndex: 1200, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
+            <motion.div initial={{ scale: 0.95, y: 10 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 10 }}
+              style={{ width: '100%', maxWidth: '460px', background: 'var(--card-bg)', borderRadius: '16px', border: '1px solid var(--border-color)', boxShadow: '0 20px 40px rgba(0,0,0,0.25)', overflow: 'hidden' }}>
+              <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  {decideApprovalDecision === 'approved' ? (
+                    <CheckCircle size={20} color="#059669" />
+                  ) : (
+                    <X size={20} color="#dc2626" />
+                  )}
+                  <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800 }}>
+                    {decideApprovalDecision === 'approved' ? 'Approve Production Release' : 'Reject Production Release'}
+                  </h3>
+                </div>
+                <button type="button" onClick={() => setDecideApprovalModalOrder(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                  <X size={18} />
+                </button>
+              </div>
+
+              <form onSubmit={handleSubmitApprovalDecision} style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.45 }}>
+                  {decideApprovalDecision === 'approved' ? (
+                    <span>Granting override approval will release the production hold and authorize factory staff to advance manufacturing stages despite outstanding balance of <strong>৳{Number(decideApprovalModalOrder.amount_due || 0).toLocaleString()}</strong>.</span>
+                  ) : (
+                    <span>Rejecting this request will keep the order strictly on Production Hold until full payment is received.</span>
+                  )}
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, marginBottom: '6px' }}>Decision Notes / Conditions (Optional)</label>
+                  <textarea
+                    rows={3}
+                    value={decideApprovalNotes}
+                    onChange={e => setDecideApprovalNotes(e.target.value)}
+                    placeholder={decideApprovalDecision === 'approved' ? 'e.g. Approved per Director verbal approval; balance payment expected on Thursday' : 'e.g. Declined; minimum 50% deposit required before cutting wood.'}
+                    style={{ width: '100%', padding: '10px 14px', background: 'var(--input-bg)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', fontSize: '0.85rem', resize: 'none', boxSizing: 'border-box' }}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '6px' }}>
+                  <button type="button" onClick={() => setDecideApprovalModalOrder(null)} style={{ padding: '10px 18px', background: 'var(--input-bg)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-secondary)', fontWeight: 600, cursor: 'pointer' }}>
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={submittingDecision}
+                    style={{
+                      padding: '10px 22px',
+                      background: decideApprovalDecision === 'approved' ? 'linear-gradient(135deg, #059669, #047857)' : '#dc2626',
+                      color: 'white', border: 'none', borderRadius: '8px', fontWeight: 700,
+                      cursor: submittingDecision ? 'not-allowed' : 'pointer', opacity: submittingDecision ? 0.7 : 1
+                    }}
+                  >
+                    {submittingDecision ? 'Processing...' : (decideApprovalDecision === 'approved' ? 'Confirm Approval' : 'Confirm Rejection')}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Payment History Log Modal */}
+      <AnimatePresence>
+        {viewPaymentsOrder && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            style={{ position: 'fixed', inset: 0, zIndex: 1200, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
+            <motion.div initial={{ scale: 0.95, y: 10 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 10 }}
+              style={{ width: '100%', maxWidth: '640px', maxHeight: '85vh', background: 'var(--card-bg)', borderRadius: '16px', border: '1px solid var(--border-color)', boxShadow: '0 20px 40px rgba(0,0,0,0.25)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+              <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <History size={18} color="var(--accent-color)" />
+                  <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800 }}>Payment Transactions — #{viewPaymentsOrder.order_number || viewPaymentsOrder.id}</h3>
+                </div>
+                <button type="button" onClick={() => setViewPaymentsOrder(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div style={{ padding: '20px', overflowY: 'auto', flex: 1 }}>
+                {loadingPayments ? (
+                  <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>Loading payment logs...</div>
+                ) : orderPayments.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>
+                    No payment transactions recorded for this order yet.
+                  </div>
+                ) : (
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                    <thead>
+                      <tr style={{ background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border-color)' }}>
+                        <th style={{ padding: '8px 12px', textAlign: 'left' }}>Date</th>
+                        <th style={{ padding: '8px 12px', textAlign: 'left' }}>Method</th>
+                        <th style={{ padding: '8px 12px', textAlign: 'left' }}>Reference</th>
+                        <th style={{ padding: '8px 12px', textAlign: 'right' }}>Amount (৳)</th>
+                        <th style={{ padding: '8px 12px', textAlign: 'left' }}>Notes</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {orderPayments.map((p, idx) => (
+                        <tr key={p.id || idx} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                          <td style={{ padding: '10px 12px', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                            {new Date(p.created_at).toLocaleString()}
+                          </td>
+                          <td style={{ padding: '10px 12px', fontWeight: 600 }}>{p.payment_method || 'Cash'}</td>
+                          <td style={{ padding: '10px 12px', fontFamily: 'monospace', fontSize: '0.8rem' }}>{p.reference_number || '—'}</td>
+                          <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 700, color: '#059669' }}>
+                            ৳{Number(p.amount || 0).toLocaleString()}
+                          </td>
+                          <td style={{ padding: '10px 12px', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>{p.notes || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
         )}
       </AnimatePresence>
     </DashboardLayout>

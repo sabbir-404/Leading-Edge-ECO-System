@@ -387,14 +387,14 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
     });
 
     // ── 10. Concurrent clients competing for final available quota ───────────────
-    it('Scenario 10: Concurrent clients competing for final quota are serialized atomically without exceeding 1 GB', async () => {
+    it('Scenario 10: Concurrent clients competing for final quota are serialized atomically without exceeding 3 GB', async () => {
         const clientA = new SupabaseQuotaManager('client-A');
         
-        // 599.5 MB storage + 100 MB DB = 699.5 MB total (500 KB left of 600 MB storage cap, well within 950 MB critical floor)
-        clientA.recordUsage('test', 599_500_000, 100_000_000);
+        // Storage cap is 2.2 GB; leave 500 KB left
+        clientA.recordUsage('test', SupabaseQuotaManager.STORAGE_CEILING_BYTES - 500_000, 100_000_000);
         
-        const req1 = await clientA.reserveStorageQuota('req_1', 300_000); // 300 KB -> accepted (total storage 599.8 MB <= 600 MB)
-        const req2 = await clientA.reserveStorageQuota('req_2', 300_000); // 300 KB -> total storage 600.1 MB > 600 MB -> REJECTED
+        const req1 = await clientA.reserveStorageQuota('req_1', 300_000); // 300 KB -> accepted (remaining 200 KB)
+        const req2 = await clientA.reserveStorageQuota('req_2', 300_000); // 300 KB -> exceeds storage cap -> REJECTED
 
         expect(req1).toBe(true);
         expect(req2).toBe(false);
@@ -403,24 +403,24 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
         await clientA.releaseStorageQuota('req_1', 0);
     });
 
-    // ── 11. Reaching 800 MB, 950 MB, and hard 1 GB ceiling ──────────────────────
-    it('Scenario 11: Correctly triggers WARNING at 800 MB, CRITICAL at 950 MB, and EXCEEDED at 1 GB', () => {
+    // ── 11. Reaching 2.4 GB warning, 2.85 GB critical, and 3 GB ceiling ──────────────────────
+    it('Scenario 11: Correctly triggers WARNING at 2.4 GB, CRITICAL at 2.85 GB, and EXCEEDED at 3 GB', () => {
         const quotaMgr = SupabaseQuotaManager.getInstance();
 
-        // 1. Under 800 MB -> ok
-        quotaMgr.recordUsage('test', 500_000_000, 100_000_000); // 600 MB total
+        // 1. Under 2.4 GB -> ok
+        quotaMgr.recordUsage('test', 1_500_000_000, 500_000_000); // 2.0 GB total
         expect(quotaMgr.getQuotaStatus().status).toBe('ok');
 
-        // 2. 820 MB -> warning
-        quotaMgr.recordUsage('test', 550_000_000, 270_000_000); // 820 MB total
+        // 2. 2.45 GB -> warning (>= 2.4 GB)
+        quotaMgr.recordUsage('test', 1_800_000_000, 650_000_000); // 2.45 GB total
         expect(quotaMgr.getQuotaStatus().status).toBe('warning');
 
-        // 3. 960 MB -> critical
-        quotaMgr.recordUsage('test', 580_000_000, 380_000_000); // 960 MB total
+        // 3. 2.90 GB -> critical (>= 2.85 GB)
+        quotaMgr.recordUsage('test', 2_100_000_000, 800_000_000); // 2.90 GB total
         expect(quotaMgr.getQuotaStatus().status).toBe('critical');
 
-        // 4. 1,000,000,001 bytes -> exceeded
-        quotaMgr.recordUsage('test', 600_000_000, 400_000_001); // > 1 GB
+        // 4. > 3,000,000,000 bytes -> exceeded
+        quotaMgr.recordUsage('test', 2_200_000_000, 800_000_001); // > 3 GB
         expect(quotaMgr.getQuotaStatus().status).toBe('exceeded');
         expect(quotaMgr.canAcceptStorageUpload(100)).toBe(false);
     });
@@ -1260,8 +1260,8 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
     // ── 34. Concurrent real reservations at the capacity limit ───────────────────
     it('Scenario 34: Concurrent real reservations strictly serialize and enforce partition ceiling', async () => {
         const quotaMgr = new SupabaseQuotaManager('client_concurrency');
-        // Set existing storage usage to 590 MB (10 MB below 600 MB ceiling)
-        quotaMgr.recordUsage('audit', 590_000_000, 0);
+        // Set existing storage usage to 10 MB below STORAGE_CEILING_BYTES (2.2 GB)
+        quotaMgr.recordUsage('audit', SupabaseQuotaManager.STORAGE_CEILING_BYTES - 10_000_000, 0);
 
         // 5 concurrent reservation attempts of 4 MB each (total 20 MB -> only 2 should fit in 10 MB remaining)
         const attempts = await Promise.all([
@@ -1273,7 +1273,7 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
         ]);
 
         const successful = attempts.filter(Boolean).length;
-        expect(successful).toBe(2); // Exactly 8 MB accepted (590 + 8 = 598 MB <= 600 MB)
+        expect(successful).toBe(2); // Exactly 8 MB accepted (2.190 GB + 8 MB = 2.198 GB <= 2.2 GB)
         expect(attempts.filter(x => !x).length).toBe(3); // 3 rejected
     });
 
@@ -2134,7 +2134,7 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
     });
 
     // ── 44. (Section 5.6) Quota Reservation Exhaustion ──────────────────────────
-    it('Scenario 44: Quota reservation exhaustion: 600 MB storage / 1 GB database ceiling rejects prospective writes, retains files safely locally for retry without accounting loss', async () => {
+    it('Scenario 44: Quota reservation exhaustion: 2.2 GB storage / 3 GB database ceiling rejects prospective writes, retains files safely locally for retry without accounting loss', async () => {
         const quotaMgr = SupabaseQuotaManager.getInstance();
         const uploadService = DurableUploadService.getInstance();
 
@@ -2147,8 +2147,8 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
         };
         uploadService.registerClients({ nas: null, supabase: { storage: mockStorage } as any });
 
-        // Simulate usage at 600 MB ceiling
-        quotaMgr.recordUsage('client-quota-test', 600 * 1024 * 1024, 100 * 1024 * 1024);
+        // Simulate usage at STORAGE_CEILING_BYTES (2.2 GB)
+        quotaMgr.recordUsage('client-quota-test', SupabaseQuotaManager.STORAGE_CEILING_BYTES, 100 * 1024 * 1024);
 
         const buffer = Buffer.from('QUOTA-EXHAUSTION-TEST-PAYLOAD');
         const staged = await uploadService.stageFile(buffer, 'huge_cad.dwg', 'application/acad', 'make-order-files');
@@ -2157,11 +2157,11 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
         const res = await uploadService.dispatchUpload(staged.id);
         expect(res.success).toBe(false);
         expect(res.status).toBe('staged_local');
-        expect(res.error).toContain('600 MB / 1 GB ceiling');
+        expect(res.error).toMatch(/(ceiling|quota limit)/i);
 
         const dbRecord = (uploadService as any).db.prepare('SELECT status, last_error FROM durable_uploads WHERE id = ?').get(staged.id);
         expect(dbRecord.status).toBe('staged_local');
-        expect(dbRecord.last_error).toContain('600 MB / 1 GB ceiling');
+        expect(dbRecord.last_error).toMatch(/(ceiling|quota limit)/i);
     });
 
     // ── 45. (Section 5.7) Quota RPC Failure / Mismatch Fail-Safety ──────────────

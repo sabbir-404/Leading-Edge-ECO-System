@@ -23,6 +23,7 @@ class LEMakeNasDbClient {
     private $active_url = null;
     private $connection_tier = 'cloudflare_tunnel'; // 'cloudflare_tunnel', 'supabase'
     private $is_nas_online = true;
+    private $nas_authorization_error = null;
 
     // Default fallback constants - NO credentials or secrets hardcoded in source
     const DEFAULT_TUNNEL_URL              = 'https://db.lenas.me';
@@ -44,6 +45,23 @@ class LEMakeNasDbClient {
 
     private function __construct() {
         $this->resolve_active_endpoint();
+    }
+
+    /** A Cloudflare HTML denial is a gateway failure; a JSON 401/403 is PostgREST authorization. */
+    private function is_gateway_denial($response, $status = null) {
+        if (is_wp_error($response)) {
+            return false;
+        }
+        $status = $status === null ? wp_remote_retrieve_response_code($response) : intval($status);
+        if ($status !== 403) {
+            return false;
+        }
+        $content_type = strtolower((string) wp_remote_retrieve_header($response, 'content-type'));
+        $body = strtolower((string) wp_remote_retrieve_body($response));
+        return strpos($content_type, 'text/html') !== false ||
+            strpos($body, '<html') !== false ||
+            strpos($body, 'cloudflare error 1033') !== false ||
+            strpos($body, 'error 1033') !== false;
     }
 
     /**
@@ -104,6 +122,10 @@ class LEMakeNasDbClient {
         return $this->is_nas_online;
     }
 
+    public function get_nas_authorization_error() {
+        return $this->nas_authorization_error;
+    }
+
     public function get_cf_id() {
         if (defined('LE_MAKE_CF_CLIENT_ID') && LE_MAKE_CF_CLIENT_ID) {
             return LE_MAKE_CF_CLIENT_ID;
@@ -156,6 +178,59 @@ class LEMakeNasDbClient {
         return !empty($anon) ? $anon : self::DEFAULT_ANON_KEY;
     }
 
+    public function get_nas_token() {
+        if (defined('LE_MAKE_NAS_JWT_TOKEN') && LE_MAKE_NAS_JWT_TOKEN) {
+            return LE_MAKE_NAS_JWT_TOKEN;
+        }
+        $env = getenv('LE_MAKE_NAS_JWT_TOKEN');
+        if (!empty($env)) {
+            return $env;
+        }
+        $token = get_option('le_make_nas_jwt_token');
+        if (empty($token)) {
+            return '';
+        }
+        if (strpos($token, 'enc:v1:') !== 0) {
+            // Preserve compatibility with tokens provisioned before encrypted settings were added.
+            return $token;
+        }
+        if (!function_exists('wp_salt') || !function_exists('openssl_decrypt')) {
+            return '';
+        }
+        $key_material = wp_salt('auth') . wp_salt('secure_auth');
+        $payload = base64_decode(substr($token, 7), true);
+        if ($key_material === '' || !is_string($payload) || strlen($payload) <= 28) {
+            return '';
+        }
+        $nonce = substr($payload, 0, 12);
+        $tag = substr($payload, 12, 16);
+        $ciphertext = substr($payload, 28);
+        $key = hash('sha256', $key_material, true);
+        $decrypted = openssl_decrypt($ciphertext, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $nonce, $tag);
+        return is_string($decrypted) ? $decrypted : '';
+    }
+
+    /**
+     * Sanitizes sensitive data from log payloads and error outputs
+     */
+    public static function sanitize_log_data($data) {
+        if (!is_array($data)) {
+            return $data;
+        }
+        $sensitive_keys = array('customer_phone', 'customer_email', 'receiver_phone', 'password', 'token', 'apikey', 'service_role_key', 'secret');
+        $sanitized = array();
+        foreach ($data as $k => $v) {
+            if (is_string($k) && in_array(strtolower($k), $sensitive_keys, true)) {
+                $sanitized[$k] = '[REDACTED]';
+            } elseif (is_array($v)) {
+                $sanitized[$k] = self::sanitize_log_data($v);
+            } else {
+                $sanitized[$k] = $v;
+            }
+        }
+        return $sanitized;
+    }
+
     public function request_supabase($endpoint, $method = 'GET', $body = null, $headers = array()) {
         $supabase_url = rtrim(get_option('le_make_supabase_url', self::DEFAULT_SUPABASE_URL), '/');
         $url = $supabase_url . '/rest/v1/' . ltrim($endpoint, '/');
@@ -176,7 +251,7 @@ class LEMakeNasDbClient {
             'method'    => $method,
             'timeout'   => 15,
             'headers'   => $req_headers,
-            'sslverify' => false
+            'sslverify' => true
         );
 
         if ($body !== null) {
@@ -212,11 +287,16 @@ class LEMakeNasDbClient {
             'CF-Access-Client-Secret' => $this->get_cf_secret()
         ), $headers);
 
+        $nas_jwt = $this->get_nas_token();
+        if (!empty($nas_jwt) && !isset($req_headers['Authorization'])) {
+            $req_headers['Authorization'] = 'Bearer ' . $nas_jwt;
+        }
+
         $args = array(
             'method'    => $method,
             'timeout'   => 10,
             'headers'   => $req_headers,
-            'sslverify' => false
+            'sslverify' => true
         );
 
         if ($body !== null) {
@@ -225,12 +305,28 @@ class LEMakeNasDbClient {
 
         $res = wp_remote_request($url, $args);
         if (is_wp_error($res)) {
+            $this->is_nas_online = false;
+            set_transient('le_make_nas_online_status', 'offline', 30);
             return $res;
         }
 
         $status = wp_remote_retrieve_response_code($res);
         $res_body = wp_remote_retrieve_body($res);
         $decoded = json_decode($res_body, true);
+
+        $gateway_denial = $this->is_gateway_denial($res, $status);
+        if ($status === 401 || ($status === 403 && !$gateway_denial)) {
+            $this->is_nas_online = true;
+            $this->nas_authorization_error = isset($decoded['message']) ? sanitize_text_field($decoded['message']) : 'NAS database authorization rejected (' . intval($status) . ').';
+            set_transient('le_make_nas_online_status', 'online', 30);
+        } elseif ($gateway_denial || $status === 0 || $status >= 500) {
+            $this->is_nas_online = false;
+            set_transient('le_make_nas_online_status', 'offline', 30);
+        } else {
+            $this->is_nas_online = true;
+            $this->nas_authorization_error = null;
+            set_transient('le_make_nas_online_status', 'online', 30);
+        }
 
         if ($status >= 400) {
             $msg = isset($decoded['message']) ? $decoded['message'] : 'NAS error (' . $status . ')';
@@ -246,7 +342,7 @@ class LEMakeNasDbClient {
             'redirection' => 1,
             'httpversion' => '1.1',
             'headers'     => array('Accept' => 'application/json'),
-            'sslverify'   => false
+            'sslverify'   => true
         );
 
         if ($is_tunnel) {
@@ -260,9 +356,9 @@ class LEMakeNasDbClient {
         }
 
         $code = wp_remote_retrieve_response_code($res);
-        // 200 or 404 (if table missing but server alive) means the tunnel itself is reachable
-        // 530 (Cloudflare 1033 - tunnel origin down), 502, 504, 0 mean NAS is offline
-        return ($code >= 200 && $code < 400);
+        // Any PostgREST 4xx proves the service answered, including auth rejection.
+        // HTML 403 is a Cloudflare access/gateway denial and does not prove the origin is reachable.
+        return ($code >= 200 && $code < 500 && !$this->is_gateway_denial($res, $code));
     }
 
     private function request($endpoint, $method = 'GET', $body = null, $headers = array()) {
@@ -292,13 +388,17 @@ class LEMakeNasDbClient {
         if ($this->connection_tier === 'cloudflare_tunnel') {
             $req_headers['CF-Access-Client-Id']     = $this->get_cf_id();
             $req_headers['CF-Access-Client-Secret'] = $this->get_cf_secret();
+            $nas_jwt = $this->get_nas_token();
+            if (!empty($nas_jwt) && !isset($req_headers['Authorization'])) {
+                $req_headers['Authorization'] = 'Bearer ' . $nas_jwt;
+            }
         }
 
         $args = array(
             'method'    => $method,
             'timeout'   => 15,
             'headers'   => $req_headers,
-            'sslverify' => false
+            'sslverify' => true
         );
 
         if ($body !== null) {
@@ -308,10 +408,14 @@ class LEMakeNasDbClient {
         $res = wp_remote_request($url, $args);
         $status = is_wp_error($res) ? 0 : wp_remote_retrieve_response_code($res);
 
-        // If Cloudflare Tunnel failed or origin down (530 Cloudflare 1033, 502, 504, 0), fallback to Supabase
-        if (($status === 0 || $status === 403 || $status === 530 || $status >= 500) && $this->connection_tier === 'cloudflare_tunnel') {
-            $this->is_nas_online = false;
-            set_transient('le_make_nas_online_status', 'offline', 30);
+        // Authorization failures mean NAS answered but this client is not permitted.
+        // They may safely use Supabase fallback because PostgREST rejects before executing SQL.
+        $authorization_rejected = ($status === 401 || $status === 403) && !$this->is_gateway_denial($res, $status);
+        $gateway_or_transport_failure = ($status === 0 || $status === 530 || $status >= 500 || $this->is_gateway_denial($res, $status));
+        if (($authorization_rejected || $gateway_or_transport_failure) && $this->connection_tier === 'cloudflare_tunnel') {
+            $this->is_nas_online = $authorization_rejected;
+            $this->nas_authorization_error = $authorization_rejected ? 'NAS database authorization rejected (' . intval($status) . ').' : null;
+            set_transient('le_make_nas_online_status', $authorization_rejected ? 'online' : 'offline', 30);
             
             $supabase_url = get_option('le_make_supabase_url', self::DEFAULT_SUPABASE_URL);
             $this->active_url = rtrim($supabase_url, '/');
@@ -336,6 +440,12 @@ class LEMakeNasDbClient {
         $res_body = wp_remote_retrieve_body($res);
         $decoded = json_decode($res_body, true);
 
+        if ($this->connection_tier === 'cloudflare_tunnel' && $status < 400) {
+            $this->is_nas_online = true;
+            $this->nas_authorization_error = null;
+            set_transient('le_make_nas_online_status', 'online', 30);
+        }
+
         if ($status >= 400) {
             $msg = isset($decoded['message']) ? $decoded['message'] : 'Database error (' . $status . ')';
             return new WP_Error('db_error_' . $status, $msg, $decoded);
@@ -348,22 +458,77 @@ class LEMakeNasDbClient {
      * Sanitizes sensitive fields for users based on role.
      * Strictly conceals cost price fields from Salespersons and unauthorized roles.
      * Only Administrator and Furniture Designer can view cost prices.
+     * Factory Manager can view cost prices, but sale prices are strictly hidden.
+     * Salesperson can view sale prices, but cost prices are strictly hidden.
      */
     public function sanitize_for_role($data, $user = null) {
         if (!$user) {
             $user = wp_get_current_user();
         }
 
+        $roles = (array)$user->roles;
         $is_admin = user_can($user, 'administrator') || user_can($user, 'manage_options');
-        $is_designer = in_array('make_designer', (array)$user->roles, true) || user_can($user, 'set_make_pricing');
+        $is_designer = in_array('make_designer', $roles, true) || user_can($user, 'set_make_pricing');
+        $is_factory_manager = in_array('factory_manager', $roles, true) || in_array('make_factory_manager', $roles, true);
 
-        // Admins and Designers see full cost pricing
+        // Admins and Designers see full cost and sale pricing
         if ($is_admin || $is_designer) {
             return $data;
         }
 
-        // For all other roles (strictly salesperson, factory manager, etc.), scrub cost prices
+        // Factory Manager sees cost prices, but SALE prices must be strictly stripped!
+        if ($is_factory_manager) {
+            return $this->strip_sale_fields($data);
+        }
+
+        // For Salesperson and all other roles, scrub cost prices
         return $this->strip_cost_fields($data);
+    }
+
+    /**
+     * Recursively scrubs all sale-related fields from data arrays/objects
+     */
+    public function strip_sale_fields($data) {
+        if (!is_array($data)) {
+            return $data;
+        }
+
+        $sale_keys = array(
+            'sale_price',
+            'item_sale_price',
+            'unit_sale_price',
+            'total_sale_price',
+            'final_price',
+            'final_item_price',
+            'custom_price',
+            'base_price',
+            'price',
+            'discount_amount',
+            'discount_value',
+            'discount_type'
+        );
+
+        $scrubbed = array();
+        foreach ($data as $k => $v) {
+            if (is_string($k) && in_array(strtolower($k), $sale_keys, true)) {
+                continue;
+            }
+
+            if (is_array($v)) {
+                $scrubbed[$k] = $this->strip_sale_fields($v);
+            } elseif (is_string($v) && ($k === 'order_data' || $k === 'custom_details')) {
+                $decoded = json_decode($v, true);
+                if (is_array($decoded)) {
+                    $scrubbed[$k] = json_encode($this->strip_sale_fields($decoded));
+                } else {
+                    $scrubbed[$k] = $v;
+                }
+            } else {
+                $scrubbed[$k] = $v;
+            }
+        }
+
+        return $scrubbed;
     }
 
     /**
@@ -791,8 +956,12 @@ class LEMakeNasDbClient {
      * If NAS is offline: writes directly to Supabase and queues for NAS synchronization.
      */
     public function create_order($order_data, $items = array()) {
-        $order_number = 'MAKE-' . date('Y') . '-' . wp_rand(100000, 999999);
-        
+        $order_number = !empty($order_data['order_number'])
+            ? sanitize_text_field($order_data['order_number'])
+            : (!empty($order_data['idempotency_key'])
+                ? sanitize_text_field($order_data['idempotency_key'])
+                : ('MAKE-' . date('Y') . '-' . wp_rand(100000, 999999)));
+
         $target_date = !empty($order_data['target_delivery_date']) 
             ? sanitize_text_field($order_data['target_delivery_date']) 
             : (!empty($order_data['delivery_date']) ? sanitize_text_field($order_data['delivery_date']) : null);
@@ -852,67 +1021,223 @@ class LEMakeNasDbClient {
             'special_instructions'    => sanitize_textarea_field($order_data['special_instructions'] ?? ''),
             'cost_price'              => floatval($order_data['cost_price'] ?? 0),
             'sale_price'              => !empty($order_data['sale_price']) ? floatval($order_data['sale_price']) : null,
+            'discount_type'           => !empty($order_data['discount_type']) ? sanitize_text_field($order_data['discount_type']) : null,
+            'discount_value'          => isset($order_data['discount_value']) && $order_data['discount_value'] !== '' ? floatval($order_data['discount_value']) : null,
+            'discount_amount'         => floatval($order_data['discount_amount'] ?? 0),
+            'final_price'             => isset($order_data['final_price']) && $order_data['final_price'] !== '' ? floatval($order_data['final_price']) : (!empty($order_data['sale_price']) ? floatval($order_data['sale_price']) : null),
+            'money_received'          => floatval($order_data['money_received'] ?? 0),
+            'amount_due'              => floatval($order_data['amount_due'] ?? 0),
+            'payment_status'          => sanitize_text_field($order_data['payment_status'] ?? 'unpaid'),
+            'production_hold'         => !empty($order_data['production_hold']),
+            'hold_reason'             => !empty($order_data['hold_reason']) ? sanitize_text_field($order_data['hold_reason']) : null,
+            'admin_approval_status'   => sanitize_text_field($order_data['admin_approval_status'] ?? 'none'),
             'invoice_attachment_urls' => $invoice_attachments,
             'pdf_urls'                => $pdf_attachments,
             'is_approved'             => true,
             'created_at'              => current_time('mysql', 1)
         );
 
-        // CASE A: NAS IS ONLINE
-        if ($this->connection_tier === 'cloudflare_tunnel') {
-            $order_res = $this->request('make_orders', 'POST', $payload);
-            if (is_wp_error($order_res)) {
-                // If tunnel just failed, resolve will shift to Supabase
-                return $this->create_order_on_supabase($payload, $items, true);
-            }
+        // CANONICAL PRIMARY WRITE: Attempt Supabase Cloud first
+        $sb_res = $this->create_order_on_supabase($payload, $items, false);
+        if (!is_wp_error($sb_res) && !empty($sb_res['success'])) {
+            $order_id = $sb_res['id'];
 
-            $created_order = is_array($order_res) && !empty($order_res) ? $order_res[0] : array();
-            $order_id = $created_order['id'] ?? null;
-
-            // Insert Order Items into NAS
-            if ($order_id && !empty($items) && is_array($items)) {
-                $items_payload = array();
-                foreach ($items as $item) {
-                    $is_cust = !empty($item['is_customized']);
-                    $dim_text = $item['dimensions_text'] ?? $item['size_label'] ?? null;
-                    $items_payload[] = array(
-                        'order_id'          => $order_id,
-                        'product_id'        => !empty($item['product_id']) ? intval($item['product_id']) : null,
-                        'spec_id'           => !empty($item['spec_id']) ? intval($item['spec_id']) : null,
-                        'size_id'           => !empty($item['size_id']) ? intval($item['size_id']) : null,
-                        'color_id'          => !empty($item['color_id']) ? intval($item['color_id']) : null,
-                        'product_name'      => sanitize_text_field($item['product_name']),
-                        'spec_name'         => sanitize_text_field($item['spec_name'] ?? ''),
-                        'size_label'        => sanitize_text_field($dim_text ?? ''),
-                        'color_name'        => sanitize_text_field($item['color_name'] ?? ''),
-                        'quantity'          => intval($item['quantity'] ?? 1),
-                        'salesperson_note'  => sanitize_textarea_field($item['notes'] ?? ''),
-                        'item_cost_price'   => floatval($item['item_cost_price'] ?? 0),
-                        'item_sale_price'   => !empty($item['item_sale_price']) ? floatval($item['item_sale_price']) : null,
-                        'is_customized'     => $is_cust,
-                        'custom_dimensions' => $item['custom_dimensions'] ?? ($is_cust ? $dim_text : null),
-                        'technical_drawing_url' => !empty($item['technical_drawing_url']) ? esc_url_raw($item['technical_drawing_url']) : null
-                    );
-                }
-
-                if (!empty($items_payload)) {
-                    $this->request('make_order_items', 'POST', $items_payload);
-                }
-            }
-
-            // Immediately mirror text copy to Supabase Cloud Backup (zero images, text only)
-            $this->mirror_order_to_supabase_text($payload, $items);
+            // Asynchronously / secondary mirror to TrueNAS if online (non-blocking)
+            $this->mirror_order_to_nas($payload, $items, $order_id);
 
             return array(
-                'success'      => true, 
-                'id'           => $order_id, 
-                'order_number' => $order_number,
-                'data_source'  => 'nas_primary'
+                'success'             => true,
+                'id'                  => $order_id,
+                'order_number'        => $order_number,
+                'status'              => 'persisted',
+                'canonical_authority' => 'supabase',
+                'persisted_canonical' => true,
+                'data_source'         => 'supabase_canonical'
             );
         }
 
-        // CASE B: NAS IS OFFLINE — Direct to Supabase Backup
-        return $this->create_order_on_supabase($payload, $items, true);
+        // FALLBACK BUFFER WRITE: Supabase Cloud unavailable, buffer locally to TrueNAS
+        $nas_res = $this->create_order_on_nas($payload, $items);
+        if (!is_wp_error($nas_res) && !empty($nas_res['success'])) {
+            // Enqueue into durable WordPress retry queue for replay to Supabase
+            $queue = get_option('le_make_pending_orders_to_supabase', array());
+            $queue[] = array(
+                'payload'    => self::sanitize_log_data($payload),
+                'items'      => $items,
+                'created_at' => time()
+            );
+            update_option('le_make_pending_orders_to_supabase', $queue);
+
+            return array(
+                'success'             => true,
+                'id'                  => $nas_res['id'],
+                'order_number'        => $order_number,
+                'status'              => 'buffered',
+                'canonical_authority' => 'buffered_nas',
+                'persisted_canonical' => false,
+                'data_source'         => 'nas_buffer',
+                'warning'             => 'Order buffered to local storage; canonical cloud synchronization pending.'
+            );
+        }
+
+        // Both database targets failed
+        $sb_err = is_wp_error($sb_res) ? $sb_res->get_error_message() : 'Supabase write rejected';
+        $nas_err = is_wp_error($nas_res) ? $nas_res->get_error_message() : 'NAS buffer write rejected';
+
+        // Preserve failed order in durable dead-letter queue for administrator recovery
+        $failed_queue = get_option('le_make_durable_failed_orders', array());
+        $failed_queue[] = array(
+            'order_number' => $order_number,
+            'payload'      => self::sanitize_log_data($payload),
+            'items'        => $items,
+            'errors'       => array('supabase' => $sb_err, 'nas' => $nas_err),
+            'timestamp'    => time(),
+            'status'       => 'FAILED_ESCALATED'
+        );
+        update_option('le_make_durable_failed_orders', $failed_queue);
+
+        return new WP_Error('order_creation_failed', 'Failed to persist order: Cloud (' . esc_html($sb_err) . '), NAS (' . esc_html($nas_err) . '). Order preserved in durable recovery queue.');
+    }
+
+    /**
+     * Mirrors an order to TrueNAS NAS storage (secondary replication)
+     */
+    public function mirror_order_to_nas($payload, $items, $sb_order_id = null) {
+        if ($this->connection_tier !== 'cloudflare_tunnel' || !$this->is_nas_online) {
+            $this->queue_order_for_nas_mirror($payload, $items);
+            return false;
+        }
+        $result = $this->create_order_on_nas($payload, $items);
+        if (is_wp_error($result) && in_array($result->get_error_code(), array('nas_error_401', 'nas_error_403'), true)) {
+            // An authorization rejection happens before PostgREST executes the mutation;
+            // preserve the cloud-canonical order for retry after NAS credentials are repaired.
+            $this->queue_order_for_nas_mirror($payload, $items);
+        }
+        return $result;
+    }
+
+    private function queue_order_for_nas_mirror($payload, $items) {
+        $queue = get_option('le_make_pending_orders_to_nas', array());
+        $order_number = $payload['order_number'] ?? '';
+        foreach ($queue as $queued) {
+            if ($order_number && ($queued['payload']['order_number'] ?? '') === $order_number) {
+                return;
+            }
+        }
+        $queue[] = array(
+            'payload' => self::sanitize_log_data($payload),
+            'items'   => self::sanitize_log_data($items),
+            'created' => time(),
+            'source'  => 'supabase_canonical'
+        );
+        update_option('le_make_pending_orders_to_nas', $queue);
+    }
+
+    /**
+     * Writes order directly to TrueNAS PostgREST container
+     */
+    public function create_order_on_nas($payload, $items = array()) {
+        $order_res = $this->request_nas('make_orders', 'POST', $payload);
+        if (is_wp_error($order_res)) {
+            return $order_res;
+        }
+
+        $created_order = is_array($order_res) && !empty($order_res) ? $order_res[0] : array();
+        $order_id = $created_order['id'] ?? null;
+
+        if ($order_id && !empty($items) && is_array($items)) {
+            $items_payload = array();
+            foreach ($items as $item) {
+                $is_cust = !empty($item['is_customized']);
+                $dim_text = $item['dimensions_text'] ?? $item['size_label'] ?? null;
+                $items_payload[] = array(
+                    'order_id'          => $order_id,
+                    'product_id'        => !empty($item['product_id']) ? intval($item['product_id']) : null,
+                    'spec_id'           => !empty($item['spec_id']) ? intval($item['spec_id']) : null,
+                    'size_id'           => !empty($item['size_id']) ? intval($item['size_id']) : null,
+                    'color_id'          => !empty($item['color_id']) ? intval($item['color_id']) : null,
+                    'product_name'      => sanitize_text_field($item['product_name']),
+                    'spec_name'         => sanitize_text_field($item['spec_name'] ?? ''),
+                    'size_label'        => sanitize_text_field($dim_text ?? ''),
+                    'color_name'        => sanitize_text_field($item['color_name'] ?? ''),
+                    'quantity'          => intval($item['quantity'] ?? 1),
+                    'salesperson_note'  => sanitize_textarea_field($item['notes'] ?? ''),
+                    'item_cost_price'   => floatval($item['item_cost_price'] ?? 0),
+                    'item_sale_price'   => !empty($item['item_sale_price']) ? floatval($item['item_sale_price']) : null,
+                    'discount_type'     => !empty($item['discount_type']) ? sanitize_text_field($item['discount_type']) : null,
+                    'discount_value'    => isset($item['discount_value']) && $item['discount_value'] !== '' ? floatval($item['discount_value']) : null,
+                    'discount_amount'   => floatval($item['discount_amount'] ?? 0),
+                    'final_item_price'  => isset($item['final_item_price']) && $item['final_item_price'] !== '' ? floatval($item['final_item_price']) : null,
+                    'max_discount_type' => !empty($item['max_discount_type']) ? sanitize_text_field($item['max_discount_type']) : null,
+                    'max_discount_value'=> isset($item['max_discount_value']) && $item['max_discount_value'] !== '' ? floatval($item['max_discount_value']) : null,
+                    'is_customized'     => $is_cust,
+                    'custom_dimensions' => $item['custom_dimensions'] ?? ($is_cust ? $dim_text : null),
+                    'technical_drawing_url' => !empty($item['technical_drawing_url']) ? esc_url_raw($item['technical_drawing_url']) : null
+                );
+            }
+
+            if (!empty($items_payload)) {
+                $this->request_nas('make_order_items', 'POST', $items_payload);
+            }
+        }
+
+        if ($order_id && !empty($payload['money_received']) && floatval($payload['money_received']) > 0) {
+            $pay_row = array(
+                'order_id'       => $order_id,
+                'amount'         => floatval($payload['money_received']),
+                'payment_method' => 'CASH',
+                'reference'      => $payload['reference_bill_no'] ?? null,
+                'notes'          => 'Initial payment recorded at order placement',
+                'received_by'    => sanitize_text_field($payload['salesperson_name'] ?? 'Portal')
+            );
+            $this->request_nas('make_order_payments', 'POST', $pay_row);
+        }
+
+        return array(
+            'success'      => true,
+            'id'           => $order_id,
+            'order_number' => $payload['order_number']
+        );
+    }
+
+    /**
+     * Replays durable pending orders from TrueNAS buffer to Supabase Cloud
+     */
+    public function process_pending_supabase_orders() {
+        $queue = get_option('le_make_pending_orders_to_supabase', array());
+        if (empty($queue) || !is_array($queue)) {
+            return array('processed' => 0, 'remaining' => 0);
+        }
+
+        $processed = 0;
+        $remaining = array();
+
+        foreach ($queue as $item) {
+            $payload = $item['payload'] ?? array();
+            $items = $item['items'] ?? array();
+            $order_number = $payload['order_number'] ?? '';
+
+            if (empty($order_number)) {
+                continue;
+            }
+
+            // Check idempotency: does order already exist in Supabase?
+            $check = $this->request_supabase('make_orders?order_number=eq.' . urlencode($order_number) . '&select=id&limit=1', 'GET');
+            if (!is_wp_error($check) && !empty($check)) {
+                $processed++;
+                continue;
+            }
+
+            $res = $this->create_order_on_supabase($payload, $items, false);
+            if (!is_wp_error($res) && !empty($res['success'])) {
+                $processed++;
+            } else {
+                $remaining[] = $item;
+            }
+        }
+
+        update_option('le_make_pending_orders_to_supabase', $remaining);
+        return array('processed' => $processed, 'remaining' => count($remaining));
     }
 
     /**
@@ -1008,6 +1333,19 @@ class LEMakeNasDbClient {
             if (!empty($sb_items)) {
                 $this->request_supabase('make_order_items', 'POST', $sb_items);
             }
+        }
+
+        // Record initial payment into Supabase make_order_payments if received
+        if ($order_id && !empty($payload['money_received']) && floatval($payload['money_received']) > 0) {
+            $pay_row = array(
+                'order_id'       => $order_id,
+                'amount'         => floatval($payload['money_received']),
+                'payment_method' => 'CASH',
+                'reference'      => $payload['reference_bill_no'] ?? null,
+                'notes'          => 'Initial payment recorded at order placement',
+                'received_by'    => sanitize_text_field($payload['salesperson_name'] ?? 'Portal')
+            );
+            $this->request_supabase('make_order_payments', 'POST', $pay_row);
         }
 
         // Queue for NAS sync once NAS comes back online
@@ -1709,9 +2047,15 @@ class LEMakeNasDbClient {
 
         // 1. Fetch current order to identify salesman & designer
         $order = null;
-        $order_res = $this->request('make_orders?id=eq.' . $order_id . '&select=id,furniture_name,salesman_id,salesperson_name,designer_name', 'GET');
+        $order_res = $this->request('make_orders?id=eq.' . $order_id . '&select=id,furniture_name,salesman_id,salesperson_name,designer_name,production_hold,admin_approval_status,amount_due', 'GET');
         if (!is_wp_error($order_res) && !empty($order_res)) {
             $order = $order_res[0];
+        }
+
+        // Enforce Production Hold: If order is on hold and admin has not approved, reject transition
+        if ($order && !empty($order['production_hold']) && ($order['admin_approval_status'] ?? '') !== 'approved') {
+            $due_msg = !empty($order['amount_due']) ? (' (Outstanding balance: ৳' . number_format(floatval($order['amount_due'])) . ')') : '';
+            return new WP_Error('production_hold', 'Cannot advance production stage: Order is on Production Hold' . $due_msg . '. Administrator approval is required to proceed.');
         }
 
         // 2. Insert make_order_updates
@@ -1773,6 +2117,190 @@ class LEMakeNasDbClient {
             'stage'     => $clean_stage,
             'photo_url' => $photo_url
         );
+    }
+
+    /**
+     * Request administrator approval to proceed with production despite an unpaid balance / hold
+     */
+    public function request_production_approval($order_id, $notes = '', $user = null) {
+        $order_id = intval($order_id);
+        if (!$user) {
+            $user = wp_get_current_user();
+        }
+        $user_name = $user ? ($user->display_name ?: $user->user_login) : 'Staff';
+        $now = current_time('mysql', 1);
+
+        $order_res = $this->request('make_orders?id=eq.' . $order_id . '&select=id,order_number,furniture_name,amount_due', 'GET');
+        if (is_wp_error($order_res) || empty($order_res)) {
+            return new WP_Error('not_found', 'Order not found');
+        }
+        $order = $order_res[0];
+
+        $payload = array(
+            'admin_approval_status'       => 'pending',
+            'admin_approval_requested_by' => $user_name,
+            'admin_approval_requested_at' => $now,
+            'admin_approval_notes'        => sanitize_textarea_field($notes),
+            'updated_at'                  => $now
+        );
+
+        $this->request('make_orders?id=eq.' . $order_id, 'PATCH', $payload);
+        if ($this->connection_tier === 'cloudflare_tunnel') {
+            $this->request_supabase('make_orders?id=eq.' . $order_id, 'PATCH', $payload);
+        }
+
+        $note_text = 'Production release approval requested from Admin' . ($notes ? (': ' . sanitize_textarea_field($notes)) : '');
+        $update_row = array(
+            'order_id'   => $order_id,
+            'status'     => 'Pending Admin Approval',
+            'note'       => $note_text,
+            'updated_by' => $user_name
+        );
+        $this->request('make_order_updates', 'POST', $update_row);
+        if ($this->connection_tier === 'cloudflare_tunnel') {
+            $this->request_supabase('make_order_updates', 'POST', $update_row);
+        }
+
+        return array('success' => true, 'message' => 'Production approval request submitted to Administrators.');
+    }
+
+    /**
+     * Decide (approve or reject) production release on a held order (Admin only)
+     */
+    public function decide_production_approval($order_id, $decision, $notes = '', $user = null) {
+        $order_id = intval($order_id);
+        if (!$user) {
+            $user = wp_get_current_user();
+        }
+        $user_name = $user ? ($user->display_name ?: $user->user_login) : 'Admin';
+        $now = current_time('mysql', 1);
+        $is_approved = ($decision === 'approved');
+
+        $payload = array(
+            'admin_approval_status'       => $decision,
+            'admin_approval_decision_by'  => $user_name,
+            'admin_approval_decision_at'  => $now,
+            'admin_approval_notes'        => sanitize_textarea_field($notes),
+            'production_hold'             => !$is_approved,
+            'updated_at'                  => $now
+        );
+
+        $this->request('make_orders?id=eq.' . $order_id, 'PATCH', $payload);
+        if ($this->connection_tier === 'cloudflare_tunnel') {
+            $this->request_supabase('make_orders?id=eq.' . $order_id, 'PATCH', $payload);
+        }
+
+        $action_text = $is_approved ? 'APPROVED' : 'REJECTED';
+        $note_text = 'Production release ' . $action_text . ' by ' . $user_name . ($notes ? (': ' . sanitize_textarea_field($notes)) : '');
+        $update_row = array(
+            'order_id'   => $order_id,
+            'status'     => $is_approved ? 'Approved for Production' : 'Hold Confirmed',
+            'note'       => $note_text,
+            'updated_by' => $user_name
+        );
+        $this->request('make_order_updates', 'POST', $update_row);
+        if ($this->connection_tier === 'cloudflare_tunnel') {
+            $this->request_supabase('make_order_updates', 'POST', $update_row);
+        }
+
+        return array('success' => true, 'decision' => $decision, 'message' => 'Production approval ' . $decision . '.');
+    }
+
+    /**
+     * Authoritatively record an order payment, update amount due, and evaluate production hold
+     */
+    public function record_order_payment($order_id, $amount, $payment_method = 'CASH', $reference = '', $notes = '', $user = null) {
+        $order_id = intval($order_id);
+        $amount = floatval($amount);
+        if ($amount <= 0) {
+            return new WP_Error('invalid_amount', 'Payment amount must be greater than zero');
+        }
+
+        if (!$user) {
+            $user = wp_get_current_user();
+        }
+        $user_name = $user ? ($user->display_name ?: $user->user_login) : 'Staff';
+
+        $order_res = $this->request('make_orders?id=eq.' . $order_id . '&select=id,order_number,furniture_name,final_price,sale_price,money_received,amount_due,payment_status,production_hold,admin_approval_status', 'GET');
+        if (is_wp_error($order_res) || empty($order_res)) {
+            return new WP_Error('not_found', 'Order not found');
+        }
+        $order = $order_res[0];
+
+        $total_price = isset($order['final_price']) && $order['final_price'] !== null ? floatval($order['final_price']) : floatval($order['sale_price'] ?? 0);
+        $current_received = floatval($order['money_received'] ?? 0);
+        $new_received = round($current_received + $amount, 2);
+
+        if ($total_price > 0 && $new_received > $total_price + 0.01) {
+            return new WP_Error('overpayment', 'Payment exceeds total amount due');
+        }
+
+        $new_amount_due = max(0, round($total_price - $new_received, 2));
+        $new_status = ($new_amount_due <= 0) ? 'paid' : ($new_received > 0 ? 'partial' : 'unpaid');
+        $new_hold = ($new_amount_due > 0 && ($order['admin_approval_status'] ?? '') !== 'approved');
+        $now = current_time('mysql', 1);
+
+        // 1. Insert into make_order_payments
+        $pay_row = array(
+            'order_id'       => $order_id,
+            'amount'         => $amount,
+            'payment_method' => sanitize_text_field($payment_method ?: 'CASH'),
+            'reference'      => sanitize_text_field($reference ?: null),
+            'notes'          => sanitize_textarea_field($notes ?: null),
+            'received_by'    => $user_name
+        );
+        $this->request('make_order_payments', 'POST', $pay_row);
+        if ($this->connection_tier === 'cloudflare_tunnel') {
+            $this->request_supabase('make_order_payments', 'POST', $pay_row);
+        }
+
+        // 2. Update order header
+        $order_payload = array(
+            'money_received'  => $new_received,
+            'amount_due'      => $new_amount_due,
+            'payment_status'  => $new_status,
+            'production_hold' => $new_hold,
+            'hold_reason'     => $new_hold ? ('Outstanding balance of ৳' . number_format($new_amount_due) . ' due') : null,
+            'updated_at'      => $now
+        );
+        $this->request('make_orders?id=eq.' . $order_id, 'PATCH', $order_payload);
+        if ($this->connection_tier === 'cloudflare_tunnel') {
+            $this->request_supabase('make_orders?id=eq.' . $order_id, 'PATCH', $order_payload);
+        }
+
+        // 3. Timeline note
+        $note_text = 'Payment of ৳' . number_format($amount) . ' received (' . ($payment_method ?: 'CASH') . '). Remaining balance: ৳' . number_format($new_amount_due) . ($new_hold ? ' [HOLD ACTIVE]' : ' [HOLD RELEASED]');
+        $update_row = array(
+            'order_id'   => $order_id,
+            'status'     => $new_hold ? 'Production Hold' : ($order['status'] ?? 'Payment Received'),
+            'note'       => $note_text,
+            'updated_by' => $user_name
+        );
+        $this->request('make_order_updates', 'POST', $update_row);
+        if ($this->connection_tier === 'cloudflare_tunnel') {
+            $this->request_supabase('make_order_updates', 'POST', $update_row);
+        }
+
+        return array(
+            'success'         => true,
+            'money_received'  => $new_received,
+            'amount_due'      => $new_amount_due,
+            'payment_status'  => $new_status,
+            'production_hold' => $new_hold
+        );
+    }
+
+    /**
+     * Retrieve payment ledger history for an order
+     */
+    public function get_order_payments($order_id) {
+        $order_id = intval($order_id);
+        $endpoint = 'make_order_payments?order_id=eq.' . $order_id . '&order=created_at.desc';
+        $res = $this->request($endpoint, 'GET');
+        if (is_wp_error($res) || !is_array($res)) {
+            return array();
+        }
+        return $res;
     }
 
     /**

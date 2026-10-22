@@ -121,6 +121,37 @@
     activeTier: 'cloudflare_tunnel',
     offlineSyncPendingCount: 0,
     orderAttachment: null,
+    orderAttachments: [],
+    uploadingOrderAttachment: false,
+    moneyReceived: '',
+
+    // Line Item Discount State
+    itemDiscountType: 'percent', // 'percent' | 'amount'
+    itemDiscountValue: '',
+
+    // Financial & Production Hold Modals
+    paymentModalOrder: null,
+    paymentAmount: '',
+    paymentMethod: 'CASH',
+    paymentRef: '',
+    paymentNotes: '',
+    submittingPayment: false,
+    paymentError: '',
+
+    approvalRequestModalOrder: null,
+    approvalRequestNotes: '',
+    submittingApprovalRequest: false,
+    approvalRequestError: '',
+
+    approvalDecisionModalOrder: null,
+    approvalDecisionType: 'approved',
+    approvalDecisionNotes: '',
+    submittingApprovalDecision: false,
+    approvalDecisionError: '',
+
+    viewPaymentsModalOrder: null,
+    orderPayments: [],
+    loadingPayments: false,
 
     // Order Builder Form
     customer: {
@@ -376,6 +407,8 @@
       state.itemCostPrice = '';
       state.itemSalePrice = '';
     }
+    state.itemDiscountType = 'percent';
+    state.itemDiscountValue = '';
 
     render();
   }
@@ -433,6 +466,32 @@
       return;
     }
 
+    const prod = state.selectedProduct;
+    let baseUnitSale = (state.itemSalePrice !== '' && state.itemSalePrice !== null)
+      ? Number(state.itemSalePrice)
+      : Number(prod.selling_price || prod.mrp || 0);
+
+    const discType = state.itemDiscountType || 'percent';
+    const discVal = parseFloat(state.itemDiscountValue) || 0;
+    let finalUnitSale = baseUnitSale;
+
+    if (discVal > 0) {
+      if (discType === 'percent') {
+        if (prod.max_discount_percent && discVal > prod.max_discount_percent) {
+          alert(`Discount (${discVal}%) exceeds maximum allowed discount of ${prod.max_discount_percent}% for this product.`);
+          return;
+        }
+        finalUnitSale = Math.max(0, Math.round((baseUnitSale - ((baseUnitSale * discVal) / 100) + Number.EPSILON) * 100) / 100);
+      } else {
+        const maxAmt = prod.max_discount_amount || (prod.max_discount_percent ? (baseUnitSale * prod.max_discount_percent / 100) : null);
+        if (maxAmt !== null && discVal > maxAmt) {
+          alert(`Discount (৳${discVal}) exceeds maximum allowed discount of ৳${maxAmt} for this product.`);
+          return;
+        }
+        finalUnitSale = Math.max(0, Math.round((baseUnitSale - discVal + Number.EPSILON) * 100) / 100);
+      }
+    }
+
     let dimText = 'Standard Dimensions';
     let isCustomized = false;
 
@@ -482,9 +541,12 @@
       color_id: state.isCustomColor ? null : state.selectedColor?.id,
       color_name: colorName,
       color_code: colorCode,
+      unit_sale_price: baseUnitSale,
+      discount_type: discVal > 0 ? discType : null,
+      discount_value: discVal > 0 ? discVal : null,
       quantity: state.itemQty > 0 ? state.itemQty : 1,
       item_cost_price: costP,
-      item_sale_price: saleP,
+      item_sale_price: finalUnitSale,
       notes: state.itemNotes,
       technical_drawing_url: state.itemAttachedFile?.file_url || null,
       technical_drawing_name: state.itemAttachedFile?.file_name || null
@@ -498,6 +560,8 @@
     state.customSpecName = '';
     state.isCustomColor = false;
     state.customColorName = '';
+    state.itemDiscountType = 'percent';
+    state.itemDiscountValue = '';
     render();
   }
 
@@ -644,47 +708,49 @@
   }
 
   async function handleUploadAttachment(e) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (file.size > 20 * 1024 * 1024) {
-      alert('File size exceeds the 20MB limit.');
-      return;
-    }
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
 
     state.uploadingAttachment = true;
     render();
 
     try {
-      const formData = new FormData();
-      formData.append('file', file);
+      for (const file of files) {
+        if (file.size > 20 * 1024 * 1024) {
+          alert(`File "${file.name}" exceeds the 20MB limit.`);
+          continue;
+        }
 
-      const headers = {};
-      if (state.currentNonce) {
-        headers['X-WP-Nonce'] = state.currentNonce;
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const headers = {};
+        if (state.currentNonce) {
+          headers['X-WP-Nonce'] = state.currentNonce;
+        }
+
+        const res = await fetch(apiUrl + 'upload-attachment', {
+          method: 'POST',
+          headers,
+          credentials: 'same-origin',
+          body: formData
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ error: 'Upload failed' }));
+          throw new Error(err.error || err.message || 'Upload failed');
+        }
+
+        const data = await res.json();
+        if (!state.orderAttachments) state.orderAttachments = [];
+        state.orderAttachments.push({
+          name: data.filename || file.name,
+          url: data.url,
+          size: file.size,
+          tier: data.tier,
+          is_temp_offline: data.is_temp_offline || false
+        });
       }
-
-      const res = await fetch(apiUrl + 'upload-attachment', {
-        method: 'POST',
-        headers,
-        credentials: 'same-origin',
-        body: formData
-      });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: 'Upload failed' }));
-        throw new Error(err.error || err.message || 'Upload failed');
-      }
-
-      const data = await res.json();
-      if (!state.orderAttachments) state.orderAttachments = [];
-      state.orderAttachments.push({
-        name: data.filename || file.name,
-        url: data.url,
-        size: file.size,
-        tier: data.tier,
-        is_temp_offline: data.is_temp_offline || false
-      });
     } catch (err) {
       alert('Attachment upload failed: ' + err.message);
     } finally {
@@ -744,6 +810,20 @@
       state.customer.targetDeliveryDate = formatDateYMD(deliveryDate);
     }
 
+    const totalSale = state.cart.reduce((sum, item) => sum + ((parseFloat(item.item_sale_price) || 0) * (item.quantity || 1)), 0);
+    const moneyReceivedNum = state.moneyReceived !== '' && state.moneyReceived !== null && state.moneyReceived !== undefined
+      ? Math.max(0, parseFloat(state.moneyReceived) || 0)
+      : 0;
+
+    if (totalSale > 0 && moneyReceivedNum > totalSale + 0.01) {
+      alert(`Money received (৳${moneyReceivedNum.toLocaleString()}) cannot exceed total order price (৳${totalSale.toLocaleString()}).`);
+      return;
+    }
+
+    const amountDue = totalSale > 0 ? Math.max(0, Math.round((totalSale - moneyReceivedNum + Number.EPSILON) * 100) / 100) : 0;
+    const paymentStatus = totalSale > 0 && amountDue <= 0 ? 'paid' : (moneyReceivedNum > 0 ? 'partial' : 'unpaid');
+    const productionHold = amountDue > 0;
+
     const submitBtn = document.getElementById('le-make-submit-order-btn');
     if (submitBtn) {
       submitBtn.disabled = true;
@@ -773,6 +853,12 @@
         target_delivery_date: state.customer.targetDeliveryDate,
         delivery_date: state.customer.targetDeliveryDate,
         requested_delivery_date: state.customer.requestedDeliveryDate || null,
+        sale_price: totalSale,
+        final_price: totalSale,
+        money_received: moneyReceivedNum,
+        amount_due: amountDue,
+        payment_status: paymentStatus,
+        production_hold: productionHold,
         items: state.cart,
         invoice_attachment_urls: attachmentUrls,
         attachments: attachmentUrls
@@ -784,6 +870,9 @@
       // Reset form & reload data
       state.cart = [];
       state.orderAttachments = [];
+      state.moneyReceived = '';
+      state.itemDiscountType = 'percent';
+      state.itemDiscountValue = '';
       state.customer = {
         name: '', phone: '', email: '', address: '', landmark: '',
         receiverName: '', receiverPhone: '', instructions: '',
@@ -800,6 +889,152 @@
         submitBtn.innerText = 'Submit Production Order';
       }
     }
+  }
+
+  // ─── Payment & Production Hold Modal Handlers ──────────────────────────────
+  function openPaymentModal(order) {
+    state.paymentModalOrder = order;
+    state.paymentAmount = (order.amount_due && Number(order.amount_due) > 0) ? String(order.amount_due) : '';
+    state.paymentMethod = 'CASH';
+    state.paymentRef = '';
+    state.paymentNotes = '';
+    state.paymentError = '';
+    state.submittingPayment = false;
+    render();
+  }
+
+  function closePaymentModal() {
+    state.paymentModalOrder = null;
+    render();
+  }
+
+  async function handleRecordPaymentSubmit(e) {
+    e.preventDefault();
+    if (!state.paymentModalOrder) return;
+    const amt = parseFloat(state.paymentAmount);
+    if (isNaN(amt) || amt <= 0) {
+      state.paymentError = 'Please enter a valid positive payment amount.';
+      render();
+      return;
+    }
+    state.submittingPayment = true;
+    state.paymentError = '';
+    render();
+
+    try {
+      await api(`orders/${state.paymentModalOrder.id}/payments`, 'POST', {
+        amount: amt,
+        payment_method: state.paymentMethod,
+        reference: state.paymentRef || undefined,
+        notes: state.paymentNotes || undefined
+      });
+      state.paymentModalOrder = null;
+      await fetchData();
+      showToast('Payment Recorded', `Payment of ৳${amt.toLocaleString()} recorded successfully.`);
+    } catch (err) {
+      state.paymentError = err.message || 'Failed to record payment';
+      state.submittingPayment = false;
+      render();
+    }
+  }
+
+  function openApprovalRequestModal(order) {
+    state.approvalRequestModalOrder = order;
+    state.approvalRequestNotes = '';
+    state.approvalRequestError = '';
+    state.submittingApprovalRequest = false;
+    render();
+  }
+
+  function closeApprovalRequestModal() {
+    state.approvalRequestModalOrder = null;
+    render();
+  }
+
+  async function handleSubmitApprovalRequest(e) {
+    e.preventDefault();
+    if (!state.approvalRequestModalOrder) return;
+    if (!state.approvalRequestNotes.trim()) {
+      state.approvalRequestError = 'Please enter justification notes for the administrator.';
+      render();
+      return;
+    }
+    state.submittingApprovalRequest = true;
+    state.approvalRequestError = '';
+    render();
+
+    try {
+      await api(`orders/${state.approvalRequestModalOrder.id}/request-approval`, 'POST', {
+        notes: state.approvalRequestNotes
+      });
+      state.approvalRequestModalOrder = null;
+      await fetchData();
+      showToast('Override Requested', 'Production approval request submitted to Administrator.');
+    } catch (err) {
+      state.approvalRequestError = err.message || 'Failed to submit approval request';
+      state.submittingApprovalRequest = false;
+      render();
+    }
+  }
+
+  function openApprovalDecisionModal(order, decision) {
+    state.approvalDecisionModalOrder = order;
+    state.approvalDecisionType = decision || 'approved';
+    state.approvalDecisionNotes = '';
+    state.approvalDecisionError = '';
+    state.submittingApprovalDecision = false;
+    render();
+  }
+
+  function closeApprovalDecisionModal() {
+    state.approvalDecisionModalOrder = null;
+    render();
+  }
+
+  async function handleSubmitApprovalDecision(e) {
+    e.preventDefault();
+    if (!state.approvalDecisionModalOrder) return;
+    state.submittingApprovalDecision = true;
+    state.approvalDecisionError = '';
+    render();
+
+    try {
+      await api(`orders/${state.approvalDecisionModalOrder.id}/decide-approval`, 'POST', {
+        decision: state.approvalDecisionType,
+        notes: state.approvalDecisionNotes || undefined
+      });
+      state.approvalDecisionModalOrder = null;
+      await fetchData();
+      showToast('Decision Saved', `Production override decision "${state.approvalDecisionType}" recorded.`);
+    } catch (err) {
+      state.approvalDecisionError = err.message || 'Failed to record decision';
+      state.submittingApprovalDecision = false;
+      render();
+    }
+  }
+
+  async function openViewPaymentsModal(order) {
+    state.viewPaymentsModalOrder = order;
+    state.loadingPayments = true;
+    state.orderPayments = [];
+    render();
+
+    try {
+      const pmts = await api(`orders/${order.id}/payments`, 'GET');
+      state.orderPayments = Array.isArray(pmts) ? pmts : [];
+    } catch (err) {
+      console.error('Failed to load payments:', err);
+      state.orderPayments = [];
+    } finally {
+      state.loadingPayments = false;
+      render();
+    }
+  }
+
+  function closeViewPaymentsModal() {
+    state.viewPaymentsModalOrder = null;
+    state.orderPayments = [];
+    render();
   }
 
   async function openDiffModal(order) {
@@ -1021,6 +1256,11 @@
 
   // ─── Factory Manager Production Workbench ──────────────────────────────────
   function openStageUpdate(order) {
+    if (order.production_hold && order.admin_approval_status !== 'approved' && !state.user?.isAdmin) {
+      alert(`Production Hold Active: Order #${order.order_number || order.id} has an unpaid balance of ৳${Number(order.amount_due || 0).toLocaleString()}. Production cannot advance until full payment is recorded or an administrator approves an override.`);
+      return;
+    }
+
     state.activeStageUpdateOrder = order;
     const currentIdx = PRODUCTION_STAGES.indexOf(order.status);
     let nextStage = PRODUCTION_STAGES[0];
@@ -1102,6 +1342,11 @@
     }
 
     const currentOrder = state.activeStageUpdateOrder;
+    if (currentOrder?.production_hold && currentOrder?.admin_approval_status !== 'approved' && !state.user?.isAdmin) {
+      alert(`Cannot advance stage: This order is on Production Hold due to an unpaid balance of ৳${Number(currentOrder.amount_due || 0).toLocaleString()}. Full payment or an administrator override approval is required before production can proceed.`);
+      return;
+    }
+
     const currentIdx = PRODUCTION_STAGES.indexOf(currentOrder?.status);
     const targetIdx = PRODUCTION_STAGES.indexOf(stage);
 
@@ -1718,6 +1963,27 @@
                         ${!user.canEditSale ? 'disabled' : ''} />
                     </div>
 
+                    <!-- Line Item Discount -->
+                    <div>
+                      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                        <label class="le-make-label" style="margin: 0;">Line Discount</label>
+                        ${(state.selectedProduct && (state.selectedProduct.max_discount_percent || state.selectedProduct.max_discount_amount)) ? `
+                          <span style="font-size: 0.72rem; padding: 1px 6px; border-radius: 4px; background: rgba(16, 185, 129, 0.1); color: #059669; font-weight: 700;">
+                            Max: ${state.selectedProduct.max_discount_percent ? `${state.selectedProduct.max_discount_percent}%` : `৳${state.selectedProduct.max_discount_amount}`}
+                          </span>
+                        ` : ''}
+                      </div>
+                      <div style="display: grid; grid-template-columns: 75px 1fr; gap: 6px;">
+                        <select class="le-make-select" style="padding: 6px;" onchange="window.LE_MAKE.state.itemDiscountType = this.value; window.LE_MAKE.render();">
+                          <option value="percent" ${state.itemDiscountType === 'percent' ? 'selected' : ''}>%</option>
+                          <option value="amount" ${state.itemDiscountType === 'amount' ? 'selected' : ''}>৳</option>
+                        </select>
+                        <input type="number" min="0" class="le-make-input" placeholder="${state.itemDiscountType === 'percent' ? 'e.g. 10' : 'e.g. 2000'}"
+                          value="${escapeHtml(state.itemDiscountValue)}"
+                          oninput="window.LE_MAKE.state.itemDiscountValue = this.value" />
+                      </div>
+                    </div>
+
                     <!-- Quantity -->
                     <div>
                       <label class="le-make-label">Quantity</label>
@@ -1829,9 +2095,9 @@
 
                 <div>
                   <label class="le-make-label">Customer Sale Price (BDT ৳)</label>
-                  <input type="number" min="0" class="le-make-input" placeholder="${user.canEditSale ? 'e.g. 35000' : '🔒 Set by Designer'}"
+                  <input type="number" min="0" class="le-make-input" placeholder="${(user.canEditSale || user.isSalesman) ? 'e.g. 35000' : '🔒 Set by Designer'}"
                     value="${escapeHtml(state.itemSalePrice)}" oninput="window.LE_MAKE.state.itemSalePrice = this.value"
-                    ${!user.canEditSale ? 'disabled' : ''} />
+                    ${(!user.canEditSale && !user.isSalesman) ? 'disabled' : ''} />
                 </div>
 
                 <div>
@@ -2009,6 +2275,118 @@
           </div>
         </div>
 
+        <!-- ── 4. ORDER ATTACHMENTS (INVOICES / QUOTATIONS / BILLS) ── -->
+        <div class="le-make-subpanel" style="margin-bottom: 2rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px;">
+            <div>
+              <h4 class="le-make-section-title" style="margin: 0;">4. Order Invoices &amp; Supporting Documents</h4>
+              <div style="font-size: 0.75rem; color: var(--le-color-muted); margin-top: 2px;">
+                Attach customer invoices, bank vouchers, purchase orders, or design files (Multiple files supported).
+              </div>
+            </div>
+            <label class="le-make-btn le-make-btn-secondary le-make-btn-sm" style="cursor: pointer; display: inline-flex; align-items: center; gap: 6px; margin: 0;">
+              📁 Upload Invoices / Files
+              <input type="file" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" style="display: none;"
+                onchange="window.LE_MAKE.handleUploadAttachment(event)" ${state.uploadingAttachment ? 'disabled' : ''} />
+            </label>
+          </div>
+
+          ${state.uploadingAttachment ? `
+            <div style="font-size: 0.8rem; color: var(--le-accent); font-weight: 600; padding: 8px 0;">
+              ⏳ Uploading attachment(s)...
+            </div>
+          ` : ''}
+
+          ${(state.orderAttachments && state.orderAttachments.length > 0) ? `
+            <div style="display: flex; flex-direction: column; gap: 6px;">
+              ${state.orderAttachments.map((att, idx) => `
+                <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: #ffffff; border: 1px solid var(--le-color-border); border-radius: 6px; font-size: 0.82rem;">
+                  <div style="display: flex; align-items: center; gap: 8px; overflow: hidden;">
+                    <span>📄</span>
+                    <span style="font-weight: 600; color: var(--le-color-dark); text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${escapeHtml(att.name || att.url)}</span>
+                    ${att.is_temp_offline ? '<span class="le-make-badge" style="background:#fef3c7;color:#92400e;">Offline</span>' : '<span style="color:#059669;font-weight:700;">✓ Ready</span>'}
+                  </div>
+                  <button type="button" class="le-make-btn le-make-btn-sm" style="color: #dc2626; background: none; border: none; cursor: pointer; font-weight: 700;"
+                    onclick="window.LE_MAKE.handleRemoveAttachment(${idx})">
+                    ✕ Remove
+                  </button>
+                </div>
+              `).join('')}
+            </div>
+          ` : `
+            <div style="padding: 16px; border: 1px dashed var(--le-color-border); border-radius: 6px; text-align: center; color: var(--le-color-muted); font-size: 0.82rem;">
+              No invoices or documents attached yet. Click &quot;Upload Invoices / Files&quot; above to attach files.
+            </div>
+          `}
+        </div>
+
+        <!-- ── 5. FINANCIAL SUMMARY & PRODUCTION HOLD NOTICE ── -->
+        ${(() => {
+          const totalSalePrice = state.cart.reduce((sum, item) => sum + ((parseFloat(item.item_sale_price) || 0) * (item.quantity || 1)), 0);
+          const moneyReceivedNum = state.moneyReceived !== '' && state.moneyReceived !== null && state.moneyReceived !== undefined
+            ? Math.max(0, parseFloat(state.moneyReceived) || 0)
+            : 0;
+          const amountDue = totalSalePrice > 0 ? Math.max(0, Math.round((totalSalePrice - moneyReceivedNum + Number.EPSILON) * 100) / 100) : 0;
+          const paymentStatus = totalSalePrice > 0 && amountDue <= 0 ? 'paid' : (moneyReceivedNum > 0 ? 'partial' : 'unpaid');
+          const productionHold = amountDue > 0;
+
+          return `
+            <div class="le-make-panel" style="margin-bottom: 2rem; background: #fafafa; border: 1px solid var(--le-color-border); border-radius: var(--le-radius);">
+              <h4 class="le-make-section-title" style="margin: 0 0 14px;">5. Payment &amp; Production Hold Summary</h4>
+
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-bottom: 16px;">
+                <div style="background: #ffffff; padding: 12px 16px; border-radius: 8px; border: 1px solid var(--le-color-border);">
+                  <div style="font-size: 0.75rem; color: var(--le-color-muted); text-transform: uppercase; font-weight: 700;">Total Sale Value</div>
+                  <div style="font-size: 1.35rem; font-weight: 800; color: var(--le-color-dark); margin-top: 4px;">
+                    ৳${totalSalePrice.toLocaleString()}
+                  </div>
+                  <div style="font-size: 0.72rem; color: var(--le-color-muted); margin-top: 2px;">${state.cart.length} item(s) in order</div>
+                </div>
+
+                <div style="background: #ffffff; padding: 12px 16px; border-radius: 8px; border: 1px solid var(--le-color-border);">
+                  <div style="font-size: 0.75rem; color: var(--le-color-muted); text-transform: uppercase; font-weight: 700;">Money Received (Deposit)</div>
+                  <div style="margin-top: 4px;">
+                    <input type="number" min="0" max="${totalSalePrice}" class="le-make-input" placeholder="e.g. 10000"
+                      value="${escapeHtml(state.moneyReceived)}"
+                      oninput="window.LE_MAKE.state.moneyReceived = this.value; window.LE_MAKE.render();" />
+                  </div>
+                  <div style="font-size: 0.72rem; color: var(--le-color-muted); margin-top: 4px;">Advance payment collected from customer</div>
+                </div>
+
+                <div style="background: #ffffff; padding: 12px 16px; border-radius: 8px; border: 1px solid var(--le-color-border);">
+                  <div style="font-size: 0.75rem; color: var(--le-color-muted); text-transform: uppercase; font-weight: 700;">Remaining Balance Due</div>
+                  <div style="font-size: 1.35rem; font-weight: 800; color: ${amountDue > 0 ? '#b91c1c' : '#059669'}; margin-top: 4px;">
+                    ৳${amountDue.toLocaleString()}
+                  </div>
+                  <div style="margin-top: 4px;">
+                    ${paymentStatus === 'paid' ? '<span class="le-make-badge" style="background:#ecfdf5;color:#047857;border:1px solid #a7f3d0;font-weight:700;">PAID IN FULL</span>' : (paymentStatus === 'partial' ? '<span class="le-make-badge" style="background:#fffbeb;color:#b45309;border:1px solid #fde68a;font-weight:700;">PARTIAL PAYMENT</span>' : '<span class="le-make-badge" style="background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;font-weight:700;">UNPAID</span>')}
+                  </div>
+                </div>
+              </div>
+
+              ${productionHold ? `
+                <div style="display: flex; align-items: flex-start; gap: 12px; padding: 14px 16px; background: #fffbeb; border: 1px solid #fde68a; border-left: 5px solid #f59e0b; border-radius: 8px; color: #92400e; font-size: 0.85rem; line-height: 1.45;">
+                  <span style="font-size: 1.5rem; line-height: 1;">⛔</span>
+                  <div>
+                    <strong style="color: #78350f; font-size: 0.9rem;">Production Hold Active Upon Creation</strong>
+                    <div style="margin-top: 2px;">
+                      This order has an unpaid balance of <strong>৳${amountDue.toLocaleString()}</strong>.
+                      Production cannot advance past the Placed/Design stage until full payment is recorded or an Administrator grants an override approval.
+                    </div>
+                  </div>
+                </div>
+              ` : `
+                <div style="display: flex; align-items: center; gap: 10px; padding: 12px 16px; background: #ecfdf5; border: 1px solid #a7f3d0; border-left: 5px solid #10b981; border-radius: 8px; color: #065f46; font-size: 0.85rem;">
+                  <span style="font-size: 1.25rem;">✓</span>
+                  <div>
+                    <strong>Fully Paid &mdash; Clear for Production:</strong> No production hold will be applied to this order.
+                  </div>
+                </div>
+              `}
+            </div>
+          `;
+        })()}
+
         <!-- Submit Button -->
         <button id="le-make-submit-order-btn" class="le-make-btn le-make-btn-primary" style="width: 100%; padding: 14px; font-size: 1rem; font-weight: 700;" onclick="window.LE_MAKE.handleSubmitOrder(event)">
           Submit Production Order (${state.cart.length} Items)
@@ -2046,13 +2424,62 @@
               <div style="border: 1px solid ${o.approval_status === 'modification_pending_approval' ? 'rgba(255,106,0,0.4)' : 'var(--le-color-border)'}; border-radius: var(--le-radius); padding: 1.25rem; background: ${o.approval_status === 'modification_pending_approval' ? '#fffaf7' : '#ffffff'}; box-shadow: var(--le-shadow-subtle);">
                 
                 <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 10px; margin-bottom: 8px;">
-                  <div>
-                    <span style="font-family: var(--le-font-mono); font-weight: 700; color: var(--le-accent); font-size: 0.95rem; margin-right: 8px;">${escapeHtml(o.order_number || `#${o.id}`)}</span>
+                  <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+                    <span style="font-family: var(--le-font-mono); font-weight: 700; color: var(--le-accent); font-size: 0.95rem; margin-right: 4px;">${escapeHtml(o.order_number || `#${o.id}`)}</span>
                     <strong style="font-size: 1.05rem; font-family: var(--le-font-sans); color: var(--le-color-dark);">${escapeHtml(o.furniture_name)}</strong>
-                    <span style="margin-left: 8px;">${renderApprovalBadge(o.approval_status, o.current_version)}</span>
+                    ${renderApprovalBadge(o.approval_status, o.current_version)}
+
+                    <!-- Production Hold and Approval Badges -->
+                    ${o.production_hold ? `
+                      <span class="le-make-badge" style="background:#fef2f2;color:#991b1b;border:1px solid #fecaca;font-weight:700;font-size:0.72rem;padding:2px 8px;border-radius:12px;">
+                        ⛔ HOLD ACTIVE
+                      </span>
+                    ` : ''}
+                    ${o.admin_approval_status === 'pending' ? `
+                      <span class="le-make-badge" style="background:#fffbeb;color:#b45309;border:1px solid #fde68a;font-weight:700;font-size:0.72rem;padding:2px 8px;border-radius:12px;">
+                        ⏳ OVERRIDE PENDING
+                      </span>
+                    ` : (o.admin_approval_status === 'approved' ? `
+                      <span class="le-make-badge" style="background:#ecfdf5;color:#047857;border:1px solid #a7f3d0;font-weight:700;font-size:0.72rem;padding:2px 8px;border-radius:12px;">
+                        ✓ OVERRIDE APPROVED
+                      </span>
+                    ` : '')}
+
+                    <!-- Payment Status Badge -->
+                    ${o.payment_status === 'paid' ? `
+                      <span class="le-make-badge" style="background:#ecfdf5;color:#047857;border:1px solid #a7f3d0;font-size:0.72rem;padding:2px 8px;border-radius:12px;">PAID</span>
+                    ` : (o.payment_status === 'partial' ? `
+                      <span class="le-make-badge" style="background:#fffbeb;color:#b45309;border:1px solid #fde68a;font-size:0.72rem;padding:2px 8px;border-radius:12px;">PARTIAL</span>
+                    ` : `
+                      <span class="le-make-badge" style="background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;font-size:0.72rem;padding:2px 8px;border-radius:12px;">UNPAID</span>
+                    `)}
                   </div>
 
-                  <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                  <div style="display: flex; gap: 6px; flex-wrap: wrap; align-items: center;">
+                    <!-- Record Payment Button -->
+                    <button type="button" class="le-make-btn le-make-btn-sm" style="background: #10b981; color: #ffffff; border: none; display: inline-flex; align-items: center; gap: 4px;" onclick="window.LE_MAKE.openPaymentModal(${JSON.stringify(o).replace(/"/g, '&quot;')})">
+                      💳 Pay
+                    </button>
+
+                    <!-- Payment Ledger Button -->
+                    <button type="button" class="le-make-btn le-make-btn-secondary le-make-btn-sm" style="display: inline-flex; align-items: center; gap: 4px;" onclick="window.LE_MAKE.openViewPaymentsModal(${JSON.stringify(o).replace(/"/g, '&quot;')})">
+                      📜 History
+                    </button>
+
+                    <!-- Hold Override Actions -->
+                    ${(o.production_hold && o.admin_approval_status !== 'approved') ? `
+                      ${o.admin_approval_status !== 'pending' ? `
+                        <button type="button" class="le-make-btn le-make-btn-sm" style="background: #f59e0b; color: #ffffff; border: none;" onclick="window.LE_MAKE.openApprovalRequestModal(${JSON.stringify(o).replace(/"/g, '&quot;')})">
+                          ✋ Request Override
+                        </button>
+                      ` : ''}
+                      ${(state.user?.isAdmin) ? `
+                        <button type="button" class="le-make-btn le-make-btn-sm" style="background: #8b5cf6; color: #ffffff; border: none;" onclick="window.LE_MAKE.openApprovalDecisionModal(${JSON.stringify(o).replace(/"/g, '&quot;')}, 'approved')">
+                          ⚖️ Override
+                        </button>
+                      ` : ''}
+                    ` : ''}
+
                     ${(o.approval_status === 'modification_pending_approval' || o.approval_status === 'priced') ? `
                       <button class="le-make-btn le-make-btn-primary le-make-btn-sm" onclick="window.LE_MAKE.openDiffModal(${JSON.stringify(o).replace(/"/g, '&quot;')})">
                         🔍 Review Version v${o.current_version} Diff &amp; Approve
@@ -2063,26 +2490,38 @@
                       </button>
                     `}
                     <button type="button" class="le-make-btn le-make-btn-secondary le-make-btn-sm" style="display: inline-flex; align-items: center; gap: 4px;" onclick="window.LE_MAKE.openOrderAttach(${o.id})">
-                      📎 Attach File / Image
+                      📎 Attach
                     </button>
                     ${(state.user?.isAdmin || state.user?.isFactoryManager || state.user?.canUpdateProduction) ? `
                       <button type="button" class="le-make-btn le-make-btn-sm" style="background: #0284c7; color: #ffffff; border: none;" onclick="window.LE_MAKE.openStageUpdate(${JSON.stringify(o).replace(/"/g, '&quot;')})">
-                        🏭 Update Stage &amp; Photos
+                        🏭 Update Stage
                       </button>
                     ` : ''}
                   </div>
                 </div>
 
                 <!-- Order Details Grid -->
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; font-size: 0.82rem; color: var(--le-color-muted); margin-bottom: 10px;">
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; font-size: 0.82rem; color: var(--le-color-muted); margin-bottom: 10px;">
                   <div>Customer: <strong style="color: var(--le-color-dark);">${escapeHtml(o.customer_name || '—')}</strong> (${escapeHtml(o.customer_phone || '')})</div>
                   <div>Landmark: <strong style="color: var(--le-accent);">📍 ${escapeHtml(o.location_landmark || 'None')}</strong></div>
                   <div>Ref Bill No: <strong style="color: var(--le-color-dark); font-family: var(--le-font-mono);">${escapeHtml(o.reference_bill_no || '—')}</strong></div>
-                  <div>Target Delivery: <strong>${(o.target_delivery_date || o.delivery_date) ? new Date(o.target_delivery_date || o.delivery_date).toLocaleDateString() : 'TBD'}</strong> ${o.target_delivery_days ? `<span style="color: var(--le-accent); font-weight: 700;">(${o.target_delivery_days} days turnaround)</span>` : ''}</div>
-                  ${o.requested_delivery_date ? `<div>Req. Delivery: <strong style="color: var(--le-accent);">${new Date(o.requested_delivery_date).toLocaleDateString()}</strong></div>` : ''}
+                  <div>Target Delivery: <strong>${(o.target_delivery_date || o.delivery_date) ? new Date(o.target_delivery_date || o.delivery_date).toLocaleDateString() : 'TBD'}</strong> ${o.target_delivery_days ? `<span style="color: var(--le-accent); font-weight: 700;">(${o.target_delivery_days}d)</span>` : ''}</div>
                   <div>Sale Price: <strong style="color: var(--le-success);">${o.sale_price ? `৳${Number(o.sale_price).toLocaleString()}` : 'Pending Pricing'}</strong></div>
+                  <div>Received: <strong style="color: #059669;">৳${Number(o.money_received || 0).toLocaleString()}</strong></div>
+                  <div>Balance Due: <strong style="color: ${Number(o.amount_due || 0) > 0 ? '#b91c1c' : '#059669'};">৳${Number(o.amount_due || 0).toLocaleString()}</strong></div>
                   <div>Production Stage: <strong style="color: #0284c7;">${escapeHtml(o.status || 'Placed')}</strong></div>
                 </div>
+
+                <!-- Production Hold Lock Banner -->
+                ${(o.production_hold && o.admin_approval_status !== 'approved') ? `
+                  <div style="margin: 6px 0 10px; padding: 10px 14px; background: #fff1f2; border: 1px solid #fecdd3; border-left: 4px solid #e11d48; border-radius: 6px; color: #9f1239; font-size: 0.82rem; display: flex; align-items: center; gap: 10px;">
+                    <span style="font-size: 1.25rem;">🔒</span>
+                    <div>
+                      <strong>Production Hold Active:</strong> Order has an outstanding balance of <strong>৳${Number(o.amount_due || 0).toLocaleString()}</strong>.
+                      Production cannot advance past Placed/Design stage without 100% full payment or an Administrator Override Approval.
+                    </div>
+                  </div>
+                ` : ''}
 
                 <!-- Miniature Sequential Stage Stepper in Order Card -->
                 <div style="display: flex; gap: 4px; overflow-x: auto; margin: 4px 0 10px; padding: 4px 0;">
@@ -2618,6 +3057,256 @@
     `;
   }
 
+  // ─── Payment & Approval Modals ─────────────────────────────────────────────
+  function renderPaymentModal() {
+    if (!state.paymentModalOrder) return '';
+    const o = state.paymentModalOrder;
+
+    return `
+      <div class="le-make-modal-backdrop" onclick="if (event.target === this) window.LE_MAKE.closePaymentModal()">
+        <div class="le-make-modal-content" style="max-width: 480px; padding: 24px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; border-bottom: 1px solid var(--le-color-border); padding-bottom: 12px;">
+            <h3 style="margin: 0; font-size: 1.15rem; color: var(--le-color-dark);">
+              💳 Record Payment &mdash; ${escapeHtml(o.order_number || `#${o.id}`)}
+            </h3>
+            <button type="button" style="background: none; border: none; font-size: 20px; cursor: pointer; color: var(--le-color-muted);" onclick="window.LE_MAKE.closePaymentModal()">✕</button>
+          </div>
+
+          <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; margin-bottom: 16px; font-size: 0.85rem;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+              <span>Total Order Value:</span>
+              <strong>৳${Number(o.sale_price || o.final_price || 0).toLocaleString()}</strong>
+            </div>
+            <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+              <span>Total Received:</span>
+              <span style="color: #059669; font-weight: 700;">৳${Number(o.money_received || 0).toLocaleString()}</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; border-top: 1px dashed #cbd5e1; padding-top: 4px;">
+              <span>Outstanding Due:</span>
+              <strong style="color: #b91c1c;">৳${Number(o.amount_due || 0).toLocaleString()}</strong>
+            </div>
+          </div>
+
+          ${state.paymentError ? `
+            <div style="padding: 10px 12px; background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; color: #b91c1c; font-size: 0.82rem; margin-bottom: 14px;">
+              ${escapeHtml(state.paymentError)}
+            </div>
+          ` : ''}
+
+          <form onsubmit="window.LE_MAKE.handleRecordPaymentSubmit(event)">
+            <div class="le-make-form-group" style="margin-bottom: 12px;">
+              <label class="le-make-label">Payment Amount (BDT ৳) *</label>
+              <input type="number" min="0.01" step="0.01" class="le-make-input" placeholder="e.g. 5000"
+                value="${escapeHtml(state.paymentAmount)}"
+                oninput="window.LE_MAKE.state.paymentAmount = this.value" required autofocus />
+            </div>
+
+            <div class="le-make-form-group" style="margin-bottom: 12px;">
+              <label class="le-make-label">Payment Method</label>
+              <select class="le-make-select" onchange="window.LE_MAKE.state.paymentMethod = this.value">
+                <option value="CASH" ${state.paymentMethod === 'CASH' ? 'selected' : ''}>Cash</option>
+                <option value="BANK_TRANSFER" ${state.paymentMethod === 'BANK_TRANSFER' ? 'selected' : ''}>Bank Transfer / Wire</option>
+                <option value="BKASH" ${state.paymentMethod === 'BKASH' ? 'selected' : ''}>bKash</option>
+                <option value="NAGAD" ${state.paymentMethod === 'NAGAD' ? 'selected' : ''}>Nagad</option>
+                <option value="CHEQUE" ${state.paymentMethod === 'CHEQUE' ? 'selected' : ''}>Cheque</option>
+                <option value="CARD" ${state.paymentMethod === 'CARD' ? 'selected' : ''}>Credit / Debit Card</option>
+              </select>
+            </div>
+
+            <div class="le-make-form-group" style="margin-bottom: 12px;">
+              <label class="le-make-label">Reference / Transaction ID (Optional)</label>
+              <input type="text" class="le-make-input" placeholder="e.g. TXN-984214, Cheque #0045"
+                value="${escapeHtml(state.paymentRef)}"
+                oninput="window.LE_MAKE.state.paymentRef = this.value" />
+            </div>
+
+            <div class="le-make-form-group" style="margin-bottom: 16px;">
+              <label class="le-make-label">Payment Notes (Optional)</label>
+              <textarea class="le-make-textarea" rows="2" placeholder="e.g. 50% deposit received by showroom supervisor"
+                oninput="window.LE_MAKE.state.paymentNotes = this.value">${escapeHtml(state.paymentNotes)}</textarea>
+            </div>
+
+            <div style="display: flex; justify-content: flex-end; gap: 10px;">
+              <button type="button" class="le-make-btn le-make-btn-secondary" onclick="window.LE_MAKE.closePaymentModal()">
+                Cancel
+              </button>
+              <button type="submit" class="le-make-btn le-make-btn-primary" ${state.submittingPayment ? 'disabled' : ''}>
+                ${state.submittingPayment ? '⏳ Recording...' : 'Record Payment'}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderApprovalRequestModal() {
+    if (!state.approvalRequestModalOrder) return '';
+    const o = state.approvalRequestModalOrder;
+
+    return `
+      <div class="le-make-modal-backdrop" onclick="if (event.target === this) window.LE_MAKE.closeApprovalRequestModal()">
+        <div class="le-make-modal-content" style="max-width: 480px; padding: 24px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; border-bottom: 1px solid var(--le-color-border); padding-bottom: 12px;">
+            <h3 style="margin: 0; font-size: 1.15rem; color: var(--le-color-dark);">
+              ✋ Request Admin Override &mdash; ${escapeHtml(o.order_number || `#${o.id}`)}
+            </h3>
+            <button type="button" style="background: none; border: none; font-size: 20px; cursor: pointer; color: var(--le-color-muted);" onclick="window.LE_MAKE.closeApprovalRequestModal()">✕</button>
+          </div>
+
+          <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 12px; margin-bottom: 16px; font-size: 0.85rem; color: #92400e;">
+            This order has an unpaid balance of <strong>৳${Number(o.amount_due || 0).toLocaleString()}</strong>.
+            Requesting administrator approval allows production to proceed while payment is pending collection.
+          </div>
+
+          ${state.approvalRequestError ? `
+            <div style="padding: 10px 12px; background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; color: #b91c1c; font-size: 0.82rem; margin-bottom: 14px;">
+              ${escapeHtml(state.approvalRequestError)}
+            </div>
+          ` : ''}
+
+          <form onsubmit="window.LE_MAKE.handleSubmitApprovalRequest(event)">
+            <div class="le-make-form-group" style="margin-bottom: 16px;">
+              <label class="le-make-label">Justification / Notes for Admin *</label>
+              <textarea class="le-make-textarea" rows="3" placeholder="e.g. VIP client, cheque will clear on Wednesday, approved by GM"
+                oninput="window.LE_MAKE.state.approvalRequestNotes = this.value" required>${escapeHtml(state.approvalRequestNotes)}</textarea>
+            </div>
+
+            <div style="display: flex; justify-content: flex-end; gap: 10px;">
+              <button type="button" class="le-make-btn le-make-btn-secondary" onclick="window.LE_MAKE.closeApprovalRequestModal()">
+                Cancel
+              </button>
+              <button type="submit" class="le-make-btn le-make-btn-primary" ${state.submittingApprovalRequest ? 'disabled' : ''}>
+                ${state.submittingApprovalRequest ? '⏳ Submitting...' : 'Submit Request'}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderApprovalDecisionModal() {
+    if (!state.approvalDecisionModalOrder) return '';
+    const o = state.approvalDecisionModalOrder;
+
+    return `
+      <div class="le-make-modal-backdrop" onclick="if (event.target === this) window.LE_MAKE.closeApprovalDecisionModal()">
+        <div class="le-make-modal-content" style="max-width: 480px; padding: 24px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; border-bottom: 1px solid var(--le-color-border); padding-bottom: 12px;">
+            <h3 style="margin: 0; font-size: 1.15rem; color: var(--le-color-dark);">
+              ⚖️ Production Override Decision &mdash; ${escapeHtml(o.order_number || `#${o.id}`)}
+            </h3>
+            <button type="button" style="background: none; border: none; font-size: 20px; cursor: pointer; color: var(--le-color-muted);" onclick="window.LE_MAKE.closeApprovalDecisionModal()">✕</button>
+          </div>
+
+          <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; margin-bottom: 16px; font-size: 0.85rem;">
+            <div>Customer: <strong>${escapeHtml(o.customer_name || '—')}</strong></div>
+            <div>Unpaid Balance Due: <strong style="color: #b91c1c;">৳${Number(o.amount_due || 0).toLocaleString()}</strong></div>
+            ${o.admin_approval_request_notes ? `<div style="margin-top: 6px; font-style: italic; color: #475569;">Requester Note: "${escapeHtml(o.admin_approval_request_notes)}"</div>` : ''}
+          </div>
+
+          ${state.approvalDecisionError ? `
+            <div style="padding: 10px 12px; background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; color: #b91c1c; font-size: 0.82rem; margin-bottom: 14px;">
+              ${escapeHtml(state.approvalDecisionError)}
+            </div>
+          ` : ''}
+
+          <form onsubmit="window.LE_MAKE.handleSubmitApprovalDecision(event)">
+            <div class="le-make-form-group" style="margin-bottom: 12px;">
+              <label class="le-make-label">Decision</label>
+              <select class="le-make-select" onchange="window.LE_MAKE.state.approvalDecisionType = this.value">
+                <option value="approved" ${state.approvalDecisionType === 'approved' ? 'selected' : ''}>✓ Approve Override (Allow Production)</option>
+                <option value="rejected" ${state.approvalDecisionType === 'rejected' ? 'selected' : ''}>✕ Reject Override (Enforce Hold)</option>
+              </select>
+            </div>
+
+            <div class="le-make-form-group" style="margin-bottom: 16px;">
+              <label class="le-make-label">Decision Reason / Notes (Optional)</label>
+              <textarea class="le-make-textarea" rows="2" placeholder="e.g. Approved per corporate client credit agreement"
+                oninput="window.LE_MAKE.state.approvalDecisionNotes = this.value">${escapeHtml(state.approvalDecisionNotes)}</textarea>
+            </div>
+
+            <div style="display: flex; justify-content: flex-end; gap: 10px;">
+              <button type="button" class="le-make-btn le-make-btn-secondary" onclick="window.LE_MAKE.closeApprovalDecisionModal()">
+                Cancel
+              </button>
+              <button type="submit" class="le-make-btn ${state.approvalDecisionType === 'approved' ? 'le-make-btn-success' : 'le-make-btn-danger'}" ${state.submittingApprovalDecision ? 'disabled' : ''}>
+                ${state.submittingApprovalDecision ? '⏳ Saving...' : (state.approvalDecisionType === 'approved' ? 'Confirm Approval' : 'Confirm Rejection')}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderViewPaymentsModal() {
+    if (!state.viewPaymentsModalOrder) return '';
+    const o = state.viewPaymentsModalOrder;
+
+    return `
+      <div class="le-make-modal-backdrop" onclick="if (event.target === this) window.LE_MAKE.closeViewPaymentsModal()">
+        <div class="le-make-modal-content" style="max-width: 600px; padding: 24px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; border-bottom: 1px solid var(--le-color-border); padding-bottom: 12px;">
+            <h3 style="margin: 0; font-size: 1.15rem; color: var(--le-color-dark);">
+              📜 Payment History &mdash; ${escapeHtml(o.order_number || `#${o.id}`)}
+            </h3>
+            <button type="button" style="background: none; border: none; font-size: 20px; cursor: pointer; color: var(--le-color-muted);" onclick="window.LE_MAKE.closeViewPaymentsModal()">✕</button>
+          </div>
+
+          <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; margin-bottom: 16px; font-size: 0.85rem; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;">
+            <div>Total: <strong>৳${Number(o.sale_price || o.final_price || 0).toLocaleString()}</strong></div>
+            <div>Received: <strong style="color: #059669;">৳${Number(o.money_received || 0).toLocaleString()}</strong></div>
+            <div>Due: <strong style="color: #b91c1c;">৳${Number(o.amount_due || 0).toLocaleString()}</strong></div>
+          </div>
+
+          ${state.loadingPayments ? `
+            <div style="text-align: center; padding: 20px; color: var(--le-color-muted);">
+              <div class="le-make-spinner" style="margin: 0 auto 8px;"></div>
+              Loading payment records...
+            </div>
+          ` : (state.orderPayments && state.orderPayments.length > 0 ? `
+            <div style="max-height: 320px; overflow-y: auto;">
+              <table class="le-make-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Method</th>
+                    <th>Ref</th>
+                    <th style="text-align: right;">Amount (৳)</th>
+                    <th>Receiver</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${state.orderPayments.map(p => `
+                    <tr>
+                      <td style="font-size: 0.78rem;">${p.created_at ? new Date(p.created_at).toLocaleString() : '—'}</td>
+                      <td><span class="le-make-badge" style="background: #e0f2fe; color: #0369a1; font-size: 0.72rem;">${escapeHtml(p.payment_method || 'CASH')}</span></td>
+                      <td style="font-size: 0.78rem; font-family: var(--le-font-mono);">${escapeHtml(p.reference_number || '—')}</td>
+                      <td style="text-align: right; font-weight: 700; color: #059669;">৳${Number(p.amount || 0).toLocaleString()}</td>
+                      <td style="font-size: 0.78rem;">${escapeHtml(p.received_by_name || p.received_by || 'Staff')}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          ` : `
+            <div style="text-align: center; padding: 24px; color: var(--le-color-muted); font-size: 0.85rem;">
+              No payment ledger transactions recorded yet.
+            </div>
+          `)}
+
+          <div style="display: flex; justify-content: flex-end; margin-top: 16px;">
+            <button type="button" class="le-make-btn le-make-btn-secondary" onclick="window.LE_MAKE.closeViewPaymentsModal()">
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   function escapeHtml(str) {
     if (str === null || str === undefined) return '';
     return String(str)
@@ -2736,6 +3425,10 @@
       ${viewHtml}
       ${renderDiffModal()}
       ${renderHistoryModal()}
+      ${renderPaymentModal()}
+      ${renderApprovalRequestModal()}
+      ${renderApprovalDecisionModal()}
+      ${renderViewPaymentsModal()}
     `;
   }
 
@@ -2781,6 +3474,18 @@
     handleSubmitOrder,
     handleDeliveryDaysChange,
     handleDeliveryDateChange,
+    // Payment & Approval Modals
+    openPaymentModal,
+    closePaymentModal,
+    handleRecordPaymentSubmit,
+    openApprovalRequestModal,
+    closeApprovalRequestModal,
+    handleSubmitApprovalRequest,
+    openApprovalDecisionModal,
+    closeApprovalDecisionModal,
+    handleSubmitApprovalDecision,
+    openViewPaymentsModal,
+    closeViewPaymentsModal,
     // Order Attachments (Admin, Designer, Salesman)
     openOrderAttach,
     closeOrderAttach,

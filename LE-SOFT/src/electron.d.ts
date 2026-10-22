@@ -409,6 +409,7 @@ export interface ElectronAPI {
     makePickAndUploadDrawing?: (data: { orderId: number | string; itemId?: number | string }) => Promise<any>;
     makePickAndUploadStagePhoto?: (data: { orderId: number | string }) => Promise<any>;
     makePickAndUploadInvoiceAttachment?: (data?: { orderId?: number | string }) => Promise<any>;
+    makePickAndUploadBlueprint?: (data?: { productId?: number | string }) => Promise<any>;
     makeUploadInvoiceAttachmentBuffer?: (data: { fileName: string; fileBase64: string; orderId?: number | string; itemId?: number | string }) => Promise<any>;
     makeGetOrderParts: (orderId: number | string) => Promise<any[]>;
     makeUpsertPart: (part: any) => Promise<any>;
@@ -440,12 +441,18 @@ export interface ElectronAPI {
     makeAssignProductAttributes?: (data: { productId: number | string; specIds?: (number | string)[]; sizeIds?: (number | string)[]; colorIds?: (number | string)[] }) => Promise<any>;
     makeGetProductPurchaseHistory?: (productId: number | string) => Promise<any>;
     makeGetOrderItems: (orderId: number | string) => Promise<any[]>;
+    makeRemoveOrderItem?: (data: { orderId: number; itemId: number }) => Promise<{ success: boolean; error?: string }>;
+    makeUpdateOrderItemQuantity?: (data: { orderId: number; itemId: number; quantity: number }) => Promise<{ success: boolean; error?: string }>;
     makeDesignerSaveSpecsAndPricing: (data: any) => Promise<any>;
     makeGetOrderVersions: (orderId: number | string) => Promise<any[]>;
     makeGetVersionDiff: (orderIdOrData: any, fromVersion?: number, toVersion?: number) => Promise<any>;
     makeUpdateProductionStage: (data: any) => Promise<any>;
     makeSearchCustomers?: (query: string) => Promise<{ success: boolean; customers: any[]; error?: string }>;
     makeGetCustomerDetails?: (customerId: number | string) => Promise<{ success: boolean; customer?: any; error?: string }>;
+    makeRequestProductionApproval?: (data: { orderId: number | string; notes?: string }) => Promise<{ success: boolean; error?: string; message?: string }>;
+    makeDecideProductionApproval?: (data: { orderId: number | string; decision: 'approved' | 'rejected'; notes?: string }) => Promise<{ success: boolean; decision?: 'approved' | 'rejected'; error?: string; message?: string }>;
+    makeRecordOrderPayment?: (data: { orderId: number | string; amount: number; paymentMethod?: string; reference?: string; notes?: string }) => Promise<{ success: boolean; error?: string; moneyReceived?: number; amountDue?: number; paymentStatus?: string; productionHold?: boolean }>;
+    makeGetOrderPayments?: (orderId: number | string) => Promise<{ success: boolean; payments: any[]; error?: string }>;
 
     // Window Controls
     setTheme: (theme: string) => Promise<void>;

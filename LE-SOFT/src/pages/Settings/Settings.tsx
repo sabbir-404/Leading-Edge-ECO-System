@@ -349,6 +349,8 @@ const Settings: React.FC = () => {
     const [nasLocalHost, setNasLocalHost] = useState('192.168.1.14');
     const [nasTunnelDbUrl, setNasTunnelDbUrl] = useState('https://db.lenas.me');
     const [nasTunnelStorageUrl, setNasTunnelStorageUrl] = useState('https://storage.lenas.me');
+    const [nasJwtToken, setNasJwtToken] = useState('');
+    const [hasNasJwtToken, setHasNasJwtToken] = useState(false);
     const [cfClientId, setCfClientId] = useState('');
     const [cfClientSecret, setCfClientSecret] = useState('');
     const [showCfSecret, setShowCfSecret] = useState(false);
@@ -372,6 +374,7 @@ const Settings: React.FC = () => {
                     setNasLocalHost(parseHost(cfg.nasLocalUrl, '192.168.1.14'));
                     setNasTunnelDbUrl(cfg.nasTunnelUrl || 'https://db.lenas.me');
                     setNasTunnelStorageUrl(cfg.nasTunnelStorageUrl || 'https://storage.lenas.me');
+                    setHasNasJwtToken(cfg.hasNasJwtToken === true);
                     setCfClientId(cfg.cfAccessClientId || '');
                     // Show masked secret if one exists (don't reveal the actual value)
                     setCfClientSecret(cfg.cfAccessClientSecret ? '••••••••••••••••••••••••••••••••' : '');
@@ -398,6 +401,7 @@ const Settings: React.FC = () => {
             // Only send CF credentials if they were actually changed (not the masked placeholder)
             const cfIdToSave     = cfClientId.trim();
             const cfSecretToSave = cfClientSecret.startsWith('\u2022') ? undefined : cfClientSecret.trim();
+            const nasJwtToSave = nasJwtToken.trim();
 
             const savePayload: Record<string, string | undefined> = {
                 nasLocalUrl:        `http://${localHost}:3001`,
@@ -409,10 +413,17 @@ const Settings: React.FC = () => {
             if (cfSecretToSave !== undefined) {
                 savePayload.cfAccessClientSecret = cfSecretToSave;
             }
+            if (nasJwtToSave) {
+                savePayload.nasJwtToken = nasJwtToSave;
+            }
 
             const res = await window.electron.saveSupabaseConfig(savePayload);
 
             if (res?.success) {
+                if (nasJwtToSave) {
+                    setHasNasJwtToken(true);
+                    setNasJwtToken('');
+                }
                 showToast('NAS Server settings saved!', 'success');
                 setNasConfigMsg('Saved! Connectivity check will run automatically.');
                 setTimeout(() => { checkNasConnectionState(); }, 1000);
@@ -1102,10 +1113,10 @@ const Settings: React.FC = () => {
                                                 }} />
                                                 <div>
                                                     <p style={{ margin: 0, fontWeight: 600, fontSize: '0.85rem' }}>
-                                                        {!nasConnectionState.isNasOnline ? 'Offline' : 'Connected'}
+                                                        {!nasConnectionState.isNasOnline ? 'Offline' : nasConnectionState.nasAuthorizationError ? 'Online · access rejected' : 'Connected'}
                                                     </p>
                                                     <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                                                        {nasConnectionState.isNasOnline ? 'Primary server online & operational' : 'Dedicated server offline'}
+                                                        {!nasConnectionState.isNasOnline ? 'Dedicated server is unreachable' : nasConnectionState.nasAuthorizationError ? 'NAS is reachable; database access was rejected. Using cloud fallback.' : 'Primary server online & operational'}
                                                     </p>
                                                 </div>
                                             </div>
@@ -1163,6 +1174,24 @@ const Settings: React.FC = () => {
                                             </div>
                                         </div>
                                         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+
+                                            <div style={{ padding: '0.85rem 1rem', borderRadius: '8px', background: hasNasJwtToken ? 'rgba(34,197,94,0.06)' : 'rgba(251,146,60,0.06)', border: `1px solid ${hasNasJwtToken ? 'rgba(34,197,94,0.2)' : 'rgba(251,146,60,0.25)'}` }}>
+                                                <p style={{ margin: '0 0 0.6rem', fontSize: '0.78rem', fontWeight: 700, color: hasNasJwtToken ? '#22c55e' : '#f97316', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                                    NAS database authorization — {hasNasJwtToken ? 'credential configured' : 'credential required'}
+                                                </p>
+                                                <p style={{ margin: '0 0 0.65rem', fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                                                    PostgREST needs a NAS-issued JWT with the application database role. The TrueNAS login password, Supabase anon key, and service-role key are not valid here. The JWT is encrypted with Windows secure storage and never returned to the renderer. Leave this field blank to keep the saved token.
+                                                </p>
+                                                <input
+                                                    style={input}
+                                                    type="password"
+                                                    value={nasJwtToken}
+                                                    onChange={e => setNasJwtToken(e.target.value)}
+                                                    placeholder={hasNasJwtToken ? 'Saved securely — enter a new JWT to rotate it' : 'Paste NAS database JWT'}
+                                                    autoComplete="new-password"
+                                                    spellCheck={false}
+                                                />
+                                            </div>
 
                                             {/* Tier 1: Local LAN */}
                                             <div style={{ padding: '0.85rem 1rem', borderRadius: '8px', background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.2)' }}>

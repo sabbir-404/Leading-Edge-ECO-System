@@ -452,9 +452,21 @@ describe('Smart NAS / Tailscale Database Access — Issue 2 Fixes', () => {
 
             // 2. Configure mock table with working upsert
             const mockUpsert = vi.fn().mockResolvedValue({ data: updatedProduct, error: null });
+            mockNasClient.from.mockReturnValue({
+                select: vi.fn().mockReturnValue({
+                    eq: vi.fn().mockReturnValue({
+                        maybeSingle: vi.fn().mockResolvedValue({ data: { id: 505 }, error: null })
+                    })
+                })
+            });
             mockSupabaseAdmin.from.mockReturnValue({
                 upsert: mockUpsert,
-                delete: vi.fn()
+                delete: vi.fn(),
+                select: vi.fn().mockReturnValue({
+                    eq: vi.fn().mockReturnValue({
+                        maybeSingle: vi.fn().mockResolvedValue({ data: { id: 505 }, error: null })
+                    })
+                })
             });
 
             // 3. Process pending mirror retries

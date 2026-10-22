@@ -52,6 +52,8 @@ LE-SOFT/
   - **Properties**: **Additive, non-destructive, zero-downtime, fully idempotent** (`ADD COLUMN IF NOT EXISTS`, `CREATE TABLE IF NOT EXISTS`).
   - **Reload PostgREST**: Issues `NOTIFY pgrst, 'reload schema'` to refresh PostgREST schema cache.
   - **Rollback Safety**: `database/truenas/rollback/069_nas_schema_synchronization_rollback.sql` is **PROHIBITED IN PRODUCTION**. It drops data-bearing financial tables and columns (`DROP TABLE CASCADE`, `DROP COLUMN`). If repair is needed, forward-fix idempotently or restore from the pre-migration `pg_dump` backup.
+* **Migration 070 Forward**: `070_nas_make_authenticated_workflow_grants.sql` grants the authenticated NAS role only the MAKE tables used by desktop and portal workflows; it also refreshes PostgREST's schema cache.
+* **Migration 071 Forward**: `071_nas_make_product_blueprint_and_size.sql` adds the nullable `blueprint_url` and `size_id` columns, size foreign key/index, and backfills existing size links. It is additive and idempotent. Its rollback removes only the index and foreign key; it deliberately retains these data-bearing columns.
 
 ### Target 3: Remote MySQL Destination Store
 * **Engine**: MySQL 8.0+ or MariaDB 10.5+ (InnoDB engine, utf8mb4 collation).
@@ -71,7 +73,7 @@ LE-SOFT/
 When promoting changes across environments, migrations must be executed in this strict sequence:
 
 1. **Step 1 — TrueNAS Master Forward Migration**:
-   Apply `database/truenas/migrations/069_nas_schema_synchronization_and_bills.sql` to TrueNAS PostgreSQL. PostgREST automatically reloads schema cache.
+   Apply the required forward migrations in order: `069_nas_schema_synchronization_and_bills.sql`, `070_nas_make_authenticated_workflow_grants.sql`, then `071_nas_make_product_blueprint_and_size.sql`. PostgREST automatically reloads its schema cache where required.
 2. **Step 2 — Supabase Cloud Quota Migration**:
    Apply `supabase/migrations/070_supabase_buffer_quota_reservations.sql` to Supabase Cloud PostgreSQL.
 3. **Step 3 — MySQL Idempotency DDL**:

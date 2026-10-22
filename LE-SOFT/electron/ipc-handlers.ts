@@ -3040,7 +3040,7 @@ export function registerHandlers() {
     ipcMain.handle('get-exchange-orders', async () => {
         const { data, error } = await supabase
             .from('exchange_orders')
-            .select('*, customer:billing_customers(name, phone), bill:bills(invoice_number)')
+            .select('*, customer:billing_customers(name, phone), bill:bills!exchange_orders_bill_id_fkey(invoice_number)')
             .order('created_at', { ascending: false });
         if (error) throw error;
         return (data || []).map((ex: any) => ({
@@ -3951,6 +3951,7 @@ export function registerHandlers() {
             connectionState: status.connectionTier,
             activeNasUrl: status.activeNasUrl,
             isNasOnline: status.isNasReachable,
+            nasAuthorizationError: status.nasAuthorizationError,
             activeTarget: status.activeTarget,
             circuitState: status.circuitState,
             pendingReconciliationCount: status.pendingReconciliationCount,
@@ -4008,6 +4009,7 @@ export function registerHandlers() {
                 // Mask the client secret if present so the UI can show •••••••• without receiving the secret
                 cfAccessClientSecret: cfg.cfAccessClientSecret ? '••••••••••••••••••••••••••••••••' : '',
                 hasServiceRoleKey: !!cfg.serviceRoleKey,
+                hasNasJwtToken: !!cfg.nasJwtToken,
             };
         } catch (e) {
             return { 
@@ -4027,6 +4029,16 @@ export function registerHandlers() {
             const configToSave = { ...newConfig };
             if (configToSave.cfAccessClientSecret === '••••••••••••••••••••••••••••••••') {
                 delete configToSave.cfAccessClientSecret;
+            }
+            if (configToSave.nasJwtToken !== undefined) {
+                if (typeof configToSave.nasJwtToken !== 'string' || configToSave.nasJwtToken.length > 16384) {
+                    throw new Error('NAS database credential must be a valid JWT string.');
+                }
+                const token = configToSave.nasJwtToken.trim();
+                if (token && token.split('.').length !== 3) {
+                    throw new Error('NAS database credential must be a valid JWT string.');
+                }
+                configToSave.nasJwtToken = token;
             }
             saveSupabaseConfig(configToSave);
             return { success: true };
@@ -4281,16 +4293,73 @@ export function registerHandlers() {
     ipcMain.handle('get-make-orders', async () => {
         const session = SessionManager.getSession();
         const role = (session?.role || '').toLowerCase();
-        const isFactoryManager = role === 'factory_manager' || role === 'factory manager' || role === 'factory';
+        const isAdmin = role === 'admin' || role === 'superadmin' || role === 'manager';
+
+        const isSales = role === 'salesperson' || role === 'salesman' || role === 'sales';
+        const isFactory = role === 'factory_manager' || role === 'factory manager' || role === 'factory';
+        const isDesigner = role === 'furniture_designer' || role === 'furniture designer' || role === 'designer' || role === 'make_designer';
+        const canViewCost = isAdmin || isSales || isFactory || isDesigner || !!session?.permissions?.view_product_cost_price;
+        const canViewSale = isAdmin || isDesigner || (!isSales && !isFactory && !!session?.permissions?.view_product_sale_price);
+        const canViewBalance = isAdmin || isSales || isDesigner;
+        const canViewMaxDiscount = isAdmin || (session?.permissions?.view_product_max_discount !== undefined ? !!session.permissions.view_product_max_discount : (role !== 'factory_manager' && role !== 'factory manager' && role !== 'factory'));
 
         const sanitizeOrder = (o: any) => {
-            if (!isFactoryManager) return o;
-            const { sale_price, custom_price, ...rest } = o;
-            return rest;
+            const copy = { ...o };
+            if (!canViewCost) {
+                delete copy.cost_price;
+                delete copy.total_cost_price;
+                if (copy.custom_details && typeof copy.custom_details === 'object') {
+                    const { cost_price: _c, total_cost: _tc, ...restDetails } = copy.custom_details;
+                    copy.custom_details = restDetails;
+                }
+            }
+            if (!canViewSale) {
+                delete copy.sale_price;
+                delete copy.custom_price;
+                delete copy.final_price;
+                delete copy.total_sale_price;
+                delete copy.money_received;
+                if (copy.custom_details && typeof copy.custom_details === 'object') {
+                    const { subtotal: _s, final_price: _fp, money_received: _mr, ...restDetails } = copy.custom_details;
+                    copy.custom_details = restDetails;
+                }
+            }
+            if (!canViewBalance) {
+                delete copy.amount_due;
+                delete copy.payment_status;
+                if (copy.custom_details && typeof copy.custom_details === 'object') {
+                    const { amount_due: _ad, payment_status: _ps, ...restDetails } = copy.custom_details;
+                    copy.custom_details = restDetails;
+                }
+            }
+            if (!canViewSale && copy.custom_details && typeof copy.custom_details === 'object' && Array.isArray(copy.custom_details.items)) {
+                copy.custom_details = {
+                    ...copy.custom_details,
+                    items: copy.custom_details.items.map((item: any) => {
+                        const safeItem = { ...item };
+                        delete safeItem.item_sale_price;
+                        delete safeItem.unit_sale_price;
+                        delete safeItem.sale_price;
+                        delete safeItem.final_item_price;
+                        delete safeItem.total_sale_price;
+                        return safeItem;
+                    })
+                };
+            }
+            if (!canViewMaxDiscount) {
+                delete copy.discount_type;
+                delete copy.discount_value;
+                delete copy.discount_amount;
+                if (copy.custom_details && typeof copy.custom_details === 'object') {
+                    const { discount_type: _dt, discount_value: _dv, discount_amount: _da, ...restDetails } = copy.custom_details;
+                    copy.custom_details = restDetails;
+                }
+            }
+            return copy;
         };
 
         try {
-            const { data, error } = await supabase.from('make_orders').select('*, salesman:users(full_name), bill:bills(invoice_number)').order('created_at', { ascending: false });
+            const { data, error } = await supabase.from('make_orders').select('*, salesman:users!make_orders_salesman_id_fkey(full_name), bill:bills!make_orders_bill_id_fkey(invoice_number)').order('created_at', { ascending: false });
             if (!error && data) {
                 return decryptRows(data).map((o: any) => sanitizeOrder({
                     ...o, 
@@ -4305,7 +4374,7 @@ export function registerHandlers() {
             console.warn('[MAKE] get-make-orders join exception:', err.message);
         }
 
-        const { data: baseData, error: baseErr } = await supabase.from('make_orders').select('*, salesman:users(full_name)').order('created_at', { ascending: false });
+        const { data: baseData, error: baseErr } = await supabase.from('make_orders').select('*, salesman:users!make_orders_salesman_id_fkey(full_name)').order('created_at', { ascending: false });
         if (baseErr) throw baseErr;
         return decryptRows(baseData || []).map((o: any) => sanitizeOrder({
             ...o, 
@@ -4315,11 +4384,22 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('get-salesmen', async () => {
-        // Fetch users in the 'Salesman' group
-        const { data: grp } = await supabase.from('user_groups').select('id').eq('name', 'Salesman').maybeSingle();
-        if (!grp) return [];
-        const { data, error } = await supabase.from('users').select('id, username, full_name, email').eq('group_id', grp.id).eq('is_active', 1);
-        if (error) throw error;
+        // Query users in 'Salesman' or 'Salesperson' groups or with role 'salesman'/'salesperson'
+        const { data: grps } = await supabase.from('user_groups').select('id, name').in('name', ['Salesman', 'Salesperson']);
+        const groupIds = (grps || []).map((g: any) => g.id);
+
+        let query = supabase.from('users').select('id, username, full_name, email, role, group_id').eq('is_active', 1);
+        if (groupIds.length > 0) {
+            query = query.or(`group_id.in.(${groupIds.join(',')}),role.in.(salesman,salesperson)`);
+        } else {
+            query = query.in('role', ['salesman', 'salesperson']);
+        }
+        const { data, error } = await query;
+        if (error) {
+            // Fallback query if .or syntax errors out
+            const { data: fallbackUsers } = await supabase.from('users').select('id, username, full_name, email').in('role', ['salesman', 'salesperson']).eq('is_active', 1);
+            return decryptRows(fallbackUsers || []);
+        }
         return decryptRows(data || []);
     });
 
@@ -4346,7 +4426,7 @@ export function registerHandlers() {
         });
 
         // Notify the creator (designer)
-        const { data: order, error: fetchErr } = await supabase.from('make_orders').select('designer_name, furniture_name, bill_id, bill:bills(invoice_number)').eq('id', orderId).maybeSingle();
+        const { data: order, error: fetchErr } = await supabase.from('make_orders').select('designer_name, furniture_name, bill_id, bill:bills!make_orders_bill_id_fkey(invoice_number)').eq('id', orderId).maybeSingle();
         if (!fetchErr && order) {
             const invoiceNumber = (order.bill as any)?.invoice_number || 'N/A';
             const { data: designer } = await supabase.from('users')
@@ -4470,7 +4550,8 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('get-make-order-updates', async (_e, orderId) => {
-        const { data } = await supabase.from('make_order_updates').select('*').eq('order_id', orderId).order('created_at');
+        const { data, error } = await supabase.from('make_order_updates').select('*').eq('order_id', orderId).order('created_at');
+        if (error) throw error;
         return decryptRows(data || []);
     });
 

@@ -280,6 +280,7 @@ contextBridge.exposeInMainWorld('electron', {
     makePickAndUploadDrawing: (data: { orderId: number | string; itemId?: number | string }) => ipcRenderer.invoke('make-pick-and-upload-drawing', data),
     makePickAndUploadStagePhoto: (data: { orderId: number | string }) => ipcRenderer.invoke('make-pick-and-upload-stage-photo', data),
     makePickAndUploadInvoiceAttachment: (data?: { orderId?: number | string }) => ipcRenderer.invoke('make-pick-and-upload-invoice-attachment', data),
+    makePickAndUploadBlueprint: (data?: { productId?: number | string }) => ipcRenderer.invoke('make-pick-and-upload-blueprint', data),
     makeUploadInvoiceAttachmentBuffer: (data: { fileName: string; fileBase64: string; orderId?: number | string; itemId?: number | string }) => ipcRenderer.invoke('make-upload-invoice-attachment-buffer', data),
     // Make — Parts / Dimensions
     makeGetOrderParts: (orderId: number | string) => ipcRenderer.invoke('make-get-order-parts', orderId),
@@ -316,6 +317,8 @@ contextBridge.exposeInMainWorld('electron', {
 
     // Make — Multi-Item Orders, Pricing & Versioning
     makeGetOrderItems: (orderId: number | string) => ipcRenderer.invoke('make-get-order-items', orderId),
+    makeRemoveOrderItem: (data: { orderId: number; itemId: number }) => ipcRenderer.invoke('make-remove-order-item', data),
+    makeUpdateOrderItemQuantity: (data: { orderId: number; itemId: number; quantity: number }) => ipcRenderer.invoke('make-update-order-item-quantity', data),
     makeDesignerSaveSpecsAndPricing: (data: any) => ipcRenderer.invoke('make-designer-save-specs-and-pricing', data),
     makeGetOrderVersions: (orderId: number | string) => ipcRenderer.invoke('make-get-order-versions', orderId),
     makeGetVersionDiff: (orderIdOrData: any, fromVersion?: number, toVersion?: number) => {
@@ -327,6 +330,10 @@ contextBridge.exposeInMainWorld('electron', {
     makeUpdateProductionStage: (data: any) => ipcRenderer.invoke('make-update-production-stage', data),
     makeSearchCustomers: (query: string) => ipcRenderer.invoke('make-search-customers', query),
     makeGetCustomerDetails: (customerId: number | string) => ipcRenderer.invoke('make-get-customer-details', customerId),
+    makeRequestProductionApproval: (data: { orderId: number | string; notes?: string }) => ipcRenderer.invoke('make-request-production-approval', data),
+    makeDecideProductionApproval: (data: { orderId: number | string; decision: 'approved' | 'rejected'; notes?: string }) => ipcRenderer.invoke('make-decide-production-approval', data),
+    makeRecordOrderPayment: (data: { orderId: number | string; amount: number; paymentMethod?: string; reference?: string; notes?: string }) => ipcRenderer.invoke('make-record-order-payment', data),
+    makeGetOrderPayments: (orderId: number | string) => ipcRenderer.invoke('make-get-order-payments', orderId),
     // License — Cloud
     checkLicenseCloud: () => ipcRenderer.invoke('check-license-cloud'),
     activateLicenseCloud: (data: any) => ipcRenderer.invoke('activate-license-cloud', data),

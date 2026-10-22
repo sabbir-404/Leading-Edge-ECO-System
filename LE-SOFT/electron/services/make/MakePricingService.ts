@@ -17,10 +17,22 @@ export interface PricingItem {
     product_id?: number | null;
     product_name: string;
     quantity: number;
+    unit_sale_price?: number | string | null;
     item_cost_price?: number | string | null;
     item_sale_price?: number | string | null;
+    discount_type?: 'percent' | 'amount' | null;
+    discount_value?: number | string | null;
+    discount_amount?: number | string | null;
+    final_item_price?: number | string | null;
     max_discount_type?: 'percent' | 'amount' | null;
     max_discount_value?: number | string | null;
+    max_discount_percent?: number | string | null;
+    max_discount_amount?: number | string | null;
+    product_code?: string | null;
+    is_custom?: boolean;
+    is_customized?: boolean;
+    custom_sale_price?: number | string | null;
+    custom_cost_price?: number | string | null;
 }
 
 export interface OrderDiscountInput {
@@ -48,6 +60,10 @@ export interface PricingCalculationResult {
         quantity: number;
         cost_price: number;
         sale_price: number | null;
+        discount_type?: 'percent' | 'amount' | null;
+        discount_value?: number;
+        discount_amount?: number;
+        final_item_price?: number | null;
         total_cost: number;
         total_sale: number | null;
     }[];
@@ -310,14 +326,208 @@ export class MakePricingService {
             const itemSaleTotal = rawSale !== null ? rawSale * qty : null;
             totalCost += itemCostTotal;
 
-            // Product-level discount limit aggregation
-            if (rawSale !== null) {
-                const itemSub = rawSale * qty;
-                const hasConfiguredLimit = item.max_discount_value !== undefined && item.max_discount_value !== null && item.max_discount_value !== '';
+            // Line-level discount calculation
+            let itemDiscType: 'percent' | 'amount' | null = null;
+            let itemDiscVal = 0;
+            let itemDiscAmount = 0;
+            let itemFinalPrice = itemSaleTotal;
+
+            const isCatalogProduct = Boolean(item.product_id) ||
+                item.max_discount_percent !== undefined ||
+                item.max_discount_amount !== undefined ||
+                item.max_discount_type !== undefined ||
+                Boolean(item.product_code);
+            const hasProduct = isCatalogProduct;
+            const isCustomOrNonCatalog = item.is_custom === true || !isCatalogProduct;
+            const rawItemDiscVal = item.discount_value !== undefined && item.discount_value !== null && item.discount_value !== '' ? Number(item.discount_value) : 0;
+            const rawItemDiscAmt = item.discount_amount !== undefined && item.discount_amount !== null && item.discount_amount !== '' ? Number(item.discount_amount) : 0;
+
+            if (isCustomOrNonCatalog && (rawItemDiscVal > 0 || rawItemDiscAmt > 0)) {
+                return {
+                    isValid: false,
+                    error: `Discounts are not permitted on custom or non-catalog item "${item.product_name}".`,
+                    subtotal: null,
+                    discountType: null,
+                    discountValue: 0,
+                    discountAmount: 0,
+                    totalCostPrice: 0,
+                    totalSalePrice: null,
+                    finalPrice: null,
+                    marginAmount: null,
+                    totalMargin: null,
+                    isLossMaking: false,
+                    items: []
+                };
+            }
+
+            if (hasProduct && rawSale !== null && item.discount_value !== undefined && item.discount_value !== null && item.discount_value !== '') {
+                const parsedItemDisc = Number(item.discount_value);
+                if (isNaN(parsedItemDisc) || parsedItemDisc < 0) {
+                    return {
+                        isValid: false,
+                        error: `Discount value for item "${item.product_name}" cannot be negative (${item.discount_value}).`,
+                        subtotal: null,
+                        discountType: null,
+                        discountValue: 0,
+                        discountAmount: 0,
+                        totalCostPrice: 0,
+                        totalSalePrice: null,
+                        finalPrice: null,
+                        marginAmount: null,
+                        totalMargin: null,
+                        isLossMaking: false,
+                        items: []
+                    };
+                }
+
+                itemDiscType = item.discount_type === 'amount' ? 'amount' : 'percent';
+                itemDiscVal = round2(parsedItemDisc);
+
+                const maxLimitType: 'percent' | 'amount' = item.max_discount_type || (item.max_discount_amount !== undefined && item.max_discount_amount !== null && item.max_discount_amount !== '' ? 'amount' : 'percent');
+                const maxLimitValRaw = item.max_discount_value !== undefined && item.max_discount_value !== null && item.max_discount_value !== ''
+                    ? item.max_discount_value
+                    : (maxLimitType === 'amount' ? item.max_discount_amount : item.max_discount_percent);
+                const hasConfiguredLimit = maxLimitValRaw !== undefined && maxLimitValRaw !== null && maxLimitValRaw !== '';
                 if (hasConfiguredLimit) {
+                    const maxLimitVal = Number(maxLimitValRaw);
+                    if (maxLimitType === 'amount') {
+                        if (itemDiscType === 'amount') {
+                            if (itemDiscVal > maxLimitVal + 0.001) {
+                                return {
+                                    isValid: false,
+                                    error: `Discount amount (৳${itemDiscVal}) for item "${item.product_name}" exceeds the maximum permitted discount limit of ৳${maxLimitVal}.`,
+                                    subtotal: null,
+                                    discountType: null,
+                                    discountValue: 0,
+                                    discountAmount: 0,
+                                    totalCostPrice: 0,
+                                    totalSalePrice: null,
+                                    finalPrice: null,
+                                    marginAmount: null,
+                                    totalMargin: null,
+                                    isLossMaking: false,
+                                    items: []
+                                };
+                            }
+                        } else {
+                            const maxPct = rawSale > 0 ? round2((maxLimitVal / rawSale) * 100) : 0;
+                            if (itemDiscVal > maxPct + 0.001) {
+                                return {
+                                    isValid: false,
+                                    error: `Discount (${itemDiscVal}%) for item "${item.product_name}" exceeds the maximum permitted discount limit of ${maxPct}% (৳${maxLimitVal}).`,
+                                    subtotal: null,
+                                    discountType: null,
+                                    discountValue: 0,
+                                    discountAmount: 0,
+                                    totalCostPrice: 0,
+                                    totalSalePrice: null,
+                                    finalPrice: null,
+                                    marginAmount: null,
+                                    totalMargin: null,
+                                    isLossMaking: false,
+                                    items: []
+                                };
+                            }
+                        }
+                    } else {
+                        // max_discount_type === 'percent'
+                        const maxPct = Math.min(100, Math.max(0, maxLimitVal));
+                        if (itemDiscType === 'percent') {
+                            if (itemDiscVal > maxPct + 0.001) {
+                                return {
+                                    isValid: false,
+                                    error: `Discount (${itemDiscVal}%) for item "${item.product_name}" exceeds the maximum permitted discount limit of ${maxPct}%.`,
+                                    subtotal: null,
+                                    discountType: null,
+                                    discountValue: 0,
+                                    discountAmount: 0,
+                                    totalCostPrice: 0,
+                                    totalSalePrice: null,
+                                    finalPrice: null,
+                                    marginAmount: null,
+                                    totalMargin: null,
+                                    isLossMaking: false,
+                                    items: []
+                                };
+                            }
+                        } else {
+                            const maxAmt = round2(rawSale * (maxPct / 100));
+                            if (itemDiscVal > maxAmt + 0.001) {
+                                return {
+                                    isValid: false,
+                                    error: `Discount amount (৳${itemDiscVal}) for item "${item.product_name}" exceeds the maximum permitted discount limit of ৳${maxAmt} (${maxPct}%).`,
+                                    subtotal: null,
+                                    discountType: null,
+                                    discountValue: 0,
+                                    discountAmount: 0,
+                                    totalCostPrice: 0,
+                                    totalSalePrice: null,
+                                    finalPrice: null,
+                                    marginAmount: null,
+                                    totalMargin: null,
+                                    isLossMaking: false,
+                                    items: []
+                                };
+                            }
+                        }
+                    }
+                } else {
+                    if (itemDiscType === 'percent' && itemDiscVal > 100) {
+                        return {
+                            isValid: false,
+                            error: `Discount percentage cannot exceed 100% for item "${item.product_name}".`,
+                            subtotal: null,
+                            discountType: null,
+                            discountValue: 0,
+                            discountAmount: 0,
+                            totalCostPrice: 0,
+                            totalSalePrice: null,
+                            finalPrice: null,
+                            marginAmount: null,
+                            totalMargin: null,
+                            isLossMaking: false,
+                            items: []
+                        };
+                    }
+                    if (itemDiscType === 'amount' && itemDiscVal > rawSale) {
+                        return {
+                            isValid: false,
+                            error: `Discount amount (৳${itemDiscVal}) cannot exceed the unit sale price (৳${rawSale}) for item "${item.product_name}".`,
+                            subtotal: null,
+                            discountType: null,
+                            discountValue: 0,
+                            discountAmount: 0,
+                            totalCostPrice: 0,
+                            totalSalePrice: null,
+                            finalPrice: null,
+                            marginAmount: null,
+                            totalMargin: null,
+                            isLossMaking: false,
+                            items: []
+                        };
+                    }
+                }
+
+                if (itemDiscType === 'percent') {
+                    itemDiscAmount = round2(rawSale * (itemDiscVal / 100) * qty);
+                } else {
+                    itemDiscAmount = round2(itemDiscVal * qty);
+                }
+                itemFinalPrice = Math.max(0, round2((rawSale * qty) - itemDiscAmount));
+            }
+
+            // Product-level discount limit aggregation (custom/non-catalog items have no discount capacity)
+            if (rawSale !== null && hasProduct) {
+                const itemSub = rawSale * qty;
+                const aggLimitType: 'percent' | 'amount' = item.max_discount_type || (item.max_discount_amount !== undefined && item.max_discount_amount !== null && item.max_discount_amount !== '' ? 'amount' : 'percent');
+                const aggLimitRaw = item.max_discount_value !== undefined && item.max_discount_value !== null && item.max_discount_value !== ''
+                    ? item.max_discount_value
+                    : (aggLimitType === 'amount' ? item.max_discount_amount : item.max_discount_percent);
+                const hasItemLimit = aggLimitRaw !== undefined && aggLimitRaw !== null && aggLimitRaw !== '';
+                if (hasItemLimit) {
                     hasAnyConfiguredDiscountLimit = true;
-                    const maxVal = Number(item.max_discount_value);
-                    if (item.max_discount_type === 'amount') {
+                    const maxVal = Number(aggLimitRaw);
+                    if (aggLimitType === 'amount') {
                         totalAllowedDiscountAmount += Math.min(itemSub, maxVal * qty);
                     } else {
                         // percent
@@ -335,6 +545,10 @@ export class MakePricingService {
                 quantity: qty,
                 cost_price: rawCost,
                 sale_price: rawSale,
+                discount_type: itemDiscType,
+                discount_value: itemDiscVal,
+                discount_amount: itemDiscAmount,
+                final_item_price: itemFinalPrice,
                 total_cost: itemCostTotal,
                 total_sale: itemSaleTotal
             });
@@ -346,10 +560,12 @@ export class MakePricingService {
             ? round2((totalAllowedDiscountAmount / undiscountedSubtotal) * 100)
             : 0;
 
+        const totalLineDiscountAmount = round2(processedItems.reduce((acc, it) => acc + (it.discount_amount || 0), 0));
+
         // Process order discount
         let discType: 'percent' | 'amount' | null = null;
         let discValue = 0;
-        let discountAmount = 0;
+        let orderDiscountAmount = 0;
 
         if (discountInput && discountInput.discount_value !== undefined && discountInput.discount_value !== null && discountInput.discount_value !== '') {
             const parsedVal = Number(discountInput.discount_value);
@@ -432,7 +648,7 @@ export class MakePricingService {
                     };
                 }
 
-                discountAmount = undiscountedSubtotal !== null ? round2(undiscountedSubtotal * (discValue / 100)) : 0;
+                orderDiscountAmount = undiscountedSubtotal !== null ? round2(undiscountedSubtotal * (discValue / 100)) : 0;
             } else {
                 // fixed amount mode
                 if (undiscountedSubtotal !== null && discValue > undiscountedSubtotal) {
@@ -474,12 +690,12 @@ export class MakePricingService {
                     };
                 }
 
-                discountAmount = round2(discValue);
+                orderDiscountAmount = round2(discValue);
             }
         }
 
         const finalSalePrice = undiscountedSubtotal !== null
-            ? Math.max(0, round2(undiscountedSubtotal - discountAmount))
+            ? Math.max(0, round2(undiscountedSubtotal - orderDiscountAmount))
             : null;
         const isLossMaking = finalSalePrice !== null && finalSalePrice < round2(totalCost);
         const marginAmount = finalSalePrice !== null ? round2(finalSalePrice - totalCost) : null;
@@ -489,7 +705,7 @@ export class MakePricingService {
             subtotal: undiscountedSubtotal,
             discountType: discType,
             discountValue: discValue,
-            discountAmount,
+            discountAmount: orderDiscountAmount > 0 ? orderDiscountAmount : totalLineDiscountAmount,
             totalCostPrice: round2(totalCost),
             totalSalePrice: finalSalePrice,
             finalPrice: finalSalePrice,
@@ -542,5 +758,239 @@ export class MakePricingService {
         }
 
         return { allowed: true };
+    }
+
+    /**
+     * Calculates the amount due given an order total and money received.
+     * Enforces non-negative results and 2 decimal places precision.
+     */
+    public static calculateAmountDue(orderTotal: number, moneyReceived: number): number {
+        const total = round2(Math.max(0, Number(orderTotal || 0)));
+        const received = round2(Math.max(0, Number(moneyReceived || 0)));
+        return round2(Math.max(0, total - received));
+    }
+
+    /**
+     * Authoritatively calculates payment status, amount due, and production hold.
+     * Enforces currency rounding, decimal precision, and payment constraints.
+     */
+    public static calculatePaymentStatus(
+        finalPrice: number | null,
+        rawMoneyReceived: number | string | null | undefined
+    ): {
+        isValid: boolean;
+        error?: string;
+        finalPrice: number;
+        moneyReceived: number;
+        amountDue: number;
+        paymentStatus: 'unpaid' | 'partial' | 'paid';
+        productionHold: boolean;
+        holdReason: string | null;
+    } {
+        const orderTotal = round2(Math.max(0, Number(finalPrice || 0)));
+
+        if (rawMoneyReceived === undefined || rawMoneyReceived === null || rawMoneyReceived === '') {
+            return {
+                isValid: true,
+                finalPrice: orderTotal,
+                moneyReceived: 0,
+                amountDue: orderTotal,
+                paymentStatus: orderTotal === 0 ? 'paid' : 'unpaid',
+                productionHold: orderTotal > 0,
+                holdReason: orderTotal > 0 ? `Outstanding balance of ৳${orderTotal.toLocaleString()} due.` : null
+            };
+        }
+
+        // Validate string inputs
+        if (typeof rawMoneyReceived === 'string') {
+            const trimmed = rawMoneyReceived.trim();
+            if (trimmed.startsWith('-')) {
+                return {
+                    isValid: false,
+                    error: 'Money received cannot be negative.',
+                    finalPrice: orderTotal,
+                    moneyReceived: 0,
+                    amountDue: orderTotal,
+                    paymentStatus: 'unpaid',
+                    productionHold: orderTotal > 0,
+                    holdReason: orderTotal > 0 ? `Outstanding balance of ৳${orderTotal.toLocaleString()} due.` : null
+                };
+            }
+            const parsed = Number(trimmed);
+            if (isNaN(parsed) || !/^\d+(\.\d+)?$/.test(trimmed)) {
+                return {
+                    isValid: false,
+                    error: 'Money received must be a valid non-negative number.',
+                    finalPrice: orderTotal,
+                    moneyReceived: 0,
+                    amountDue: orderTotal,
+                    paymentStatus: 'unpaid',
+                    productionHold: orderTotal > 0,
+                    holdReason: orderTotal > 0 ? `Outstanding balance of ৳${orderTotal.toLocaleString()} due.` : null
+                };
+            }
+            if (trimmed.includes('.')) {
+                const decPart = trimmed.split('.')[1];
+                if (decPart && decPart.length > 2) {
+                    return {
+                        isValid: false,
+                        error: 'Money received cannot have more than 2 decimal places.',
+                        finalPrice: orderTotal,
+                        moneyReceived: 0,
+                        amountDue: orderTotal,
+                        paymentStatus: 'unpaid',
+                        productionHold: orderTotal > 0,
+                        holdReason: orderTotal > 0 ? `Outstanding balance of ৳${orderTotal.toLocaleString()} due.` : null
+                    };
+                }
+            }
+        } else if (typeof rawMoneyReceived === 'number') {
+            if (isNaN(rawMoneyReceived) || rawMoneyReceived < 0) {
+                return {
+                    isValid: false,
+                    error: rawMoneyReceived < 0 ? 'Money received cannot be negative.' : 'Money received must be a valid non-negative number.',
+                    finalPrice: orderTotal,
+                    moneyReceived: 0,
+                    amountDue: orderTotal,
+                    paymentStatus: 'unpaid',
+                    productionHold: orderTotal > 0,
+                    holdReason: orderTotal > 0 ? `Outstanding balance of ৳${orderTotal.toLocaleString()} due.` : null
+                };
+            }
+            const strVal = rawMoneyReceived.toString();
+            if (strVal.includes('.')) {
+                const decPart = strVal.split('.')[1];
+                if (decPart && decPart.length > 2 && Math.abs(round2(rawMoneyReceived) - rawMoneyReceived) > 1e-6) {
+                    return {
+                        isValid: false,
+                        error: 'Money received cannot have more than 2 decimal places.',
+                        finalPrice: orderTotal,
+                        moneyReceived: 0,
+                        amountDue: orderTotal,
+                        paymentStatus: 'unpaid',
+                        productionHold: orderTotal > 0,
+                        holdReason: orderTotal > 0 ? `Outstanding balance of ৳${orderTotal.toLocaleString()} due.` : null
+                    };
+                }
+            }
+        }
+
+        const received = Number(rawMoneyReceived);
+        const roundedReceived = round2(received);
+
+        if (roundedReceived > orderTotal) {
+            return {
+                isValid: false,
+                error: `Money received (৳${roundedReceived.toLocaleString()}) cannot exceed the order total (৳${orderTotal.toLocaleString()}).`,
+                finalPrice: orderTotal,
+                moneyReceived: roundedReceived,
+                amountDue: 0,
+                paymentStatus: 'paid',
+                productionHold: false,
+                holdReason: null
+            };
+        }
+
+        const amountDue = round2(Math.max(0, orderTotal - roundedReceived));
+        let paymentStatus: 'unpaid' | 'partial' | 'paid' = 'unpaid';
+
+        if (amountDue === 0 && (orderTotal > 0 ? roundedReceived >= orderTotal : true)) {
+            paymentStatus = 'paid';
+        } else if (roundedReceived > 0 && amountDue > 0) {
+            paymentStatus = 'partial';
+        } else {
+            paymentStatus = 'unpaid';
+        }
+
+        const productionHold = amountDue > 0;
+        const holdReason = productionHold
+            ? `Outstanding balance of ৳${amountDue.toLocaleString()} due.`
+            : null;
+
+        return {
+            isValid: true,
+            finalPrice: orderTotal,
+            moneyReceived: roundedReceived,
+            amountDue,
+            paymentStatus,
+            productionHold,
+            holdReason
+        };
+    }
+
+    /**
+     * Authoritatively validates and sanitizes line pricing based on the actor's user role:
+     * - Designer / Admin: Can enter cost price and sale price for any line.
+     * - Salesman:
+     *   - Cannot set or view cost price (strictly scrubbed to 0).
+     *   - Catalog products: Sale price is locked to catalog sale price; line discount is allowed up to product limit.
+     *   - Non-catalog products: Can enter sale price; cannot edit cost price.
+     * - Factory Manager: Strictly prohibited from placing orders or entering prices.
+     */
+    public static validateRolePricingPermissions(
+        items: PricingItem[],
+        userRole: string,
+        catalogProductsMap?: Record<number, any>
+    ): { isValid: boolean; error?: string; sanitizedItems: PricingItem[] } {
+        const normRole = (userRole || '').toLowerCase();
+        const isFactoryManager = normRole === 'factory_manager' || normRole === 'factory manager' || normRole === 'factory';
+        if (isFactoryManager) {
+            return {
+                isValid: false,
+                error: 'Factory Managers are strictly restricted from placing orders or modifying order pricing.',
+                sanitizedItems: []
+            };
+        }
+
+        const isSalesperson = normRole === 'salesperson' || normRole === 'salesman' || normRole === 'sales';
+        const sanitizedItems: PricingItem[] = [];
+
+        for (const it of items) {
+            const isCatalog = Boolean(it.product_id && (catalogProductsMap ? catalogProductsMap[Number(it.product_id)] : true));
+            const catalogProd = it.product_id && catalogProductsMap ? catalogProductsMap[Number(it.product_id)] : null;
+
+            if (isSalesperson) {
+                // Salesman cannot enter or view cost price
+                const sanitizedCost = 0;
+                let sanitizedSale = it.item_sale_price;
+
+                if (isCatalog && catalogProd) {
+                    // For catalog products, salesman cannot override catalog base sale price
+                    sanitizedSale = catalogProd.sale_price;
+                } else if (!isCatalog) {
+                    // For non-catalog products, salesman can enter sale price
+                    if (sanitizedSale === undefined || sanitizedSale === null || sanitizedSale === '') {
+                        sanitizedSale = null;
+                    } else if (Number(sanitizedSale) < 0) {
+                        return {
+                            isValid: false,
+                            error: `Sale price for non-catalog item "${it.product_name}" cannot be negative.`,
+                            sanitizedItems: []
+                        };
+                    }
+                }
+
+                sanitizedItems.push({
+                    ...it,
+                    item_cost_price: sanitizedCost,
+                    item_sale_price: sanitizedSale,
+                    max_discount_type: it.max_discount_type || catalogProd?.max_discount_type || null,
+                    max_discount_value: it.max_discount_value !== undefined && it.max_discount_value !== null
+                        ? it.max_discount_value
+                        : (catalogProd?.max_discount_value ?? null)
+                });
+            } else {
+                // Designer, Admin, Super Admin
+                sanitizedItems.push({
+                    ...it,
+                    max_discount_type: it.max_discount_type || catalogProd?.max_discount_type || null,
+                    max_discount_value: it.max_discount_value !== undefined && it.max_discount_value !== null
+                        ? it.max_discount_value
+                        : (catalogProd?.max_discount_value ?? null)
+                });
+            }
+        }
+
+        return { isValid: true, sanitizedItems };
     }
 }

@@ -108,6 +108,10 @@ const PERMISSION_GROUPS = [
             },
             { key: 'set_make_cost_price', label: 'Enter Production Cost Price' },
             { key: 'set_make_sale_price', label: 'Set Customer Sale Price' },
+            { key: 'view_product_blueprint', label: 'View Product Blueprint Files', desc: 'Allows viewing and downloading technical blueprint and CAD drawing assets.' },
+            { key: 'view_product_cost_price', label: 'View Product Cost Prices', desc: 'Allows viewing production cost prices in catalog and order lines.' },
+            { key: 'view_product_sale_price', label: 'View Product Sale Prices', desc: 'Allows viewing customer sale prices in catalog and order lines.' },
+            { key: 'view_product_max_discount', label: 'View Maximum Allowed Discount', desc: 'Allows viewing maximum permitted discount limits in product catalog.' },
             { key: 'approve_make_order', label: 'Approve Manufacturing Orders' },
             { key: 'access_make_sales_portal', label: 'Authorize WordPress Sales Portal Access' }
         ]
