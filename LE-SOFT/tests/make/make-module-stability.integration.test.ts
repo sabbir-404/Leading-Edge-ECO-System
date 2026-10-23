@@ -198,6 +198,7 @@ describe('MAKE Module Stability & Verification Suite (LE-SOFT v1.8.12)', () => {
     let mockStorage: Storage;
 
     beforeEach(() => {
+        vi.restoreAllMocks();
         h.state.calls = [];
         h.state.cloudCalls = [];
         h.state.storageUploads = [];
@@ -219,12 +220,15 @@ describe('MAKE Module Stability & Verification Suite (LE-SOFT v1.8.12)', () => {
 
         // Register handlers & clients
         DurableUploadService.getInstance().registerClients({ nas: null, supabase: supabase as any });
+        // Cleanup tests model the authenticated reconciliation identity required
+        // before committed cloud-buffer copies can be pruned in production.
+        vi.spyOn(SupabaseQuotaManager.getInstance(), 'hasAuthorizedReconciliationSession').mockResolvedValue(true);
         registerMakeHandlers();
     });
 
     afterEach(() => {
         vi.unstubAllGlobals();
-        vi.clearAllMocks();
+        vi.restoreAllMocks();
     });
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -911,6 +915,9 @@ describe('MAKE Module Stability & Verification Suite (LE-SOFT v1.8.12)', () => {
                 success: false,
                 error: 'TrueNAS offline'
             });
+            // Make the cloud quota unavailable too so this first step genuinely
+            // exercises durable local staging before the later recovery fixture.
+            vi.spyOn(quotaMgr, 'reserveStorageQuota').mockResolvedValue(false);
 
             const buffer = Buffer.from('%PDF-1.7 full lifecycle invoice test');
             const uploadRes = await MakeCadService.uploadValidatedBuffer(

@@ -39,6 +39,31 @@ function getConfigPath(): string {
 
 // Secret must be provided at runtime via environment variable or secure config — never hardcoded
 const CREDENTIAL_SALT   = 'LE-SOFT-CREDENTIAL-ENCRYPT-SALT-v1-2026';
+let nasJwtDecryptWarningLogged = false;
+
+/**
+ * Development-only repair source for a NAS JWT whose Electron safeStorage
+ * envelope was written by an incompatible app context. The local file is
+ * gitignored; packaged builds never read it. Once recovered, the value is
+ * immediately re-encrypted by this Electron process and saved to config.
+ */
+function getDevelopmentNasJwtToken(): string {
+    if (app?.isPackaged) return '';
+    const candidates = [
+        path.join(process.cwd(), '.env.local'),
+        path.join(__dirname, '..', '.env.local')
+    ];
+    for (const candidate of Array.from(new Set(candidates))) {
+        try {
+            if (!fs.existsSync(candidate)) continue;
+            const line = fs.readFileSync(candidate, 'utf8').split(/\r?\n/).find(row => /^\s*NAS_JWT_TOKEN\s*=/.test(row));
+            if (!line) continue;
+            const value = line.slice(line.indexOf('=') + 1).trim().replace(/^(["'])(.*)\1$/, '$2');
+            if (value.split('.').length === 3 && value.length < 16384) return value;
+        } catch {}
+    }
+    return '';
+}
 
 /**
  * Derives the AES-256 decryption key using PBKDF2.
@@ -207,8 +232,21 @@ export function loadConfig(): SupabaseConfig {
                     try {
                         cfg.nasJwtToken = decryptPrivilegedSecret(cfg.nasJwtToken);
                     } catch (err) {
-                        console.error('[SUPABASE] Failed to decrypt NAS JWT token.');
-                        cfg.nasJwtToken = '';
+                        const recoveredToken = getDevelopmentNasJwtToken();
+                        if (recoveredToken && isSafeStorageAvailable()) {
+                            try {
+                                cfg.nasJwtToken = recoveredToken;
+                                parsed.nasJwtToken = encryptPrivilegedSecret(recoveredToken);
+                                needsMigration = true;
+                                if (!nasJwtDecryptWarningLogged) console.warn('[SUPABASE] Recovered and re-encrypted the NAS database credential for this development install.');
+                            } catch {
+                                cfg.nasJwtToken = recoveredToken;
+                            }
+                        } else {
+                            cfg.nasJwtToken = '';
+                            if (!nasJwtDecryptWarningLogged) console.error('[SUPABASE] NAS database credential cannot be decrypted; re-enter it in Database & API settings.');
+                        }
+                        nasJwtDecryptWarningLogged = true;
                     }
                 } else if (cfg.nasJwtToken.startsWith('enc:v1:fallback:')) {
                     console.error('[SUPABASE] Refusing NAS JWT token stored without OS-backed encryption.');
@@ -542,6 +580,16 @@ export function getCfAccessHeaders(): Record<string, string> {
     }
 }
 
+/** Returns the server-side NAS storage bearer header without exposing it to renderer code. */
+export function getNasStorageAuthHeaders(): Record<string, string> {
+    try {
+        const token = loadConfig().nasJwtToken;
+        return token ? { Authorization: `Bearer ${token}` } : {};
+    } catch {
+        return {};
+    }
+}
+
 export function getNasStorageUrl(): string | null {
     try {
         const config = loadConfig();
@@ -859,8 +907,18 @@ export function reinitSupabaseClients(): void {
     }
 }
 
-// Initial initialization
-reinitSupabaseClients();
+// Electron's OS-backed safeStorage may not be usable until the app is ready.
+// Defer the first config read/client initialization in packaged runtime so
+// encrypted NAS JWTs are not incorrectly treated as undecryptable at startup.
+if (typeof app?.whenReady === 'function' && app?.isReady?.() === false) {
+    app.whenReady()
+        .then(() => reinitSupabaseClients())
+        .catch((err: any) => console.error('[SUPABASE] Deferred client initialization failed:', err?.message || err));
+} else {
+    // Preserve immediate initialization in tests and consumers that import this
+    // module after Electron readiness (including local non-Electron tooling).
+    reinitSupabaseClients();
+}
 
 /**
  * Returns prioritized storage candidate base URLs for TrueNAS storage.

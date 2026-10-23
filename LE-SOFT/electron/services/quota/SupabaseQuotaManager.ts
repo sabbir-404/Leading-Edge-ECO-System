@@ -119,6 +119,17 @@ export class SupabaseQuotaManager {
         this.reconciliationClient = client;
     }
 
+    /** Cloud copies may only be pruned by a logged-in reconciliation identity. */
+    public async hasAuthorizedReconciliationSession(): Promise<boolean> {
+        if (!this.reconciliationClient) return false;
+        try {
+            const { data, error } = await this.reconciliationClient.auth.getSession();
+            return !error && !!data?.session?.user?.id;
+        } catch {
+            return false;
+        }
+    }
+
     /**
      * Resolves the authoritative client identity expected by PostgreSQL RPC.
      * When caller has an authenticated Supabase session, auth.uid() is authoritative.

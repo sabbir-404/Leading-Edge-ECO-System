@@ -240,6 +240,14 @@ export class ConsolidatedHealthEngine {
 
     private async probeSupabaseDatabase(): Promise<boolean> {
         if (!this.supabaseClient) return false;
+        // RLS intentionally denies anon. A pre-login table probe only creates
+        // noisy 401s and falsely treats authorization as database availability.
+        try {
+            const { data: authState, error: authError } = await this.supabaseClient.auth.getSession();
+            if (authError || !authState.session?.access_token) return false;
+        } catch {
+            return false;
+        }
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 3000);
         try {

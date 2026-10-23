@@ -475,7 +475,9 @@ describe('Phase 3: Cryptography and Secure Local Storage Hardening', () => {
                 saved_at: Date.now(),
             });
 
-            const iv = crypto.randomBytes(12);
+            // Avoid the rare 1/256 collision where a random binary IV starts
+            // with the ASCII '{' byte and is mistaken for a JSON V2 record.
+            const iv = Buffer.alloc(12, 0x01);
             const cipher = crypto.createCipheriv('aes-256-gcm', legacyKey, iv);
             const encrypted = Buffer.concat([cipher.update(legacyPayload, 'utf8'), cipher.final()]);
             const tag = cipher.getAuthTag();

@@ -14,7 +14,8 @@ import { BrowserWindow, dialog, app, shell } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { supabase, getCfAccessHeaders } from '../../supabase';
+import { PDFDocument, StandardFonts, rgb, degrees } from 'pdf-lib';
+import { supabase, getCfAccessHeaders, getNasStorageAuthHeaders } from '../../supabase';
 import { SupabaseQuotaManager } from '../quota/SupabaseQuotaManager';
 import { DurableUploadService } from '../media/DurableUploadService';
 
@@ -40,7 +41,8 @@ export interface MakeUploadResult {
 
 const ALLOWED_CAD_EXTENSIONS = new Set([
     'pdf', 'dwg', 'dxf', 'step', 'stp', 'iges', 'igs', 'skp', 'stl', 'obj',
-    'png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tiff', 'tif', 'avif', 'heic', 'heif'
+    'png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tiff', 'tif', 'avif', 'heic', 'heif',
+    'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'csv', 'rtf'
 ]);
 
 const ALLOWED_PHOTO_EXTENSIONS = new Set([
@@ -50,12 +52,45 @@ const ALLOWED_PHOTO_EXTENSIONS = new Set([
 const ALLOWED_INVOICE_EXTENSIONS = new Set([
     'png', 'jpg', 'jpeg', 'webp', 'pdf', 'gif', 'bmp', 'tiff', 'tif', 'avif', 'heic', 'heif'
 ]);
+// Reference uploads may be any ordinary document/archive/design file. Active
+// content and executable formats remain blocked before they reach storage.
+const BLOCKED_REFERENCE_EXTENSIONS = new Set([
+    'exe', 'dll', 'com', 'scr', 'msi', 'msp', 'bat', 'cmd', 'ps1', 'psm1', 'vbs', 'vbe', 'js', 'jse', 'cjs', 'mjs', 'jar', 'sh', 'bash', 'php', 'phtml', 'html', 'htm', 'svg', 'hta', 'lnk', 'reg'
+]);
+const isAllowedReferenceExtension = (extension: string) => !!extension && !BLOCKED_REFERENCE_EXTENSIONS.has(extension.toLowerCase());
 
 const MAX_CAD_FILE_SIZE = 50 * 1024 * 1024;    // 50 MB
 const MAX_PHOTO_FILE_SIZE = 15 * 1024 * 1024;  // 15 MB
 const MAX_INVOICE_FILE_SIZE = 15 * 1024 * 1024; // 15 MB
 
 export class MakeCadService {
+    /** Permanently stamps product-drawing PDFs with a subtle Leading Edge mark. */
+    public static async watermarkProductDrawingPdf(fileBuffer: Buffer, fileName: string): Promise<Buffer> {
+        if (path.extname(fileName).toLowerCase() !== '.pdf') return fileBuffer;
+        try {
+            const pdf = await PDFDocument.load(fileBuffer, { updateMetadata: true });
+            const font = await pdf.embedFont(StandardFonts.HelveticaBold);
+            for (const page of pdf.getPages()) {
+                const { width, height } = page.getSize();
+                const size = Math.max(22, Math.min(46, width / 13));
+                const label = 'LEADING EDGE';
+                const textWidth = font.widthOfTextAtSize(label, size);
+                page.drawText(label, {
+                    x: Math.max(16, (width - textWidth) / 2),
+                    y: Math.max(16, height / 2),
+                    size,
+                    font,
+                    color: rgb(0.72, 0.75, 0.78),
+                    opacity: 0.16,
+                    rotate: degrees(32)
+                });
+            }
+            return Buffer.from(await pdf.save());
+        } catch (error: any) {
+            throw new Error(`Could not watermark this PDF product drawing: ${error?.message || 'invalid or protected PDF'}`);
+        }
+    }
+
     /**
      * Resolves the TrueNAS Storage URL from config or default tunnel
      */
@@ -95,7 +130,7 @@ export class MakeCadService {
 
         // Block script / HTML / SVG content masked as images or documents
         const headerStr = buffer.toString('utf8', 0, Math.min(buffer.length, 512)).toLowerCase();
-        if (headerStr.includes('<script') || headerStr.includes('javascript:') || headerStr.startsWith('#!/')) {
+        if (headerStr.includes('<script') || headerStr.includes('javascript:') || headerStr.startsWith('#!/') || headerStr.includes('<iframe') || headerStr.includes('<svg') || headerStr.includes('<?php')) {
             return { isValid: false, detectedMime: 'text/plain', error: 'Executable scripts and active HTML content are strictly forbidden.' };
         }
 
@@ -193,6 +228,25 @@ export class MakeCadService {
         if (ext === 'obj') return { isValid: true, detectedMime: 'model/obj' };
         if (ext === 'skp') return { isValid: true, detectedMime: 'application/octet-stream' };
 
+        // Common reference documents. Validate container signatures before accepting.
+        if (['doc', 'xls', 'ppt'].includes(ext)) {
+            const isOle = buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]));
+            return { isValid: isOle, detectedMime: 'application/x-ole-storage', error: isOle ? undefined : 'Invalid Office document structure.' };
+        }
+        if (['docx', 'xlsx', 'pptx'].includes(ext)) {
+            const isZip = buffer.length >= 4 && buffer[0] === 0x50 && buffer[1] === 0x4B && [0x03, 0x05, 0x07].includes(buffer[2]);
+            const mime = ext === 'docx' ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' : ext === 'xlsx' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+            return { isValid: isZip, detectedMime: mime, error: isZip ? undefined : 'Invalid Office document structure.' };
+        }
+        if (ext === 'rtf') {
+            const isRtf = buffer.toString('utf8', 0, Math.min(buffer.length, 16)).trimStart().startsWith('{\\rtf');
+            return { isValid: isRtf, detectedMime: 'application/rtf', error: isRtf ? undefined : 'Invalid RTF document structure.' };
+        }
+        if (['txt', 'csv'].includes(ext)) {
+            const isText = !buffer.subarray(0, Math.min(buffer.length, 4096)).includes(0);
+            return { isValid: isText, detectedMime: ext === 'csv' ? 'text/csv' : 'text/plain', error: isText ? undefined : 'The selected text document contains binary data.' };
+        }
+
         return { isValid: true, detectedMime: 'application/octet-stream' };
     }
 
@@ -210,7 +264,8 @@ export class MakeCadService {
         }
 
         const commonImgExts = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tiff', 'tif', 'avif', 'heic', 'heif'];
-        const cadExts = ['pdf', 'dwg', 'dxf', 'step', 'stp', 'iges', 'igs', 'skp', 'stl', 'obj', ...commonImgExts];
+        const referenceDocExts = ['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'csv', 'rtf'];
+        const cadExts = ['pdf', 'dwg', 'dxf', 'step', 'stp', 'iges', 'igs', 'skp', 'stl', 'obj', ...commonImgExts, ...referenceDocExts];
 
         const filters = type === 'invoice_attachment'
             ? [
@@ -252,12 +307,12 @@ export class MakeCadService {
         type: 'cad' | 'photo' | 'invoice_attachment'
     ): { isValid: boolean; error?: string } {
         const ext = path.extname(fileName).replace('.', '').toLowerCase();
-        const allowedSet = type === 'photo'
-            ? ALLOWED_PHOTO_EXTENSIONS
-            : (type === 'invoice_attachment' ? ALLOWED_INVOICE_EXTENSIONS : ALLOWED_CAD_EXTENSIONS);
+        const allowed = type === 'photo' ? ALLOWED_PHOTO_EXTENSIONS.has(ext)
+            : type === 'invoice_attachment' ? ALLOWED_INVOICE_EXTENSIONS.has(ext)
+            : isAllowedReferenceExtension(ext);
 
-        if (!allowedSet.has(ext)) {
-            return { isValid: false, error: `Invalid file type ".${ext}". Allowed: ${Array.from(allowedSet).join(', ')}` };
+        if (!allowed) {
+            return { isValid: false, error: `File type ".${ext}" is not supported for a safe reference attachment.` };
         }
 
         const maxSize = (type === 'photo' || type === 'invoice_attachment') ? MAX_INVOICE_FILE_SIZE : MAX_CAD_FILE_SIZE;
@@ -298,11 +353,10 @@ export class MakeCadService {
         }
 
         const ext = path.extname(filePath).replace('.', '').toLowerCase();
-        const allowedSet = type === 'photo'
-            ? ALLOWED_PHOTO_EXTENSIONS
-            : (type === 'invoice_attachment' ? ALLOWED_INVOICE_EXTENSIONS : ALLOWED_CAD_EXTENSIONS);
-
-        if (!allowedSet.has(ext)) {
+        const allowed = type === 'photo' ? ALLOWED_PHOTO_EXTENSIONS.has(ext)
+            : type === 'invoice_attachment' ? ALLOWED_INVOICE_EXTENSIONS.has(ext)
+            : isAllowedReferenceExtension(ext);
+        if (!allowed) {
             return { canceled: true, error: `File extension ".${ext}" is not supported.` };
         }
 
@@ -340,11 +394,10 @@ export class MakeCadService {
         }
 
         const ext = path.extname(fileName).replace('.', '').toLowerCase();
-        const allowedSet = type === 'photo'
-            ? ALLOWED_PHOTO_EXTENSIONS
-            : (type === 'invoice_attachment' ? ALLOWED_INVOICE_EXTENSIONS : ALLOWED_CAD_EXTENSIONS);
-
-        if (!allowedSet.has(ext)) {
+        const allowed = type === 'photo' ? ALLOWED_PHOTO_EXTENSIONS.has(ext)
+            : type === 'invoice_attachment' ? ALLOWED_INVOICE_EXTENSIONS.has(ext)
+            : isAllowedReferenceExtension(ext);
+        if (!allowed) {
             return { isValid: false, error: `File extension ".${ext}" is not supported.` };
         }
 
@@ -461,6 +514,7 @@ export class MakeCadService {
                     body: formData,
                     headers: {
                         'x-subfolder': subfolder,
+                        ...getNasStorageAuthHeaders(),
                         ...cfHeaders
                     },
                     signal: controller.signal

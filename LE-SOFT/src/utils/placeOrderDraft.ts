@@ -37,6 +37,7 @@ export interface CartItemDraft {
   attachedFile?: {
     name: string;
     url?: string;
+    uploadId?: string;
     type: string;
     previewUrl?: string;
   } | null;
@@ -80,7 +81,7 @@ export interface PlaceOrderDraftData {
   itemCostPrice?: number | string;
   itemSalePrice?: number | string;
   itemRemarks?: string;
-  selectedItemAttachedFile?: { name: string; url?: string; type: string } | null;
+  selectedItemAttachedFile?: { name: string; url?: string; uploadId?: string; type: string } | null;
 
   // Custom size/spec/color toggles
   isCustomSize?: boolean;
@@ -216,7 +217,8 @@ export function saveNamedPlaceOrderDraft(
           attachedFile: {
             name: item.attachedFile.name,
             type: item.attachedFile.type,
-            url
+            url,
+            uploadId: item.attachedFile.uploadId
           }
         };
       })
@@ -243,7 +245,8 @@ export function saveNamedPlaceOrderDraft(
       selectedItemAttachedFile = {
         name: selectedItemAttachedFile.name,
         type: selectedItemAttachedFile.type,
-        url
+        url,
+        uploadId: selectedItemAttachedFile.uploadId
       };
     }
   }

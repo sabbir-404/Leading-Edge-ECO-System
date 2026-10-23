@@ -19,7 +19,7 @@ if ($is_logged_in) {
     $is_factory_manager = in_array('make_factory_manager', (array)$user_roles, true) || in_array('factory_manager', (array)$user_roles, true) || current_user_can('update_production_status');
     $is_salesperson = in_array('make_salesperson', (array)$user_roles, true) || (!$is_admin && !$is_designer && !$is_factory_manager);
 
-    $display_role = 'Salesperson';
+    $display_role = 'Salesman';
     if ($is_admin) {
         $display_role = 'Administrator';
     } elseif ($is_designer) {
@@ -45,6 +45,12 @@ if ($is_logged_in) {
         'canEditCost'         => $is_admin || $is_designer,
         'canEditSale'         => $is_admin || $is_designer,
         'canUpdateProduction' => $is_factory_manager || $is_admin,
+        'canReadCostingRequests' => current_user_can('read_make_costing_requests') || $is_admin || $is_designer || $is_factory_manager,
+        'canReadAllCostingRequests' => current_user_can('read_all_make_costing_requests') || $is_admin || $is_designer || $is_factory_manager,
+        'canCreateCostingRequest' => current_user_can('create_make_costing_request') || $is_admin,
+        'canPriceCostingRequest' => current_user_can('price_make_costing_request') || $is_admin || $is_designer,
+        'canDeleteCostingRequest' => current_user_can('delete_make_costing_request') || $is_admin || $is_designer,
+        'canOrderCostingRequest' => current_user_can('place_order_from_costing_request') || $is_admin,
     );
 }
 

@@ -39,7 +39,8 @@ import {
   Layers,
   Scale,
   Warehouse,
-  PackageMinus
+  PackageMinus,
+  FolderOpen
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTheme } from '../context/ThemeContext';
@@ -91,6 +92,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
   // Notification state
   const [notifications, setNotifications] = useState<any[]>([]);
   const [showNotifDropdown, setShowNotifDropdown] = useState(false);
+  const [selectedNotification, setSelectedNotification] = useState<any | null>(null);
   const notifRef = useRef<HTMLDivElement>(null);
 
   const unreadCount = notifications.filter((n: any) => !n.is_read).length;
@@ -138,11 +140,9 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
         setNotifications(prev => prev.map(p => p.id === notification.id ? { ...p, is_read: 1 } : p));
       } catch { }
     }
+    setSelectedNotification(notification);
     setShowNotifDropdown(false);
-    if (notification.action_path) {
-      navigate(notification.action_path);
-    }
-  }, [navigate]);
+  }, []);
 
   // Auto-expand submenu based on current route (including sub-item paths)
   useEffect(() => {
@@ -250,7 +250,14 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
       subItems: [
         { icon: <LayoutDashboard size={18} />, label: 'Overview', path: '/make/dashboard' },
         ...(hasPermission('read_make_catalog') || hasPermission('write_make_catalog') ? [{ icon: <Package size={18} />, label: 'Product Catalog', path: '/make/products' }] : []),
-        ...(hasPermission('write_make') ? [{ icon: <ClipboardList size={18} />, label: 'Place Order', path: '/make/place-order' }] : []),
+        ...((hasPermission('read_make') || hasPermission('write_make') || hasPermission('read_make_catalog') || hasPermission('read_make_costing_requests') || hasPermission('create_make_costing_request')) ? [{ icon: <FileText size={18} />, label: 'Requestion', path: '/make/requestion', subItems: [
+          { icon: <FileText size={18} />, label: 'Requestions', path: '/make/requestion' },
+          ...(hasPermission('write_make_catalog') ? [{ icon: <Clock size={18} />, label: 'Requests to Process', path: '/make/requestion/process' }] : [])
+        ] }] : []),
+        ...(hasPermission('write_make') ? [{ icon: <ClipboardList size={18} />, label: 'Place Order', path: '/make/place-order', subItems: [
+          { icon: <ClipboardList size={18} />, label: 'New Order', path: '/make/place-order' },
+          { icon: <FolderOpen size={18} />, label: 'Drafts', path: '/make/place-order/drafts' }
+        ] }] : []),
         { icon: <Clock size={18} />, label: 'Track Orders', path: '/make/track' },
       ]
     }] : []),
@@ -555,8 +562,9 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
                     </div>
                     <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
                       {notifications.slice(0, 5).map((n: any) => (
-                        <div key={n.id} style={{ padding: '0.65rem 1rem', borderBottom: '1px solid var(--border-color)', background: n.is_read ? 'transparent' : 'rgba(99,102,241,0.04)', cursor: 'pointer', transition: 'background 0.15s' }}
+                        <div key={n.id} role="button" tabIndex={0} style={{ padding: '0.65rem 1rem', borderBottom: '1px solid var(--border-color)', background: n.is_read ? 'transparent' : 'rgba(99,102,241,0.04)', cursor: 'pointer', transition: 'background 0.15s' }}
                           onClick={() => openNotification(n)}
+                          onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); void openNotification(n); } }}
                         >
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                             {!n.is_read && <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--accent-color)', flexShrink: 0 }} />}
@@ -633,6 +641,39 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, title }) =>
           {children}
         </main>
       </div>
+
+      {/* Profile Settings Modal */}
+      <AnimatePresence>
+        {selectedNotification && (
+          <div className="profile-modal-overlay" onClick={() => setSelectedNotification(null)}>
+            <motion.section
+              className="profile-modal notification-preview-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="notification-preview-title"
+              initial={{ opacity: 0, scale: 0.97, y: 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.97, y: 8 }}
+              onClick={event => event.stopPropagation()}
+            >
+              <div className="notification-preview-header">
+                <div className="notification-preview-icon"><Bell size={18} /></div>
+                <div className="notification-preview-title-wrap">
+                  <h2 id="notification-preview-title">{selectedNotification.title || 'Notification'}</h2>
+                  <span>{selectedNotification.created_at ? new Date(selectedNotification.created_at).toLocaleString() : ''}</span>
+                </div>
+                <button aria-label="Close notification" onClick={() => setSelectedNotification(null)} className="notification-preview-close"><X size={18} /></button>
+              </div>
+              <p className="notification-preview-message">{selectedNotification.message || 'There are no additional details for this notification.'}</p>
+              {selectedNotification.action_label && selectedNotification.action_path && (
+                <button className="notification-preview-action" onClick={() => { const path = selectedNotification.action_path; setSelectedNotification(null); navigate(path); }}>
+                  {selectedNotification.action_label}
+                </button>
+              )}
+            </motion.section>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Profile Settings Modal */}
       <AnimatePresence>

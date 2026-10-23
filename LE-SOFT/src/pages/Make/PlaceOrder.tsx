@@ -45,9 +45,26 @@ export const getColorSwatchColor = (value?: unknown): string => {
   return '#d1d5db';
 };
 
+const getOrderSizeLabel = (size: any, fallback?: any): string => {
+  const candidate = size || fallback;
+  if (!candidate) return 'Not available';
+  if (typeof candidate === 'string') {
+    const value = candidate.trim();
+    return value && !['standard size', 'standard dimensions'].includes(value.toLowerCase()) ? value : 'Not available';
+  }
+  const formatted = formatSizeDisplay(candidate);
+  const normalized = formatted.trim().toLowerCase();
+  if (normalized && !['standard size', 'standard dimensions'].includes(normalized)) return formatted;
+  const explicit = String(candidate.size_label || candidate.label || candidate.name || '').trim();
+  if (explicit && !['standard size', 'standard dimensions'].includes(explicit.toLowerCase())) return explicit;
+  const rawDimensions = String(candidate.dimensions_text || candidate.dimensions || '').trim();
+  return rawDimensions || 'Not available';
+};
+
 interface CartItem {
   _id: string;
   product_id?: number;
+  requestion_item_id?: number;
   product_code?: string;
   product_name: string;
   spec_id?: number;
@@ -75,6 +92,7 @@ interface CartItem {
     path?: string;
     base64?: string;
     url?: string;
+    uploadId?: string;
     type: string;
     previewUrl?: string;
   } | null;
@@ -90,8 +108,20 @@ const PlaceOrder: React.FC = () => {
   const [confirmedOrderNumber, setConfirmedOrderNumber] = useState<string | null>(null);
   const [showProductCreateModal, setShowProductCreateModal] = useState(false);
   const [autoOrderNumber, setAutoOrderNumber] = useState<string>('');
+  const [headerDateTime, setHeaderDateTime] = useState(() => new Date().toLocaleString());
   const [savedDrafts, setSavedDrafts] = useState<SavedPlaceOrderDraft[]>(() => loadSavedPlaceOrderDrafts());
   const [activeSavedDraftId, setActiveSavedDraftId] = useState<string | null>(null);
+  const [savedDraftSearch, setSavedDraftSearch] = useState('');
+  const isDraftsView = location.pathname.endsWith('/drafts');
+  useEffect(() => {
+    const timer = window.setInterval(() => setHeaderDateTime(new Date().toLocaleString()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const visibleSavedDrafts = savedDrafts.filter(draft => {
+    const q = savedDraftSearch.trim().toLowerCase();
+    if (!q) return true;
+    return [draft.title, draft.data.customerName, draft.data.selectedCustomerInfo?.name, draft.data.cartItems?.map(item => item.product_name).join(' ')].some(value => String(value || '').toLowerCase().includes(q));
+  });
 
   // Initial draft loaded synchronously to prevent any asynchronous typing wipes
   const initialDraft = React.useMemo(() => {
@@ -210,9 +240,12 @@ const PlaceOrder: React.FC = () => {
     name: string;
     base64?: string;
     url?: string;
+    uploadId?: string;
     type: string;
     previewUrl?: string;
   } | null>(null);
+  const [itemFileProgress, setItemFileProgress] = useState<number | null>(null);
+  const pendingItemUploadsRef = React.useRef<Promise<void>[]>([]);
 
   const handleItemFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -230,16 +263,49 @@ const PlaceOrder: React.FC = () => {
       previewUrl = URL.createObjectURL(file);
     }
 
+    setItemFileProgress(0);
     const reader = new FileReader();
+    let finishUploadWait!: () => void;
+    const uploadWait = new Promise<void>(resolve => { finishUploadWait = resolve; });
+    pendingItemUploadsRef.current.push(uploadWait);
+    const clearUploadWait = () => {
+      finishUploadWait();
+      pendingItemUploadsRef.current = pendingItemUploadsRef.current.filter(task => task !== uploadWait);
+    };
+    reader.onprogress = event => {
+      if (event.lengthComputable) setItemFileProgress(Math.min(40, Math.round(event.loaded / event.total * 40)));
+    };
     reader.onload = () => {
       const base64 = (reader.result as string).split(',')[1] || (reader.result as string);
-      setAttachedFile({
+      const initialFile = {
         name: file.name,
         base64: base64,
         type: isCad ? 'cad' : (isPdf ? 'pdf' : (isImage ? 'image' : 'document')),
         previewUrl
-      });
+      };
+      setAttachedFile(initialFile);
+      void (async () => {
+        try {
+          setItemFileProgress(45);
+          const result = await window.electron?.makeUploadInvoiceAttachmentBuffer?.({ fileName: file.name, fileBase64: reader.result as string, attachmentType: isCad ? 'cad' : 'invoice_attachment' });
+          const ref = result?.durableKey || (result?.publicUrl && !result.publicUrl.includes('token=') ? result.publicUrl : undefined);
+          if (!result?.success && !result?.isPendingUpload) throw new Error(result?.error || 'File could not be saved to protected storage.');
+          if (ref) {
+            const persistentFile = { name: file.name, type: initialFile.type, url: ref, uploadId: result.uploadId, previewUrl };
+            setAttachedFile(current => current?.name === file.name ? persistentFile : current);
+            setCartItems(current => current.map(item => item.attachedFile?.name === file.name && item.attachedFile?.base64 === initialFile.base64 ? { ...item, attachedFile: persistentFile } : item));
+          }
+          setItemFileProgress(100);
+        } catch (error: any) {
+          setAttachedFile(current => current?.name === file.name ? { ...initialFile } : current);
+          setItemFileProgress(null);
+          showToast(`Attachment upload failed: ${error?.message || 'Retry the file attachment before saving a draft.'}`, 'error');
+        } finally {
+          clearUploadWait();
+        }
+      })();
     };
+    reader.onerror = () => { setItemFileProgress(null); showToast('Could not read the selected attachment.', 'error'); clearUploadWait(); };
     reader.readAsDataURL(file);
   };
 
@@ -248,6 +314,7 @@ const PlaceOrder: React.FC = () => {
       URL.revokeObjectURL(attachedFile.previewUrl);
     }
     setAttachedFile(null);
+    setItemFileProgress(null);
   };
 
   // Custom Size toggle & state for catalog products
@@ -363,6 +430,28 @@ const PlaceOrder: React.FC = () => {
 
   // Multi-item Cart
   const [cartItems, setCartItems] = useState<CartItem[]>(() => (Array.isArray(initialDraft.cartItems) ? initialDraft.cartItems : []) as any);
+  const loadedRequestionItemRef = React.useRef<number | null>(null);
+
+  useEffect(() => {
+    const requestion = (location.state as any)?.requestion;
+    const requestItem = requestion?.item;
+    if (!requestItem?.id || loadedRequestionItemRef.current === Number(requestItem.id)) return;
+    loadedRequestionItemRef.current = Number(requestItem.id);
+    setCustomerName((current: string) => current || requestion.request?.customer_name || '');
+    setCustomerPhone((current: string) => current || requestion.request?.customer_phone || '');
+    setCartItems((current: CartItem[]) => {
+      if (current.some(item => item.requestion_item_id === Number(requestItem.id))) return current;
+      return [...current, {
+        _id: `requestion-${requestItem.id}-${Date.now()}`,
+        product_id: requestItem.product_id || undefined,
+        product_name: requestItem.product_name,
+        quantity: Number(requestItem.quantity) || 1,
+        item_sale_price: requestItem.sale_price ?? null,
+        requestion_item_id: Number(requestItem.id),
+        attachedFile: null
+      } as any];
+    });
+  }, [location.state]);
 
   // Authoritative real-time totals & discount recalculation
   const pricingSummary = React.useMemo(() => {
@@ -509,6 +598,8 @@ const PlaceOrder: React.FC = () => {
   // Invoice Attachments
   const [invoiceAttachments, setInvoiceAttachments] = useState<{ name: string; url: string; isPending?: boolean }[]>(() => Array.isArray(initialDraft.invoiceAttachments) ? initialDraft.invoiceAttachments : []);
   const [uploadingInvoice, setUploadingInvoice] = useState(false);
+  const [invoiceUploadProgress, setInvoiceUploadProgress] = useState<Record<string, number>>({});
+  const invoiceUploadsActiveRef = React.useRef(0);
 
   // Submission & Feedback
   const [loading, setLoading] = useState(false);
@@ -547,7 +638,7 @@ const PlaceOrder: React.FC = () => {
     itemSalePrice,
     itemRemarks,
     selectedItemAttachedFile: attachedFile
-      ? { name: attachedFile.name, url: attachedFile.url, type: attachedFile.type }
+      ? { name: attachedFile.name, url: attachedFile.url, uploadId: attachedFile.uploadId, type: attachedFile.type }
       : null,
     isCustomSize,
     customShape,
@@ -625,7 +716,7 @@ const PlaceOrder: React.FC = () => {
     setItemSalePrice(d.itemSalePrice ?? '');
     setItemRemarks(d.itemRemarks || '');
     setAttachedFile(d.selectedItemAttachedFile?.url
-      ? { name: d.selectedItemAttachedFile.name, url: d.selectedItemAttachedFile.url, type: d.selectedItemAttachedFile.type }
+      ? { name: d.selectedItemAttachedFile.name, url: d.selectedItemAttachedFile.url, uploadId: d.selectedItemAttachedFile.uploadId, type: d.selectedItemAttachedFile.type }
       : null);
     setIsCustomSize(d.isCustomSize ?? false);
     setCustomShape(d.customShape || 'rect');
@@ -657,7 +748,8 @@ const PlaceOrder: React.FC = () => {
     showToast('Loaded saved draft: ' + savedDraft.title, 'success');
   };
 
-  const handleSaveAsDraft = () => {
+  const handleSaveAsDraft = async () => {
+    if (pendingItemUploadsRef.current.length) await Promise.all(pendingItemUploadsRef.current);
     const snapshot = buildCurrentDraftData();
     if (!hasMeaningfulPlaceOrderDraft(snapshot)) {
       showToast('Enter customer details or add an item before saving a draft.', 'warning');
@@ -858,6 +950,7 @@ const PlaceOrder: React.FC = () => {
         itemCostPrice,
         itemSalePrice,
         itemRemarks,
+        selectedItemAttachedFile: attachedFile ? { name: attachedFile.name, type: attachedFile.type, url: attachedFile.url, uploadId: attachedFile.uploadId } : null,
         isCustomSize,
         customShape,
         customLength,
@@ -884,7 +977,7 @@ const PlaceOrder: React.FC = () => {
     priority, targetDeliveryDate, requestedDeliveryDate, targetDeliveryDays, requestedDeliveryDays, orderPlacementDate, selectedSalesmanId,
     selectedCustomerId, selectedCustomerInfo,
     customerName, customerPhone, customerEmail, shippingAddress, locationLandmark,
-    receiverName, receiverPhone, specialInstructions, selectedProduct, selectedSpec,
+    receiverName, receiverPhone, specialInstructions, selectedProduct, selectedSpec, attachedFile,
     selectedSize, selectedColor, itemQuantity, itemCostPrice, itemSalePrice, itemRemarks,
     isCustomSize, customShape, customLength, customWidth, customHeight, customDiameter,
     customUnit, isCustomSpec, customSpecName, isCustomColor, customColorName,
@@ -1248,19 +1341,29 @@ const PlaceOrder: React.FC = () => {
         continue;
       }
 
+      const progressKey = `${file.name}-${file.size}-${file.lastModified}`;
+      invoiceUploadsActiveRef.current += 1;
+      setUploadingInvoice(true);
+      setInvoiceUploadProgress(prev => ({ ...prev, [progressKey]: 0 }));
       try {
         await new Promise<void>((resolve) => {
           const reader = new FileReader();
+          reader.onprogress = event => {
+            if (event.lengthComputable) setInvoiceUploadProgress(prev => ({ ...prev, [progressKey]: Math.min(40, Math.round(event.loaded / event.total * 40)) }));
+          };
           reader.onload = async () => {
             try {
               const base64 = reader.result as string;
+              setInvoiceUploadProgress(prev => ({ ...prev, [progressKey]: 45 }));
               if (window.electron?.makeUploadInvoiceAttachmentBuffer) {
+                setInvoiceUploadProgress(prev => ({ ...prev, [progressKey]: 55 }));
                 const res = await window.electron.makeUploadInvoiceAttachmentBuffer({
                   fileName: file.name,
                   fileBase64: base64
                 });
                 const persistentUrl = res.durableKey || (res.publicUrl && !res.publicUrl.includes('token=') ? res.publicUrl : undefined) || res.durableKey;
                 if (res && (res.success || res.isPendingUpload) && persistentUrl) {
+                  setInvoiceUploadProgress(prev => ({ ...prev, [progressKey]: 100 }));
                   setInvoiceAttachments(prev => [...prev, {
                     name: file.name,
                     url: persistentUrl,
@@ -1270,6 +1373,7 @@ const PlaceOrder: React.FC = () => {
                   alert(`Upload failed for "${file.name}": ` + res.error);
                 }
               } else {
+                setInvoiceUploadProgress(prev => ({ ...prev, [progressKey]: 100 }));
                 setInvoiceAttachments(prev => [...prev, { name: file.name, url: base64 }]);
               }
             } catch (bufErr: any) {
@@ -1283,10 +1387,13 @@ const PlaceOrder: React.FC = () => {
         });
       } catch (err: any) {
         console.error(err);
+      } finally {
+        invoiceUploadsActiveRef.current = Math.max(0, invoiceUploadsActiveRef.current - 1);
+        if (invoiceUploadsActiveRef.current === 0) setUploadingInvoice(false);
+        window.setTimeout(() => setInvoiceUploadProgress(prev => { const next = { ...prev }; delete next[progressKey]; return next; }), 1200);
       }
     }
     e.target.value = '';
-    setUploadingInvoice(false);
   };
 
   // ── Submit Order ───────────────────────────────────────────────────────────
@@ -1314,6 +1421,7 @@ const PlaceOrder: React.FC = () => {
     setError('');
 
     try {
+      if (pendingItemUploadsRef.current.length) await Promise.all(pendingItemUploadsRef.current);
       if (pricingSummary.discountValidationError) {
         alert(`Invalid discount: ${pricingSummary.discountValidationError}`);
         setLoading(false);
@@ -1327,7 +1435,7 @@ const PlaceOrder: React.FC = () => {
 
       const totalQty = pricingSummary.totalQty;
       const totalCostPrice = pricingSummary.totalCostPrice;
-      const totalSalePrice = pricingSummary.finalSalePrice ?? pricingSummary.subtotal;
+      const totalSalePrice = pricingSummary.subtotal;
 
       const mainTitle = cartItems.length === 1 
         ? cartItems[0].product_name 
@@ -1372,6 +1480,7 @@ const PlaceOrder: React.FC = () => {
         invoice_attachments: invoiceAttachments.map(a => a.url),
         items: cartItems.map(i => ({
           product_id: i.product_id || null,
+          requestion_item_id: (i as any).requestion_item_id || null,
           product_name: i.product_name,
           spec_id: i.spec_id || null,
           spec_name: i.spec_name || null,
@@ -1397,12 +1506,24 @@ const PlaceOrder: React.FC = () => {
 
       const orderId = order?.id;
       const createdItems = order?.items || [];
+      const attachmentWarnings: string[] = [];
 
       // Upload per-item drawings / attachments if attached via base64 buffer
       if (orderId && Array.isArray(createdItems)) {
         for (let idx = 0; idx < cartItems.length; idx++) {
           const item = cartItems[idx];
-          if (item.attachedFile && item.attachedFile.base64) {
+          if (item.attachedFile && item.attachedFile.uploadId && item.attachedFile.url) {
+            const createdItem = createdItems[idx];
+            if (createdItem?.id) {
+              const attached = await window.electron?.makeAssociateOrderAttachment?.({
+                uploadId: item.attachedFile.uploadId,
+                orderId,
+                itemId: createdItem.id,
+                fileRef: item.attachedFile.url
+              });
+              if (!attached?.success) attachmentWarnings.push(`${item.attachedFile.name}: ${attached?.error || 'attachment could not be linked'}`);
+            }
+          } else if (item.attachedFile && item.attachedFile.base64) {
             const createdItem = createdItems[idx];
             if (createdItem?.id && window.electron?.makeUploadInvoiceAttachmentBuffer) {
               try {
@@ -1421,6 +1542,7 @@ const PlaceOrder: React.FC = () => {
       }
 
       const confirmedNo = order?.order_number || (orderId ? `ORD-${orderId}` : 'Confirmed');
+      if (attachmentWarnings.length) showToast(`Order ${confirmedNo} was placed, but an attachment needs to be reattached: ${attachmentWarnings.join('; ')}`, 'warning');
       setConfirmedOrderNumber(confirmedNo);
       setSuccess(true);
 
@@ -1500,6 +1622,7 @@ const PlaceOrder: React.FC = () => {
   return (
     <DashboardLayout title="Place Customized Furniture Order">
       <div style={{ maxWidth: '1000px', margin: '1.5rem auto', padding: '0 1.5rem' }}>
+        {!isDraftsView && <>
         <motion.div initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }}
           style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '2rem', boxShadow: '0 4px 20px rgba(0,0,0,0.05)' }}>
 
@@ -1531,7 +1654,7 @@ const PlaceOrder: React.FC = () => {
                     </span>
                   )}
                 </div>
-                <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-secondary)' }}>Active User: <strong>{designerName}</strong> • Order Number: Auto-generated</p>
+                <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-secondary)' }}>Active User: <strong>{designerName}</strong> • Order Number: Auto-generated • {headerDateTime}</p>
               </div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -1996,7 +2119,7 @@ const PlaceOrder: React.FC = () => {
                           onChange={e => handleSpecSelect(Number(e.target.value))} 
                           disabled={!selectedProduct || (selectedProduct.specifications || []).length === 0}
                           style={{ ...inputStyle, opacity: !selectedProduct ? 0.6 : 1 }}>
-                          <option value="">-- Standard / Choose Specification --</option>
+                          <option value="">{selectedProduct.specifications?.length ? '-- Standard / Choose Specification --' : 'Not available'}</option>
                           {(selectedProduct?.specifications || []).map((s: any) => (
                             <option key={s.id} value={s.id}>{s.spec_code ? `[${s.spec_code}] ` : ''}{s.spec_name}</option>
                           ))}
@@ -2037,7 +2160,7 @@ const PlaceOrder: React.FC = () => {
                           </div>
                           <div style={{ ...inputStyle, display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'var(--bg-secondary)' }}>
                             <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
-                              {selectedProduct.size_label || (selectedProduct.size ? formatSizeDisplay(selectedProduct.size) : (selectedProduct.sizes?.[0] ? formatSizeDisplay(selectedProduct.sizes[0]) : 'Standard Dimensions'))}
+                              {getOrderSizeLabel(selectedSize, selectedProduct.size || selectedProduct.size_label)}
                             </span>
                             <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#10b981', background: 'rgba(16,185,129,0.12)', padding: '2px 8px', borderRadius: '4px' }}>
                               1 Active Size
@@ -2172,7 +2295,7 @@ const PlaceOrder: React.FC = () => {
                               <span style={{ flex: 1 }}>
                                 {selectedColor
                                   ? (selectedColor.color_name || 'Selected color') + (selectedColor.color_code ? ' (' + selectedColor.color_code + ')' : '')
-                                  : '-- Standard / Default Color --'}
+                                  : (selectedProduct.colors?.length || selectedSpec?.colors?.length ? '-- Standard / Default Color --' : 'Not available')}
                               </span>
                               <ChevronDown size={15} style={{ flexShrink: 0, opacity: 0.7 }} />
                             </button>
@@ -2215,7 +2338,7 @@ const PlaceOrder: React.FC = () => {
                                   }}
                                 >
                                   <span aria-hidden="true" style={{ width: '22px', height: '22px', flexShrink: 0, border: '1px solid var(--border-color)', borderRadius: '6px', background: 'linear-gradient(135deg, #fff 45%, #e5e7eb 45%, #e5e7eb 55%, #fff 55%)' }} />
-                                  <span>-- Standard / Default Color --</span>
+                                  <span>{selectedProduct.colors?.length || selectedSpec?.colors?.length ? '-- Standard / Default Color --' : 'Not available'}</span>
                                 </button>
                                 {((selectedProduct.colors && selectedProduct.colors.length > 0) ? selectedProduct.colors : (selectedSpec?.colors || [])).map((cl: any) => (
                                   <button
@@ -2407,8 +2530,9 @@ const PlaceOrder: React.FC = () => {
                             {attachedFile.name}
                           </div>
                           <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
-                            {attachedFile.type === 'cad' ? 'CAD Model / Technical Drawing' : (attachedFile.type === 'pdf' ? 'PDF Document' : 'Image Blueprint')} &bull; Ready to attach
+                            {attachedFile.type === 'cad' ? 'CAD Model / Technical Drawing' : (attachedFile.type === 'pdf' ? 'PDF Document' : 'Image Blueprint')} &bull; {itemFileProgress !== null && itemFileProgress < 100 ? `Uploading securely… ${itemFileProgress}%` : 'Uploaded and ready to attach'}
                           </div>
+                          {itemFileProgress !== null && <div style={{ height: 5, background: 'var(--border-color)', borderRadius: 5, overflow: 'hidden', marginTop: 5 }}><div style={{ width: `${itemFileProgress}%`, height: '100%', background: 'var(--accent-color)', transition: 'width 0.2s' }} /></div>}
                         </div>
                       </div>
                     )}
@@ -2542,8 +2666,9 @@ const PlaceOrder: React.FC = () => {
                             {attachedFile.name}
                           </div>
                           <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
-                            {attachedFile.type === 'cad' ? 'CAD Model / Technical Drawing' : (attachedFile.type === 'pdf' ? 'PDF Document' : 'Image Blueprint')} &bull; Ready to attach
+                            {attachedFile.type === 'cad' ? 'CAD Model / Technical Drawing' : (attachedFile.type === 'pdf' ? 'PDF Document' : 'Image Blueprint')} &bull; {itemFileProgress !== null && itemFileProgress < 100 ? `Uploading securely… ${itemFileProgress}%` : 'Uploaded and ready to attach'}
                           </div>
+                          {itemFileProgress !== null && <div style={{ height: 5, background: 'var(--border-color)', borderRadius: 5, overflow: 'hidden', marginTop: 5 }}><div style={{ width: `${itemFileProgress}%`, height: '100%', background: 'var(--accent-color)', transition: 'width 0.2s' }} /></div>}
                         </div>
                       </div>
                     )}
@@ -2601,21 +2726,21 @@ const PlaceOrder: React.FC = () => {
                                   </span>
                                 )}
                               </div>
-                              {(item.spec_details || item.spec_name) && (
+                              {(item.spec_details || item.spec_name) ? (
                                 <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
                                   {item.spec_details || item.spec_name}
                                 </div>
-                              )}
+                              ) : <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Specification: Not available</div>}
                             </td>
                             <td style={{ padding: '10px 12px' }}>
                               <span style={{ color: item.is_customized ? '#c2410c' : 'var(--text-secondary)', fontWeight: item.is_customized ? 700 : 400 }}>
-                                {item.dimensions_text || item.custom_dimensions || '—'}
+                                {item.dimensions_text || item.custom_dimensions || 'Not available'}
                               </span>
                             </td>
                             <td style={{ padding: '10px 12px' }}>
                               {item.color_name ? (
                                 <span style={{ padding: '2px 8px', borderRadius: '10px', background: 'var(--input-bg)', fontWeight: 600 }}>{item.color_name}</span>
-                              ) : '—'}
+                              ) : 'Not available'}
                             </td>
                             <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 700 }}>{item.quantity}</td>
                             
@@ -2630,15 +2755,15 @@ const PlaceOrder: React.FC = () => {
                             <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 600 }}>
                               {item.item_sale_price !== null && item.item_sale_price !== undefined && item.item_sale_price !== '' ? (
                                 <div>
-                                  <div>৳{Number(item.item_sale_price).toLocaleString()}</div>
+                                  <div style={{ textDecoration: item.discount_amount && Number(item.discount_amount) > 0 ? 'line-through' : 'none', color: item.discount_amount && Number(item.discount_amount) > 0 ? 'var(--text-secondary)' : 'inherit' }}>৳{Number(item.item_sale_price).toLocaleString()}</div>
                                   {item.discount_amount && Number(item.discount_amount) > 0 ? (
                                     <div style={{ fontSize: '0.72rem', color: '#ef4444', fontWeight: 600 }}>
                                       -৳{Number(item.discount_amount).toLocaleString()} ({item.discount_type === 'percent' ? `${item.discount_value}%` : 'fixed'})
                                     </div>
                                   ) : null}
                                   {item.final_item_price !== null && item.final_item_price !== undefined && item.discount_amount && Number(item.discount_amount) > 0 ? (
-                                    <div style={{ fontSize: '0.74rem', color: 'var(--accent-color)', fontWeight: 700 }}>
-                                      = ৳{Number(item.final_item_price).toLocaleString()}
+                                    <div style={{ fontSize: '0.9rem', color: 'var(--accent-color)', fontWeight: 800 }}>
+                                      Final: ৳{Number(item.final_item_price).toLocaleString()}
                                     </div>
                                   ) : null}
                                 </div>
@@ -3025,10 +3150,8 @@ const PlaceOrder: React.FC = () => {
                     ? <><RefreshCw size={16} className="upload-spinner" /> Uploading…</>
                     : <><Paperclip size={16} /> Choose Invoice Image (Desktop File)</>}
                 </button>
-                <label aria-disabled={uploadingInvoice} style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '9px 16px', background: 'var(--input-bg)', border: '1px dashed var(--border-color)', borderRadius: '8px', cursor: uploadingInvoice ? 'not-allowed' : 'pointer', opacity: uploadingInvoice ? 0.65 : 1, pointerEvents: uploadingInvoice ? 'none' : 'auto', color: 'var(--text-secondary)', fontSize: '0.875rem', fontWeight: 600 }}>
-                  {uploadingInvoice
-                    ? <><RefreshCw size={16} className="upload-spinner" /> Uploading…</>
-                    : <><Paperclip size={16} /> Attach Document / PDF</>}
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '9px 16px', background: 'var(--input-bg)', border: '1px dashed var(--border-color)', borderRadius: '8px', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '0.875rem', fontWeight: 600 }}>
+                  <Paperclip size={16} /> {uploadingInvoice ? 'Uploading in background · Attach more' : 'Attach Document / PDF'}
                   <input
                     type="file"
                     multiple
@@ -3041,6 +3164,11 @@ const PlaceOrder: React.FC = () => {
                   Accepts JPG, JPEG, PNG, WEBP (Max 15 MB) &amp; PDF
                 </span>
               </div>
+
+              {Object.entries(invoiceUploadProgress).map(([key, progress]) => <div key={key} style={{ marginTop: 8, padding: '8px 10px', border: '1px solid var(--border-color)', borderRadius: 8, fontSize: 12, color: 'var(--text-secondary)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}><span>{key.split('-').slice(0, -2).join('-')} · {progress >= 100 ? 'Saved' : 'Saving securely'}</span><strong>{progress}%</strong></div>
+                <div style={{ height: 4, marginTop: 5, background: 'var(--border-color)', borderRadius: 4, overflow: 'hidden' }}><div style={{ width: `${progress}%`, height: '100%', background: 'var(--accent-color)', transition: 'width .2s' }} /></div>
+              </div>)}
 
               {invoiceAttachments.length > 0 && (
                 <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -3099,6 +3227,8 @@ const PlaceOrder: React.FC = () => {
             </div>
           </form>
 
+        </motion.div></>}
+
           {/* Individually saved drafts are separate from the auto-restored working copy above. */}
           <section style={{
             marginTop: '20px',
@@ -3118,9 +3248,10 @@ const PlaceOrder: React.FC = () => {
                 {savedDrafts.length} saved
               </span>
             </div>
-            {savedDrafts.length === 0 ? (
+            <input aria-label="Search order drafts" value={savedDraftSearch} onChange={e => setSavedDraftSearch(e.target.value)} placeholder="Search drafts by title, customer, or product…" style={{ width: '100%', margin: '0 0 12px', padding: '10px 12px', border: '1px solid var(--border-color)', borderRadius: 8, background: 'var(--input-bg)', color: 'var(--text-primary)', boxSizing: 'border-box' }} />
+            {visibleSavedDrafts.length === 0 ? (
               <div style={{ padding: '22px 12px', textAlign: 'center', color: 'var(--text-secondary)', border: '1px dashed var(--border-color)', borderRadius: '10px', fontSize: '0.88rem' }}>
-                No saved drafts yet. Fill in an order and select “Save as Draft”.
+                {savedDrafts.length ? 'No drafts match this search.' : 'No saved drafts yet. Fill in an order and select “Save as Draft”.'}
               </div>
             ) : (
               <div style={{ overflowX: 'auto' }}>
@@ -3135,7 +3266,7 @@ const PlaceOrder: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {savedDrafts.map(savedDraft => {
+                    {visibleSavedDrafts.map(savedDraft => {
                       const itemCount = Array.isArray(savedDraft.data.cartItems)
                         ? savedDraft.data.cartItems.length
                         : (savedDraft.data.selectedProduct ? 1 : 0);
@@ -3187,7 +3318,6 @@ const PlaceOrder: React.FC = () => {
               </div>
             )}
           </section>
-        </motion.div>
       </div>
 
       {showProductCreateModal && (

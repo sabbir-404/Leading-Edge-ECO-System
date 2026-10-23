@@ -7,6 +7,7 @@
 import { z } from 'zod';
 
 export const MakeOrderItemInputSchema = z.object({
+    requestion_item_id: z.union([z.number().int().positive(), z.string()]).nullable().optional(),
     product_id: z.union([z.number().int().positive(), z.string()]).nullable().optional(),
     product_name: z.string().min(1, 'Product item name is required').max(255),
     spec_id: z.union([z.number().int().positive(), z.string()]).nullable().optional(),
@@ -188,6 +189,8 @@ export const CatalogProductSchema = z.object({
     sizeId: z.union([z.number().int().positive(), z.string(), z.null()]).optional(),
     blueprint_url: z.string().nullable().optional(),
     blueprintUrl: z.string().nullable().optional(),
+    product_drawing_url: z.string().nullable().optional(),
+    productDrawingUrl: z.string().nullable().optional(),
     specIds: z.array(z.union([z.number(), z.string()])).optional(),
     sizeIds: z.array(z.union([z.number(), z.string()])).optional(),
     colorIds: z.array(z.union([z.number(), z.string()])).optional()

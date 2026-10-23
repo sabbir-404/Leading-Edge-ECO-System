@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Package, Plus, Search, Edit2, Trash2, 
   Layers, Maximize2, Palette, CheckCircle, AlertCircle, RefreshCw, X, Upload, Image as ImageIcon,
-  ShoppingCart, History as HistoryIcon, RotateCcw, FileText
+  ShoppingCart, History as HistoryIcon, RotateCcw
 } from 'lucide-react';
 import DashboardLayout from '../../components/DashboardLayout';
 import { canManageGlobalProductAttributes, getUserPricingPermissions } from '../../utils/permissions';
@@ -17,6 +17,7 @@ import {
 import { ProductCreateModal } from './components/ProductCreateModal';
 import { resolveImageSrc, handleImageLoadError } from '../../utils/imageSrc';
 import { formatSizeDisplay } from '../../utils/formatSize';
+import { MakeDrawingPreview } from '../../components/MakeDrawingPreview';
 
 interface Size {
   id?: number;
@@ -60,6 +61,7 @@ interface Product {
   description?: string;
   main_image?: string;
   blueprint_url?: string | null;
+  product_drawing_url?: string | null;
   size_id?: number | null;
   size_label?: string | null;
   size?: any | null;
@@ -1078,19 +1080,8 @@ const MakeProductCatalog: React.FC = () => {
                     </div>
 
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', flexShrink: 0 }}>
-                      {selectedProduct.blueprint_url && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const resolved = resolveImageSrc(selectedProduct.blueprint_url);
-                            window.open(resolved, '_blank');
-                          }}
-                          style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 12px', background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.3)', borderRadius: '8px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 700, color: '#3b82f6', whiteSpace: 'nowrap' }}
-                          title="View technical CAD blueprint or PDF drawing"
-                        >
-                          <FileText size={14} /> View Blueprint
-                        </button>
-                      )}
+                      <MakeDrawingPreview url={selectedProduct.blueprint_url} label="Production Blueprint" compact />
+                      <MakeDrawingPreview url={selectedProduct.product_drawing_url} label="Product Drawing" compact />
                       <button 
                         onClick={() => setActiveTab('history')}
                         style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 12px', background: activeTab === 'history' ? '#059669' : 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.3)', borderRadius: '8px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 700, color: activeTab === 'history' ? '#fff' : '#059669', whiteSpace: 'nowrap' }}>

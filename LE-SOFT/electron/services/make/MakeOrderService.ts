@@ -512,6 +512,7 @@ export class MakeOrderService {
 
             return {
                 order_id: orderId,
+                requestion_item_id: (item as any).requestion_item_id ? Number((item as any).requestion_item_id) : null,
                 product_id: item.product_id || null,
                 spec_id: item.spec_id || null,
                 size_id: item.size_id || null,
@@ -586,6 +587,23 @@ export class MakeOrderService {
             console.error('[MakeOrderService] Items insertion failed. Rolling back order header:', itemsErr.message);
             await supabase.from('make_orders').delete().eq('id', orderId);
             return { success: false, error: `Order creation rolled back due to item insertion error: ${itemsErr.message}` };
+        }
+
+        const requestionItemIds = Array.from(new Set(input.items
+            .map((item: any) => Number(item.requestion_item_id || 0))
+            .filter((id: number) => Number.isInteger(id) && id > 0)));
+        for (const requestionItemId of requestionItemIds) {
+            try {
+                const { data: linkedItem } = await supabase.from('make_costing_request_items').update({ status: 'ordered', updated_at: new Date().toISOString() }).eq('id', requestionItemId).select('request_id').maybeSingle();
+                if (linkedItem?.request_id) {
+                    const { data: requestItems } = await supabase.from('make_costing_request_items').select('status').eq('request_id', linkedItem.request_id);
+                    if ((requestItems || []).length && (requestItems || []).every((row: any) => row.status === 'ordered')) {
+                        await supabase.from('make_costing_requests').update({ status: 'ordered', updated_at: new Date().toISOString() }).eq('id', linkedItem.request_id);
+                    }
+                }
+            } catch (err: any) {
+                console.warn('[MakeOrderService] Could not mark linked costing request item ordered:', err?.message || err);
+            }
         }
 
         // 3.5 Record initial payment into make_order_payments if money received
@@ -1588,7 +1606,11 @@ export class MakeOrderService {
         if (!order) return { success: false, error: 'Order not found.' };
 
         const role = (actorSession.role || '').toLowerCase().trim();
-        if (!['salesperson', 'salesman', 'sales', 'admin', 'superadmin', 'manager'].includes(role)) {
+        const requestPermission = actorSession.permissions?.['request_make_production_approval'];
+        if (role !== 'admin' && role !== 'superadmin' && role !== 'manager' && requestPermission === false) {
+            return { success: false, error: 'Forbidden: your user group cannot request production release approval.' };
+        }
+        if (!['salesperson', 'salesman', 'sales', 'admin', 'superadmin', 'manager'].includes(role) && requestPermission !== true) {
             return { success: false, error: 'Only Sales or Admin can request production release for an order with a due balance.' };
         }
         const due = Number(order.amount_due || 0);
@@ -1665,8 +1687,12 @@ export class MakeOrderService {
     ): Promise<{ success: boolean; decision?: 'approved' | 'rejected'; error?: string; message?: string }> {
         const role = (actorSession.role || '').toLowerCase();
         const isAdmin = role === 'admin' || role === 'superadmin';
-        if (!isAdmin) {
+        const decisionPermission = actorSession.permissions?.['decide_make_production_approval'];
+        if (!isAdmin && decisionPermission !== true) {
             return { success: false, error: 'Forbidden: Only Administrators can decide production approval.' };
+        }
+        if (!isAdmin && decisionPermission === false) {
+            return { success: false, error: 'Forbidden: your user group cannot decide production approval.' };
         }
 
         const { data: order, error: fetchErr } = await supabase

@@ -4,6 +4,7 @@ import { canManageGlobalProductAttributes, getUserPricingPermissions } from '../
 import { clearProductFormDraft, hasMeaningfulDraftContent, saveProductCatalogDraft } from '../../../utils/productCatalogDraft';
 import { resolveImageSrc, handleImageLoadError } from '../../../utils/imageSrc';
 import { formatSizeDisplay } from '../../../utils/formatSize';
+import { MakeDrawingPreview } from '../../../components/MakeDrawingPreview';
 
 export interface ProductCreateModalProps {
   isOpen: boolean;
@@ -50,6 +51,7 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
     category: null,
     main_image: '',
     blueprint_url: '',
+    product_drawing_url: '',
     size_id: null,
     is_active: true,
     cost_price: '',
@@ -73,7 +75,17 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
   const [uploadState, setUploadState] = useState<{ status: 'idle' | 'uploading' | 'success' | 'error'; error?: string | null }>({ status: 'idle' });
   const [uploadingBlueprint, setUploadingBlueprint] = useState(false);
   const [blueprintUploadState, setBlueprintUploadState] = useState<{ status: 'idle' | 'uploading' | 'success' | 'error'; error?: string | null }>({ status: 'idle' });
+  const [productDrawingUploadState, setProductDrawingUploadState] = useState<{ status: 'idle' | 'uploading' | 'success' | 'error'; error?: string | null }>({ status: 'idle' });
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const imageUploadTaskRef = React.useRef<Promise<void> | null>(null);
+  const blueprintUploadTaskRef = React.useRef<Promise<void> | null>(null);
+  const productDrawingUploadTaskRef = React.useRef<Promise<void> | null>(null);
+  const uploadedImageRef = React.useRef<string | null>(null);
+  const uploadedBlueprintRef = React.useRef<string | null>(null);
+  const uploadedProductDrawingRef = React.useRef<string | null>(null);
+  const imageUploadErrorRef = React.useRef<string | null>(null);
+  const blueprintUploadErrorRef = React.useRef<string | null>(null);
+  const productDrawingUploadErrorRef = React.useRef<string | null>(null);
 
   // Fetch global attributes if not provided or empty
   const fetchGlobalAttrs = async () => {
@@ -119,6 +131,15 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
     const productChanged = currentId !== prevProductIdRef.current;
 
     if (justOpened || productChanged) {
+      uploadedImageRef.current = null;
+      uploadedBlueprintRef.current = null;
+      uploadedProductDrawingRef.current = null;
+      imageUploadTaskRef.current = null;
+      blueprintUploadTaskRef.current = null;
+      productDrawingUploadTaskRef.current = null;
+      imageUploadErrorRef.current = null;
+      blueprintUploadErrorRef.current = null;
+      productDrawingUploadErrorRef.current = null;
       prevOpenRef.current = true;
       prevProductIdRef.current = currentId;
 
@@ -133,6 +154,7 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
           category: initialProduct.category || null,
           main_image: initialProduct.main_image || '',
           blueprint_url: initialProduct.blueprint_url || '',
+          product_drawing_url: initialProduct.product_drawing_url || '',
           size_id: initSizeId,
           is_active: initialProduct.is_active !== undefined ? initialProduct.is_active : true,
           cost_price: pricingPerms.canViewCostPrice ? (initialProduct.cost_price !== undefined && initialProduct.cost_price !== null ? initialProduct.cost_price : '') : '',
@@ -156,6 +178,7 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
           category: null,
           main_image: '',
           blueprint_url: '',
+          product_drawing_url: '',
           size_id: null,
           is_active: true,
           cost_price: '',
@@ -170,6 +193,7 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
       }
       setUploadState({ status: 'idle', error: null });
       setBlueprintUploadState({ status: 'idle', error: null });
+      setProductDrawingUploadState({ status: 'idle', error: null });
       setErrorMessage(null);
       setInlineNewAttrType(null);
     }
@@ -209,11 +233,13 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
     if (uploadState.status === 'uploading') return;
     setUploadState({ status: 'uploading', error: null });
     setUploadingImage(true);
+    imageUploadErrorRef.current = null;
     setErrorMessage(null);
-    try {
+    const task = (async () => { try {
       // @ts-ignore
       const url = await window.electron.pickImage();
       if (url) {
+        uploadedImageRef.current = url;
         handleFieldChange('main_image', url);
         setUploadState({ status: 'success', error: null });
         setTimeout(() => {
@@ -226,17 +252,21 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
     } catch (e: any) {
       console.error(e);
       const errText = e?.message || 'Failed to upload image. Please try again.';
+      imageUploadErrorRef.current = errText;
       setUploadState({ status: 'error', error: errText });
     } finally {
       setUploadingImage(false);
-    }
+    } })();
+    imageUploadTaskRef.current = task;
+    await task;
   };
 
   const handlePickAndUploadBlueprint = async () => {
     if (uploadingBlueprint) return;
     setUploadingBlueprint(true);
+    blueprintUploadErrorRef.current = null;
     setBlueprintUploadState({ status: 'uploading', error: null });
-    try {
+    const task = (async () => { try {
       // @ts-ignore
       const res = await window.electron.makePickAndUploadBlueprint({ productId: formData.id });
       if (res && res.canceled) {
@@ -245,6 +275,7 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
       }
       if (res && res.success) {
         const ref = res.durableKey || res.publicUrl;
+        uploadedBlueprintRef.current = ref;
         handleFieldChange('blueprint_url', ref);
         setBlueprintUploadState({ status: 'success', error: null });
         setTimeout(() => {
@@ -255,10 +286,36 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
       }
     } catch (e: any) {
       console.error(e);
+      blueprintUploadErrorRef.current = e.message || 'Failed to upload blueprint';
       setBlueprintUploadState({ status: 'error', error: e.message || 'Failed to upload blueprint' });
     } finally {
       setUploadingBlueprint(false);
-    }
+    } })();
+    blueprintUploadTaskRef.current = task;
+    await task;
+  };
+
+  const handlePickAndUploadProductDrawing = async () => {
+    if (productDrawingUploadState.status === 'uploading') return;
+    productDrawingUploadErrorRef.current = null;
+    setProductDrawingUploadState({ status: 'uploading', error: null });
+    const task = (async () => { try {
+      // PDF product drawings receive a permanent, light Leading Edge watermark in the main process.
+      const res = await window.electron.makePickAndUploadProductDrawing?.({ productId: formData.id });
+      if (res?.canceled) { setProductDrawingUploadState({ status: 'idle', error: null }); return; }
+      if (!res?.success) throw new Error(res?.error || 'Failed to upload product drawing.');
+      const ref = res.durableKey || res.publicUrl;
+      if (!ref) throw new Error('Upload completed without a persistent file reference.');
+      uploadedProductDrawingRef.current = ref;
+      handleFieldChange('product_drawing_url', ref);
+      setProductDrawingUploadState({ status: 'success', error: null });
+    } catch (e: any) {
+      productDrawingUploadErrorRef.current = e?.message || 'Failed to upload product drawing.';
+      setProductDrawingUploadState({ status: 'error', error: productDrawingUploadErrorRef.current });
+    } finally { productDrawingUploadTaskRef.current = null; }
+    })();
+    productDrawingUploadTaskRef.current = task;
+    await task;
   };
 
   const handleCreateInlineAttribute = async () => {
@@ -373,6 +430,12 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
     setSelectedSpecIds([]);
     setSelectedSizeIds([]);
     setSelectedColorIds([]);
+    uploadedImageRef.current = null;
+    uploadedBlueprintRef.current = null;
+    imageUploadErrorRef.current = null;
+    blueprintUploadErrorRef.current = null;
+    imageUploadTaskRef.current = null;
+    blueprintUploadTaskRef.current = null;
     setUploadState({ status: 'idle', error: null });
     setErrorMessage(null);
     if (onClearDraft) onClearDraft();
@@ -424,11 +487,22 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
 
     setSaving(true);
     try {
+      // If Save is pressed while the native picker is still uploading, wait for
+      // the upload result so the product row is committed with the final object key.
+      const pendingUploads: Promise<void>[] = [];
+      if (imageUploadTaskRef.current) pendingUploads.push(imageUploadTaskRef.current);
+      if (blueprintUploadTaskRef.current) pendingUploads.push(blueprintUploadTaskRef.current);
+      if (productDrawingUploadTaskRef.current) pendingUploads.push(productDrawingUploadTaskRef.current);
+      await Promise.all(pendingUploads);
+      if (imageUploadErrorRef.current || blueprintUploadErrorRef.current || productDrawingUploadErrorRef.current) {
+        throw new Error(imageUploadErrorRef.current || blueprintUploadErrorRef.current || productDrawingUploadErrorRef.current || 'An attachment upload failed.');
+      }
       const primaryCatId = selectedCategoryIds.length > 0 ? Number(selectedCategoryIds[0]) : null;
       const primaryCat = (attrs.categories || []).find((c: any) => c.id === primaryCatId);
 
       const payload = {
         ...formData,
+        main_image: uploadedImageRef.current ?? formData.main_image,
         product_code: code,
         product_name: name,
         category_id: primaryCatId,
@@ -439,7 +513,8 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
         max_discount_type: maxDiscType,
         max_discount_value: maxDiscVal,
         size_id: formData.size_id ? Number(formData.size_id) : null,
-        blueprint_url: formData.blueprint_url || null,
+        blueprint_url: (uploadedBlueprintRef.current ?? formData.blueprint_url) || null,
+        product_drawing_url: (uploadedProductDrawingRef.current ?? formData.product_drawing_url) || null,
         specIds: selectedSpecIds,
         sizeIds: formData.size_id ? [Number(formData.size_id)] : selectedSizeIds,
         colorIds: selectedColorIds
@@ -764,7 +839,7 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
               {formData.main_image && (
                 <button
                   type="button"
-                  onClick={() => { handleFieldChange('main_image', ''); setUploadState({ status: 'idle', error: null }); }}
+                  onClick={() => { uploadedImageRef.current = null; imageUploadErrorRef.current = null; handleFieldChange('main_image', ''); setUploadState({ status: 'idle', error: null }); }}
                   style={{ padding: '9px 12px', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.82rem' }}
                 >
                   Remove
@@ -788,7 +863,7 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
           {/* Blueprint Upload */}
           <div>
             <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '4px' }}>
-              PRODUCT BLUEPRINT (CAD / DRAWING / PDF)
+              PRODUCTION BLUEPRINT (FACTORY DRAWING / CAD / PDF)
             </label>
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
               <button
@@ -829,7 +904,7 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
               {formData.blueprint_url && (
                 <button
                   type="button"
-                  onClick={() => { handleFieldChange('blueprint_url', ''); setBlueprintUploadState({ status: 'idle', error: null }); }}
+                  onClick={() => { uploadedBlueprintRef.current = null; blueprintUploadErrorRef.current = null; handleFieldChange('blueprint_url', ''); setBlueprintUploadState({ status: 'idle', error: null }); }}
                   style={{ padding: '9px 12px', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.82rem' }}
                 >
                   Remove
@@ -843,10 +918,25 @@ export const ProductCreateModal: React.FC<ProductCreateModalProps> = ({
               </div>
             )}
             {formData.blueprint_url && (
-              <div style={{ marginTop: '6px', fontSize: '0.75rem', color: '#10b981', fontWeight: 600 }}>
-                ✓ Blueprint attached ({formData.blueprint_url.split('/').pop()})
+              <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.75rem', color: '#10b981', fontWeight: 600 }}>
+                ✓ Production blueprint attached ({formData.blueprint_url.split('/').pop()}) <MakeDrawingPreview url={formData.blueprint_url} label="Production Blueprint" compact />
               </div>
             )}
+          </div>
+
+          {/* Customer-facing product drawing */}
+          <div>
+            <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+              PRODUCT DRAWING (CUSTOMER-FACING)
+            </label>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <button type="button" onClick={() => void handlePickAndUploadProductDrawing()} disabled={productDrawingUploadState.status === 'uploading'} style={{ padding: '9px 14px', background: productDrawingUploadState.status === 'success' ? 'rgba(16,185,129,0.1)' : 'var(--bg-secondary)', border: `1px solid ${productDrawingUploadState.status === 'success' ? '#10b981' : 'var(--border-color)'}`, borderRadius: 8, color: productDrawingUploadState.status === 'success' ? '#10b981' : 'var(--text-primary)', cursor: productDrawingUploadState.status === 'uploading' ? 'not-allowed' : 'pointer', fontSize: '0.82rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+                {productDrawingUploadState.status === 'uploading' ? <><RefreshCw size={14} className="upload-spinner" /> Uploading…</> : productDrawingUploadState.status === 'success' ? <><Check size={14} /> Drawing Uploaded</> : <><Upload size={14} /> {formData.product_drawing_url ? 'Change Product Drawing' : 'Upload Product Drawing (PDF, DWG, DXF, STEP)'}</>}
+              </button>
+              {productDrawingUploadState.error && <span role="alert" style={{ color: '#ef4444', fontSize: 12 }}>{productDrawingUploadState.error}</span>}
+              {formData.product_drawing_url && <span style={{ color: '#10b981', fontSize: 12, fontWeight: 600 }}>Product drawing attached · PDF files are watermarked</span>}
+              {formData.product_drawing_url && <MakeDrawingPreview url={formData.product_drawing_url} label="Product Drawing" compact />}
+            </div>
           </div>
 
           {/* Attributes Assignment */}

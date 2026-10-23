@@ -3,6 +3,11 @@ services:
   lesoft-storage:
     image: node:18-alpine
     working_dir: /usr/src/app
+    env_file:
+      - /root/lesoft-storage.env
+    environment:
+      NAS_STORAGE_PATH: /usr/src/app/uploads
+      PORT: 8080
     volumes:
       - "/mnt/data_pool/lesoft/lesoft-storage:/usr/src/app"
     command: ["node", "nas-storage-server.js"]

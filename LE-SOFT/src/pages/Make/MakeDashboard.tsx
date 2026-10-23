@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { ClipboardList, Clock, CheckCircle, Truck, Package, BarChart2, RefreshCw } from 'lucide-react';
+import { ClipboardList, Clock, CheckCircle, Truck, Package, BarChart2, RefreshCw, Search, ArrowRight } from 'lucide-react';
 import { useAutoRefresh } from '../../hooks/useAutoRefresh';
 import DashboardLayout from '../../components/DashboardLayout';
 
@@ -56,8 +57,11 @@ const StatCard = ({ label, value, icon: Icon, color }: { label: string; value: n
 );
 
 const MakeDashboard: React.FC = () => {
+  const navigate = useNavigate();
   const [stats, setStats] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [costingStats, setCostingStats] = useState({ total: 0, pending: 0, completed: 0 });
+  const [recentSearch, setRecentSearch] = useState('');
 
   const fetchStats = async () => {
     setLoading(true);
@@ -65,6 +69,10 @@ const MakeDashboard: React.FC = () => {
       // @ts-ignore
       const data = await window.electron?.makeGetDashboardStats?.();
       setStats(data || null);
+      const requests = await window.electron?.makeGetCostingRequests?.();
+      const rows = Array.isArray(requests) ? requests : [];
+      const items = rows.flatMap((request: any) => request.items || []);
+      setCostingStats({ total: rows.length, pending: items.filter((item: any) => !['priced', 'ordered', 'completed'].includes(String(item.status || '').toLowerCase())).length, completed: items.filter((item: any) => ['priced', 'ordered', 'completed'].includes(String(item.status || '').toLowerCase())).length });
     } catch (e) { 
       console.error('[MakeDashboard] fetchStats error:', e); 
     } finally { 
@@ -94,6 +102,7 @@ const MakeDashboard: React.FC = () => {
   const recentOrdersList: any[] = Array.isArray(stats?.recent) 
     ? stats.recent 
     : (Array.isArray(stats?.recentOrders) ? stats.recentOrders : []);
+  const visibleRecentOrders = recentOrdersList.filter(o => [o.id, o.order_number, o.furniture_name, o.designer_name, o.status].some(value => String(value || '').toLowerCase().includes(recentSearch.trim().toLowerCase())));
 
   return (
     <DashboardLayout title="Make Dashboard">
@@ -124,6 +133,9 @@ const MakeDashboard: React.FC = () => {
               <StatCard label="In Progress" value={inProgressCount} icon={BarChart2} color="#3b82f6" />
               <StatCard label="Ready for Dispatch" value={readyForDispatchCount} icon={Truck} color="#10b981" />
               <StatCard label="Delivered" value={deliveredCount} icon={CheckCircle} color="#059669" />
+              <StatCard label="Requestions Made" value={costingStats.total} icon={ClipboardList} color="#8b5cf6" />
+              <StatCard label="Pending Costing" value={costingStats.pending} icon={Clock} color="#d97706" />
+              <StatCard label="Costing Completed" value={costingStats.completed} icon={CheckCircle} color="#0f766e" />
             </div>
 
             <div className="make-responsive-grid-2" style={{ gap: '1.5rem', marginBottom: '2rem' }}>
@@ -179,32 +191,36 @@ const MakeDashboard: React.FC = () => {
             {/* Recent Orders */}
             <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '14px', overflow: 'hidden' }}>
               <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid var(--border-color)' }}>
-                <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700 }}>Recent Orders</h3>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                  <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700 }}>Recent Orders</h3>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 7, border: '1px solid var(--border-color)', borderRadius: 8, padding: '7px 10px', background: 'var(--input-bg)' }}><Search size={15} /><input aria-label="Search recent orders" value={recentSearch} onChange={e => setRecentSearch(e.target.value)} placeholder="Search recent orders…" style={{ border: 0, outline: 0, background: 'transparent', color: 'var(--text-primary)' }} /></label>
+                </div>
               </div>
               <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ background: 'var(--bg-secondary)' }}>
-                      {['#', 'Furniture', 'Designer', 'Status', 'Priority', 'Date'].map(h => (
+                      {['#', 'Furniture', 'Designer', 'Status', 'Priority', 'Date', ''].map(h => (
                         <th key={h} style={{ padding: '10px 16px', textAlign: 'left', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {recentOrdersList.map((o: any, i: number) => (
+                    {visibleRecentOrders.map((o: any, i: number) => (
                       <tr key={o.id} style={{ borderTop: '1px solid var(--border-color)', background: i % 2 === 0 ? 'transparent' : 'var(--bg-secondary)' }}>
                         <td style={{ padding: '12px 16px', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>#{o.id}</td>
                         <td style={{ padding: '12px 16px', fontWeight: 600, fontSize: '0.875rem', color: 'var(--text-primary)' }}>{o.furniture_name}</td>
                         <td style={{ padding: '12px 16px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>{o.designer_name}</td>
                         <td style={{ padding: '12px 16px' }}><span style={chipStyle(statusColors[o.status] || '#6b7280')}>{o.status}</span></td>
                         <td style={{ padding: '12px 16px' }}><span style={chipStyle(priorityColors[o.priority] || '#6b7280')}>{o.priority}</span></td>
-                        <td style={{ padding: '12px 16px', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{new Date(o.created_at).toLocaleDateString()}</td>
+                        <td style={{ padding: '12px 16px', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{new Date(o.created_at).toLocaleString()}</td>
+                        <td style={{ padding: '12px 16px' }}><button type="button" onClick={() => navigate('/make/track', { state: { focusOrderId: o.id } })} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, border: '1px solid var(--border-color)', background: 'var(--card-bg)', color: 'var(--text-primary)', borderRadius: 7, padding: '6px 9px', cursor: 'pointer' }}>Open <ArrowRight size={14} /></button></td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
-                {recentOrdersList.length === 0 && (
-                  <p style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)', opacity: 0.6 }}>No orders yet</p>
+                {visibleRecentOrders.length === 0 && (
+                  <p style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)', opacity: 0.6 }}>{recentOrdersList.length ? 'No recent orders match the search.' : 'No orders yet'}</p>
                 )}
               </div>
             </div>

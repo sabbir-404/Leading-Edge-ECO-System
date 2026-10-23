@@ -68,7 +68,24 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
                 remove: vi.fn().mockResolvedValue({ data: {}, error: null })
             }))
         };
-        uploadService.registerClients({ nas: null, supabase: { storage: mockStorage } as any });
+        const mockSupabaseClient = {
+            storage: mockStorage,
+            from: vi.fn(() => {
+                let operation = 'select';
+                const builder: any = {
+                    select: () => builder,
+                    update: () => { operation = 'update'; return builder; },
+                    eq: () => builder,
+                    maybeSingle: async () => ({ data: { id: 1, pdf_urls: [] }, error: null }),
+                    then: (resolve: (value: any) => unknown) => Promise.resolve({
+                        data: operation === 'update' ? [{ id: 1 }] : [{ id: 1 }],
+                        error: null
+                    }).then(resolve)
+                };
+                return builder;
+            })
+        };
+        uploadService.registerClients({ nas: null, supabase: mockSupabaseClient as any });
     });
 
     afterEach(() => {
@@ -1077,6 +1094,9 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
 
     it('Scenario 28: Idempotent image retry reuses established remote URL after failed metadata update without re-upload', async () => {
         const uploadService = DurableUploadService.getInstance();
+        // This scenario exercises cleanup after successful reconciliation, which
+        // requires the authenticated reconciliation capability in production.
+        vi.spyOn(SupabaseQuotaManager.getInstance(), 'hasAuthorizedReconciliationSession').mockResolvedValue(true);
         
         // Mock uploadToNasStorage to succeed with established remote URL
         const uploadSpy = vi.spyOn(uploadService as any, 'uploadToNasStorage').mockResolvedValue({
@@ -1085,7 +1105,9 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
         });
 
         // First attempt: entity update fails (simulating crash or DB metadata update failure)
-        const entitySpy = vi.spyOn(uploadService as any, 'updateEntityRecord').mockResolvedValueOnce(false);
+        const entitySpy = vi.spyOn(uploadService as any, 'updateEntityRecord')
+            .mockResolvedValueOnce(true)  // temporary Supabase-buffer reference
+            .mockResolvedValueOnce(false); // NAS reference update fails on first pass
 
         const stageRecord = await uploadService.stageFile(
             Buffer.from('test-image-data-scenario-28'),

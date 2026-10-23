@@ -318,13 +318,15 @@ function createWindow() {
 
     log('Creating window...');
 
-    // Resolve app icon cross-platform:
-    //  - In packaged builds the icon is bundled alongside the binary
-    //  - In dev mode we resolve relative to the project root via __dirname
+    // Resolve the window icon from Electron's resources directory in packaged
+    // builds. electron-builder embeds the executable icon, but BrowserWindow
+    // needs a separate runtime asset or Windows falls back to the Electron icon.
     const isMac = process.platform === 'darwin';
-    const iconFile = isMac
-        ? path.join(__dirname, '../Logo/icon.icns')
-        : path.join(path.dirname(path.dirname(__dirname)), 'icon.ico');
+    const iconFile = app.isPackaged
+        ? path.join(process.resourcesPath, isMac ? 'Logo/icon.icns' : 'icon.ico')
+        : (isMac
+            ? path.resolve(__dirname, '../Logo/icon.icns')
+            : path.resolve(__dirname, '../../icon.ico'));
 
     const win = new BrowserWindow({
         width: 1280,
@@ -604,7 +606,7 @@ app.whenReady().then(() => {
             const responseHeaders = { ...details.responseHeaders };
             if (!responseHeaders['content-security-policy'] && !responseHeaders['Content-Security-Policy']) {
                 responseHeaders['Content-Security-Policy'] = [
-                    "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: app-media:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https://*.supabase.co https://storage.lenas.me http://100.88.85.6:* ws://localhost:* ws://127.0.0.1:* http://localhost:* http://127.0.0.1:*; media-src 'self' app-media: blob:; object-src 'none'; base-uri 'self';"
+                    "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: app-media:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' app-media: https://*.supabase.co https://storage.lenas.me http://100.88.85.6:* ws://localhost:* ws://127.0.0.1:* http://localhost:* http://127.0.0.1:*; frame-src 'self' app-media: blob:; media-src 'self' app-media: blob:; object-src app-media: blob:; base-uri 'self';"
                 ];
             }
             callback({ responseHeaders });
@@ -630,7 +632,7 @@ app.whenReady().then(() => {
                 initDB(),
                 new Promise((_, reject) => setTimeout(() => reject(new Error('Supabase init timed out')), 15000))
             ]);
-            log('Cloud DB ready');
+            log('Cloud DB startup probe complete; authenticated table checks run after sign-in');
 
             await Promise.race([
                 initOfflineDB(),

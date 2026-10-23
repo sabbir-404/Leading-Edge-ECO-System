@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   ClipboardList, ChevronDown, ChevronUp, CheckCircle, Trash2, Send, 
@@ -291,6 +291,7 @@ interface Part { id: number; part_name: string; length: string; width: string; h
 
 const TrackOrders: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const pricingPerms = getUserPricingPermissions();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
@@ -343,6 +344,7 @@ const TrackOrders: React.FC = () => {
   const [stagePhotoFile, setStagePhotoFile] = useState<File | null>(null);
   const [stagePhotoPreview, setStagePhotoPreview] = useState<string | null>(null);
   const [stagePhotoUrl, setStagePhotoUrl] = useState<string | null>(null);
+  const [uploadingStagePhoto, setUploadingStagePhoto] = useState(false);
   const [updatingStage, setUpdatingStage] = useState(false);
   const [approving, setApproving] = useState(false);
 
@@ -682,13 +684,32 @@ const TrackOrders: React.FC = () => {
     }
   };
 
+  useEffect(() => {
+    const targetId = Number((location.state as any)?.focusOrderId);
+    if (!targetId || !orders.length) return;
+    setStatusFilter('All');
+    setSearchQuery('');
+    void loadExpanded(targetId);
+    navigate(location.pathname, { replace: true, state: {} });
+  }, [location.key, orders.length]);
+
   const handlePickStagePhotoNative = async (orderId: number) => {
+    if (uploadingStagePhoto) return;
+    setUploadingStagePhoto(true);
     try {
       if (window.electron?.makePickAndUploadStagePhoto) {
         const res = await window.electron.makePickAndUploadStagePhoto({ orderId });
-        if (res?.success && res.publicUrl) {
-          setStagePhotoUrl(res.publicUrl);
-          setStagePhotoPreview(res.publicUrl);
+        const durableRef = res?.durableKey || res?.publicUrl;
+        if (res?.success && durableRef) {
+          setStagePhotoUrl(durableRef);
+          let previewUrl = res.publicUrl || '';
+          if (!previewUrl && window.electron?.makeResolveAttachmentUrl) {
+            try {
+              const resolved = await window.electron.makeResolveAttachmentUrl(durableRef);
+              previewUrl = resolved?.url || '';
+            } catch { /* queued uploads may resolve after background sync */ }
+          }
+          setStagePhotoPreview(previewUrl || durableRef);
           setStagePhotoFile(null);
           return;
         } else if (res?.error) {
@@ -698,6 +719,8 @@ const TrackOrders: React.FC = () => {
       }
     } catch (e: any) {
       console.error('Native photo pick error:', e);
+    } finally {
+      setUploadingStagePhoto(false);
     }
   };
 
@@ -708,6 +731,10 @@ const TrackOrders: React.FC = () => {
   };
 
   const handleUpdateProductionStage = async (orderId: number) => {
+    if (uploadingStagePhoto) {
+      alert('Please wait for the stage photo upload to finish before updating the production stage.');
+      return;
+    }
     if (!selectedStage) {
       alert('Please select a production stage.');
       return;
@@ -2265,7 +2292,7 @@ const TrackOrders: React.FC = () => {
                                       <span style={{ fontWeight: 600, fontSize: '0.85rem', color: statusColors[upd.status] || 'var(--text-primary)' }}>{upd.status}</span>
                                       <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '2px' }}>{upd.updated_by} • {new Date(upd.created_at).toLocaleString()}</div>
                                       {upd.note && <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '3px', fontStyle: 'italic' }}>{upd.note}</div>}
-                                      {upd.photo_url && (
+                                      {!isSalesperson && upd.photo_url && (
                                         <div style={{ marginTop: '8px' }}>
                                           <img 
                                             src={resolveImageSrc(upd.photo_url)} 
@@ -2298,7 +2325,7 @@ const TrackOrders: React.FC = () => {
 
                               {/* Latest Stage Live Photo Banner */}
                               {(() => {
-                                const displayPhoto = order.current_stage_photo || (updates || []).slice().reverse().find(u => u.photo_url)?.photo_url;
+                                const displayPhoto = !isSalesperson ? (order.current_stage_photo || (updates || []).slice().reverse().find(u => u.photo_url)?.photo_url) : null;
                                 if (!displayPhoto) return null;
                                 return (
                                   <div style={{ marginBottom: '14px', position: 'relative', borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--border-color)', background: 'var(--input-bg)' }}>
@@ -2365,20 +2392,21 @@ const TrackOrders: React.FC = () => {
                                         {!stagePhotoPreview ? (
                                           <button 
                                             type="button"
+                                            disabled={uploadingStagePhoto}
                                             onClick={() => handlePickStagePhotoNative(order.id)}
                                             style={{ 
                                               width: '100%',
                                               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
                                               padding: '10px 14px', border: '1px dashed var(--accent-color)', borderRadius: '8px',
-                                              background: 'rgba(99,102,241,0.05)', color: 'var(--accent-color)', cursor: 'pointer',
+                                              background: 'rgba(99,102,241,0.05)', color: 'var(--accent-color)', cursor: uploadingStagePhoto ? 'wait' : 'pointer', opacity: uploadingStagePhoto ? 0.75 : 1,
                                               fontSize: '0.84rem', fontWeight: 600, transition: 'all 0.2s'
                                             }}>
-                                            <Upload size={15} /> Select Stage Photo via Secure File Picker
+                                            {uploadingStagePhoto ? <><RefreshCw size={15} className="upload-spinner" /> Uploading stage photo…</> : <><Upload size={15} /> Select Stage Photo via Secure File Picker</>}
                                           </button>
                                         ) : (
                                           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 12px', background: 'var(--input-bg)', border: '1px solid var(--border-color)', borderRadius: '8px' }}>
                                             <img 
-                                              src={stagePhotoPreview} 
+                                              src={resolveImageSrc(stagePhotoPreview)}
                                               alt="Preview" 
                                               onClick={() => setPdfViewer({ url: stagePhotoPreview, name: 'Stage Photo Preview', path: '' })}
                                               style={{ width: '44px', height: '44px', objectFit: 'cover', borderRadius: '6px', cursor: 'pointer' }} 
@@ -2426,7 +2454,7 @@ const TrackOrders: React.FC = () => {
 
                                       <motion.button
                                         onClick={() => handleUpdateProductionStage(order.id)}
-                                        disabled={updatingStage || Boolean(order.production_hold && order.admin_approval_status !== 'approved')}
+                                        disabled={updatingStage || uploadingStagePhoto || Boolean(order.production_hold && order.admin_approval_status !== 'approved')}
                                         whileHover={{ scale: (updatingStage || (order.production_hold && order.admin_approval_status !== 'approved')) ? 1 : 1.01 }}
                                         whileTap={{ scale: (updatingStage || (order.production_hold && order.admin_approval_status !== 'approved')) ? 1 : 0.98 }}
                                         style={{

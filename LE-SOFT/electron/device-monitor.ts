@@ -21,6 +21,15 @@ function getMachineId(): string {
 
 export const DEVICE_ID = getMachineId();
 export const DEVICE_NAME = os.hostname();
+
+async function hasAuthenticatedSupabaseSession(): Promise<boolean> {
+    try {
+        const { data, error } = await supabase.auth.getSession();
+        return !error && !!data.session?.access_token;
+    } catch {
+        return false;
+    }
+}
 export const DEVICE_PLATFORM = os.platform();
 
 // ─── Get local IP address ─────────────────────────────────────────────────────
@@ -38,6 +47,7 @@ function getLocalIP(): string {
 
 // ─── Register/update device session in Supabase ───────────────────────────────
 export async function registerDevice(username?: string): Promise<void> {
+    if (!(await hasAuthenticatedSupabaseSession())) return;
     const { version } = JSON.parse(
         fs.readFileSync(path.join(app.getAppPath(), 'package.json'), 'utf-8')
     );
@@ -65,6 +75,7 @@ export async function registerDevice(username?: string): Promise<void> {
 
 // ─── Set/unset this device as backup node ────────────────────────────────────
 export async function setBackupNode(isBackup: boolean): Promise<void> {
+    if (!(await hasAuthenticatedSupabaseSession())) return;
     const { error } = await supabase
         .from('device_sessions')
         .update({ is_backup_node: isBackup })
@@ -76,6 +87,7 @@ export async function setBackupNode(isBackup: boolean): Promise<void> {
 
 // ─── Get all connected devices ───────────────────────────────────────────────
 export async function getConnectedDevices(): Promise<any[]> {
+    if (!(await hasAuthenticatedSupabaseSession())) return [];
     const { data, error } = await supabase
         .from('device_sessions')
         .select('*')
@@ -91,6 +103,7 @@ export async function getConnectedDevices(): Promise<any[]> {
 // ─── Heartbeat — keep session alive ──────────────────────────────────────────
 export function startHeartbeat(intervalMs = 60_000): NodeJS.Timeout {
     return setInterval(async () => {
+        if (!(await hasAuthenticatedSupabaseSession())) return;
         await supabase
             .from('device_sessions')
             .update({ last_seen: new Date().toISOString() })

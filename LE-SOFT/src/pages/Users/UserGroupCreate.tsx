@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronDown, ChevronRight, Shield, CheckSquare, Square, Search } from 'lucide-react';
+import { ChevronDown, ChevronRight, Shield, CheckSquare, Square, Search, UserRound } from 'lucide-react';
 import DashboardLayout from '../../components/DashboardLayout';
 import '../Accounting/Masters/Masters.css';
 
@@ -109,10 +109,21 @@ const PERMISSION_GROUPS = [
             { key: 'set_make_cost_price', label: 'Enter Production Cost Price' },
             { key: 'set_make_sale_price', label: 'Set Customer Sale Price' },
             { key: 'view_product_blueprint', label: 'View Product Blueprint Files', desc: 'Allows viewing and downloading technical blueprint and CAD drawing assets.' },
+            { key: 'view_product_drawing', label: 'View Customer Product Drawings', desc: 'Allows customer-facing product drawings; factory-manager roles remain restricted to production blueprints.' },
             { key: 'view_product_cost_price', label: 'View Product Cost Prices', desc: 'Allows viewing production cost prices in catalog and order lines.' },
             { key: 'view_product_sale_price', label: 'View Product Sale Prices', desc: 'Allows viewing customer sale prices in catalog and order lines.' },
             { key: 'view_product_max_discount', label: 'View Maximum Allowed Discount', desc: 'Allows viewing maximum permitted discount limits in product catalog.' },
             { key: 'approve_make_order', label: 'Approve Manufacturing Orders' },
+            { key: 'make_record_payment', label: 'Record Order Payments' },
+            { key: 'request_make_production_approval', label: 'Request Production Approval With Due' },
+            { key: 'decide_make_production_approval', label: 'Approve or Reject Production Override' },
+            { key: 'update_make_production_stage', label: 'Update Production Stage and Photos' },
+            { key: 'read_make_costing_requests', label: 'Read Costing Requests', desc: 'Read own requests; use the separate all-requests permission for department-wide access.' },
+            { key: 'read_all_make_costing_requests', label: 'Read All Costing Requests', desc: 'Allows department-wide request visibility; without it users are limited to their own requests.' },
+            { key: 'create_make_costing_request', label: 'Create Costing Requests' },
+            { key: 'price_make_costing_request', label: 'Price and Prepare Requested Products', desc: 'Enter product name/code and prices, attach optional drawings, and create the linked catalog product.' },
+            { key: 'delete_make_costing_request', label: 'Delete Costing Requests' },
+            { key: 'place_order_from_costing_request', label: 'Place Order from Costing Request' },
             { key: 'access_make_sales_portal', label: 'Authorize WordPress Sales Portal Access' }
         ]
     },
@@ -176,6 +187,7 @@ const UserGroupCreate: React.FC = () => {
     const [name, setName] = useState('');
     const [description, setDescription] = useState('');
     const [permissions, setPermissions] = useState<Record<string, boolean>>({});
+    const [existingGroupId, setExistingGroupId] = useState<number | null>(null);
     const [error, setError] = useState('');
     const [expandedCategories, setExpandedCategories] = useState<string[]>(['Billing', 'Settings & Security']);
     const [permSearch, setPermSearch] = useState('');
@@ -212,6 +224,41 @@ const UserGroupCreate: React.FC = () => {
         setPermissions({});
     };
 
+    // Baseline Salesman access for MAKE. Pricing, production, and designer-only
+    // files remain explicitly excluded; the role can create requests and orders.
+    const applySalesmanPreset = async () => {
+        const makeGroup = PERMISSION_GROUPS.find(g => g.category === 'MAKE');
+        if (!makeGroup) return;
+        let next: Record<string, boolean> = { ...permissions };
+        try {
+            // The default Salesman group is seeded by the database migration.
+            // If it exists, apply the preset as an edit instead of creating a duplicate.
+            const groups = await (window.electron as any).getUserGroups({ requestingUserId: parseInt(localStorage.getItem('user_id') || '0') });
+            const existing = (groups || []).find((group: any) => ['salesman', 'salesperson'].includes(String(group.name || '').toLowerCase()));
+            if (existing) {
+                const saved = typeof existing.permissions === 'string' ? JSON.parse(existing.permissions || '{}') : (existing.permissions || {});
+                next = { ...saved };
+                setExistingGroupId(Number(existing.id));
+            } else {
+                setExistingGroupId(null);
+            }
+        } catch {
+            setExistingGroupId(null);
+        }
+        makeGroup.perms.forEach(p => { next[p.key] = false; });
+        [
+            'read_make', 'write_make', 'read_make_catalog',
+            'view_product_drawing', 'view_product_sale_price',
+            'approve_make_order', 'read_make_costing_requests',
+            'create_make_costing_request', 'place_order_from_costing_request',
+            'access_make_sales_portal'
+        ].forEach(key => { next[key] = true; });
+        setPermissions(next);
+        setName('Salesman');
+        setDescription('MAKE salesperson: catalog and customer drawings, own costing requests, and order placement/approval. No cost prices, production blueprints, designer pricing, or production controls.');
+        setExpandedCategories(['MAKE']);
+    };
+
     const isCategoryAllSelected = (category: string) => {
         const group = PERMISSION_GROUPS.find(g => g.category === category);
         if (!group) return false;
@@ -230,7 +277,11 @@ const UserGroupCreate: React.FC = () => {
         if (!name.trim()) { setError('Group name is required'); return; }
         try {
             // @ts-ignore
-            await window.electron.createUserGroup({ name, description, permissions });
+            if (existingGroupId !== null) {
+                await window.electron.updateUserGroup({ id: existingGroupId, name, description, permissions });
+            } else {
+                await window.electron.createUserGroup({ name, description, permissions });
+            }
             navigate('/users/groups');
         } catch (err: any) {
             setError(err.message || 'Failed to create group');
@@ -260,7 +311,7 @@ const UserGroupCreate: React.FC = () => {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem' }}>
                     <div style={{ background: 'rgba(99,102,241,0.1)', color: 'var(--accent-color)', padding: '10px', borderRadius: '10px' }}><Shield size={24} /></div>
                     <motion.h1 initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ margin: 0, fontSize: '1.6rem', fontWeight: 700 }}>
-                        Create User Group
+                        {existingGroupId !== null ? 'Update Salesman Group' : 'Create User Group'}
                     </motion.h1>
                 </div>
 
@@ -283,7 +334,8 @@ const UserGroupCreate: React.FC = () => {
                             <h3 style={{ margin: 0, fontWeight: 700, fontSize: '1.2rem' }}>Permission Matrix</h3>
                             <p style={{ margin: '0.2rem 0 0', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Check the specific modules and actions this group can access.</p>
                         </div>
-                        <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                            <button type="button" onClick={applySalesmanPreset} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.5rem 1rem', borderRadius: '8px', border: '1px solid var(--accent-color)', background: 'rgba(99,102,241,0.08)', color: 'var(--accent-color)', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 }}><UserRound size={16} /> Apply Salesman Permissions</button>
                             <button type="button" onClick={clearAllGlobal} style={{ padding: '0.5rem 1rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--card-bg)', color: 'var(--text-primary)', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 }}>Clear All</button>
                             <button type="button" onClick={selectAllGlobal} style={{ padding: '0.5rem 1rem', borderRadius: '8px', border: 'none', background: 'var(--accent-color)', color: 'white', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 }}>Select All Global</button>
                         </div>
@@ -378,7 +430,7 @@ const UserGroupCreate: React.FC = () => {
                     <div style={{ position: 'sticky', bottom: '1rem', zIndex: 10, background: 'var(--bg-color)', padding: '1rem', borderRadius: '12px', border: '1px solid var(--border-color)', boxShadow: '0 -10px 40px rgba(0,0,0,0.1)', display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
                         <button type="button" onClick={() => navigate('/users/groups')} style={{ padding: '0.75rem 2rem', background: 'var(--input-bg)', border: '1px solid var(--border-color)', borderRadius: '8px', cursor: 'pointer', color: 'var(--text-primary)', fontWeight: 600, fontSize: '0.95rem' }}>Cancel</button>
                         <motion.button type="submit" whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} style={{ padding: '0.75rem 2.5rem', background: 'var(--accent-color)', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', fontSize: '0.95rem', boxShadow: '0 4px 12px rgba(99, 102, 241, 0.3)' }}>
-                            Save User Group
+                            {existingGroupId !== null ? 'Update Salesman Group' : 'Save User Group'}
                         </motion.button>
                     </div>
                 </form>

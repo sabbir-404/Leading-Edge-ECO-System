@@ -22,7 +22,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { SupabaseQuotaManager } from '../quota/SupabaseQuotaManager';
-import { getCfAccessHeaders, getNasStorageCandidates } from '../../supabase';
+import { getCfAccessHeaders, getNasStorageAuthHeaders, getNasStorageCandidates } from '../../supabase';
 
 export type UploadStatus = 
     | 'staged_local'
@@ -785,7 +785,7 @@ export class DurableUploadService {
                 return false;
             }
 
-            if (resolvedFieldName === 'pdf_urls' || resolvedFieldName === 'invoice_attachment_urls') {
+            if (['pdf_urls', 'invoice_attachment_urls', 'file_urls'].includes(resolvedFieldName)) {
                 const list: string[] = Array.isArray((existing as any)?.[resolvedFieldName]) ? (existing as any)[resolvedFieldName] : [];
                 const uploadPrefix = uploadId ? `${uploadId}_` : null;
 
@@ -896,6 +896,18 @@ export class DurableUploadService {
             }
 
             const keysToRemove = Array.from(candidateKeys).filter(k => k.length > 0);
+
+            const quotaManager = SupabaseQuotaManager.getInstance();
+            if (uploadId) {
+                // A regular anon desktop client is not authorized to release shared
+                // cloud-buffer quota. Preserve the verified cloud copy until an
+                // authenticated reconciliation session can update the ledger.
+                if (!await quotaManager.hasAuthorizedReconciliationSession()) {
+                    console.info(`[DurableUpload] Retaining verified cloud copy for ${uploadId}; authorized quota reconciliation is unavailable.`);
+                    return false;
+                }
+            }
+
             const { error } = await this.supabaseClient.storage
                 .from('make-order-files')
                 .remove(keysToRemove);
@@ -906,13 +918,16 @@ export class DurableUploadService {
             }
 
             if (uploadId) {
-                const pruned = await SupabaseQuotaManager.getInstance().pruneConfirmedStorage(uploadId, sizeBytes);
+                // Release shared capacity only after object deletion is confirmed.
+                // If the RPC fails, retries can safely repeat the idempotent remove
+                // and finish quota reconciliation without undercounting live data.
+                const pruned = await quotaManager.pruneConfirmedStorage(uploadId, sizeBytes);
                 if (!pruned) {
-                    console.warn(`[DurableUpload] Storage quota prune RPC failed for ${uploadId}`);
+                    console.warn(`[DurableUpload] Cloud object was removed, but quota reconciliation was rejected for ${uploadId}; retaining the upload record for retry.`);
                     return false;
                 }
             } else {
-                SupabaseQuotaManager.getInstance().deductConfirmedPrunedStorage(sizeBytes);
+                quotaManager.deductConfirmedPrunedStorage(sizeBytes);
             }
 
             console.log(`[DurableUpload] Safely pruned temporary cloud copy after NAS persistence: ${objectKey}`);
@@ -954,7 +969,7 @@ export class DurableUploadService {
         try {
             const resp = await fetch(url, {
                 method: 'GET',
-                headers: isTunnel ? cfHeaders : {},
+                headers: { ...getNasStorageAuthHeaders(), ...(isTunnel ? cfHeaders : {}) },
                 signal: controller.signal
             });
 
@@ -1035,6 +1050,7 @@ export class DurableUploadService {
                 const isTunnel = candidateBase.startsWith('https://');
                 const reqHeaders: Record<string, string> = {
                     'x-subfolder': subfolder,
+                    ...getNasStorageAuthHeaders(),
                     ...(isTunnel ? cfHeaders : {})
                 };
 

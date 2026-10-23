@@ -1,124 +1,125 @@
-import React, { useEffect, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useState } from 'react';
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import ProtectedRoute from './components/ProtectedRoute';
-import Login from './pages/Auth/Login';
-import SetupScreen from './pages/Auth/SetupScreen';
-import Dashboard from './pages/Dashboard/Dashboard';
-import Masters from './pages/Masters';
-import Vouchers from './pages/Vouchers';
-import CreateCompany from './pages/Company/CreateCompany';
+const Login = lazy(() => import('./pages/Auth/Login'));
+const SetupScreen = lazy(() => import('./pages/Auth/SetupScreen'));
+const Dashboard = lazy(() => import('./pages/Dashboard/Dashboard'));
+const Masters = lazy(() => import('./pages/Masters'));
+const Vouchers = lazy(() => import('./pages/Vouchers'));
+const CreateCompany = lazy(() => import('./pages/Company/CreateCompany'));
 import './index.css';
 
 // Accounting Masters
-import GroupList from './pages/Accounting/Masters/GroupList';
-import GroupCreate from './pages/Accounting/Masters/GroupCreate';
-import LedgerList from './pages/Accounting/Masters/LedgerList';
-import LedgerCreate from './pages/Accounting/Masters/LedgerCreate';
-import SupplierManagement from './pages/Accounting/Masters/SupplierManagement';
-import SupplierLedgerDetail from './pages/Accounting/Masters/SupplierLedgerDetail';
+const GroupList = lazy(() => import('./pages/Accounting/Masters/GroupList'));
+const GroupCreate = lazy(() => import('./pages/Accounting/Masters/GroupCreate'));
+const LedgerList = lazy(() => import('./pages/Accounting/Masters/LedgerList'));
+const LedgerCreate = lazy(() => import('./pages/Accounting/Masters/LedgerCreate'));
+const SupplierManagement = lazy(() => import('./pages/Accounting/Masters/SupplierManagement'));
+const SupplierLedgerDetail = lazy(() => import('./pages/Accounting/Masters/SupplierLedgerDetail'));
 // Inventory Masters
-import UnitList from './pages/Inventory/Masters/UnitList';
-import UnitCreate from './pages/Inventory/Masters/UnitCreate';
-import StockGroupList from './pages/Inventory/Masters/StockGroupList';
-import StockGroupCreate from './pages/Inventory/Masters/StockGroupCreate';
-import StockItemList from './pages/Inventory/Masters/StockItemList';
-import StockItemCreate from './pages/Inventory/Masters/StockItemCreate';
-import ProductList from './pages/Inventory/Masters/ProductList';
-import ProductCreate from './pages/Inventory/Masters/ProductCreate';
-import ProductLedger from './pages/Inventory/Masters/ProductLedger';
-import ProductModelRules from './pages/Inventory/Masters/ProductModelRules';
-import ProductAttributes from './pages/Inventory/Masters/ProductAttributes';
-import DamagedGoods from './pages/Inventory/Masters/DamagedGoods';
-import PurchaseRequisitions from './pages/Inventory/Masters/PurchaseRequisitions';
+const UnitList = lazy(() => import('./pages/Inventory/Masters/UnitList'));
+const UnitCreate = lazy(() => import('./pages/Inventory/Masters/UnitCreate'));
+const StockGroupList = lazy(() => import('./pages/Inventory/Masters/StockGroupList'));
+const StockGroupCreate = lazy(() => import('./pages/Inventory/Masters/StockGroupCreate'));
+const StockItemList = lazy(() => import('./pages/Inventory/Masters/StockItemList'));
+const StockItemCreate = lazy(() => import('./pages/Inventory/Masters/StockItemCreate'));
+const ProductList = lazy(() => import('./pages/Inventory/Masters/ProductList'));
+const ProductCreate = lazy(() => import('./pages/Inventory/Masters/ProductCreate'));
+const ProductLedger = lazy(() => import('./pages/Inventory/Masters/ProductLedger'));
+const ProductModelRules = lazy(() => import('./pages/Inventory/Masters/ProductModelRules'));
+const ProductAttributes = lazy(() => import('./pages/Inventory/Masters/ProductAttributes'));
+const DamagedGoods = lazy(() => import('./pages/Inventory/Masters/DamagedGoods'));
+const PurchaseRequisitions = lazy(() => import('./pages/Inventory/Masters/PurchaseRequisitions'));
 
 // Master Stubs
-import VoucherTypes from './pages/Stubs/VoucherTypes';
-import Currencies from './pages/Stubs/Currencies';
-import Godowns from './pages/Stubs/Godowns';
+const VoucherTypes = lazy(() => import('./pages/Stubs/VoucherTypes'));
+const Currencies = lazy(() => import('./pages/Stubs/Currencies'));
+const Godowns = lazy(() => import('./pages/Stubs/Godowns'));
 
 // Vouchers
-import VoucherList from './pages/Accounting/Vouchers/VoucherList';
-import VoucherEntry from './pages/Accounting/Vouchers/VoucherEntry';
-import PurchaseBillList from './pages/Accounting/Vouchers/PurchaseBillList';
-import PurchaseBillCreate from './pages/Accounting/Vouchers/PurchaseBillCreate';
+const VoucherList = lazy(() => import('./pages/Accounting/Vouchers/VoucherList'));
+const VoucherEntry = lazy(() => import('./pages/Accounting/Vouchers/VoucherEntry'));
+const PurchaseBillList = lazy(() => import('./pages/Accounting/Vouchers/PurchaseBillList'));
+const PurchaseBillCreate = lazy(() => import('./pages/Accounting/Vouchers/PurchaseBillCreate'));
 
 // Users
-import UserList from './pages/Users/UserList';
-import UserCreate from './pages/Users/UserCreate';
-import UserGroupList from './pages/Users/UserGroupList';
-import UserGroupCreate from './pages/Users/UserGroupCreate';
-import ActiveUsers from './pages/Users/ActiveUsers';
-import PermissionLevels from './pages/Users/PermissionLevels';
+const UserList = lazy(() => import('./pages/Users/UserList'));
+const UserCreate = lazy(() => import('./pages/Users/UserCreate'));
+const UserGroupList = lazy(() => import('./pages/Users/UserGroupList'));
+const UserGroupCreate = lazy(() => import('./pages/Users/UserGroupCreate'));
+const ActiveUsers = lazy(() => import('./pages/Users/ActiveUsers'));
+const PermissionLevels = lazy(() => import('./pages/Users/PermissionLevels'));
 
 // Notifications
-import Notifications from './pages/Notifications/Notifications';
+const Notifications = lazy(() => import('./pages/Notifications/Notifications'));
 
 // Settings
-import Settings from './pages/Settings/Settings';
+const Settings = lazy(() => import('./pages/Settings/Settings'));
 import MakeTutorial from './components/tutorial/MakeTutorial';
 
 // Website Admin
-import WebsiteDashboard from './pages/Website/WebsiteDashboard';
-import WebsiteProducts from './pages/Website/WebsiteProducts';
-import WebsiteOrders from './pages/Website/WebsiteOrders';
-import WebsiteCategories from './pages/Website/WebsiteCategories';
-import WebsiteProjects from './pages/Website/WebsiteProjects';
-import WebsitePages from './pages/Website/WebsitePages';
-import WebsiteMedia from './pages/Website/WebsiteMedia';
-import WebsiteNewsletter from './pages/Website/WebsiteNewsletter';
-import WebsiteSettings from './pages/Website/WebsiteSettings';
+const WebsiteDashboard = lazy(() => import('./pages/Website/WebsiteDashboard'));
+const WebsiteProducts = lazy(() => import('./pages/Website/WebsiteProducts'));
+const WebsiteOrders = lazy(() => import('./pages/Website/WebsiteOrders'));
+const WebsiteCategories = lazy(() => import('./pages/Website/WebsiteCategories'));
+const WebsiteProjects = lazy(() => import('./pages/Website/WebsiteProjects'));
+const WebsitePages = lazy(() => import('./pages/Website/WebsitePages'));
+const WebsiteMedia = lazy(() => import('./pages/Website/WebsiteMedia'));
+const WebsiteNewsletter = lazy(() => import('./pages/Website/WebsiteNewsletter'));
+const WebsiteSettings = lazy(() => import('./pages/Website/WebsiteSettings'));
 
 // Billing
-import Billing from './pages/Billing/Billing';
-import BillHistory from './pages/Billing/BillHistory';
-import AlterBill from './pages/Billing/AlterBill';
-import PendingAlterations from './pages/Billing/PendingAlterations';
+const Billing = lazy(() => import('./pages/Billing/Billing'));
+const BillHistory = lazy(() => import('./pages/Billing/BillHistory'));
+const AlterBill = lazy(() => import('./pages/Billing/AlterBill'));
+const PendingAlterations = lazy(() => import('./pages/Billing/PendingAlterations'));
 
 
 // Shipping
-import ShippingDashboard from './pages/Shipping/ShippingDashboard';
+const ShippingDashboard = lazy(() => import('./pages/Shipping/ShippingDashboard'));
 
 // MAKE Module
-import PlaceOrder from './pages/Make/PlaceOrder';
-import TrackOrders from './pages/Make/TrackOrders';
-import MakeDashboard from './pages/Make/MakeDashboard';
-import MakeProductCatalog from './pages/Make/MakeProductCatalog';
+const PlaceOrder = lazy(() => import('./pages/Make/PlaceOrder'));
+const TrackOrders = lazy(() => import('./pages/Make/TrackOrders'));
+const MakeDashboard = lazy(() => import('./pages/Make/MakeDashboard'));
+const MakeProductCatalog = lazy(() => import('./pages/Make/MakeProductCatalog'));
+const MakeCostingRequests = lazy(() => import('./pages/Make/MakeCostingRequests'));
 
 
 // Reports
-import Reports from './pages/Reports/Reports';
-import TrialBalance from './pages/Reports/TrialBalance';
-import BalanceSheet from './pages/Reports/BalanceSheet';
-import ProfitAndLoss from './pages/Reports/ProfitAndLoss';
-import StockSummary from './pages/Reports/StockSummary';
-import DayBook from './pages/Reports/DayBook';
-import MarketAnalysis from './pages/Reports/MarketAnalysis';
-import ProductHistoryReport from './pages/Reports/ProductHistoryReport';
+const Reports = lazy(() => import('./pages/Reports/Reports'));
+const TrialBalance = lazy(() => import('./pages/Reports/TrialBalance'));
+const BalanceSheet = lazy(() => import('./pages/Reports/BalanceSheet'));
+const ProfitAndLoss = lazy(() => import('./pages/Reports/ProfitAndLoss'));
+const StockSummary = lazy(() => import('./pages/Reports/StockSummary'));
+const DayBook = lazy(() => import('./pages/Reports/DayBook'));
+const MarketAnalysis = lazy(() => import('./pages/Reports/MarketAnalysis'));
+const ProductHistoryReport = lazy(() => import('./pages/Reports/ProductHistoryReport'));
 
 // HRM Module
-import HRMDashboard from './pages/HRM/HRMDashboard';
-import HRMEmployees from './pages/HRM/HRMEmployees';
-import HRMAttendance from './pages/HRM/HRMAttendance';
-import HRMLeaves from './pages/HRM/HRMLeaves';
-import HRMPayroll from './pages/HRM/HRMPayroll';
-import HRMHolidays from './pages/HRM/HRMHolidays';
+const HRMDashboard = lazy(() => import('./pages/HRM/HRMDashboard'));
+const HRMEmployees = lazy(() => import('./pages/HRM/HRMEmployees'));
+const HRMAttendance = lazy(() => import('./pages/HRM/HRMAttendance'));
+const HRMLeaves = lazy(() => import('./pages/HRM/HRMLeaves'));
+const HRMPayroll = lazy(() => import('./pages/HRM/HRMPayroll'));
+const HRMHolidays = lazy(() => import('./pages/HRM/HRMHolidays'));
 
 // CRM Module
-import CRMDirectory from './pages/CRM/CRMDirectory';
-import CRMProgress from './pages/CRM/CRMProgress';
-import CustomerLedgerList from './pages/CRM/CustomerLedgerList';
-import CustomerLedgerDetail from './pages/CRM/CustomerLedgerDetail';
-import ExchangeOrders from './pages/CRM/ExchangeOrders';
-import ExchangeCreate from './pages/CRM/ExchangeCreate';
+const CRMDirectory = lazy(() => import('./pages/CRM/CRMDirectory'));
+const CRMProgress = lazy(() => import('./pages/CRM/CRMProgress'));
+const CustomerLedgerList = lazy(() => import('./pages/CRM/CustomerLedgerList'));
+const CustomerLedgerDetail = lazy(() => import('./pages/CRM/CustomerLedgerDetail'));
+const ExchangeOrders = lazy(() => import('./pages/CRM/ExchangeOrders'));
+const ExchangeCreate = lazy(() => import('./pages/CRM/ExchangeCreate'));
 
 // Quotation Module
-import QuotationList from './pages/Quotation/QuotationList';
-import QuotationCreate from './pages/Quotation/QuotationCreate';
-import QuotationPreview from './pages/Quotation/QuotationPreview';
+const QuotationList = lazy(() => import('./pages/Quotation/QuotationList'));
+const QuotationCreate = lazy(() => import('./pages/Quotation/QuotationCreate'));
+const QuotationPreview = lazy(() => import('./pages/Quotation/QuotationPreview'));
 
-import Email from './pages/Email/Email';
+const Email = lazy(() => import('./pages/Email/Email'));
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
-import LicenseGate from './pages/Auth/LicenseGate';
+const LicenseGate = lazy(() => import('./pages/Auth/LicenseGate'));
 import UpdateBanner from './components/UpdateBanner';
 import { ToastProvider } from './context/ToastContext';
 import { NetworkProvider } from './context/NetworkContext';
@@ -277,6 +278,7 @@ function App() {
             <AppLoadingScreen onReady={() => setIsAppReady(true)} />
         )}
 
+        <Suspense fallback={<div role="status" style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}>Loading page…</div>}>
         <Routes>
         <Route path="/" element={<Login onLoginSuccess={() => setIsAppReady(false)} />} />
         <Route path="/login" element={<Login onLoginSuccess={() => setIsAppReady(false)} />} />
@@ -354,7 +356,10 @@ function App() {
         <Route path="/make/dashboard" element={<ProtectedRoute><MakeDashboard /></ProtectedRoute>} />
         <Route path="/make/products" element={<ProtectedRoute><MakeProductCatalog /></ProtectedRoute>} />
         <Route path="/make/place-order" element={<ProtectedRoute><PlaceOrder /></ProtectedRoute>} />
+        <Route path="/make/place-order/drafts" element={<ProtectedRoute><PlaceOrder /></ProtectedRoute>} />
         <Route path="/make/track" element={<ProtectedRoute><TrackOrders /></ProtectedRoute>} />
+        <Route path="/make/requestion" element={<ProtectedRoute><MakeCostingRequests /></ProtectedRoute>} />
+        <Route path="/make/requestion/process" element={<ProtectedRoute><MakeCostingRequests /></ProtectedRoute>} />
 
         <Route path="/website/products" element={<ProtectedRoute><WebsiteProducts /></ProtectedRoute>} />
         <Route path="/website/orders" element={<ProtectedRoute><WebsiteOrders /></ProtectedRoute>} />
@@ -408,6 +413,7 @@ function App() {
         {/* Network Setup (Unguarded) */}
 
       </Routes>
+        </Suspense>
       <MakeTutorial />
       </NetworkProvider>
     </ToastProvider>

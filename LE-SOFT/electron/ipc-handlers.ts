@@ -17,14 +17,14 @@ try {
     console.warn('[IPC] sharp native module not loaded:', err);
 }
 
-import supabase, { supabaseAdmin, nasClient, isNasOnline, decryptEmbeddedCredentials, bootstrapPublicClientConfig, reinitSupabaseClients, getNasStorageUrl, getNasStorageCandidates, getCfAccessHeaders, loadConfig, saveSupabaseConfig, getDbClients } from './supabase';
+import supabase, { supabaseAdmin, nasClient, isNasOnline, decryptEmbeddedCredentials, bootstrapPublicClientConfig, reinitSupabaseClients, getNasStorageUrl, getNasStorageCandidates, getCfAccessHeaders, getNasStorageAuthHeaders, loadConfig, saveSupabaseConfig, getDbClients } from './supabase';
 import { DurableOutboxService } from './services/outbox/DurableOutboxService';
 import { DurableUploadService } from './services/media/DurableUploadService';
 import { SupabaseQuotaManager } from './services/quota/SupabaseQuotaManager';
 import { ConsolidatedHealthEngine } from './services/health/ConsolidatedHealthEngine';
 import mysql from 'mysql2/promise';
 import * as licenseManager from './license-manager';
-import { getConnectedDevices, setBackupNode, DEVICE_ID } from './device-monitor';
+import { getConnectedDevices, setBackupNode, registerDevice, DEVICE_ID } from './device-monitor';
 import { encryptObject, encryptField, decryptRows, decryptObject, decryptField } from './field-encryption';
 import { enqueue, enqueueGraph, getQueueStats } from './write-queue';
 import * as cache from './cache-manager';
@@ -123,6 +123,7 @@ async function uploadOptimizedImage(buffer: Buffer, filenamePrefix: string): Pro
                     body: formData,
                     headers: {
                         'x-subfolder': 'product-images',
+                        ...getNasStorageAuthHeaders(),
                         ...cfHeaders
                     },
                     signal: AbortSignal.timeout(20000)
@@ -3674,6 +3675,7 @@ export function registerHandlers() {
             resetLoginAttempts(username);
             await saveSession(row);
             SessionManager.setSession(safeUser);
+            void registerDevice(safeUser.username || username);
             return { success: true, user: safeUser, licenseWarning, offlineMode: false };
         }
 
@@ -4296,6 +4298,8 @@ export function registerHandlers() {
         const isAdmin = role === 'admin' || role === 'superadmin' || role === 'manager';
 
         const isSales = role === 'salesperson' || role === 'salesman' || role === 'sales';
+        if (isSales && !session?.userId) return [];
+        const canSeeFactoryStagePhotos = !isSales;
         const isFactory = role === 'factory_manager' || role === 'factory manager' || role === 'factory';
         const isDesigner = role === 'furniture_designer' || role === 'furniture designer' || role === 'designer' || role === 'make_designer';
         const canViewCost = isAdmin || isSales || isFactory || isDesigner || !!session?.permissions?.view_product_cost_price;
@@ -4305,6 +4309,14 @@ export function registerHandlers() {
 
         const sanitizeOrder = (o: any) => {
             const copy = { ...o };
+            // Sales users can follow production status and remarks but do not receive
+            // factory progress imagery or its protected storage references.
+            if (!canSeeFactoryStagePhotos) {
+                delete copy.current_stage_photo;
+                delete copy.stage_photo_url;
+                delete copy.factory_photo_url;
+                if (Array.isArray(copy.updates)) copy.updates = copy.updates.map((update: any) => { const { photo_url: _photo, image_url: _image, ...safe } = update; return safe; });
+            }
             if (!canViewCost) {
                 delete copy.cost_price;
                 delete copy.total_cost_price;
@@ -4359,7 +4371,9 @@ export function registerHandlers() {
         };
 
         try {
-            const { data, error } = await supabase.from('make_orders').select('*, salesman:users!make_orders_salesman_id_fkey(full_name), bill:bills!make_orders_bill_id_fkey(invoice_number)').order('created_at', { ascending: false });
+            let orderQuery = supabase.from('make_orders').select('*, salesman:users!make_orders_salesman_id_fkey(full_name), bill:bills!make_orders_bill_id_fkey(invoice_number)').order('created_at', { ascending: false });
+            if (isSales && session?.userId) orderQuery = orderQuery.eq('salesman_id', session.userId) as any;
+            const { data, error } = await orderQuery;
             if (!error && data) {
                 return decryptRows(data).map((o: any) => sanitizeOrder({
                     ...o, 
@@ -4374,7 +4388,9 @@ export function registerHandlers() {
             console.warn('[MAKE] get-make-orders join exception:', err.message);
         }
 
-        const { data: baseData, error: baseErr } = await supabase.from('make_orders').select('*, salesman:users!make_orders_salesman_id_fkey(full_name)').order('created_at', { ascending: false });
+        let baseQuery = supabase.from('make_orders').select('*, salesman:users!make_orders_salesman_id_fkey(full_name)').order('created_at', { ascending: false });
+        if (isSales && session?.userId) baseQuery = baseQuery.eq('salesman_id', session.userId) as any;
+        const { data: baseData, error: baseErr } = await baseQuery;
         if (baseErr) throw baseErr;
         return decryptRows(baseData || []).map((o: any) => sanitizeOrder({
             ...o, 
@@ -4550,9 +4566,19 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('get-make-order-updates', async (_e, orderId) => {
+        const session = requireSession();
+        const role = (session.role || '').toLowerCase();
+        if (['salesperson', 'salesman', 'sales'].includes(role)) {
+            const { data: ownedOrder, error: ownerError } = await supabase.from('make_orders').select('id, salesman_id').eq('id', Number(orderId)).maybeSingle();
+            if (ownerError || !ownedOrder || Number(ownedOrder.salesman_id) !== Number(session.userId)) throw new Error('Forbidden: you can only view progress for your own orders.');
+        }
         const { data, error } = await supabase.from('make_order_updates').select('*').eq('order_id', orderId).order('created_at');
         if (error) throw error;
-        return decryptRows(data || []);
+        const rows = decryptRows(data || []);
+        if (['salesperson', 'salesman', 'sales'].includes(role)) {
+            return rows.map((update: any) => { const { photo_url: _photo, image_url: _image, ...safe } = update; return safe; });
+        }
+        return rows;
     });
 
     // Note: delete-make-order and make-get-order-items are registered by registerMakeHandlers()

@@ -63,7 +63,7 @@ describe('MAKE V1.1 — Invoice Attachments Security & File Validation', () => {
         for (const fileName of disallowed) {
             const result = MakeCadService.validateFileMetadata(fileName, 1024 * 1024, 'invoice_attachment');
             expect(result.isValid).toBe(false);
-            expect(result.error).toContain('Invalid file type');
+            expect(result.error).toContain('not supported');
         }
     });
 

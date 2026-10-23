@@ -110,10 +110,14 @@
       loading: false
     },
 
-    currentTab: 'dashboard', // 'dashboard' | 'catalog' | 'create_order' | 'track_orders'
+    currentTab: 'dashboard', // 'dashboard' | 'catalog' | 'create_order' | 'track_orders' | 'requestion'
     stats: { total: 0, pending_pricing: 0, action_required: 0, in_production: 0, delivered: 0 },
     products: [],
     orders: [],
+    costingRequests: [],
+    costingSearch: '',
+    costingForm: { customer_name: '', customer_phone: '', remarks: '', file_urls: [], items: [{ item_name: '', quantity: 1, remarks: '', file_urls: [] }] },
+    pricingForms: {},
     statusFilter: 'All',
     catalogSearch: '',
     loading: false, // Start false so portal mounts immediately without getting stuck in skeleton
@@ -283,12 +287,13 @@
     }
 
     try {
-      const [sysStatus, statsData, productsData, ordersData, notifsData] = await Promise.all([
+      const [sysStatus, statsData, productsData, ordersData, notifsData, costingData] = await Promise.all([
         api('system-status').catch(() => null),
         api('stats').catch(e => { console.warn('[LE-MAKE] Stats API notice:', e.message); return null; }),
         api('products' + (state.catalogSearch ? `?search=${encodeURIComponent(state.catalogSearch)}` : '')).catch(e => { console.warn('[LE-MAKE] Products API notice:', e.message); return []; }),
         api('orders').catch(e => { console.warn('[LE-MAKE] Orders API notice:', e.message); return []; }),
-        api('notifications').catch(e => { console.warn('[LE-MAKE] Notifications API notice:', e.message); return null; })
+        api('notifications').catch(e => { console.warn('[LE-MAKE] Notifications API notice:', e.message); return null; }),
+        state.user?.canReadCostingRequests ? api('costing-requests').catch(e => { console.warn('[LE-MAKE] Costing requests API notice:', e.message); return []; }) : Promise.resolve([])
       ]);
 
       if (sysStatus) {
@@ -300,6 +305,7 @@
       state.stats = statsData || state.stats;
       state.products = Array.isArray(productsData) ? productsData : (productsData?.products || []);
       state.orders = Array.isArray(ordersData) ? ordersData : (ordersData?.orders || []);
+      state.costingRequests = Array.isArray(costingData) ? costingData : [];
       
       if (notifsData && Array.isArray(notifsData.notifications)) {
         processNotifications(notifsData.notifications, notifsData.unread_count);
@@ -383,7 +389,78 @@
   // ─── Actions & Handlers ────────────────────────────────────────────────────
   function setTab(tab) {
     state.currentTab = tab;
+    if (tab === 'requestion' && state.isLoggedIn) fetchCostingRequests();
     render();
+  }
+
+  async function fetchCostingRequests() {
+    if (!state.user?.canReadCostingRequests) return;
+    const search = state.costingSearch ? `?search=${encodeURIComponent(state.costingSearch)}` : '';
+    try { const rows = await api('costing-requests' + search); state.costingRequests = Array.isArray(rows) ? rows : []; render(); }
+    catch (error) { console.warn('[LE-MAKE] Costing request load failed:', error.message); }
+  }
+
+  async function uploadCostingFiles(fileList, target, itemIndex = null, kind = 'file_urls') {
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+    if (target !== 'price') {
+      const current = target === 'request' ? state.costingForm[kind] : state.costingForm.items[itemIndex][kind];
+      if ((current || []).length + files.length > 20) { alert('You can attach up to 20 files in each request or product file section.'); return; }
+    }
+    if (files.some(file => file.size > 50 * 1024 * 1024)) { alert('Each reference file must be 50 MB or smaller.'); return; }
+    try {
+      for (const selectedFile of files) {
+        let file = selectedFile;
+        if (target === 'price' && kind === 'product_drawing_url' && file.type === 'application/pdf') {
+          if (typeof window.LEMakePdfWatermark !== 'function') throw new Error('The PDF watermark processor did not load. Refresh the page and retry.');
+          file = await window.LEMakePdfWatermark(file);
+        }
+        const form = new FormData(); form.append('file', file, file.name);
+        const headers = state.currentNonce ? { 'X-WP-Nonce': state.currentNonce } : {};
+        const res = await fetch(apiUrl + 'upload-attachment', { method: 'POST', headers, credentials: 'same-origin', body: form });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'Upload failed');
+        if (target === 'request') state.costingForm[kind].push(data.url);
+        else if (target === 'item') state.costingForm.items[itemIndex][kind].push(data.url);
+        else { state.pricingForms[itemIndex] = state.pricingForms[itemIndex] || {}; state.pricingForms[itemIndex][kind] = data.url; }
+      }
+      render();
+    } catch (error) { alert('Reference file upload failed: ' + error.message); }
+  }
+
+  function setPricing(itemId, key, value) {
+    state.pricingForms[itemId] = state.pricingForms[itemId] || {};
+    state.pricingForms[itemId][key] = value;
+  }
+
+  async function submitCostingRequest(event) {
+    event.preventDefault();
+    const form = state.costingForm;
+    if (!form.items.length || form.items.some(item => !item.item_name.trim() || Number(item.quantity) <= 0)) { alert('Enter an item name and positive quantity for every row.'); return; }
+    try {
+      await api('costing-requests', 'POST', form);
+      state.costingForm = { customer_name: '', customer_phone: '', remarks: '', file_urls: [], items: [{ item_name: '', quantity: 1, remarks: '', file_urls: [] }] };
+      await fetchCostingRequests(); alert('Costing request submitted.');
+    } catch (error) { alert('Could not submit request: ' + error.message); }
+  }
+
+  async function saveCostingPrice(requestId, itemId) {
+    try { await api(`costing-requests/${requestId}/items/${itemId}/price`, 'POST', state.pricingForms[itemId] || {}); await fetchData(); alert('Price saved and catalog product created.'); }
+    catch (error) { alert('Could not save pricing: ' + error.message); }
+  }
+
+  async function deleteCostingRequest(id) {
+    if (!confirm('Delete this costing request?')) return;
+    try { await api(`costing-requests/${id}`, 'DELETE'); await fetchCostingRequests(); }
+    catch (error) { alert('Could not delete request: ' + error.message); }
+  }
+
+  function beginCostingOrder(request, item) {
+    const product = state.products.find(row => Number(row.id) === Number(item.product_id));
+    if (!product) { alert('The linked catalog product is not loaded. Refresh and try again.'); return; }
+    state.customer = { ...state.customer, name: request.customer_name || '', phone: request.customer_phone || '', referenceBillNo: `REQ-${request.request_number || request.id}`, targetDeliveryDays: '15', targetDeliveryDate: formatDateYMD(calculateWorkingDaysDate(new Date(), 15)) };
+    state.cart = [{ _id: `req-${item.id}`, product_id: product.id, product_code: product.product_code, product_name: product.product_name || item.product_name || item.item_name, spec_id: null, spec_name: '', spec_details: '', size_id: null, dimensions_text: 'As specified in costing request', is_customized: true, custom_dimensions: 'As specified in costing request', color_id: null, color_name: '', color_code: null, unit_sale_price: Number(item.sale_price || product.selling_price || 0), quantity: Number(item.quantity || 1), item_cost_price: Number(product.purchase_price || 0), item_sale_price: Number(item.sale_price || product.selling_price || 0), notes: item.remarks || request.remarks || '' }];
+    setTab('create_order');
   }
 
   function handleProductCardClick(productId) {
@@ -1231,7 +1308,7 @@
               No recent notifications.
             </div>
           ` : state.notifications.map(n => `
-            <div class="le-make-notif-item ${!n.is_read ? 'unread' : ''}" onclick="window.LE_MAKE.markNotificationRead(${n.id})">
+            <div class="le-make-notif-item ${!n.is_read ? 'unread' : ''}" onclick="window.LE_MAKE.handleNotificationClick(${Number(n.id)})">
               <div class="le-make-notif-icon">
                 ${n.metadata?.stage ? '🛠️' : (n.title.includes('Approved') ? '✅' : '📢')}
               </div>
@@ -1388,6 +1465,25 @@
 
   // ─── Render Components ─────────────────────────────────────────────────────
 
+  function renderCostingRequestsView() {
+    const user = state.user || {};
+    const urls = list => (list || []).map((url, i) => {
+      const path = String(url || '').split('?')[0].toLowerCase();
+      const previewable = /\.(dxf|pdf|png|jpe?g|webp|gif|bmp)$/.test(path);
+      return previewable ? `<span>${renderDrawingButton(url, `Reference ${i + 1}`)}<a target="_blank" rel="noopener" href="${escapeHtml(resolveMediaUrl(url))}">Download</a></span>` : `<a target="_blank" rel="noopener" href="${escapeHtml(resolveMediaUrl(url))}">File ${i + 1}</a>`;
+    }).join(' ');
+    const rows = state.costingRequests.filter(row => !state.costingSearch || JSON.stringify(row).toLowerCase().includes(state.costingSearch.toLowerCase()));
+    return `<section class="le-make-panel" style="padding:20px"><h2>MAKE Requestion</h2><p>Request costing for custom furniture before placing an order.</p>
+      ${user.canCreateCostingRequest ? `<form onsubmit="window.LE_MAKE.submitCostingRequest(event)" class="le-make-subpanel" style="padding:16px"><h3>New costing request</h3><div class="le-make-grid-2"><input class="le-make-input" placeholder="Customer name (optional)" oninput="window.LE_MAKE.state.costingForm.customer_name=this.value"><input class="le-make-input" placeholder="Phone (optional)" oninput="window.LE_MAKE.state.costingForm.customer_phone=this.value"></div>
+      ${state.costingForm.items.map((item, index) => `<div class="le-make-subpanel" style="padding:12px;margin-top:12px"><div class="le-make-grid-2"><input class="le-make-input" placeholder="Furniture item ${index + 1}" value="${escapeHtml(item.item_name)}" oninput="window.LE_MAKE.state.costingForm.items[${index}].item_name=this.value" required><input class="le-make-input" type="number" min="0.001" step="0.001" value="${escapeHtml(item.quantity)}" oninput="window.LE_MAKE.state.costingForm.items[${index}].quantity=this.value" required></div><textarea class="le-make-textarea" placeholder="Product remarks" oninput="window.LE_MAKE.state.costingForm.items[${index}].remarks=this.value">${escapeHtml(item.remarks)}</textarea><label>Item files<input type="file" multiple onchange="window.LE_MAKE.uploadCostingFiles(this.files,'item',${index})"></label>${urls(item.file_urls)}${index ? `<button type="button" class="le-make-btn le-make-btn-danger" onclick="window.LE_MAKE.removeCostingItem(${index})">Remove</button>` : ''}</div>`).join('')}
+      <button type="button" class="le-make-btn le-make-btn-secondary" onclick="window.LE_MAKE.addCostingItem()">+ Add product</button><textarea class="le-make-textarea" placeholder="Overall remarks" oninput="window.LE_MAKE.state.costingForm.remarks=this.value">${escapeHtml(state.costingForm.remarks)}</textarea><label>Request files<input type="file" multiple onchange="window.LE_MAKE.uploadCostingFiles(this.files,'request')"></label>${urls(state.costingForm.file_urls)}<button class="le-make-btn le-make-btn-primary">Submit request</button></form>` : ''}
+      <div class="le-make-subpanel" style="padding:16px;margin-top:18px"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><h3>Requests</h3><input class="le-make-input" placeholder="Search requests" value="${escapeHtml(state.costingSearch)}" oninput="window.LE_MAKE.searchCosting(this.value)"></div>
+      ${rows.length ? rows.map(request => `<article class="le-make-subpanel" style="padding:14px;margin:12px 0"><strong>${escapeHtml(request.request_number || `Request #${request.id}`)}</strong> · ${escapeHtml(request.status || 'submitted')}<div>${escapeHtml(request.requester_name || '')}${request.customer_name ? ` · ${escapeHtml(request.customer_name)}` : ''}${request.customer_phone ? ` · ${escapeHtml(request.customer_phone)}` : ''}</div><p>${escapeHtml(request.remarks || '')}</p>${urls(request.file_urls)}${user.canDeleteCostingRequest ? `<button class="le-make-btn le-make-btn-danger le-make-btn-sm" onclick="window.LE_MAKE.deleteCostingRequest(${Number(request.id)})">Delete</button>` : ''}
+      ${(request.items || []).map(item => { const price = state.pricingForms[item.id] || {}; return `<div class="le-make-subpanel" style="padding:12px;margin-top:12px"><strong>${escapeHtml(item.product_name || item.item_name)}</strong> · Qty ${escapeHtml(item.quantity)} · ${escapeHtml(item.status || 'submitted')}<p>${escapeHtml(item.remarks || '')}</p>${urls(item.file_urls)}${item.product_drawing_url ? renderDrawingButton(item.product_drawing_url, 'Customer product drawing') : ''}${item.blueprint_url ? renderDrawingButton(item.blueprint_url, 'Production blueprint') : ''}${item.product_image ? renderDrawingButton(item.product_image, 'Product image') : ''}
+      ${user.canPriceCostingRequest ? `<div class="le-make-grid-2"><input class="le-make-input" placeholder="Product name *" value="${escapeHtml(price.product_name ?? item.product_name ?? '')}" oninput="window.LE_MAKE.setPricing(${Number(item.id)},'product_name',this.value)"><input class="le-make-input" placeholder="Product code *" value="${escapeHtml(price.product_code ?? item.product_code ?? '')}" oninput="window.LE_MAKE.setPricing(${Number(item.id)},'product_code',this.value)"><input class="le-make-input" type="number" min="0" step="0.01" placeholder="Cost price *" value="${escapeHtml(price.cost_price ?? item.cost_price ?? '')}" oninput="window.LE_MAKE.setPricing(${Number(item.id)},'cost_price',this.value)"><input class="le-make-input" type="number" min="0" step="0.01" placeholder="Sale price *" value="${escapeHtml(price.sale_price ?? item.sale_price ?? '')}" oninput="window.LE_MAKE.setPricing(${Number(item.id)},'sale_price',this.value)"></div><textarea class="le-make-textarea" placeholder="Designer notes" oninput="window.LE_MAKE.setPricing(${Number(item.id)},'designer_notes',this.value)">${escapeHtml(price.designer_notes || item.designer_notes || '')}</textarea><label>Image<input type="file" onchange="window.LE_MAKE.uploadCostingFiles(this.files,'price',${Number(item.id)},'product_image')"></label><label>Production blueprint<input type="file" onchange="window.LE_MAKE.uploadCostingFiles(this.files,'price',${Number(item.id)},'blueprint_url')"></label><label>Customer drawing<input type="file" onchange="window.LE_MAKE.uploadCostingFiles(this.files,'price',${Number(item.id)},'product_drawing_url')"></label><button class="le-make-btn le-make-btn-primary" onclick="window.LE_MAKE.saveCostingPrice(${Number(request.id)},${Number(item.id)})">Save price and create product</button>` : ''}
+      ${user.canOrderCostingRequest && item.status === 'priced' ? `<button class="le-make-btn le-make-btn-primary" onclick="window.LE_MAKE.beginCostingOrder(${Number(request.id)},${Number(item.id)})">Place order</button>` : ''}${item.sale_price !== undefined ? `<strong> Sale: ৳${Number(item.sale_price || 0).toLocaleString()}</strong>` : ''}${item.cost_price !== undefined ? `<strong> Cost: ৳${Number(item.cost_price || 0).toLocaleString()}</strong>` : ''}</div>`; }).join('')}</article>`).join('') : '<p>No requests found.</p>'}</div></section>`;
+  }
+
   function renderNavbar() {
     const user = state.user || {};
 
@@ -1417,6 +1513,7 @@
           <button class="le-make-nav-btn ${state.currentTab === 'create_order' ? 'active' : ''}" onclick="window.LE_MAKE.setTab('create_order')">
             ➕ New Order
           </button>
+          ${(user.canReadCostingRequests || user.canCreateCostingRequest) ? `<button class="le-make-nav-btn ${state.currentTab === 'requestion' ? 'active' : ''}" onclick="window.LE_MAKE.setTab('requestion')">📝 Requestion</button>` : ''}
           <button class="le-make-nav-btn ${state.currentTab === 'track_orders' ? 'active' : ''}" onclick="window.LE_MAKE.setTab('track_orders')">
             📦 Orders &amp; Approvals ${state.stats.action_required > 0 ? `<span class="le-make-badge le-make-badge-action-required" style="margin-left:4px;">${state.stats.action_required}</span>` : ''}
           </button>
@@ -1594,6 +1691,12 @@
                   ${(p.specifications || []).length} Specifications • ${(p.sizes || []).length} Standard Sizes
                 </div>
 
+                ${(p.product_drawing_url || p.blueprint_url) ? `
+                  <div style="display:flex;flex-wrap:wrap;gap:7px;margin-top:10px;width:100%;">
+                    ${p.product_drawing_url ? renderDrawingButton(p.product_drawing_url, 'Product Drawing') : ''}
+                    ${p.blueprint_url ? renderDrawingButton(p.blueprint_url, 'Production Blueprint') : ''}
+                  </div>` : ''}
+
                 <div style="margin-top: 14px; display: flex; gap: 8px; width: 100%;">
                   <button class="le-make-btn le-make-btn-secondary le-make-btn-sm" style="flex: 1;" onclick="window.LE_MAKE.openHistoryModal(${JSON.stringify(p).replace(/"/g, '&quot;')})">
                     📊 Order History
@@ -1608,6 +1711,53 @@
         `}
       </div>
     `;
+  }
+
+  function renderDrawingButton(url, label) {
+    const action = `window.LE_MAKE.openDrawingModal(${JSON.stringify(resolveMediaUrl(String(url)))}, ${JSON.stringify(String(label))})`;
+    return `<button type="button" class="le-make-btn le-make-btn-secondary le-make-btn-sm" onclick="${escapeHtml(action)}" style="flex:1;">📐 View ${escapeHtml(label)}</button>`;
+  }
+
+  let activeCadViewer = null;
+  function closeDrawingModal() {
+    if (activeCadViewer) { activeCadViewer.destroy(); activeCadViewer = null; }
+    document.getElementById('le-make-drawing-modal')?.remove();
+  }
+
+  async function openDrawingModal(url, label) {
+    closeDrawingModal();
+    const cleanUrl = String(url || '');
+    if (!cleanUrl) return;
+    const ext = (() => { try { return new URL(cleanUrl, window.location.href).pathname.split('.').pop().toLowerCase(); } catch (_) { return cleanUrl.split('?')[0].split('.').pop().toLowerCase(); } })();
+    const modal = document.createElement('div');
+    modal.id = 'le-make-drawing-modal';
+    modal.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(8,12,20,.78);display:grid;place-items:center;padding:16px;';
+    const viewerId = 'le-make-cad-canvas-' + Math.random().toString(36).slice(2);
+    modal.innerHTML = `<div style="width:min(1120px,96vw);height:min(760px,92vh);background:#fff;border-radius:12px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.35);">
+      <header style="display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid #e5e7eb;"><strong style="flex:1;">${escapeHtml(label)}</strong><a href="${escapeHtml(cleanUrl)}" download style="color:#334155;">Download file</a><button type="button" aria-label="Close" style="border:0;background:none;font-size:22px;cursor:pointer;">×</button></header>
+      <div id="${viewerId}" style="position:relative;flex:1;min-height:0;background:#f4f5f7;"></div></div>`;
+    modal.addEventListener('click', event => { if (event.target === modal || event.target.closest('header button')) closeDrawingModal(); });
+    document.body.appendChild(modal);
+    const canvas = modal.querySelector('#' + viewerId);
+    if (ext === 'dxf') {
+      const waiting = document.createElement('div');
+      waiting.textContent = 'Loading CAD drawing…';
+      waiting.style.cssText = 'position:absolute;inset:0;display:grid;place-items:center;background:rgba(255,255,255,.75);z-index:2;';
+      canvas.appendChild(waiting);
+      try {
+        if (!window.LEMakeCadViewer?.mount) throw new Error('CAD preview is still loading. Please try again.');
+        activeCadViewer = await window.LEMakeCadViewer.mount(canvas, cleanUrl);
+        waiting.remove();
+      } catch (error) {
+        waiting.textContent = (error && error.message) ? error.message : 'Could not preview this DXF. Use Download file to inspect it.';
+      }
+    } else if (ext === 'pdf') {
+      canvas.innerHTML = `<iframe title="${escapeHtml(label)}" src="${escapeHtml(cleanUrl)}" style="width:100%;height:100%;border:0;"></iframe>`;
+    } else if (['png','jpg','jpeg','webp','gif','bmp'].includes(ext)) {
+      canvas.innerHTML = `<img alt="${escapeHtml(label)}" src="${escapeHtml(cleanUrl)}" style="width:100%;height:100%;object-fit:contain;">`;
+    } else {
+      canvas.innerHTML = `<div style="padding:24px;color:#334155;">Preview is available for DXF, PDF, and image drawings. DWG files can be downloaded here; an inline DWG decoder needs a separate license for this proprietary software.</div>`;
+    }
   }
 
   function renderApprovalBadge(status, version = 1) {
@@ -3418,6 +3568,8 @@
       viewHtml = renderCreateOrderView();
     } else if (state.currentTab === 'track_orders') {
       viewHtml = renderTrackOrdersView();
+    } else if (state.currentTab === 'requestion') {
+      viewHtml = renderCostingRequestsView();
     }
 
     root.innerHTML = `
@@ -3436,11 +3588,31 @@
   window.LE_MAKE = {
     state,
     setTab,
+    uploadCostingFiles,
+    submitCostingRequest,
+    setPricing,
+    saveCostingPrice,
+    deleteCostingRequest,
+    beginCostingOrder,
+    addCostingItem: () => { state.costingForm.items.push({ item_name: '', quantity: 1, remarks: '', file_urls: [] }); render(); },
+    removeCostingItem: index => { state.costingForm.items.splice(index, 1); render(); },
+    searchCosting: value => {
+      state.costingSearch = value;
+      const search = document.querySelector('#le-make-sales-portal-app input[placeholder="Search requests"]');
+      if (window.LE_MAKE.costingSearchTimer) clearTimeout(window.LE_MAKE.costingSearchTimer);
+      window.LE_MAKE.costingSearchTimer = setTimeout(async () => {
+        await fetchCostingRequests();
+        const input = document.querySelector('#le-make-sales-portal-app input[placeholder="Search requests"]');
+        if (input) { input.focus(); input.setSelectionRange(value.length, value.length); }
+      }, 250);
+    },
     setStatusFilter: (s) => { state.statusFilter = s; render(); },
     handleCatalogSearch: (query) => {
       state.catalogSearch = query;
       fetchData();
     },
+    openDrawingModal,
+    closeDrawingModal,
     handleProductCardClick,
     handleSelectProductAndOrder: (prodId) => {
       handleProductCardClick(prodId);
@@ -3499,6 +3671,11 @@
     // Notifications & Permissions
     toggleNotifDrawer,
     markNotificationRead,
+    handleNotificationClick: id => {
+      const notice = state.notifications.find(item => Number(item.id) === Number(id));
+      markNotificationRead(id);
+      if (String(notice?.action_path || '').includes('requestion')) { state.notifDrawerOpen = false; setTab('requestion'); }
+    },
     markAllNotificationsRead,
     requestNotificationPermission,
     retryNasConnection: async () => {

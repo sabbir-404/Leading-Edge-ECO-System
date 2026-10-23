@@ -51,6 +51,19 @@ class LEMakeApiController {
             'permission_callback' => array($this, 'check_user_permission'),
         ));
 
+        // Custom furniture costing requests: endpoints are capability checked
+        // again in each callback because the table is accessed with server keys.
+        register_rest_route($this->namespace, '/costing-requests', array(
+            array('methods' => 'GET', 'callback' => array($this, 'get_costing_requests'), 'permission_callback' => array($this, 'check_user_permission')),
+            array('methods' => 'POST', 'callback' => array($this, 'create_costing_request'), 'permission_callback' => array($this, 'check_user_permission')),
+        ));
+        register_rest_route($this->namespace, '/costing-requests/(?P<id>\\d+)', array(
+            array('methods' => 'DELETE', 'callback' => array($this, 'delete_costing_request'), 'permission_callback' => array($this, 'check_user_permission')),
+        ));
+        register_rest_route($this->namespace, '/costing-requests/(?P<id>\\d+)/items/(?P<item_id>\\d+)/price', array(
+            array('methods' => 'POST', 'callback' => array($this, 'price_costing_request_item'), 'permission_callback' => array($this, 'check_user_permission')),
+        ));
+
         // Product Purchase History
         register_rest_route($this->namespace, '/products/(?P<id>\d+)/history', array(
             'methods'             => 'GET',
@@ -215,18 +228,20 @@ class LEMakeApiController {
         register_rest_route($this->namespace, '/media-proxy', array(
             'methods'             => 'GET',
             'callback'            => array($this, 'media_proxy'),
-            'permission_callback' => '__return_true',
+            'permission_callback' => array($this, 'check_user_permission'),
         ));
 
         register_rest_route('le-make-portal/v1', '/media-proxy', array(
             'methods'             => 'GET',
             'callback'            => array($this, 'media_proxy'),
-            'permission_callback' => '__return_true',
+            'permission_callback' => array($this, 'check_user_permission'),
         ));
     }
 
     public function check_user_permission() {
-        return is_user_logged_in();
+        // Keep the portal API unavailable to unrelated authenticated WordPress
+        // accounts. Portal roles and administrators receive this capability.
+        return is_user_logged_in() && (current_user_can('access_make_sales_portal') || current_user_can('manage_options'));
     }
 
     public function check_admin_permission() {
@@ -446,7 +461,7 @@ class LEMakeApiController {
         $is_factory_manager = in_array('make_factory_manager', $user_roles, true) || in_array('factory_manager', $user_roles, true) || user_can($user, 'update_production_status');
         $is_salesperson = in_array('make_salesperson', $user_roles, true) || (!$is_admin && !$is_designer && !$is_factory_manager);
 
-        $display_role = 'Salesperson';
+        $display_role = 'Salesman';
         if ($is_admin) {
             $display_role = 'Administrator';
         } elseif ($is_designer) {
@@ -467,12 +482,205 @@ class LEMakeApiController {
             'canApprove'          => user_can($user, 'approve_make_orders') || $is_admin,
             'canCreate'           => user_can($user, 'create_make_orders') || $is_admin || $is_designer,
             'canSetPricing'       => user_can($user, 'set_make_pricing') || $is_admin || $is_designer,
-            // Strictly only Admin and Designer can view or edit cost prices
-            'canViewCost'         => $is_admin || $is_designer,
+            // Factory managers may see production cost but never sale price.
+            'canViewCost'         => $is_admin || $is_designer || $is_factory_manager,
+            'canViewSale'         => !$is_factory_manager,
             'canEditCost'         => $is_admin || $is_designer,
             'canEditSale'         => $is_admin || $is_designer,
             'canUpdateProduction' => $is_factory_manager || $is_admin,
+            'canReadCostingRequests' => user_can($user, 'read_make_costing_requests') || $is_admin || $is_designer || $is_factory_manager,
+            'canReadAllCostingRequests' => user_can($user, 'read_all_make_costing_requests') || $is_admin || $is_designer || $is_factory_manager,
+            'canCreateCostingRequest' => user_can($user, 'create_make_costing_request') || $is_admin,
+            'canPriceCostingRequest' => user_can($user, 'price_make_costing_request') || $is_admin || $is_designer,
+            'canDeleteCostingRequest' => user_can($user, 'delete_make_costing_request') || $is_admin || $is_designer,
+            'canOrderCostingRequest' => user_can($user, 'place_order_from_costing_request') || $is_admin,
         );
+    }
+
+    private function costing_request_actor_id($user) {
+        return intval(get_user_meta($user->ID, 'le_nas_user_id', true));
+    }
+
+    private function costing_request_files($value) {
+        if (!is_array($value)) return array();
+        $files = array();
+        foreach (array_slice($value, 0, 20) as $url) {
+            if (is_string($url) && strlen($url) < 2048 && preg_match('#^https://#i', $url)) $files[] = esc_url_raw($url);
+        }
+        return array_values(array_unique($files));
+    }
+
+    private function costing_request_role_data($data, $user) {
+        $admin = user_can($user, 'administrator') || user_can($user, 'manage_options');
+        $designer = user_can($user, 'set_make_pricing') || user_can($user, 'price_make_costing_request');
+        $factory = user_can($user, 'update_production_status');
+        if (!$admin && !$designer) {
+            $remove = $factory ? array('sale_price', 'product_drawing_url') : array('cost_price', 'blueprint_url');
+            foreach ($remove as $field) if (is_array($data) && array_key_exists($field, $data)) unset($data[$field]);
+        }
+        if (is_array($data)) {
+            foreach ($data as $key => $value) if (is_array($value)) $data[$key] = $this->costing_request_role_data($value, $user);
+        }
+        return $data;
+    }
+
+    public function get_costing_requests(WP_REST_Request $request) {
+        $user = wp_get_current_user();
+        if (!user_can($user, 'read_make_costing_requests') && !user_can($user, 'read_all_make_costing_requests') && !user_can($user, 'manage_options')) {
+            return new WP_REST_Response(array('error' => 'You do not have permission to view costing requests.'), 403);
+        }
+        $client = LEMakeNasDbClient::get_instance();
+        $search = sanitize_text_field((string)$request->get_param('search'));
+        $endpoint = 'make_costing_requests?select=*&order=created_at.desc&limit=200';
+        if ($search !== '') {
+            $term = rawurlencode(substr(preg_replace('/[^\\pL\\pN _-]/u', '', $search), 0, 80));
+            if ($term !== '') $endpoint .= '&or=(request_number.ilike.*' . $term . '*,customer_name.ilike.*' . $term . '*,requester_name.ilike.*' . $term . '*,remarks.ilike.*' . $term . '*)';
+        }
+        if (!user_can($user, 'read_all_make_costing_requests') && !user_can($user, 'manage_options')) {
+            $endpoint .= '&requested_by=eq.' . $this->costing_request_actor_id($user);
+        }
+        $rows = $client->request_portal_data($endpoint, 'GET');
+        if (is_wp_error($rows)) return new WP_REST_Response(array('error' => $rows->get_error_message()), 502);
+        if (!is_array($rows)) $rows = array();
+        $request_ids = array_values(array_filter(array_map(function ($row) { return intval($row['id'] ?? 0); }, $rows)));
+        $children_by_request = array();
+        if ($request_ids) {
+            $children = $client->request_portal_data('make_costing_request_items?request_id=in.(' . implode(',', $request_ids) . ')&order=id.asc&limit=1000', 'GET');
+            if (is_array($children)) foreach ($children as $child) $children_by_request[intval($child['request_id'])][] = $child;
+        }
+        $items = array();
+        foreach ($rows as $row) {
+            $id = intval($row['id'] ?? 0);
+            $row['items'] = $children_by_request[$id] ?? array();
+            foreach (array('file_urls') as $field) if (!empty($row[$field]) && is_array($row[$field])) $row[$field] = array_map(array('LEMakeApiController', 'format_media_url'), $row[$field]);
+            foreach ($row['items'] as &$item) {
+                foreach (array('blueprint_url', 'product_image', 'product_drawing_url') as $field) if (!empty($item[$field])) $item[$field] = self::format_media_url($item[$field]);
+                if (!empty($item['file_urls']) && is_array($item['file_urls'])) $item['file_urls'] = array_map(array('LEMakeApiController', 'format_media_url'), $item['file_urls']);
+            }
+            unset($item);
+            $items[] = $this->costing_request_role_data($row, $user);
+        }
+        return rest_ensure_response($items);
+    }
+
+    public function create_costing_request(WP_REST_Request $request) {
+        $user = wp_get_current_user();
+        if (!user_can($user, 'create_make_costing_request') && !user_can($user, 'manage_options')) return new WP_REST_Response(array('error' => 'You do not have permission to create costing requests.'), 403);
+        $body = $request->get_json_params();
+        $source_items = isset($body['items']) && is_array($body['items']) ? array_slice($body['items'], 0, 30) : array();
+        if (!$source_items) return new WP_REST_Response(array('error' => 'Add at least one furniture item.'), 400);
+        $actor_id = $this->costing_request_actor_id($user);
+        if ($actor_id <= 0) return new WP_REST_Response(array('error' => 'This WordPress account is not linked to an LE-SOFT user yet. Ask an administrator to publish or sync the account, then retry.'), 409);
+        $client = LEMakeNasDbClient::get_instance();
+        $parent = array(
+            'requested_by' => $actor_id,
+            'requester_name' => sanitize_text_field($user->display_name ?: $user->user_login),
+            'customer_name' => sanitize_text_field((string)($body['customer_name'] ?? '')),
+            'customer_phone' => sanitize_text_field((string)($body['customer_phone'] ?? '')),
+            'remarks' => sanitize_textarea_field((string)($body['remarks'] ?? '')),
+            'file_urls' => $this->costing_request_files($body['file_urls'] ?? array()),
+            'status' => 'submitted',
+        );
+        $created = $client->request_portal_data('make_costing_requests', 'POST', $parent);
+        if (is_wp_error($created) || empty($created[0]['id'])) return new WP_REST_Response(array('error' => is_wp_error($created) ? $created->get_error_message() : 'Database did not return the new request.'), 502);
+        $request_id = intval($created[0]['id']);
+        foreach ($source_items as $source) {
+            $name = sanitize_text_field((string)($source['item_name'] ?? ''));
+            $quantity = floatval($source['quantity'] ?? 0);
+            if ($name === '' || $quantity <= 0 || $quantity > 100000) {
+                $client->request_portal_data('make_costing_requests?id=eq.' . $request_id, 'DELETE');
+                return new WP_REST_Response(array('error' => 'Each item needs a name and positive quantity.'), 400);
+            }
+            $item = array(
+                'request_id' => $request_id, 'item_name' => $name, 'quantity' => $quantity,
+                'remarks' => sanitize_textarea_field((string)($source['remarks'] ?? '')),
+                'file_urls' => $this->costing_request_files($source['file_urls'] ?? array()), 'status' => 'submitted'
+            );
+            $saved = $client->request_portal_data('make_costing_request_items', 'POST', $item);
+            if (is_wp_error($saved)) {
+                $client->request_portal_data('make_costing_requests?id=eq.' . $request_id, 'DELETE');
+                return new WP_REST_Response(array('error' => 'Could not save request items: ' . $saved->get_error_message()), 502);
+            }
+        }
+        return new WP_REST_Response(array('success' => true, 'id' => $request_id), 201);
+    }
+
+    public function price_costing_request_item(WP_REST_Request $request) {
+        $user = wp_get_current_user();
+        if (!user_can($user, 'price_make_costing_request') && !user_can($user, 'manage_options')) return new WP_REST_Response(array('error' => 'Only a furniture designer or administrator can price this request.'), 403);
+        $request_id = intval($request->get_param('id'));
+        $item_id = intval($request->get_param('item_id'));
+        $body = $request->get_json_params();
+        $product_name = sanitize_text_field((string)($body['product_name'] ?? ''));
+        $product_code = sanitize_text_field((string)($body['product_code'] ?? ''));
+        if ($product_name === '' || $product_code === '' || !is_numeric($body['sale_price'] ?? null) || !is_numeric($body['cost_price'] ?? null) || floatval($body['sale_price']) < 0 || floatval($body['cost_price']) < 0) {
+            return new WP_REST_Response(array('error' => 'Product name, product code, cost price, and sale price are required.'), 400);
+        }
+        $client = LEMakeNasDbClient::get_instance();
+        $lookup = $client->request_portal_data('make_costing_request_items?id=eq.' . $item_id . '&request_id=eq.' . $request_id . '&select=*', 'GET');
+        if (is_wp_error($lookup) || empty($lookup[0])) return new WP_REST_Response(array('error' => 'Costing request item was not found.'), 404);
+        $item = $lookup[0];
+        $product = array(
+            'product_code' => $product_code, 'product_name' => $product_name,
+            'cost_price' => floatval($body['cost_price']), 'sale_price' => floatval($body['sale_price']),
+            'main_image' => esc_url_raw((string)($body['product_image'] ?? '')) ?: null,
+            'blueprint_url' => esc_url_raw((string)($body['blueprint_url'] ?? '')) ?: null,
+            'product_drawing_url' => esc_url_raw((string)($body['product_drawing_url'] ?? '')) ?: null,
+            'requestion_item_id' => $item_id, 'is_active' => true
+        );
+        if (!empty($item['product_id'])) {
+            $product_result = $client->request_portal_data('make_products?id=eq.' . intval($item['product_id']), 'PATCH', $product);
+        } else {
+            $existing = $client->request_portal_data('make_products?requestion_item_id=eq.' . $item_id . '&select=id&limit=1', 'GET');
+            if (is_wp_error($existing)) return new WP_REST_Response(array('error' => $existing->get_error_message()), 502);
+            if (!empty($existing[0]['id'])) {
+                $product_id = intval($existing[0]['id']);
+                $product_result = $client->request_portal_data('make_products?id=eq.' . $product_id, 'PATCH', $product);
+            } else {
+                $product_result = $client->request_portal_data('make_products', 'POST', $product);
+            }
+        }
+        if (is_wp_error($product_result) || empty($product_result[0]['id'])) return new WP_REST_Response(array('error' => is_wp_error($product_result) ? $product_result->get_error_message() : 'Could not create linked product.'), 502);
+        $product_id = intval($product_result[0]['id']);
+        $item_update = array(
+            'product_name' => $product_name, 'product_code' => $product_code,
+            'cost_price' => floatval($body['cost_price']), 'sale_price' => floatval($body['sale_price']),
+            'blueprint_url' => $product['blueprint_url'], 'product_drawing_url' => $product['product_drawing_url'],
+            'product_image' => $product['main_image'], 'designer_notes' => sanitize_textarea_field((string)($body['designer_notes'] ?? '')),
+            'product_id' => $product_id, 'status' => 'priced', 'updated_at' => gmdate('c')
+        );
+        $updated = $client->request_portal_data('make_costing_request_items?id=eq.' . $item_id . '&request_id=eq.' . $request_id, 'PATCH', $item_update);
+        if (is_wp_error($updated)) return new WP_REST_Response(array('error' => 'Product saved but request item update failed: ' . $updated->get_error_message()), 502);
+        $request_items = $client->request_portal_data('make_costing_request_items?request_id=eq.' . $request_id . '&select=status', 'GET');
+        $all_priced = is_array($request_items) && count($request_items) > 0;
+        foreach ((array)$request_items as $request_line) if (!in_array(($request_line['status'] ?? ''), array('priced', 'ordered'), true)) $all_priced = false;
+        $client->request_portal_data('make_costing_requests?id=eq.' . $request_id, 'PATCH', array('status' => $all_priced ? 'priced' : 'in_progress', 'updated_at' => gmdate('c')));
+        $request_row = $client->request_portal_data('make_costing_requests?id=eq.' . $request_id . '&select=request_number,requested_by,requester_name', 'GET');
+        $recipient_id = intval($request_row[0]['requested_by'] ?? 0);
+        if ($recipient_id > 0) {
+            $notification = array(
+                'title' => 'Furniture costing is ready',
+                'message' => sanitize_text_field($product_name . ' has been priced and is ready to review.'),
+                'recipient_id' => $recipient_id,
+                'sender_id' => $this->costing_request_actor_id($user) ?: null,
+                'action_path' => '/make/requestion',
+                'action_label' => 'View costing',
+                'metadata' => array('type' => 'make_costing_request_priced', 'request_id' => $request_id, 'item_id' => $item_id, 'product_id' => $product_id),
+                'is_read' => false,
+                'created_at' => gmdate('c')
+            );
+            $client->request_portal_data('notifications', 'POST', $notification);
+        }
+        return rest_ensure_response(array('success' => true, 'product_id' => $product_id));
+    }
+
+    public function delete_costing_request(WP_REST_Request $request) {
+        $user = wp_get_current_user();
+        if (!user_can($user, 'delete_make_costing_request') && !user_can($user, 'manage_options')) return new WP_REST_Response(array('error' => 'Only a furniture designer or administrator can delete costing requests.'), 403);
+        $client = LEMakeNasDbClient::get_instance();
+        $result = $client->request_portal_data('make_costing_requests?id=eq.' . intval($request->get_param('id')), 'DELETE');
+        if (is_wp_error($result)) return new WP_REST_Response(array('error' => $result->get_error_message()), 502);
+        return rest_ensure_response(array('success' => true));
     }
 
     public static function format_media_url($url) {
@@ -482,10 +690,25 @@ class LEMakeApiController {
         }
         // Normalize any legacy local IP or Tailscale IP to public Cloudflare storage domain
         $normalized = preg_replace('#^http://(?:192\.168\.\d+\.\d+|100\.\d+\.\d+\.\d+|localhost|127\.0\.0\.1):8081#i', 'https://storage.lenas.me', $url);
-        if (strpos($normalized, 'storage.lenas.me') !== false || strpos($normalized, 'lenas.me/files/') !== false) {
-            return add_query_arg('file', rawurlencode($normalized), rest_url('le-make/v1/media-proxy'));
+        $is_nas_media = strpos($normalized, 'storage.lenas.me') !== false || strpos($normalized, 'lenas.me/files/') !== false;
+        $is_supabase_media = strpos($normalized, '/storage/v1/object/public/make-portal-files/') !== false || strpos($normalized, '/storage/v1/object/make-portal-files/') !== false;
+        if ($is_nas_media || $is_supabase_media) {
+            // Legacy public-bucket URLs must also pass through the authenticated,
+            // signed proxy so the browser never bypasses role-based access.
+            $expires = time() + HOUR_IN_SECONDS;
+            $signature = self::sign_media_reference($normalized, $expires);
+            return add_query_arg(array(
+                'file' => $normalized,
+                'exp'  => $expires,
+                'sig'  => $signature,
+            ), rest_url('le-make/v1/media-proxy'));
         }
         return $normalized;
+    }
+
+    private static function sign_media_reference($file, $expires) {
+        $key = function_exists('wp_salt') ? wp_salt('auth') : '';
+        return $key !== '' ? hash_hmac('sha256', $file . '|' . (int) $expires, $key) : '';
     }
 
     public function get_products(WP_REST_Request $request) {
@@ -501,6 +724,11 @@ class LEMakeApiController {
             foreach ($products as &$p) {
                 if (!empty($p['main_image'])) {
                     $p['main_image'] = self::format_media_url($p['main_image']);
+                }
+                foreach (array('blueprint_url', 'product_drawing_url') as $drawing_field) {
+                    if (!empty($p[$drawing_field])) {
+                        $p[$drawing_field] = self::format_media_url($p[$drawing_field]);
+                    }
                 }
             }
         }
@@ -525,7 +753,8 @@ class LEMakeApiController {
         $is_factory = in_array('make_factory_manager', $user_roles, true) || in_array('factory_manager', $user_roles, true) || current_user_can('update_production_status');
 
         // Salesperson sees their own orders; Admin, Designer, and Factory Manager see all orders
-        $salesperson_id = (!$is_admin && !$is_designer && !$is_factory) ? $current_user->ID : null;
+        $nas_user_id = get_user_meta($current_user->ID, 'le_nas_user_id', true);
+        $salesperson_id = (!$is_admin && !$is_designer && !$is_factory) ? (intval($nas_user_id) ?: -1) : null;
 
         $client = LEMakeNasDbClient::get_instance();
         $orders = $client->get_salesperson_orders($salesperson_id, $status);
@@ -574,6 +803,18 @@ class LEMakeApiController {
             return new WP_REST_Response(array('error' => 'Order not found'), 404);
         }
 
+        $current_user = wp_get_current_user();
+        $roles = (array)$current_user->roles;
+        $can_view_all = current_user_can('manage_options') || current_user_can('modify_all_make_data') ||
+            in_array('make_designer', $roles, true) || in_array('make_factory_manager', $roles, true) ||
+            in_array('factory_manager', $roles, true) || current_user_can('update_production_status');
+        if (!$can_view_all) {
+            $nas_user_id = intval(get_user_meta($current_user->ID, 'le_nas_user_id', true));
+            if ($nas_user_id < 1 || intval($order['salesman_id'] ?? 0) !== $nas_user_id) {
+                return new WP_REST_Response(array('error' => 'Order not found'), 404);
+            }
+        }
+
         if (!empty($order['current_stage_photo'])) {
             $order['current_stage_photo'] = self::format_media_url($order['current_stage_photo']);
         }
@@ -617,6 +858,10 @@ class LEMakeApiController {
     public function create_order(WP_REST_Request $request) {
         $params = $request->get_json_params();
         $current_user = wp_get_current_user();
+
+        if (!user_can($current_user, 'create_make_orders') && !user_can($current_user, 'manage_options')) {
+            return new WP_REST_Response(array('error' => 'You do not have permission to create production orders.'), 403);
+        }
 
         if (empty($params['customer_name'])) {
             return new WP_REST_Response(array('error' => 'Customer name is required.'), 400);
@@ -713,10 +958,28 @@ class LEMakeApiController {
             return new WP_REST_Response(array('error' => $res->get_error_message()), 500);
         }
 
+        // Mark request items once the linked order has actually persisted.
+        // Keep this secondary: a status-sync problem must not undo a valid order.
+        foreach ($params['items'] as $order_item) {
+            $requestion_item_id = intval($order_item['requestion_item_id'] ?? 0);
+            if ($requestion_item_id > 0) {
+                $client->request_portal_data('make_costing_request_items?id=eq.' . $requestion_item_id, 'PATCH', array('status' => 'ordered', 'updated_at' => gmdate('c')));
+                $request_item = $client->request_portal_data('make_costing_request_items?id=eq.' . $requestion_item_id . '&select=request_id', 'GET');
+                $request_id = intval($request_item[0]['request_id'] ?? 0);
+                if ($request_id > 0) {
+                    $all_items = $client->request_portal_data('make_costing_request_items?request_id=eq.' . $request_id . '&select=status', 'GET');
+                    $all_ordered = is_array($all_items) && count($all_items) > 0;
+                    foreach ((array)$all_items as $request_line) if (($request_line['status'] ?? '') !== 'ordered') $all_ordered = false;
+                    if ($all_ordered) $client->request_portal_data('make_costing_requests?id=eq.' . $request_id, 'PATCH', array('status' => 'ordered', 'updated_at' => gmdate('c')));
+                }
+            }
+        }
+
         return rest_ensure_response($client->sanitize_for_role($res, $current_user));
     }
 
     public function approve_order_version(WP_REST_Request $request) {
+        if (!current_user_can('approve_make_orders') && !current_user_can('manage_options')) return new WP_REST_Response(array('error' => 'You do not have permission to approve order versions.'), 403);
         $order_id = intval($request->get_param('id'));
         $params = $request->get_json_params();
         $version_number = intval($params['version_number'] ?? 1);
@@ -735,6 +998,7 @@ class LEMakeApiController {
     }
 
     public function reject_order_version(WP_REST_Request $request) {
+        if (!current_user_can('approve_make_orders') && !current_user_can('manage_options')) return new WP_REST_Response(array('error' => 'You do not have permission to request order revisions.'), 403);
         $order_id = intval($request->get_param('id'));
         $params = $request->get_json_params();
         $version_number = intval($params['version_number'] ?? 1);
@@ -892,18 +1156,19 @@ class LEMakeApiController {
         $file = $files['file'];
         $client = LEMakeNasDbClient::get_instance();
 
-        // 1. File size validation (Max 20MB)
-        $max_size = 20 * 1024 * 1024;
+        // Reference file limit is aligned with the desktop MAKE module.
+        $max_size = 50 * 1024 * 1024;
         if (!empty($file['size']) && $file['size'] > $max_size) {
-            return new WP_REST_Response(array('error' => 'File size exceeds maximum allowed limit of 20MB.'), 400);
+            return new WP_REST_Response(array('error' => 'File size exceeds maximum allowed limit of 50MB.'), 400);
         }
 
-        // 2. Extension validation against strict whitelist
+        // 2. Reject active content and executable formats. Furniture references
+        // may otherwise be any opaque document/CAD/media format.
         $orig_name = sanitize_file_name($file['name'] ?? '');
         $ext = strtolower(pathinfo($orig_name, PATHINFO_EXTENSION));
-        $allowed_exts = array('jpg', 'jpeg', 'png', 'webp', 'pdf');
-        if (!in_array($ext, $allowed_exts, true)) {
-            return new WP_REST_Response(array('error' => 'Unsupported file format. Allowed formats: JPG, PNG, WEBP, PDF.'), 400);
+        $blocked_exts = array('php','phtml','php3','php4','php5','phps','phar','inc','pl','py','cgi','asp','aspx','sh','bash','exe','bat','cmd','js','html','htm','svg','com','msi','dll','app','jar','class','ps1','vbs','wsf','scr','sys','wasm');
+        if ($ext === '' || in_array($ext, $blocked_exts, true)) {
+            return new WP_REST_Response(array('error' => 'This file type cannot be uploaded as a portal attachment.'), 400);
         }
 
         // Protect against double extensions or executable token injection
@@ -942,6 +1207,14 @@ class LEMakeApiController {
         } elseif ($ext === 'pdf' && strpos($header, '%PDF-') === 0) {
             $is_valid_magic = true;
             $mime_type = 'application/pdf';
+        } elseif (in_array($ext, array('zip', 'docx', 'xlsx', 'pptx'), true) && substr($header, 0, 2) === "PK") {
+            $is_valid_magic = true;
+            $mime_type = 'application/zip';
+        } else {
+            // CAD formats have vendor-specific/binary headers. Keep them as
+            // opaque octet streams; downloads are authenticated and nosniff.
+            $is_valid_magic = strlen($header) > 0;
+            $mime_type = 'application/octet-stream';
         }
 
         if (!$is_valid_magic) {
@@ -966,6 +1239,10 @@ class LEMakeApiController {
             $headers = array(
                 'Content-Type' => 'multipart/form-data; boundary=' . $boundary,
             );
+            $nas_jwt = $client->get_nas_token();
+            if (!empty($nas_jwt)) {
+                $headers['Authorization'] = 'Bearer ' . trim($nas_jwt);
+            }
             $cf_id = $client->get_cf_id();
             $cf_secret = $client->get_cf_secret();
             if (!empty($cf_id)) {
@@ -980,7 +1257,7 @@ class LEMakeApiController {
                 'timeout'   => 30,
                 'headers'   => $headers,
                 'body'      => $body,
-                'sslverify' => false
+                'sslverify' => true
             ));
 
             if (!is_wp_error($res) && wp_remote_retrieve_response_code($res) < 300) {
@@ -1004,17 +1281,23 @@ class LEMakeApiController {
         $sb_url = $client->upload_file_to_supabase_storage($unique_name, $file_content, $mime_type);
         $client->prune_supabase_storage_to_1gb();
 
-        // Local buffer
-        $wp_uploads = wp_upload_dir();
-        $target_dir = $wp_uploads['basedir'] . '/le-make-temp';
-        if (!file_exists($target_dir)) {
-            wp_mkdir_p($target_dir);
+        // Private local buffer; never place pending customer files under the
+        // publicly served WordPress uploads directory.
+        $target_dir = $client->get_private_staging_dir();
+        if (!$target_dir) {
+            return new WP_REST_Response(array('error' => 'Private upload staging is unavailable.'), 503);
         }
-        $target_file = $target_dir . '/' . $unique_name;
-        move_uploaded_file($file['tmp_name'], $target_file);
-        $temp_local_url = $wp_uploads['baseurl'] . '/le-make-temp/' . $unique_name;
+        $encrypted_payload = $client->encrypt_private_staging_payload($file_content);
+        if (is_wp_error($encrypted_payload)) return new WP_REST_Response(array('error' => $encrypted_payload->get_error_message()), 503);
+        $target_file = $target_dir . DIRECTORY_SEPARATOR . $unique_name . '.enc';
+        if (file_put_contents($target_file, $encrypted_payload, LOCK_EX) === false) {
+            return new WP_REST_Response(array('error' => 'Could not safely stage the encrypted attachment.'), 500);
+        }
+        @chmod($target_file, 0600);
 
-        $primary_url = (!is_wp_error($sb_url) && !empty($sb_url)) ? $sb_url : $temp_local_url;
+        // Stable reference served only through the signed portal media proxy.
+        $nas_storage = get_option('le_make_nas_storage_url', LEMakeNasDbClient::DEFAULT_TUNNEL_STORAGE);
+        $primary_url = (!is_wp_error($sb_url) && !empty($sb_url)) ? $sb_url : rtrim($nas_storage, '/') . '/files/' . rawurlencode($unique_name);
 
         // Queue in pending file transfers for TrueNAS when online
         $queue = get_option('le_make_pending_file_transfers', array());
@@ -1265,6 +1548,15 @@ class LEMakeApiController {
         // Normalize any local IP or Tailscale IP
         $file_param = preg_replace('#^http://(?:192\.168\.\d+\.\d+|100\.\d+\.\d+\.\d+|localhost|127\.0\.0\.1):8081#i', 'https://storage.lenas.me', $file_param);
 
+        // A logged-in portal role is necessary but not sufficient: require a
+        // short-lived server signature so clients cannot probe arbitrary files.
+        $expires = absint($request->get_param('exp'));
+        $signature = strtolower((string) $request->get_param('sig'));
+        $expected_signature = self::sign_media_reference($file_param, $expires);
+        if ($expires < time() || $expires > time() + HOUR_IN_SECONDS || $expected_signature === '' || !preg_match('/^[a-f0-9]{64}$/', $signature) || !hash_equals($expected_signature, $signature)) {
+            return new WP_REST_Response(array('error' => 'Media link is invalid or expired. Reload the portal and try again.'), 403);
+        }
+
         $clean_file_path = parse_url($file_param, PHP_URL_PATH);
         if (empty($clean_file_path)) {
             $clean_file_path = $file_param;
@@ -1273,6 +1565,10 @@ class LEMakeApiController {
         // Extract subpath under /files/
         if (strpos($clean_file_path, '/files/') !== false) {
             $subpath = substr($clean_file_path, strpos($clean_file_path, '/files/') + 7);
+        } elseif (preg_match('#/storage/v1/object/(?:public/)?make-portal-files/(.+)$#', $clean_file_path, $matches)) {
+            // Legacy Supabase URLs encode bucket and endpoint in the path;
+            // the storage API request must receive only the object key.
+            $subpath = $matches[1];
         } else {
             $subpath = ltrim($clean_file_path, '/');
         }
@@ -1298,6 +1594,8 @@ class LEMakeApiController {
             $cf_id = $client->get_cf_id();
             $cf_secret = $client->get_cf_secret();
             $headers = array();
+            $nas_token = $client->get_nas_token();
+            if (!empty($nas_token)) $headers['Authorization'] = 'Bearer ' . $nas_token;
             if (!empty($cf_id)) $headers['CF-Access-Client-Id'] = trim($cf_id);
             if (!empty($cf_secret)) $headers['CF-Access-Client-Secret'] = trim($cf_secret);
 
@@ -1305,7 +1603,7 @@ class LEMakeApiController {
                 'headers'     => $headers,
                 'timeout'     => 8,
                 'redirection' => 5,
-                'sslverify'   => false,
+                'sslverify'   => true,
             ));
 
             if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 200) {
@@ -1318,12 +1616,21 @@ class LEMakeApiController {
         if (empty($body)) {
             $supabase_url = rtrim(get_option('le_make_supabase_url', LEMakeNasDbClient::DEFAULT_SUPABASE_URL), '/');
             $bucket = LEMakeNasDbClient::DEFAULT_SUPABASE_STORAGE_BUCKET;
-            $target_sb_url = $supabase_url . '/storage/v1/object/public/' . $bucket . '/' . $file_name;
+            $target_sb_url = $supabase_url . '/storage/v1/object/' . $bucket . '/' . $subpath;
+            $service_key = $client->get_service_key();
+
+            if (empty($service_key)) {
+                return new WP_REST_Response(array('error' => 'Private cloud media is unavailable: configure the Supabase service credential on the WordPress server.'), 503);
+            }
 
             $sb_res = wp_remote_get($target_sb_url, array(
+                'headers'     => array(
+                    'Authorization' => 'Bearer ' . $service_key,
+                    'apikey' => $service_key,
+                ),
                 'timeout'     => 15,
                 'redirection' => 5,
-                'sslverify'   => false
+                'sslverify'   => true
             ));
 
             if (!is_wp_error($sb_res) && wp_remote_retrieve_response_code($sb_res) === 200) {
@@ -1334,10 +1641,16 @@ class LEMakeApiController {
 
         // 3. Fallback: check local staging directory if file was buffered during upload
         if (empty($body)) {
-            $wp_uploads = wp_upload_dir();
-            $local_path = $wp_uploads['basedir'] . '/le-make-temp/' . $file_name;
-            if (file_exists($local_path)) {
-                $body = file_get_contents($local_path);
+            $real_temp_dir = $client->get_private_staging_dir();
+            $local_path = $real_temp_dir ? $real_temp_dir . DIRECTORY_SEPARATOR . sanitize_file_name($file_name) : '';
+            $real_local_path = realpath($local_path);
+            $encrypted_path = $local_path . '.enc';
+            $real_encrypted_path = realpath($encrypted_path);
+            $candidate_path = $real_local_path ?: $real_encrypted_path;
+            if ($real_temp_dir && $candidate_path && strpos($candidate_path, rtrim($real_temp_dir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR) === 0 && is_file($candidate_path)) {
+                $stored_body = file_get_contents($candidate_path);
+                $body = $client->decrypt_private_staging_payload($stored_body);
+                if (is_wp_error($body)) return new WP_REST_Response(array('error' => 'Private staged file could not be decrypted.'), 500);
             }
         }
 
@@ -1373,14 +1686,17 @@ class LEMakeApiController {
         header('Content-Type: ' . $content_type);
         header('Content-Length: ' . strlen($body));
         header('Content-Disposition: inline; filename="' . sanitize_file_name($file_name) . '"');
-        header('Cache-Control: public, max-age=86400');
-        header('Access-Control-Allow-Origin: *');
+        // These files can contain internal production drawings; never make
+        // authenticated media cacheable as public CDN content.
+        header('Cache-Control: private, no-store, max-age=0');
+        header('X-Content-Type-Options: nosniff');
 
         echo $body;
         exit;
     }
 
     public function request_production_approval(WP_REST_Request $request) {
+        if (!current_user_can('request_make_production_approval') && !current_user_can('manage_options')) return new WP_REST_Response(array('error' => 'You do not have permission to request production approval with an outstanding balance.'), 403);
         $order_id = intval($request->get_param('id'));
         $body = $request->get_json_params() ?: $request->get_body_params();
         $notes = sanitize_textarea_field($body['notes'] ?? '');
@@ -1412,6 +1728,7 @@ class LEMakeApiController {
     }
 
     public function record_order_payment(WP_REST_Request $request) {
+        if (!current_user_can('make_record_payment') && !current_user_can('manage_options')) return new WP_REST_Response(array('error' => 'You do not have permission to record order payments.'), 403);
         $order_id = intval($request->get_param('id'));
         $body = $request->get_json_params() ?: $request->get_body_params();
         $amount = floatval($body['amount'] ?? 0);

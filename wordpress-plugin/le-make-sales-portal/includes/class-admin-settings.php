@@ -278,14 +278,14 @@ class LEMakeAdminSettings {
                     <tr>
                         <th scope="row" style="font-weight: 600;">Service Role Key (Optional)</th>
                         <td>
-                            <?php $has_sb_key = !empty(get_option('le_make_supabase_service_key')) || (defined('LE_MAKE_SUPABASE_SERVICE_KEY') && LE_MAKE_SUPABASE_SERVICE_KEY); ?>
+                            <?php $has_sb_key = !empty(get_option('le_make_supabase_service_key')) || (defined('LE_MAKE_SUPABASE_SERVICE_KEY') && LE_MAKE_SUPABASE_SERVICE_KEY) || !empty(getenv('LE_MAKE_SUPABASE_SERVICE_KEY')); ?>
                             <input type="password" name="le_make_supabase_service_key" value="" class="regular-text" style="width: 100%; max-width: 500px;" placeholder="<?php echo $has_sb_key ? '•••••••••••••••• (Key configured — leave blank to keep)' : 'Enter Supabase Service Role Key'; ?>" autocomplete="new-password" />
                             <?php if ($has_sb_key): ?>
                                 <div style="margin-top: 5px; color: #059669; font-size: 12px; font-weight: 600;">✓ Service role key is securely stored server-side (never exposed in HTML)</div>
                             <?php else: ?>
                                 <div style="margin-top: 5px; color: #64748b; font-size: 12px;">Optional. Leave blank if not required.</div>
                             <?php endif; ?>
-                            <p class="description">Supabase privileged service-role key for backend storage management. Can also be defined via <code>LE_MAKE_SUPABASE_SERVICE_KEY</code> in <code>wp-config.php</code>.</p>
+                            <p class="description">Required for private cloud media reads and server-side database failover. Configure only on the WordPress server as <code>LE_MAKE_SUPABASE_SERVICE_KEY</code> in <code>wp-config.php</code> or the server environment. Never use the anon key here.</p>
                         </td>
                     </tr>
                 </table>

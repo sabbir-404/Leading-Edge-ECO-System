@@ -410,7 +410,9 @@ export interface ElectronAPI {
     makePickAndUploadStagePhoto?: (data: { orderId: number | string }) => Promise<any>;
     makePickAndUploadInvoiceAttachment?: (data?: { orderId?: number | string }) => Promise<any>;
     makePickAndUploadBlueprint?: (data?: { productId?: number | string }) => Promise<any>;
-    makeUploadInvoiceAttachmentBuffer?: (data: { fileName: string; fileBase64: string; orderId?: number | string; itemId?: number | string }) => Promise<any>;
+    makePickAndUploadProductDrawing?: (data?: { productId?: number | string }) => Promise<any>;
+    makeUploadInvoiceAttachmentBuffer?: (data: { fileName: string; fileBase64: string; attachmentType?: 'cad' | 'invoice_attachment'; orderId?: number | string; itemId?: number | string }) => Promise<any>;
+    makeAssociateOrderAttachment?: (data: { uploadId: string; orderId: number | string; itemId: number | string; fileRef: string }) => Promise<any>;
     makeGetOrderParts: (orderId: number | string) => Promise<any[]>;
     makeUpsertPart: (part: any) => Promise<any>;
     makeDeletePart: (partId: number | string) => Promise<any>;
@@ -453,6 +455,14 @@ export interface ElectronAPI {
     makeDecideProductionApproval?: (data: { orderId: number | string; decision: 'approved' | 'rejected'; notes?: string }) => Promise<{ success: boolean; decision?: 'approved' | 'rejected'; error?: string; message?: string }>;
     makeRecordOrderPayment?: (data: { orderId: number | string; amount: number; paymentMethod?: string; reference?: string; notes?: string }) => Promise<{ success: boolean; error?: string; moneyReceived?: number; amountDue?: number; paymentStatus?: string; productionHold?: boolean }>;
     makeGetOrderPayments?: (orderId: number | string) => Promise<{ success: boolean; payments: any[]; error?: string }>;
+    makeCreateCostingRequest?: (data: any) => Promise<any>;
+    makeGetCostingRequests?: () => Promise<any>;
+    makeUploadCostingRequestFile?: (data: { requestId: number }) => Promise<any>;
+    makeUploadCostingRequestItemFile?: (data: { requestId: number; itemId: number }) => Promise<any>;
+    makePickCostingProductAsset?: (data: { kind: 'image' | 'blueprint' | 'product_drawing'; requestId: number; itemId: number }) => Promise<any>;
+    makeCompleteCostingRequestItem?: (data: any) => Promise<any>;
+    makeDeleteCostingRequest?: (data: { requestId: number }) => Promise<any>;
+    makeOrderFromCostingRequest?: (itemId: number) => Promise<any>;
 
     // Window Controls
     setTheme: (theme: string) => Promise<void>;

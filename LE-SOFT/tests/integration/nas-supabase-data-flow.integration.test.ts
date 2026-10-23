@@ -196,19 +196,22 @@ describe('Real NAS + Supabase Data-Flow Verification Suite', () => {
             });
         });
 
-        it('verifies live TrueNAS Storage endpoint responsiveness, real write, and bit-for-bit read-back over Tailscale', async () => {
+        // Live NAS canaries are opt-in: CI and developer builds must not wait on
+        // a private Tailscale host. Run with LE_RUN_LIVE_NAS_E2E=1 when connected.
+        it.skipIf(process.env.LE_RUN_LIVE_NAS_E2E !== '1')('verifies live TrueNAS Storage endpoint responsiveness, real write, and bit-for-bit read-back over Tailscale', async () => {
             let isNasStorageHealthy = false;
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 4000);
             try {
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 4000);
                 const resp = await fetch('http://100.88.85.6:8081/health', { signal: controller.signal });
-                clearTimeout(timeoutId);
                 if (resp.ok) {
                     const body = await resp.json();
                     isNasStorageHealthy = (body.status === 'healthy');
                 }
             } catch {
                 isNasStorageHealthy = false;
+            } finally {
+                clearTimeout(timeoutId);
             }
 
             if (!isNasStorageHealthy) {
@@ -244,7 +247,7 @@ describe('Real NAS + Supabase Data-Flow Verification Suite', () => {
             expect(readBuffer.length).toBe(canaryBytes.length);
             expect(readSha256).toBe(canarySha256);
             console.log(`[EVIDENCE] TrueNAS Storage real write & read-back verified: ${readBuffer.length} bytes, SHA-256: ${readSha256}`);
-        });
+        }, 15000);
     });
 
     // ─────────────────────────────────────────────────────────────────────────

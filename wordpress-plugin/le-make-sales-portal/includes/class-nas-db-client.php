@@ -162,8 +162,53 @@ class LEMakeNasDbClient {
         if (!empty($service)) {
             return $service;
         }
-        $anon = $this->get_anon_key();
-        return !empty($anon) ? $anon : self::DEFAULT_SERVICE_ROLE_KEY;
+        // Never substitute a publishable/anon key for privileged backend access.
+        // Supabase Storage private-object reads and server-side DB operations
+        // must fail closed until an actual service credential is configured.
+        return self::DEFAULT_SERVICE_ROLE_KEY;
+    }
+
+    /** Private site-specific staging directory outside the public web root. */
+    public function get_private_staging_dir() {
+        $site_key = substr(hash('sha256', function_exists('site_url') ? site_url() : __FILE__), 0, 20);
+        $directory = rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'le-make-private-' . $site_key;
+        if (!is_dir($directory) && !wp_mkdir_p($directory)) {
+            return '';
+        }
+        @chmod($directory, 0700);
+        return realpath($directory) ?: '';
+    }
+
+    /** Encrypt offline staged attachments with a key derived from WordPress auth salts. */
+    public function encrypt_private_staging_payload($plain_text) {
+        if (!function_exists('openssl_encrypt') || !function_exists('random_bytes') || !function_exists('wp_salt')) {
+            return new WP_Error('staging_encryption_unavailable', 'Authenticated file encryption is unavailable on this WordPress server.');
+        }
+        $salt = wp_salt('auth');
+        if (!is_string($salt) || $salt === '') return new WP_Error('staging_encryption_key_missing', 'WordPress authentication salts are not configured.');
+        $iv = random_bytes(12);
+        $tag = '';
+        $key = hash_hmac('sha256', 'le-make-private-staging-v1', $salt, true);
+        $ciphertext = openssl_encrypt($plain_text, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag);
+        if ($ciphertext === false || strlen($tag) !== 16) return new WP_Error('staging_encryption_failed', 'Could not encrypt the offline file buffer.');
+        return "LEWP1" . $iv . $tag . $ciphertext;
+    }
+
+    /** Decrypt current encrypted stage files; allow older private raw buffers to drain. */
+    public function decrypt_private_staging_payload($stored_bytes) {
+        if (!is_string($stored_bytes)) return new WP_Error('staging_file_unreadable', 'The staged attachment could not be read.');
+        if (substr($stored_bytes, 0, 5) !== 'LEWP1') return $stored_bytes;
+        if (!function_exists('openssl_decrypt') || !function_exists('wp_salt') || strlen($stored_bytes) < 33) {
+            return new WP_Error('staging_decryption_unavailable', 'The encrypted offline file cannot be decrypted on this server.');
+        }
+        $salt = wp_salt('auth');
+        if (!is_string($salt) || $salt === '') return new WP_Error('staging_encryption_key_missing', 'WordPress authentication salts are not configured.');
+        $iv = substr($stored_bytes, 5, 12);
+        $tag = substr($stored_bytes, 17, 16);
+        $ciphertext = substr($stored_bytes, 33);
+        $key = hash_hmac('sha256', 'le-make-private-staging-v1', $salt, true);
+        $plain = openssl_decrypt($ciphertext, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag);
+        return $plain === false ? new WP_Error('staging_decryption_failed', 'Encrypted offline file authentication failed.') : $plain;
     }
 
     public function get_anon_key() {
@@ -336,6 +381,22 @@ class LEMakeNasDbClient {
         return $decoded;
     }
 
+    /**
+     * Request app data through NAS first and fail over to Supabase service-role
+     * access only after NAS is unavailable or rejects this integration token.
+     * Callers must enforce WordPress capabilities before using this method.
+     */
+    public function request_portal_data($endpoint, $method = 'GET', $body = null, $headers = array()) {
+        if ($this->is_nas_online()) {
+            $nas = $this->request_nas($endpoint, $method, $body, $headers);
+            if (!is_wp_error($nas)) return $nas;
+            $code = $nas->get_error_code();
+            $is_auth_or_transport = in_array($code, array('nas_error_401', 'nas_error_403', 'db_connection_error'), true);
+            if (!$is_auth_or_transport) return $nas;
+        }
+        return $this->request_supabase($endpoint, $method, $body, $headers);
+    }
+
     private function ping_endpoint($url, $timeout = 2.5, $is_tunnel = true) {
         $args = array(
             'timeout'     => $timeout,
@@ -469,7 +530,8 @@ class LEMakeNasDbClient {
         $roles = (array)$user->roles;
         $is_admin = user_can($user, 'administrator') || user_can($user, 'manage_options');
         $is_designer = in_array('make_designer', $roles, true) || user_can($user, 'set_make_pricing');
-        $is_factory_manager = in_array('factory_manager', $roles, true) || in_array('make_factory_manager', $roles, true);
+        $is_factory_manager = in_array('factory_manager', $roles, true) || in_array('make_factory_manager', $roles, true) || user_can($user, 'update_production_status');
+        $is_salesperson = in_array('make_salesperson', $roles, true) || in_array('salesperson', $roles, true) || in_array('salesman', $roles, true) || in_array('sales', $roles, true) || user_can($user, 'create_make_orders') || user_can($user, 'approve_make_orders');
 
         // Admins and Designers see full cost and sale pricing
         if ($is_admin || $is_designer) {
@@ -478,11 +540,23 @@ class LEMakeNasDbClient {
 
         // Factory Manager sees cost prices, but SALE prices must be strictly stripped!
         if ($is_factory_manager) {
-            return $this->strip_sale_fields($data);
+            return $this->strip_drawing_fields($this->strip_sale_fields($data), 'product_drawing_url');
         }
 
-        // For Salesperson and all other roles, scrub cost prices
-        return $this->strip_cost_fields($data);
+        // Sales roles can receive customer-facing drawings, but never production files.
+        $scrubbed = $this->strip_drawing_fields($this->strip_cost_fields($data), 'blueprint_url');
+        return $is_salesperson ? $scrubbed : $this->strip_drawing_fields($scrubbed, 'product_drawing_url');
+    }
+
+    /** Remove a drawing category recursively before it leaves the server. */
+    public function strip_drawing_fields($data, $field) {
+        if (!is_array($data)) return $data;
+        $scrubbed = array();
+        foreach ($data as $key => $value) {
+            if (is_string($key) && strtolower($key) === strtolower($field)) continue;
+            $scrubbed[$key] = is_array($value) ? $this->strip_drawing_fields($value, $field) : $value;
+        }
+        return $scrubbed;
     }
 
     /**
@@ -1153,6 +1227,7 @@ class LEMakeNasDbClient {
                 $items_payload[] = array(
                     'order_id'          => $order_id,
                     'product_id'        => !empty($item['product_id']) ? intval($item['product_id']) : null,
+                    'requestion_item_id' => !empty($item['requestion_item_id']) ? intval($item['requestion_item_id']) : null,
                     'spec_id'           => !empty($item['spec_id']) ? intval($item['spec_id']) : null,
                     'size_id'           => !empty($item['size_id']) ? intval($item['size_id']) : null,
                     'color_id'          => !empty($item['color_id']) ? intval($item['color_id']) : null,
@@ -1318,6 +1393,8 @@ class LEMakeNasDbClient {
                 $dim_text = $it['dimensions_text'] ?? $it['size_label'] ?? null;
                 $sb_items[] = array(
                     'order_id'          => $order_id,
+                    'product_id'        => !empty($it['product_id']) ? intval($it['product_id']) : null,
+                    'requestion_item_id' => !empty($it['requestion_item_id']) ? intval($it['requestion_item_id']) : null,
                     'product_name'      => sanitize_text_field($it['product_name']),
                     'spec_name'         => sanitize_text_field($it['spec_name'] ?? ''),
                     'size_label'        => sanitize_text_field($dim_text ?? ''),
@@ -1444,6 +1521,8 @@ class LEMakeNasDbClient {
                 $dim_text = $it['dimensions_text'] ?? $it['size_label'] ?? null;
                 $sb_items[] = array(
                     'order_id'          => $order_id,
+                    'product_id'        => !empty($it['product_id']) ? intval($it['product_id']) : null,
+                    'requestion_item_id' => !empty($it['requestion_item_id']) ? intval($it['requestion_item_id']) : null,
                     'product_name'      => sanitize_text_field($it['product_name']),
                     'spec_name'         => sanitize_text_field($it['spec_name'] ?? ''),
                     'size_label'        => sanitize_text_field($dim_text ?? ''),
@@ -1470,7 +1549,7 @@ class LEMakeNasDbClient {
 
     /**
      * Uploads a file to Supabase Storage bucket 'make-portal-files'
-     * Returns public URL on success, or WP_Error on failure.
+     * Returns a server-authenticated object URL on success, or WP_Error on failure.
      */
     public function upload_file_to_supabase_storage($filename, $file_content, $mime_type = 'application/octet-stream') {
         $supabase_url = rtrim(get_option('le_make_supabase_url', self::DEFAULT_SUPABASE_URL), '/');
@@ -1492,7 +1571,7 @@ class LEMakeNasDbClient {
                 'x-upsert'      => 'true'
             ),
             'body'      => $file_content,
-            'sslverify' => false
+            'sslverify' => true
         ));
 
         if (is_wp_error($res)) {
@@ -1501,7 +1580,7 @@ class LEMakeNasDbClient {
 
         $code = wp_remote_retrieve_response_code($res);
         if ($code >= 200 && $code < 300) {
-            return $supabase_url . '/storage/v1/object/public/' . $bucket . '/' . $clean_name;
+            return $supabase_url . '/storage/v1/object/' . $bucket . '/' . $clean_name;
         }
 
         $body = wp_remote_retrieve_body($res);
@@ -1529,7 +1608,7 @@ class LEMakeNasDbClient {
                 'limit'  => 1000,
                 'sortBy' => array('column' => 'created_at', 'order' => 'asc') // Oldest first
             )),
-            'sslverify' => false
+            'sslverify' => true
         ));
 
         if (is_wp_error($res)) {
@@ -1594,7 +1673,7 @@ class LEMakeNasDbClient {
                     'Content-Type'  => 'application/json'
                 ),
                 'body'      => json_encode(array('prefixes' => $to_delete)),
-                'sslverify' => false
+                'sslverify' => true
             ));
         }
 
@@ -1688,9 +1767,29 @@ class LEMakeNasDbClient {
             $file_content = '';
 
             if ($temp_path && file_exists($temp_path)) {
-                $file_content = file_get_contents($temp_path);
+                $stored_content = file_get_contents($temp_path);
+                $file_content = $this->decrypt_private_staging_payload($stored_content);
+                if (is_wp_error($file_content)) {
+                    $remaining[] = $file_entry;
+                    continue;
+                }
             } elseif (!empty($temp_url)) {
-                $res = wp_remote_get($temp_url, array('timeout' => 25, 'sslverify' => false));
+                $download_url = $temp_url;
+                $download_headers = array();
+                $object_path = parse_url($temp_url, PHP_URL_PATH);
+                $storage_prefix = '/storage/v1/object/';
+                if (is_string($object_path) && strpos($object_path, $storage_prefix) !== false) {
+                    $object_key = substr($object_path, strpos($object_path, $storage_prefix) + strlen($storage_prefix));
+                    $object_key = preg_replace('#^public/#', '', $object_key);
+                    $download_url = rtrim(get_option('le_make_supabase_url', self::DEFAULT_SUPABASE_URL), '/') . '/storage/v1/object/' . $object_key;
+                    $service_key = $this->get_service_key();
+                    if (empty($service_key)) {
+                        $remaining[] = $file_entry;
+                        continue;
+                    }
+                    $download_headers = array('Authorization' => 'Bearer ' . $service_key, 'apikey' => $service_key);
+                }
+                $res = wp_remote_get($download_url, array('timeout' => 25, 'headers' => $download_headers, 'sslverify' => true));
                 if (!is_wp_error($res) && wp_remote_retrieve_response_code($res) === 200) {
                     $file_content = wp_remote_retrieve_body($res);
                 }
@@ -1712,16 +1811,18 @@ class LEMakeNasDbClient {
                     'timeout'   => 30,
                     'headers'   => array(
                         'Content-Type'             => 'multipart/form-data; boundary=' . $boundary,
+                        'Authorization'           => 'Bearer ' . $this->get_nas_token(),
+                        'X-Subfolder'              => 'make-order-files',
                         'CF-Access-Client-Id'     => $this->get_cf_id(),
                         'CF-Access-Client-Secret' => $this->get_cf_secret()
                     ),
                     'body'      => $body,
-                    'sslverify' => false
+                    'sslverify' => true
                 ));
 
                 $code = is_wp_error($upload_res) ? 0 : wp_remote_retrieve_response_code($upload_res);
                 if ($code >= 200 && $code < 300) {
-                    $nas_file_url = rtrim($nas_storage_url, '/') . '/files/' . $unique_name;
+                    $nas_file_url = rtrim($nas_storage_url, '/') . '/files/make-order-files/' . rawurlencode($unique_name);
                     if (!empty($file_entry['order_id'])) {
                         $this->request_nas('make_orders?id=eq.' . intval($file_entry['order_id']), 'PATCH', array(
                             'attachment_url' => $nas_file_url
