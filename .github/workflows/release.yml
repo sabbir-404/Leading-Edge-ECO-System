@@ -47,8 +47,6 @@ jobs:
 
       - name: Build macOS Release
         run: npm run dist:mac
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish macOS Release Assets
         env:
@@ -127,8 +125,6 @@ jobs:
 
       - name: Build Windows Release
         run: npm run dist
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish Windows Release Assets
         shell: pwsh
