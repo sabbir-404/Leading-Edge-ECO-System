@@ -20,6 +20,7 @@
  */
 
 import { supabase } from '../../supabase';
+import { DurableOutboxService } from '../outbox/DurableOutboxService';
 
 export const CANONICAL_PRODUCTION_STAGES = [
     'Work in process',
@@ -73,6 +74,34 @@ export interface StageTransitionResult {
 }
 
 export class MakeProductionService {
+    private static supportsCurrentStagePhoto: boolean | null = null;
+
+    public static setSupportsCurrentStagePhoto(supported: boolean | null): void {
+        MakeProductionService.supportsCurrentStagePhoto = supported;
+    }
+
+    public static getSupportsCurrentStagePhoto(): boolean | null {
+        return MakeProductionService.supportsCurrentStagePhoto;
+    }
+
+    public static isMissingColumnError(err: any, colName: string): boolean {
+        if (!err) return false;
+        const msg = String(err.message || '').toLowerCase();
+        const details = String(err.details || '').toLowerCase();
+        const code = String(err.code || '');
+        const target = colName.toLowerCase();
+
+        return (
+            code === 'PGRST204' ||
+            code === '42703' ||
+            msg.includes(target) ||
+            details.includes(target) ||
+            msg.includes(`could not find the '${target}' column`) ||
+            msg.includes(`column make_orders.${target} does not exist`) ||
+            details.includes(`column ${target} does not exist`)
+        );
+    }
+
     /**
      * Resolves the canonical stage index (0-5) for any stage string (canonical or legacy).
      * Returns -1 if the stage string is not recognized.
@@ -94,9 +123,22 @@ export class MakeProductionService {
     /**
      * Authoritatively validates whether an order can advance from its current status to targetStage.
      */
-    public static validateTransition(currentStatus: string | null | undefined, targetStage: string): StageTransitionResult {
+    public static validateTransition(
+        currentStatus: string | null | undefined,
+        targetStage: string,
+        options?: { productionHold?: boolean; adminApprovalStatus?: string | null }
+    ): StageTransitionResult {
         const curIdx = this.getStageIndex(currentStatus);
         const targetIdx = this.getStageIndex(targetStage);
+
+        if (options?.productionHold && options.adminApprovalStatus !== 'approved') {
+            return {
+                allowed: false,
+                error: 'Order is on Production Hold due to outstanding balance. Administrator approval is required before factory production can proceed.',
+                currentStageIndex: curIdx,
+                targetStageIndex: targetIdx
+            };
+        }
 
         if (targetIdx === -1) {
             return {
@@ -147,7 +189,20 @@ export class MakeProductionService {
 
     /**
      * Executes the stage transition in the database and dispatches notifications.
+     * Aliased as addProductionUpdate for foreign-key validation and production workflow consumers.
      */
+    public static async addProductionUpdate(params: {
+        orderId: number | string;
+        targetStage: string;
+        note?: string;
+        photoUrl?: string | null;
+        actorName: string;
+        actorRole: string;
+        actorUserId?: number | null;
+    }): Promise<{ success: boolean; stage: string; photo_url: string | null; error?: string }> {
+        return this.advanceOrderStage(params);
+    }
+
     public static async advanceOrderStage(params: {
         orderId: number | string;
         targetStage: string;
@@ -159,19 +214,113 @@ export class MakeProductionService {
     }): Promise<{ success: boolean; stage: string; photo_url: string | null; error?: string }> {
         const { orderId, targetStage, note, photoUrl, actorName, actorRole, actorUserId } = params;
 
-        // 1. Fetch current order
-        const { data: order, error: fetchErr } = await supabase
+        // 1. Fetch current order from primary Supabase source of truth
+        let order: any = null;
+        const { data: remoteOrder, error: fetchErr } = await supabase
             .from('make_orders')
             .select('*')
             .eq('id', orderId)
             .maybeSingle();
 
-        if (fetchErr || !order) {
-            return { success: false, stage: targetStage, photo_url: null, error: 'Order not found' };
+        if (remoteOrder) {
+            order = remoteOrder;
+        } else {
+            // Parent order not found in Supabase database.
+            // Check if parent order is currently staged/pending in the Durable Outbox!
+            const outbox = DurableOutboxService.getInstance();
+            const pendingParent = outbox.findPendingOrderOperation(orderId);
+
+            if (pendingParent) {
+                // Parent order is pending remote commitment in Supabase.
+                // Do NOT issue a direct insert to Supabase, which would violate foreign-key constraint 23503!
+                // Instead, defer this stage update in the Durable Outbox with strict dependency ordering.
+                const roleLabel = actorRole || 'Factory Manager';
+                const formattedActor = `${actorName} (${roleLabel})`;
+                const finalPhotoUrl = photoUrl || (pendingParent.payload as any)?.current_stage_photo || null;
+
+                const deferredUpdateRow = {
+                    order_id: orderId,
+                    status: targetStage,
+                    stage: targetStage,
+                    note: note || '',
+                    photo_url: finalPhotoUrl,
+                    photo_urls: finalPhotoUrl ? [finalPhotoUrl] : [],
+                    updated_by: formattedActor
+                };
+
+                const deferredOrderUpdates: any = {
+                    status: targetStage,
+                    current_stage: targetStage,
+                    updated_at: new Date().toISOString(),
+                    factory_manager_name: actorName,
+                    factory_manager_id: actorUserId || null
+                };
+                if (finalPhotoUrl && MakeProductionService.supportsCurrentStagePhoto !== false) {
+                    deferredOrderUpdates.current_stage_photo = finalPhotoUrl;
+                }
+
+                const childUpdateOpId = outbox.enqueueSingle({
+                    entityType: 'make_order_updates',
+                    operation: 'insert',
+                    payload: deferredUpdateRow,
+                    dependencyOpId: pendingParent.id,
+                    target: 'supabase'
+                });
+
+                outbox.enqueueSingle({
+                    entityType: 'make_orders',
+                    operation: 'update',
+                    payload: deferredOrderUpdates,
+                    filter: [{ column: 'id', value: orderId }],
+                    dependencyOpId: childUpdateOpId,
+                    target: 'supabase'
+                });
+
+                console.warn(`[MakeProductionService] Parent order ${orderId} is pending in durable outbox. Deferred stage update "${targetStage}" with dependency op ${pendingParent.id}.`);
+                return {
+                    success: true,
+                    stage: targetStage,
+                    photo_url: finalPhotoUrl,
+                    error: undefined
+                };
+            }
+
+            return {
+                success: false,
+                stage: targetStage,
+                photo_url: null,
+                error: `Parent order "${orderId}" does not exist in database or pending outbox.`
+            };
         }
 
-        // 2. Validate transition
-        const validation = this.validateTransition(order.status, targetStage);
+        // 2. Enforce Production Hold: If order is on hold and admin has not approved, reject transition
+        if (order.production_hold && order.admin_approval_status !== 'approved') {
+            const dueMsg = order.amount_due ? ` (Outstanding balance: ৳${Number(order.amount_due).toLocaleString()})` : '';
+            return {
+                success: false,
+                stage: targetStage,
+                photo_url: null,
+                error: `Cannot advance production stage: Order is on Production Hold${dueMsg}. Administrator approval is required to proceed.`
+            };
+        }
+
+        const normalizedRole = String(actorRole || '').trim().toLowerCase();
+        const isFactoryActor = ['factory_manager', 'factory manager', 'factory'].includes(normalizedRole);
+        const isStartingProduction = MakeProductionService.getStageIndex(order.status || order.current_stage) < 0 && targetStage === CANONICAL_PRODUCTION_STAGES[0];
+        if (isFactoryActor && isStartingProduction) {
+            if (order.approval_status !== 'sales_approved') {
+                return { success: false, stage: targetStage, photo_url: null, error: 'Salesperson approval is required before the factory can start production.' };
+            }
+            if (Number(order.amount_due || 0) > 0 && order.admin_approval_status !== 'approved') {
+                return { success: false, stage: targetStage, photo_url: null, error: `This order still has a due balance of ৳${Number(order.amount_due).toLocaleString()}. Payment or admin release approval is required before production.` };
+            }
+        }
+
+        // 3. Validate transition
+        const validation = this.validateTransition(order.status, targetStage, {
+            productionHold: order.production_hold,
+            adminApprovalStatus: order.admin_approval_status
+        });
         if (!validation.allowed) {
             return { success: false, stage: targetStage, photo_url: null, error: validation.error };
         }
@@ -192,7 +341,24 @@ export class MakeProductionService {
 
         const roleLabel = actorRole || 'Factory Manager';
         const formattedActor = `${actorName} (${roleLabel})`;
-        const finalPhotoUrl = photoUrl || order.current_stage_photo || null;
+        let finalPhotoUrl = photoUrl || order.current_stage_photo || null;
+        if (!finalPhotoUrl) {
+            try {
+                const { data: latestUpdate } = await supabase
+                    .from('make_order_updates')
+                    .select('photo_url')
+                    .eq('order_id', orderId)
+                    .not('photo_url', 'is', null)
+                    .order('created_at', { ascending: false })
+                    .limit(1)
+                    .maybeSingle();
+                if (latestUpdate?.photo_url) {
+                    finalPhotoUrl = latestUpdate.photo_url;
+                }
+            } catch {
+                // Non-fatal query fallback
+            }
+        }
 
         // 4. Record stage update in make_order_updates
         const updateRow: any = {
@@ -207,29 +373,58 @@ export class MakeProductionService {
         const { error: insErr } = await supabase.from('make_order_updates').insert(updateRow);
         if (insErr) {
             console.error('[MakeProductionService] Failed to insert update:', insErr);
+            // Fail closed: propagate actual persistence failure; DO NOT update order or imply success
+            return {
+                success: false,
+                stage: targetStage,
+                photo_url: finalPhotoUrl,
+                error: `Failed to insert production update: ${insErr.message}`
+            };
         }
 
         // 5. Update make_orders table
-        const orderUpdates: any = {
+        const baseOrderUpdates: any = {
             status: targetStage,
             current_stage: targetStage,
             updated_at: new Date().toISOString()
         };
-        if (finalPhotoUrl) {
+        if (actorUserId) {
+            baseOrderUpdates.factory_manager_id = actorUserId;
+        }
+        baseOrderUpdates.factory_manager_name = actorName;
+
+        const orderUpdates = { ...baseOrderUpdates };
+        if (finalPhotoUrl && MakeProductionService.supportsCurrentStagePhoto !== false) {
             orderUpdates.current_stage_photo = finalPhotoUrl;
         }
-        if (actorUserId) {
-            orderUpdates.factory_manager_id = actorUserId;
-        }
-        orderUpdates.factory_manager_name = actorName;
 
-        const { error: updErr } = await supabase
+        let { error: updErr } = await supabase
             .from('make_orders')
             .update(orderUpdates)
             .eq('id', orderId);
 
+        // Safe fallback: If make_orders update failed because 'current_stage_photo' column is absent in schema cache
+        if (updErr && orderUpdates.current_stage_photo && MakeProductionService.isMissingColumnError(updErr, 'current_stage_photo')) {
+            console.warn(`[MakeProductionService] 'current_stage_photo' not found on make_orders schema. Retrying update without optional column while preserving photo in make_order_updates.`);
+            MakeProductionService.supportsCurrentStagePhoto = false;
+            delete orderUpdates.current_stage_photo;
+
+            const retryResult = await supabase
+                .from('make_orders')
+                .update(orderUpdates)
+                .eq('id', orderId);
+            updErr = retryResult.error;
+        } else if (!updErr && orderUpdates.current_stage_photo) {
+            MakeProductionService.supportsCurrentStagePhoto = true;
+        }
+
         if (updErr) {
-            return { success: false, stage: targetStage, photo_url: finalPhotoUrl, error: updErr.message };
+            return {
+                success: false,
+                stage: targetStage,
+                photo_url: finalPhotoUrl,
+                error: `Failed to update order record: ${updErr.message}`
+            };
         }
 
         // 6. Send real-time notification to Salesman and Designer

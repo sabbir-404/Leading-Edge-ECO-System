@@ -240,11 +240,13 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   makeGetPdfUrls: (orderId) => import_electron.ipcRenderer.invoke("make-get-pdf-urls", orderId),
   makeDeletePdf: (data) => import_electron.ipcRenderer.invoke("make-delete-pdf", data),
   makeDownloadPdf: (data) => import_electron.ipcRenderer.invoke("make-download-pdf", data),
+  makeResolveAttachmentUrl: (url) => import_electron.ipcRenderer.invoke("make-resolve-attachment-url", url),
   makeUploadItemPdf: (data) => import_electron.ipcRenderer.invoke("make-upload-item-pdf", data),
   makeDeleteItemPdf: (data) => import_electron.ipcRenderer.invoke("make-delete-item-pdf", data),
   makePickAndUploadDrawing: (data) => import_electron.ipcRenderer.invoke("make-pick-and-upload-drawing", data),
   makePickAndUploadStagePhoto: (data) => import_electron.ipcRenderer.invoke("make-pick-and-upload-stage-photo", data),
   makePickAndUploadInvoiceAttachment: (data) => import_electron.ipcRenderer.invoke("make-pick-and-upload-invoice-attachment", data),
+  makePickAndUploadBlueprint: (data) => import_electron.ipcRenderer.invoke("make-pick-and-upload-blueprint", data),
   makeUploadInvoiceAttachmentBuffer: (data) => import_electron.ipcRenderer.invoke("make-upload-invoice-attachment-buffer", data),
   // Make — Parts / Dimensions
   makeGetOrderParts: (orderId) => import_electron.ipcRenderer.invoke("make-get-order-parts", orderId),
@@ -279,6 +281,8 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   makeGetProductPurchaseHistory: (productId) => import_electron.ipcRenderer.invoke("make-get-product-purchase-history", productId),
   // Make — Multi-Item Orders, Pricing & Versioning
   makeGetOrderItems: (orderId) => import_electron.ipcRenderer.invoke("make-get-order-items", orderId),
+  makeRemoveOrderItem: (data) => import_electron.ipcRenderer.invoke("make-remove-order-item", data),
+  makeUpdateOrderItemQuantity: (data) => import_electron.ipcRenderer.invoke("make-update-order-item-quantity", data),
   makeDesignerSaveSpecsAndPricing: (data) => import_electron.ipcRenderer.invoke("make-designer-save-specs-and-pricing", data),
   makeGetOrderVersions: (orderId) => import_electron.ipcRenderer.invoke("make-get-order-versions", orderId),
   makeGetVersionDiff: (orderIdOrData, fromVersion, toVersion) => {
@@ -288,6 +292,10 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   makeUpdateProductionStage: (data) => import_electron.ipcRenderer.invoke("make-update-production-stage", data),
   makeSearchCustomers: (query) => import_electron.ipcRenderer.invoke("make-search-customers", query),
   makeGetCustomerDetails: (customerId) => import_electron.ipcRenderer.invoke("make-get-customer-details", customerId),
+  makeRequestProductionApproval: (data) => import_electron.ipcRenderer.invoke("make-request-production-approval", data),
+  makeDecideProductionApproval: (data) => import_electron.ipcRenderer.invoke("make-decide-production-approval", data),
+  makeRecordOrderPayment: (data) => import_electron.ipcRenderer.invoke("make-record-order-payment", data),
+  makeGetOrderPayments: (orderId) => import_electron.ipcRenderer.invoke("make-get-order-payments", orderId),
   // License — Cloud
   checkLicenseCloud: () => import_electron.ipcRenderer.invoke("check-license-cloud"),
   activateLicenseCloud: (data) => import_electron.ipcRenderer.invoke("activate-license-cloud", data),
@@ -462,5 +470,15 @@ import_electron.contextBridge.exposeInMainWorld("electron", {
   },
   sendWatchdogPong: () => {
     import_electron.ipcRenderer.send("watchdog-pong");
-  }
+  },
+  // ─── SMART FAILOVER, DURABLE OUTBOX & 1GB QUOTA ───
+  getOutboxStatus: () => import_electron.ipcRenderer.invoke("get-outbox-status"),
+  getDeadLetterOperations: () => import_electron.ipcRenderer.invoke("get-dead-letter-operations"),
+  replayDeadLetterOperation: (id) => import_electron.ipcRenderer.invoke("replay-dead-letter-operation", id),
+  replayAllDeadLetters: () => import_electron.ipcRenderer.invoke("replay-all-dead-letters"),
+  getSupabaseQuotaStatus: () => import_electron.ipcRenderer.invoke("get-supabase-quota-status"),
+  auditSupabaseQuota: () => import_electron.ipcRenderer.invoke("audit-supabase-quota"),
+  getConsolidatedHealth: () => import_electron.ipcRenderer.invoke("get-consolidated-health"),
+  getPendingUploads: () => import_electron.ipcRenderer.invoke("get-pending-uploads"),
+  retryStagedUpload: (id) => import_electron.ipcRenderer.invoke("retry-staged-upload", id)
 });

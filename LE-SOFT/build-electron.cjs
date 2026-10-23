@@ -12,11 +12,11 @@ try {
     // 2. Build Electron Main/Preload
     console.log('⚙️ Bundling Electron code with esbuild...');
 
-    // Build Main
-    execSync('npx esbuild electron/main.ts --bundle --platform=node --target=node18 --external:electron --external:better-sqlite3 --external:mysql2 --external:bcryptjs --external:electron-updater --external:sharp --outfile=core/main.cjs', { stdio: 'inherit' });
+    execSync('npm run electron:build:main', { stdio: 'inherit' });
 
-    // Build Preload
-    execSync('npx esbuild electron/preload.ts --bundle --platform=node --target=node18 --external:electron --outfile=core/preload.cjs', { stdio: 'inherit' });
+    // 2.5 Native module compatibility for Electron runtime
+    console.log('🔧 Ensuring native modules (better-sqlite3) are compiled for Electron 40.10.2 (ABI 143)...');
+    execSync('npx electron-rebuild -v 40.10.2 -f -w better-sqlite3', { stdio: 'inherit' });
 
     // 3. Code hardening - commented out while debugging blank screen
     // Obfuscate Main (NOTE: self-defending can crash Node.js runtime - use carefully)

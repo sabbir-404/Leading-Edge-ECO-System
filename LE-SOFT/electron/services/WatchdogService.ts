@@ -163,6 +163,10 @@ export class WatchdogService {
         this.pendingPong = false;
     }
 
+    public recordRendererHeartbeat(): void {
+        this.handleRendererPong();
+    }
+
     /**
      * Records an IPC or operation duration metric. Logs to file only if exceeding threshold.
      */

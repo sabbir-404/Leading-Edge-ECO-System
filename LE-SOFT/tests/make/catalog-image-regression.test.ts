@@ -158,7 +158,7 @@ describe('Product Catalog Image Loading — Regression', () => {
             } catch (e: any) {
                 console.log(`  ⚠ Tailscale storage not reachable (${e.message}), skipping network test`);
             }
-        });
+        }, 20000);
 
         it('downloads a real image with spaces in filename from Tailscale storage', async () => {
             const testUrl = encodeURI('http://100.88.85.6:8081/files/product-images/Screenshot 2026-09-14 035740_1789390462948.webp');
@@ -181,6 +181,6 @@ describe('Product Catalog Image Loading — Regression', () => {
             } catch (e: any) {
                 console.log(`  ⚠ Tailscale storage not reachable (${e.message}), skipping`);
             }
-        });
+        }, 20000);
     });
 });

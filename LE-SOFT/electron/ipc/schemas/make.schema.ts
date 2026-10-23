@@ -7,6 +7,7 @@
 import { z } from 'zod';
 
 export const MakeOrderItemInputSchema = z.object({
+    requestion_item_id: z.union([z.number().int().positive(), z.string()]).nullable().optional(),
     product_id: z.union([z.number().int().positive(), z.string()]).nullable().optional(),
     product_name: z.string().min(1, 'Product item name is required').max(255),
     spec_id: z.union([z.number().int().positive(), z.string()]).nullable().optional(),
@@ -19,9 +20,26 @@ export const MakeOrderItemInputSchema = z.object({
     quantity: z.number().positive('Quantity must be greater than zero').default(1),
     item_cost_price: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
     item_sale_price: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
+    discount_type: z.enum(['percent', 'amount']).nullable().optional(),
+    discount_value: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
+    discount_amount: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
+    final_item_price: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
+    max_discount_type: z.enum(['percent', 'amount']).nullable().optional(),
+    max_discount_value: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
     is_customized: z.boolean().default(false),
     custom_dimensions: z.string().nullable().optional(),
     designer_notes: z.string().nullable().optional()
+}).refine(item => {
+    const hasProduct = Boolean(item.product_id) || Boolean(item.max_discount_type) || (item.max_discount_value !== undefined && item.max_discount_value !== null);
+    const discountVal = Number(item.discount_value || 0);
+    const discountAmt = Number(item.discount_amount || 0);
+    if (!hasProduct && (discountVal > 0 || discountAmt > 0)) {
+        return false;
+    }
+    return true;
+}, {
+    message: 'Discounts are not permitted on custom or non-catalog items',
+    path: ['discount_value']
 });
 
 export const CreateMakeOrderSchema = z.object({
@@ -33,7 +51,7 @@ export const CreateMakeOrderSchema = z.object({
     requested_delivery_date: z.string().nullable().optional(),
     salesman_id: z.number().int().positive().nullable().optional(),
     customer_id: z.union([z.string(), z.number()]).nullable().optional(),
-    customer_name: z.string({ required_error: 'Customer name is required' }).min(1, 'Customer name is required').max(255),
+    customer_name: z.string().min(1, 'Customer name is required').max(255),
     customer_phone: z.string().max(50).nullable().optional().refine(val => {
         if (!val || val.trim() === '') return true;
         const cleaned = val.trim();
@@ -53,8 +71,20 @@ export const CreateMakeOrderSchema = z.object({
     special_instructions: z.string().nullable().optional(),
     cost_price: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
     sale_price: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
+    discount_type: z.enum(['percent', 'amount']).nullable().optional(),
+    discount_value: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
+    discount_amount: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
+    final_price: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
+    money_received: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
+    moneyReceived: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
+    amount_due: z.union([z.number(), z.string(), z.null()]).optional(),
+    payment_status: z.string().optional(),
+    production_hold: z.boolean().optional(),
+    hold_reason: z.string().nullable().optional(),
+    admin_approval_status: z.string().optional(),
     reference_bill_no: z.string().nullable().optional(),
     invoice_attachments: z.array(z.string()).optional(),
+    invoice_attachment_urls: z.array(z.string()).optional(),
     items: z.array(MakeOrderItemInputSchema).min(1, 'At least one product item must be included in the order.')
 });
 
@@ -78,9 +108,11 @@ export const DesignerSaveSpecsAndPricingSchema = z.object({
         quantity: z.number().positive(),
         item_cost_price: z.union([z.number().nonnegative(), z.string()]).optional(),
         item_sale_price: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
-        spec_name: z.string().optional(),
-        size_label: z.string().optional(),
-        color_name: z.string().optional(),
+        // Existing/legacy order rows may legitimately have no catalog attribute.
+        // Track Orders sends those database nulls back when saving designer pricing.
+        spec_name: z.string().nullable().optional(),
+        size_label: z.string().nullable().optional(),
+        color_name: z.string().nullable().optional(),
         salesperson_note: z.string().nullable().optional(),
         designer_notes: z.string().nullable().optional(),
         technical_drawing_url: z.string().nullable().optional()
@@ -126,7 +158,7 @@ export const AlterMakeOrderItemSchema = z.object({
 
 export const AlterMakeOrderSchema = z.object({
     orderId: z.union([z.string().min(1), z.number()]),
-    changes: z.record(z.any()).optional().default({}),
+    changes: z.record(z.string(), z.any()).optional().default({}),
     itemChanges: z.array(AlterMakeOrderItemSchema).optional(),
     items: z.array(AlterMakeOrderItemSchema).optional(),
     reason: z.string().optional(),
@@ -149,6 +181,16 @@ export const CatalogProductSchema = z.object({
     categoryIds: z.array(z.union([z.number(), z.string()])).optional(),
     main_image: z.string().nullable().optional(),
     is_active: z.boolean().default(true),
+    cost_price: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
+    sale_price: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
+    max_discount_type: z.enum(['percent', 'amount']).nullable().optional(),
+    max_discount_value: z.union([z.number().nonnegative(), z.string(), z.null()]).optional(),
+    size_id: z.union([z.number().int().positive(), z.string(), z.null()]).optional(),
+    sizeId: z.union([z.number().int().positive(), z.string(), z.null()]).optional(),
+    blueprint_url: z.string().nullable().optional(),
+    blueprintUrl: z.string().nullable().optional(),
+    product_drawing_url: z.string().nullable().optional(),
+    productDrawingUrl: z.string().nullable().optional(),
     specIds: z.array(z.union([z.number(), z.string()])).optional(),
     sizeIds: z.array(z.union([z.number(), z.string()])).optional(),
     colorIds: z.array(z.union([z.number(), z.string()])).optional()
@@ -272,4 +314,153 @@ export const SearchCatalogProductsSchema = z.object({
     category: z.string().optional(),
     activeOnly: z.boolean().optional().default(true)
 });
+
+/**
+ * Detects directory traversal patterns or illegal null-byte sequences in raw / decoded strings.
+ */
+export function hasUnsafePathSequence(str: string): boolean {
+    if (!str || typeof str !== 'string') return false;
+    if (str.includes('\0') || str.includes('%00') || str.includes('\\0')) return true;
+    if (
+        str.includes('../') ||
+        str.includes('..\\') ||
+        str.includes('/..') ||
+        str.includes('\\..') ||
+        str === '..'
+    ) {
+        return true;
+    }
+    if (/%2e%2e|%2e\.|\.%2e|\.\.%2f|\.\.%5c|%2f\.\.|%5c\.\./i.test(str)) {
+        return true;
+    }
+    let currentStr = str;
+    for (let depth = 0; depth < 2; depth++) {
+        try {
+            const decoded = decodeURIComponent(currentStr);
+            if (decoded === currentStr) break;
+            currentStr = decoded;
+            if (
+                currentStr.includes('../') ||
+                currentStr.includes('..\\') ||
+                currentStr.includes('/..') ||
+                currentStr.includes('\\..') ||
+                currentStr === '..'
+            ) {
+                return true;
+            }
+            const segments = currentStr.split(/[/\\]/);
+            for (const seg of segments) {
+                if (seg.trim() === '..') return true;
+            }
+        } catch {
+            if (/%2e/i.test(currentStr)) return true;
+            break;
+        }
+    }
+    return false;
+}
+
+/**
+ * Validates whether a storage reference has an unsupported or dangerous scheme.
+ */
+export function hasUnsupportedStorageScheme(str: string): boolean {
+    if (!str || typeof str !== 'string') return false;
+    const lower = str.trim().toLowerCase();
+    const dangerousSchemes = ['javascript:', 'file:', 'data:', 'ftp:', 'vbscript:', 'blob:', 'php:'];
+    for (const scheme of dangerousSchemes) {
+        if (lower.startsWith(scheme)) return true;
+    }
+    return false;
+}
+
+export const DeleteOrderPdfSchema = z.object({
+    orderId: z.union([
+        z.number().int().positive('Order ID must be a positive integer'),
+        z.string().regex(/^\d+$/, 'Order ID must be a numeric integer').transform(Number)
+    ]),
+    storagePath: z.string().trim().min(1, 'storagePath cannot be empty')
+}).refine(data => !hasUnsafePathSequence(data.storagePath), {
+    message: 'Invalid storagePath: Directory traversal or null bytes detected'
+}).refine(data => !hasUnsupportedStorageScheme(data.storagePath), {
+    message: 'Invalid storagePath: Unsupported storage reference scheme'
+});
+
+export const DeleteItemPdfSchema = z.object({
+    itemId: z.union([
+        z.number().int().positive('Item ID must be a positive integer'),
+        z.string().regex(/^\d+$/, 'Item ID must be a numeric integer').transform(Number)
+    ]),
+    orderId: z.union([
+        z.number().int().positive('Order ID must be a positive integer'),
+        z.string().regex(/^\d+$/, 'Order ID must be a numeric integer').transform(Number)
+    ]).optional(),
+    storagePath: z.string().trim().min(1, 'storagePath cannot be empty')
+}).refine(data => !hasUnsafePathSequence(data.storagePath), {
+    message: 'Invalid storagePath: Directory traversal or null bytes detected'
+}).refine(data => !hasUnsupportedStorageScheme(data.storagePath), {
+    message: 'Invalid storagePath: Unsupported storage reference scheme'
+});
+
+export const RequestProductionApprovalSchema = z.object({
+    orderId: z.union([
+        z.number().int().positive('Order ID must be a positive integer'),
+        z.string().regex(/^\d+$/, 'Order ID must be a numeric integer').transform(Number)
+    ]).optional(),
+    order_id: z.union([
+        z.number().int().positive('Order ID must be a positive integer'),
+        z.string().regex(/^\d+$/, 'Order ID must be a numeric integer').transform(Number)
+    ]).optional(),
+    notes: z.string().optional()
+}).transform(val => ({
+    orderId: val.orderId || val.order_id || 0,
+    order_id: val.orderId || val.order_id || 0,
+    notes: val.notes
+})).refine(val => val.orderId > 0, { message: 'Valid orderId is required' });
+
+export const DecideProductionApprovalSchema = z.object({
+    orderId: z.union([
+        z.number().int().positive('Order ID must be a positive integer'),
+        z.string().regex(/^\d+$/, 'Order ID must be a numeric integer').transform(Number)
+    ]).optional(),
+    order_id: z.union([
+        z.number().int().positive('Order ID must be a positive integer'),
+        z.string().regex(/^\d+$/, 'Order ID must be a numeric integer').transform(Number)
+    ]).optional(),
+    decision: z.enum(['approved', 'rejected']),
+    notes: z.string().optional()
+}).transform(val => ({
+    orderId: val.orderId || val.order_id || 0,
+    order_id: val.orderId || val.order_id || 0,
+    decision: val.decision,
+    notes: val.notes
+})).refine(val => val.orderId > 0, { message: 'Valid orderId is required' });
+
+export const RecordOrderPaymentSchema = z.object({
+    orderId: z.union([
+        z.number().int().positive('Order ID must be a positive integer'),
+        z.string().regex(/^\d+$/, 'Order ID must be a numeric integer').transform(Number)
+    ]).optional(),
+    order_id: z.union([
+        z.number().int().positive('Order ID must be a positive integer'),
+        z.string().regex(/^\d+$/, 'Order ID must be a numeric integer').transform(Number)
+    ]).optional(),
+    amount: z.union([
+        z.number().positive('Payment amount must be greater than zero'),
+        z.string().regex(/^\d+(\.\d+)?$/).transform(Number)
+    ]),
+    paymentMethod: z.string().optional(),
+    payment_method: z.string().optional(),
+    reference: z.string().optional(),
+    notes: z.string().optional()
+}).transform(val => ({
+    orderId: val.orderId || val.order_id || 0,
+    order_id: val.orderId || val.order_id || 0,
+    amount: val.amount,
+    paymentMethod: val.paymentMethod || val.payment_method || 'CASH',
+    payment_method: val.paymentMethod || val.payment_method || 'CASH',
+    reference: val.reference,
+    notes: val.notes
+})).refine(val => val.orderId > 0, { message: 'Valid orderId is required' });
+
+export const ProductionApprovalDecisionSchema = DecideProductionApprovalSchema;
 

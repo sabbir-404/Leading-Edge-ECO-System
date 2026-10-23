@@ -6,7 +6,7 @@ import {
   ShoppingCart, History as HistoryIcon, RotateCcw
 } from 'lucide-react';
 import DashboardLayout from '../../components/DashboardLayout';
-import { canManageGlobalProductAttributes } from '../../utils/permissions';
+import { canManageGlobalProductAttributes, getUserPricingPermissions } from '../../utils/permissions';
 import { 
   loadProductCatalogDraft, 
   saveProductCatalogDraft, 
@@ -16,6 +16,9 @@ import {
 } from '../../utils/productCatalogDraft';
 import { ProductCreateModal } from './components/ProductCreateModal';
 import { resolveImageSrc, handleImageLoadError } from '../../utils/imageSrc';
+import { formatSizeDisplay } from '../../utils/formatSize';
+import { MakeDrawingPreview } from '../../components/MakeDrawingPreview';
+import './MakeProductCatalog.css';
 
 interface Size {
   id?: number;
@@ -58,6 +61,15 @@ interface Product {
   category?: string | null;
   description?: string;
   main_image?: string;
+  blueprint_url?: string | null;
+  product_drawing_url?: string | null;
+  size_id?: number | null;
+  size_label?: string | null;
+  size?: any | null;
+  cost_price?: number | null;
+  sale_price?: number | null;
+  max_discount_type?: 'percent' | 'amount' | null;
+  max_discount_value?: number | null;
   is_active: boolean;
   purchased_count?: number;
   specifications?: Spec[];
@@ -124,6 +136,16 @@ const MakeProductCatalog: React.FC = () => {
 
   // Track image load failures to gracefully show initials fallback
   const [imageErrors, setImageErrors] = useState<Record<number, boolean>>({});
+  const [imagePreview, setImagePreview] = useState<{ src: string; title: string } | null>(null);
+
+  useEffect(() => {
+    if (!imagePreview) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setImagePreview(null);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [imagePreview]);
 
   // Modals
   const [showProductModal, setShowProductModal] = useState(!!initialDraft.productForm?.isOpen);
@@ -153,24 +175,56 @@ const MakeProductCatalog: React.FC = () => {
   const [showColorModal, setShowColorModal] = useState(false);
   const [editingColor, setEditingColor] = useState<Partial<Color>>({ is_active: true });
 
+  const pricingPerms = getUserPricingPermissions();
   const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const [uploadingImage, setUploadingImage] = useState(false);
 
-  const handlePickAndUploadImage = async (onSuccess: (url: string) => void) => {
-    setUploadingImage(true);
+  // Independent upload control states for Spec and Color modals
+  const [specUploadState, setSpecUploadState] = useState<{ status: 'idle' | 'uploading' | 'success' | 'error'; error?: string | null }>({ status: 'idle' });
+  const [colorUploadState, setColorUploadState] = useState<{ status: 'idle' | 'uploading' | 'success' | 'error'; error?: string | null }>({ status: 'idle' });
+
+  const handlePickAndUploadSpecImage = async () => {
+    if (specUploadState.status === 'uploading') return;
+    setSpecUploadState({ status: 'uploading' });
     try {
       // @ts-ignore
       const url = await window.electron.pickImage();
       if (url) {
-        onSuccess(url);
+        setEditingSpec(prev => ({ ...prev, image_url: url }));
+        setSpecUploadState({ status: 'success' });
         setMsg({ type: 'success', text: 'Image uploaded successfully!' });
         setTimeout(() => setMsg(null), 4000);
+        setTimeout(() => {
+          setSpecUploadState(prev => (prev.status === 'success' ? { status: 'idle' } : prev));
+        }, 2500);
+      } else {
+        setSpecUploadState({ status: 'idle' });
       }
     } catch (e: any) {
-      console.error(e);
-      setMsg({ type: 'error', text: 'Failed to upload image. Please try again.' });
-    } finally {
-      setUploadingImage(false);
+      console.error('[SpecUpload] Error:', e);
+      setSpecUploadState({ status: 'error', error: e?.message || 'Failed to upload image. Please try again.' });
+    }
+  };
+
+  const handlePickAndUploadColorImage = async () => {
+    if (colorUploadState.status === 'uploading') return;
+    setColorUploadState({ status: 'uploading' });
+    try {
+      // @ts-ignore
+      const url = await window.electron.pickImage();
+      if (url) {
+        setEditingColor(prev => ({ ...prev, image_url: url }));
+        setColorUploadState({ status: 'success' });
+        setMsg({ type: 'success', text: 'Image uploaded successfully!' });
+        setTimeout(() => setMsg(null), 4000);
+        setTimeout(() => {
+          setColorUploadState(prev => (prev.status === 'success' ? { status: 'idle' } : prev));
+        }, 2500);
+      } else {
+        setColorUploadState({ status: 'idle' });
+      }
+    } catch (e: any) {
+      console.error('[ColorUpload] Error:', e);
+      setColorUploadState({ status: 'error', error: e?.message || 'Failed to upload image. Please try again.' });
     }
   };
 
@@ -809,7 +863,17 @@ const MakeProductCatalog: React.FC = () => {
                           const resolvedType = resolved.startsWith('app-media://nas/') ? 'nas_storage' : resolved.startsWith('app-media://local/') ? 'local_file' : resolved.startsWith('data:') ? 'data_url' : resolved.startsWith('http') ? 'remote_http' : 'other';
                           const startTime = performance.now();
                           return (
-                            <img 
+                            <button
+                              type="button"
+                              className="make-catalog-image-preview-trigger"
+                              aria-label={`View full-size image of ${p.product_name}`}
+                              title="View full-size image"
+                              onClick={event => {
+                                event.stopPropagation();
+                                setImagePreview({ src: resolved, title: `${p.product_name}${p.product_code ? ` · ${p.product_code}` : ''}` });
+                              }}
+                            >
+                            <img
                               src={resolved} 
                               alt={p.product_name} 
                               data-diagnostic-product-id={p.id}
@@ -831,6 +895,7 @@ const MakeProductCatalog: React.FC = () => {
                               }} 
                               style={{ width: '42px', height: '42px', borderRadius: '6px', objectFit: 'cover', border: '1px solid var(--border-color)' }} 
                             />
+                            </button>
                           );
                         })() : (
                           <div 
@@ -853,10 +918,17 @@ const MakeProductCatalog: React.FC = () => {
                               <span style={{ fontSize: '0.68rem', color: 'var(--text-secondary)' }}>0 sold</span>
                             )}
                           </div>
-                          <div style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: '2px' }}>{p.product_name}</div>
+                          <div style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.product_name}</span>
+                            {(p.size_label || (p.sizes?.[0] ? formatSizeDisplay(p.sizes[0]) : null)) && (
+                              <span style={{ flexShrink: 0, fontSize: '0.68rem', fontWeight: 700, color: '#10b981', background: 'rgba(16,185,129,0.12)', padding: '1px 5px', borderRadius: '4px' }}>
+                                {p.size_label || (p.sizes?.[0] ? formatSizeDisplay(p.sizes[0]) : '')}
+                              </span>
+                            )}
+                          </div>
                           <div style={{ display: 'flex', gap: '8px', fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
                             <span>📋 {p.specifications?.length || 0} specs</span>
-                            <span>📏 {p.sizes?.length || 0} sizes</span>
+                            <span>📏 {p.size_label || (p.sizes?.[0] ? formatSizeDisplay(p.sizes[0]) : `${p.sizes?.length || 0} sizes`)}</span>
                             <span>🎨 {p.colors?.length || 0} colors</span>
                           </div>
                         </div>
@@ -885,7 +957,13 @@ const MakeProductCatalog: React.FC = () => {
                         const resolvedType = resolved.startsWith('app-media://nas/') ? 'nas_storage' : resolved.startsWith('app-media://local/') ? 'local_file' : resolved.startsWith('data:') ? 'data_url' : resolved.startsWith('http') ? 'remote_http' : 'other';
                         const startTime = performance.now();
                         return (
-                          <div style={{ position: 'relative', flexShrink: 0 }}>
+                          <button
+                            type="button"
+                            className="make-catalog-image-preview-trigger make-catalog-image-preview-trigger-large"
+                            aria-label={`View full-size image of ${selectedProduct.product_name}`}
+                            title="View full-size image"
+                            onClick={() => setImagePreview({ src: resolved, title: `${selectedProduct.product_name}${selectedProduct.product_code ? ` · ${selectedProduct.product_code}` : ''}` })}
+                          >
                             <img 
                               src={resolved} 
                               alt={selectedProduct.product_name} 
@@ -908,7 +986,7 @@ const MakeProductCatalog: React.FC = () => {
                               }} 
                               style={{ width: '80px', height: '80px', borderRadius: '10px', objectFit: 'cover', border: '1px solid var(--border-color)', boxShadow: '0 4px 10px rgba(0,0,0,0.1)' }} 
                             />
-                          </div>
+                          </button>
                         );
                       })() : (
                         <div 
@@ -934,16 +1012,104 @@ const MakeProductCatalog: React.FC = () => {
                             <ShoppingCart size={12} /> {historyData?.totalQuantity || selectedProduct.purchased_count || 0} Units Purchased
                           </span>
                         </div>
-                        <h2 style={{ margin: '6px 0 4px', fontSize: '1.25rem', fontWeight: 800, color: 'var(--text-primary)', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
-                          {selectedProduct.product_name}
-                        </h2>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                          <h2 style={{ margin: '6px 0 4px', fontSize: '1.25rem', fontWeight: 800, color: 'var(--text-primary)', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
+                            {selectedProduct.product_name}
+                          </h2>
+                          {(selectedProduct.size_label || (selectedProduct.size ? formatSizeDisplay(selectedProduct.size) : (selectedProduct.sizes?.[0] ? formatSizeDisplay(selectedProduct.sizes[0]) : null))) && (
+                            <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#10b981', background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.25)', padding: '2px 8px', borderRadius: '6px' }}>
+                              📏 Size: {selectedProduct.size_label || (selectedProduct.size ? formatSizeDisplay(selectedProduct.size) : (selectedProduct.sizes?.[0] ? formatSizeDisplay(selectedProduct.sizes[0]) : ''))}
+                            </span>
+                          )}
+                        </div>
                         <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.85rem', maxWidth: '650px', wordBreak: 'break-word' }}>
                           {selectedProduct.description || 'No description provided.'}
                         </p>
+
+                        {/* Catalog Pricing & Maximum Discount Badge Bar */}
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '8px', alignItems: 'center' }}>
+                          {/* Sale Price */}
+                          <div style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            padding: '4px 10px',
+                            borderRadius: '8px',
+                            background: 'rgba(59, 130, 246, 0.1)',
+                            border: '1px solid rgba(59, 130, 246, 0.25)',
+                            color: '#2563eb',
+                            fontSize: '0.8rem',
+                            fontWeight: 700
+                          }}>
+                            <span>Sale Price:</span>
+                            <span style={{ fontSize: '0.88rem', color: 'var(--text-primary)' }}>
+                              {selectedProduct.sale_price !== null && selectedProduct.sale_price !== undefined
+                                ? `৳ ${Number(selectedProduct.sale_price).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                : 'Not set'}
+                            </span>
+                          </div>
+
+                          {/* Cost Price - strictly guarded by canViewCostPrice */}
+                          {pricingPerms.canViewCostPrice && (
+                            <div style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                              padding: '4px 10px',
+                              borderRadius: '8px',
+                              background: 'rgba(107, 114, 128, 0.1)',
+                              border: '1px solid rgba(107, 114, 128, 0.25)',
+                              color: 'var(--text-secondary)',
+                              fontSize: '0.8rem',
+                              fontWeight: 700
+                            }}>
+                              <span>Cost Price:</span>
+                              <span style={{ fontSize: '0.88rem', color: 'var(--text-primary)' }}>
+                                {selectedProduct.cost_price !== null && selectedProduct.cost_price !== undefined
+                                  ? `৳ ${Number(selectedProduct.cost_price).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                  : 'Not set'}
+                              </span>
+                            </div>
+                          )}
+
+                          {/* Max Discount & Lowest Permitted Price */}
+                          <div style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            padding: '4px 10px',
+                            borderRadius: '8px',
+                            background: selectedProduct.max_discount_value ? 'rgba(16, 185, 129, 0.1)' : 'rgba(107, 114, 128, 0.08)',
+                            border: selectedProduct.max_discount_value ? '1px solid rgba(16, 185, 129, 0.25)' : '1px solid var(--border-color)',
+                            color: selectedProduct.max_discount_value ? '#059669' : 'var(--text-secondary)',
+                            fontSize: '0.8rem',
+                            fontWeight: 600
+                          }}>
+                            <span>Max Discount:</span>
+                            <span style={{ fontWeight: 700 }}>
+                              {selectedProduct.max_discount_value !== null && selectedProduct.max_discount_value !== undefined
+                                ? selectedProduct.max_discount_type === 'amount'
+                                  ? `৳ ${Number(selectedProduct.max_discount_value).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                  : `${selectedProduct.max_discount_value}%`
+                                : 'None (Standard)'}
+                            </span>
+                            {selectedProduct.sale_price && selectedProduct.max_discount_value ? (
+                              <span style={{ fontSize: '0.75rem', opacity: 0.85, marginLeft: '4px' }}>
+                                (Floor: ৳ {(
+                                  selectedProduct.max_discount_type === 'amount'
+                                    ? Math.max(0, Number(selectedProduct.sale_price) - Number(selectedProduct.max_discount_value))
+                                    : Math.max(0, Number(selectedProduct.sale_price) * (1 - Number(selectedProduct.max_discount_value) / 100))
+                                ).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
                       </div>
                     </div>
 
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', flexShrink: 0 }}>
+                      <MakeDrawingPreview url={selectedProduct.blueprint_url} label="Production Blueprint" compact />
+                      <MakeDrawingPreview url={selectedProduct.product_drawing_url} label="Product Drawing" compact />
                       <button 
                         onClick={() => setActiveTab('history')}
                         style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 12px', background: activeTab === 'history' ? '#059669' : 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.3)', borderRadius: '8px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 700, color: activeTab === 'history' ? '#fff' : '#059669', whiteSpace: 'nowrap' }}>
@@ -1663,17 +1829,66 @@ const MakeProductCatalog: React.FC = () => {
                 <div>
                   <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '4px' }}>DRAWING / SPEC IMAGE</label>
                   <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                    <button type="button" disabled={uploadingImage} onClick={() => handlePickAndUploadImage(url => setEditingSpec(prev => ({ ...prev, image_url: url })))}
-                      style={{ padding: '9px 14px', background: '#8b5cf6', border: 'none', borderRadius: '8px', color: '#fff', cursor: uploadingImage ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', fontWeight: 600, whiteSpace: 'nowrap' }}>
-                      <Upload size={14} /> {uploadingImage ? 'Uploading...' : 'Upload Image'}
+                    <button
+                      type="button"
+                      disabled={specUploadState.status === 'uploading'}
+                      onClick={handlePickAndUploadSpecImage}
+                      style={{
+                        padding: '9px 14px',
+                        background: specUploadState.status === 'error' ? '#ef4444' : specUploadState.status === 'success' ? '#10b981' : '#8b5cf6',
+                        border: 'none',
+                        borderRadius: '8px',
+                        color: '#fff',
+                        cursor: specUploadState.status === 'uploading' ? 'not-allowed' : 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        fontSize: '0.82rem',
+                        fontWeight: 600,
+                        whiteSpace: 'nowrap',
+                        transition: 'all 0.2s ease'
+                      }}
+                    >
+                      {specUploadState.status === 'uploading' ? (
+                        <>
+                          <div className="upload-spinner" style={{ width: 14, height: 14, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%' }} />
+                          <span>Uploading...</span>
+                        </>
+                      ) : specUploadState.status === 'success' ? (
+                        <>
+                          <CheckCircle size={14} />
+                          <span>Uploaded!</span>
+                        </>
+                      ) : specUploadState.status === 'error' ? (
+                        <>
+                          <AlertCircle size={14} />
+                          <span>Retry Upload</span>
+                        </>
+                      ) : (
+                        <>
+                          <Upload size={14} />
+                          <span>Upload Image</span>
+                        </>
+                      )}
                     </button>
                     {editingSpec.image_url && (
-                      <button type="button" onClick={() => setEditingSpec(prev => ({ ...prev, image_url: '' }))}
-                        style={{ padding: '9px 12px', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.82rem' }}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingSpec(prev => ({ ...prev, image_url: '' }));
+                          setSpecUploadState({ status: 'idle' });
+                        }}
+                        style={{ padding: '9px 12px', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.82rem' }}
+                      >
                         Remove
                       </button>
                     )}
                   </div>
+                  {specUploadState.status === 'error' && (
+                    <div style={{ fontSize: '0.75rem', color: '#ef4444', marginTop: '4px' }}>
+                      {specUploadState.error}
+                    </div>
+                  )}
                   {editingSpec.image_url && (
                     <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '10px' }}>
                       <img src={resolveImageSrc(editingSpec.image_url)} alt="Spec Preview" onError={e => handleImageLoadError(e, editingSpec.image_url)} style={{ width: '50px', height: '50px', objectFit: 'cover', borderRadius: '6px', border: '1px solid var(--border-color)' }} />
@@ -1777,17 +1992,66 @@ const MakeProductCatalog: React.FC = () => {
                 <div>
                   <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '4px' }}>TEXTURE / FINISH SAMPLE IMAGE</label>
                   <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                    <button type="button" disabled={uploadingImage} onClick={() => handlePickAndUploadImage(url => setEditingColor(prev => ({ ...prev, image_url: url })))}
-                      style={{ padding: '9px 14px', background: '#f59e0b', border: 'none', borderRadius: '8px', color: '#fff', cursor: uploadingImage ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', fontWeight: 600, whiteSpace: 'nowrap' }}>
-                      <Upload size={14} /> {uploadingImage ? 'Uploading...' : 'Upload Image'}
+                    <button
+                      type="button"
+                      disabled={colorUploadState.status === 'uploading'}
+                      onClick={handlePickAndUploadColorImage}
+                      style={{
+                        padding: '9px 14px',
+                        background: colorUploadState.status === 'error' ? '#ef4444' : colorUploadState.status === 'success' ? '#10b981' : '#f59e0b',
+                        border: 'none',
+                        borderRadius: '8px',
+                        color: '#fff',
+                        cursor: colorUploadState.status === 'uploading' ? 'not-allowed' : 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        fontSize: '0.82rem',
+                        fontWeight: 600,
+                        whiteSpace: 'nowrap',
+                        transition: 'all 0.2s ease'
+                      }}
+                    >
+                      {colorUploadState.status === 'uploading' ? (
+                        <>
+                          <div className="upload-spinner" style={{ width: 14, height: 14, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%' }} />
+                          <span>Uploading...</span>
+                        </>
+                      ) : colorUploadState.status === 'success' ? (
+                        <>
+                          <CheckCircle size={14} />
+                          <span>Uploaded!</span>
+                        </>
+                      ) : colorUploadState.status === 'error' ? (
+                        <>
+                          <AlertCircle size={14} />
+                          <span>Retry Upload</span>
+                        </>
+                      ) : (
+                        <>
+                          <Upload size={14} />
+                          <span>Upload Image</span>
+                        </>
+                      )}
                     </button>
                     {editingColor.image_url && (
-                      <button type="button" onClick={() => setEditingColor(prev => ({ ...prev, image_url: '' }))}
-                        style={{ padding: '9px 12px', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.82rem' }}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingColor(prev => ({ ...prev, image_url: '' }));
+                          setColorUploadState({ status: 'idle' });
+                        }}
+                        style={{ padding: '9px 12px', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.82rem' }}
+                      >
                         Remove
                       </button>
                     )}
                   </div>
+                  {colorUploadState.status === 'error' && (
+                    <div style={{ fontSize: '0.75rem', color: '#ef4444', marginTop: '4px' }}>
+                      {colorUploadState.error}
+                    </div>
+                  )}
                   {editingColor.image_url && (
                     <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '10px' }}>
                       <img src={resolveImageSrc(editingColor.image_url)} alt="Color Swatch Preview" onError={e => handleImageLoadError(e, editingColor.image_url)} style={{ width: '50px', height: '50px', objectFit: 'cover', borderRadius: '6px', border: '1px solid var(--border-color)' }} />
@@ -1803,6 +2067,39 @@ const MakeProductCatalog: React.FC = () => {
             </div>
           </div>
         )}
+
+        <AnimatePresence>
+          {imagePreview && (
+            <motion.div
+              className="make-catalog-image-preview-backdrop"
+              role="dialog"
+              aria-modal="true"
+              aria-label={`Image preview: ${imagePreview.title}`}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onMouseDown={event => {
+                if (event.target === event.currentTarget) setImagePreview(null);
+              }}
+            >
+              <motion.div
+                className="make-catalog-image-preview-dialog"
+                initial={{ opacity: 0, scale: 0.96, y: 8 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.98, y: 6 }}
+              >
+                <div className="make-catalog-image-preview-header">
+                  <span>{imagePreview.title}</span>
+                  <button type="button" onClick={() => setImagePreview(null)} aria-label="Close image preview" title="Close preview">
+                    <X size={19} />
+                  </button>
+                </div>
+                <img src={imagePreview.src} alt={imagePreview.title} />
+                <p>Click outside the image or press Escape to close.</p>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
       </div>
     </DashboardLayout>

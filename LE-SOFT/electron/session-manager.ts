@@ -11,6 +11,7 @@
 
 export interface UserSession {
     userId: number;
+    id?: number;
     username: string;
     fullName: string;
     role: string;
@@ -33,6 +34,7 @@ export class SessionManager {
     }): UserSession {
         activeUserSession = {
             userId: user.id,
+            id: user.id,
             username: user.username,
             fullName: user.full_name || user.username,
             role: user.role || 'operator',

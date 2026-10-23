@@ -170,8 +170,8 @@ describe('NAS Health Probe & False-Negative Recovery Tests (v1.8.6)', () => {
         expect(engine.getStatus().circuitState).toBe('degraded');
     });
 
-    // 4. NAS returns 401/403 for the actual protected database query: reports genuine authorization failure
-    it('4. NAS returns 401/403 for the actual protected database query -> reports genuine authorization failure and does not pretend healthy', async () => {
+    // 4. NAS rejects database authorization: keep NAS online and use cloud fallback
+    it('4. NAS rejects the protected query -> reports NAS reachable and falls back to Supabase', async () => {
         mockNasClient.from.mockImplementation(() => {
             return {
                 select: vi.fn().mockReturnValue({
@@ -187,13 +187,12 @@ describe('NAS Health Probe & False-Negative Recovery Tests (v1.8.6)', () => {
             return client.from('make_products').select('*').order('created_at', { ascending: false });
         }, 'make-get-catalog-products');
 
-        // It should return the permission error directly from NAS without masking it
-        expect(res.databaseUsed).toBe('nas');
-        expect(res.error).toBeDefined();
-        expect(res.error.message).toContain('permission denied');
+        expect(res.databaseUsed).toBe('supabase');
+        expect(engine.getStatus().isNasReachable).toBe(true);
+        expect(engine.getStatus().nasAuthorizationError).toContain('permission denied');
     });
 
-    // 5. HTML 403 from an unrelated/wrong endpoint: must not be treated as proof that database itself is offline
+    // 5. HTML 403 from an unrelated/wrong endpoint: classify as proxy failure, not DB auth
     it('5. HTML 403 proxy error clears cached tunnel URL without permanently disabling NAS if valid candidate exists', async () => {
         // Simulate cached lastWorkingNasUrl pointing to HTTPS tunnel
         (engine as any).lastWorkingNasUrl = 'https://db.lenas.me';

@@ -81,7 +81,7 @@ describe('Smart NAS / Tailscale Database Access — Issue 2 Fixes', () => {
     describe('1. Non-Blocking Startup & Fast Endpoint Preference', () => {
         it('persists and reloads lastWorkingNasUrl across app restarts', async () => {
             const fetchMock = vi.fn().mockImplementation((url: string) => {
-                if (url.includes('192.168.1.14')) {
+                if (url.includes('127.0.0.1:3002')) {
                     return Promise.resolve({ ok: true, status: 200 });
                 }
                 return Promise.reject(new Error('unreachable'));
@@ -89,31 +89,31 @@ describe('Smart NAS / Tailscale Database Access — Issue 2 Fixes', () => {
             global.fetch = fetchMock as any;
 
             await engine.checkNasConnectivity({
-                localUrl: 'http://192.168.1.14:3001',
-                tunnelUrl: 'https://db.lenas.me',
-                publicUrl: 'http://100.88.85.6:3001'
+                localUrl: 'http://127.0.0.1:3001',
+                tunnelUrl: 'http://127.0.0.1:3003',
+                publicUrl: 'http://127.0.0.1:3002'
             });
 
-            expect(engine.getLastWorkingNasUrl()).toBe('http://192.168.1.14:3001');
+            expect(engine.getLastWorkingNasUrl()).toBe('http://127.0.0.1:3002');
 
             // Simulate app restart by instantiating new engine
             (DatabaseFailoverEngine as any).instance = null;
             const newEngine = DatabaseFailoverEngine.getInstance();
-            expect(newEngine.getLastWorkingNasUrl()).toBe('http://192.168.1.14:3001');
+            expect(newEngine.getLastWorkingNasUrl()).toBe('http://127.0.0.1:3002');
         });
 
         it('probes lastWorkingNasUrl first before trying other endpoints', async () => {
             // Save state indicating tunnel was the last working url
             fs.mkdirSync(tempUserDir, { recursive: true });
             fs.writeFileSync(connectionStatePath, JSON.stringify({
-                lastWorkingNasUrl: 'https://db.lenas.me',
+                lastWorkingNasUrl: 'http://127.0.0.1:3003',
                 tier: 'nas_tunnel',
                 updatedAt: Date.now()
             }));
 
             (DatabaseFailoverEngine as any).instance = null;
             const restoredEngine = DatabaseFailoverEngine.getInstance();
-            expect(restoredEngine.getLastWorkingNasUrl()).toBe('https://db.lenas.me');
+            expect(restoredEngine.getLastWorkingNasUrl()).toBe('http://127.0.0.1:3003');
 
             const fetchCalls: string[] = [];
             global.fetch = vi.fn().mockImplementation((url: string) => {
@@ -122,14 +122,14 @@ describe('Smart NAS / Tailscale Database Access — Issue 2 Fixes', () => {
             }) as any;
 
             const online = await restoredEngine.checkNasConnectivity({
-                localUrl: 'http://192.168.1.14:3001',
-                tunnelUrl: 'https://db.lenas.me',
-                publicUrl: 'http://100.88.85.6:3001'
+                localUrl: 'http://127.0.0.1:3001',
+                tunnelUrl: 'http://127.0.0.1:3003',
+                publicUrl: 'http://127.0.0.1:3002'
             });
 
             expect(online).toBe(true);
             // Verify that the very first probed URL was the last working candidate
-            expect(fetchCalls[0]).toContain('db.lenas.me');
+            expect(fetchCalls[0]).toContain('127.0.0.1:3003');
         });
     });
 
@@ -452,9 +452,21 @@ describe('Smart NAS / Tailscale Database Access — Issue 2 Fixes', () => {
 
             // 2. Configure mock table with working upsert
             const mockUpsert = vi.fn().mockResolvedValue({ data: updatedProduct, error: null });
+            mockNasClient.from.mockReturnValue({
+                select: vi.fn().mockReturnValue({
+                    eq: vi.fn().mockReturnValue({
+                        maybeSingle: vi.fn().mockResolvedValue({ data: { id: 505 }, error: null })
+                    })
+                })
+            });
             mockSupabaseAdmin.from.mockReturnValue({
                 upsert: mockUpsert,
-                delete: vi.fn()
+                delete: vi.fn(),
+                select: vi.fn().mockReturnValue({
+                    eq: vi.fn().mockReturnValue({
+                        maybeSingle: vi.fn().mockResolvedValue({ data: { id: 505 }, error: null })
+                    })
+                })
             });
 
             // 3. Process pending mirror retries

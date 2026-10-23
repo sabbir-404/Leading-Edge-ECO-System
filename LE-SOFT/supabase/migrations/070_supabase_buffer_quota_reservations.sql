@@ -1,0 +1,488 @@
+-- ============================================================================
+-- Migration 070_supabase_buffer_quota_reservations.sql
+-- ============================================================================
+-- Purpose:
+-- Authoritative, secure server-side atomic reservation mechanism for Supabase
+-- Fallback Buffer. Enforces a strict 1 GB hard ceiling across all concurrent
+-- LE-SOFT desktop clients with multi-client serialization and client isolation.
+--
+-- Authoritative Partition Allocation:
+--   1. Storage Fallback Buffer: 600 MB (600,000,000 B)
+--   2. Database Fallback Buffer: 250 MB (250,000,000 B)
+--   3. Critical Emergency Reserve: 150 MB (150,000,000 B)
+--   4. Hard Ceiling: 1,000,000,000 B (1 GB)
+--
+-- Security Controls:
+--   - Authoritative constants enforced on the server; ignores caller-supplied limits.
+--   - Rejects negative bytes, invalid resource types, and excessive reservation requests.
+--   - Strict client isolation: Clients cannot read, overwrite, or release other clients' reservations.
+--   - Direct table mutations blocked via RLS; mutations restricted to SECURITY DEFINER RPCs.
+--   - Explicit search_path = public, pg_temp prevents search path hijack vulnerabilities.
+--   - Accounts for both active reservations AND committed temporary data until pruned.
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS public.supabase_buffer_reservations (
+    id TEXT PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    resource_type TEXT NOT NULL, -- 'storage' | 'database'
+    bytes_reserved BIGINT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active', -- 'active', 'committed', 'released', 'pruned', 'expired'
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_resource_type CHECK (resource_type IN ('storage', 'database')),
+    CONSTRAINT chk_bytes_positive CHECK (bytes_reserved >= 0),
+    CONSTRAINT chk_status_valid CHECK (status IN ('active', 'committed', 'released', 'pruned', 'expired'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_supabase_buffer_reservations_status_type 
+ON public.supabase_buffer_reservations(status, resource_type);
+
+CREATE INDEX IF NOT EXISTS idx_supabase_buffer_reservations_client 
+ON public.supabase_buffer_reservations(client_id);
+
+CREATE INDEX IF NOT EXISTS idx_supabase_buffer_reservations_expires 
+ON public.supabase_buffer_reservations(expires_at) WHERE status = 'active';
+
+-- Enable Row Level Security
+ALTER TABLE public.supabase_buffer_reservations ENABLE ROW LEVEL SECURITY;
+
+-- Dynamic Policy Cleanup
+DO $$
+DECLARE
+    pol record;
+BEGIN
+    FOR pol IN
+        SELECT policyname
+        FROM pg_policies
+        WHERE schemaname = 'public' AND tablename = 'supabase_buffer_reservations'
+    LOOP
+        EXECUTE format('DROP POLICY IF EXISTS %I ON public.supabase_buffer_reservations', pol.policyname);
+    END LOOP;
+END $$;
+
+-- Revoke direct table mutations and SELECT from public and anon
+REVOKE ALL ON TABLE public.supabase_buffer_reservations FROM PUBLIC, anon;
+GRANT SELECT ON TABLE public.supabase_buffer_reservations TO authenticated, service_role;
+
+-- RLS: Authenticated clients can only read their own reservation metadata verified via auth.uid()
+CREATE POLICY "client_read_own_reservations" ON public.supabase_buffer_reservations
+    FOR SELECT TO authenticated
+    USING (
+        client_id = auth.uid()::text
+    );
+
+-- ── Transactional Atomic Reservation RPC ──────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.reserve_buffer_capacity(
+    p_reservation_id TEXT,
+    p_client_id TEXT,
+    p_resource_type TEXT,
+    p_bytes BIGINT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    -- Authoritative server-side limits
+    STORAGE_CEILING CONSTANT BIGINT := 600000000;       -- 600 MB
+    DATABASE_CEILING CONSTANT BIGINT := 250000000;      -- 250 MB
+    HARD_CEILING CONSTANT BIGINT := 1000000000;          -- 1,000,000,000 bytes
+    CRITICAL_RESERVE CONSTANT BIGINT := 150000000;      -- 150 MB
+    MAX_ALLOWED_TOTAL CONSTANT BIGINT := 850000000;     -- 850 MB = 1 GB - 150 MB
+    MAX_SINGLE_ITEM CONSTANT BIGINT := 50000000;        -- 50 MB max single item
+
+    v_caller TEXT;
+    v_total_storage BIGINT;
+    v_total_db BIGINT;
+    v_grand_total BIGINT;
+    v_existing_client TEXT;
+    v_existing_status TEXT;
+    v_existing_bytes BIGINT;
+    v_existing_resource_type TEXT;
+    v_is_existing_reservation BOOLEAN := FALSE;
+BEGIN
+    -- 1. Input Validation & Trusted Identity Resolution
+    IF p_reservation_id IS NULL OR TRIM(p_reservation_id) = '' THEN
+        RETURN jsonb_build_object('success', false, 'reason', 'INVALID_RESERVATION_ID');
+    END IF;
+
+    -- Authoritative client identity: strictly bound to authenticated auth.uid() when present,
+    -- or explicit validated client identity for authenticated desktop client machines.
+    -- Anonymous unauthenticated callers are strictly prohibited from consuming buffer quota.
+    IF auth.uid() IS NOT NULL THEN
+        v_caller := auth.uid()::text;
+        IF p_client_id IS NOT NULL AND TRIM(p_client_id) <> '' AND TRIM(p_client_id) <> v_caller THEN
+            RETURN jsonb_build_object(
+                'success', false, 
+                'reason', 'CLIENT_IDENTITY_MISMATCH',
+                'detail', 'Caller cannot reserve capacity on behalf of a different client ID'
+            );
+        END IF;
+    ELSIF (COALESCE(auth.jwt() ->> 'role', '') IN ('authenticated', 'service_role')) OR session_user IN ('postgres', 'supabase_admin') THEN
+        IF p_client_id IS NOT NULL AND TRIM(p_client_id) <> '' THEN
+            v_caller := TRIM(p_client_id);
+        ELSE
+            v_caller := COALESCE(auth.jwt() ->> 'role', 'service_role');
+        END IF;
+    ELSE
+        RETURN jsonb_build_object(
+            'success', false,
+            'reason', 'AUTHENTICATION_REQUIRED',
+            'detail', 'Anonymous quota reservations are prohibited'
+        );
+    END IF;
+
+    IF v_caller IS NULL OR TRIM(v_caller) = '' THEN
+        RETURN jsonb_build_object('success', false, 'reason', 'INVALID_CLIENT_ID');
+    END IF;
+
+    IF p_resource_type NOT IN ('storage', 'database') THEN
+        RETURN jsonb_build_object('success', false, 'reason', 'INVALID_RESOURCE_TYPE');
+    END IF;
+
+    IF p_bytes <= 0 OR p_bytes > MAX_SINGLE_ITEM THEN
+        RETURN jsonb_build_object('success', false, 'reason', 'INVALID_BYTE_COUNT');
+    END IF;
+
+    -- 2. Acquire transaction-level advisory lock for atomic multi-client serialization
+    PERFORM pg_advisory_xact_lock(84729103);
+
+    -- 3. Check for existing reservation ID and enforce client ownership, state and resource type
+    SELECT client_id, status, bytes_reserved, resource_type
+    INTO v_existing_client, v_existing_status, v_existing_bytes, v_existing_resource_type
+    FROM public.supabase_buffer_reservations
+    WHERE id = p_reservation_id;
+
+    IF FOUND THEN
+        v_is_existing_reservation := TRUE;
+        -- If not service_role, caller MUST match existing reservation owner
+        IF (COALESCE(auth.jwt() ->> 'role', '') <> 'service_role')
+           AND auth.uid() IS NOT NULL
+           AND v_existing_client <> v_caller THEN
+            RETURN jsonb_build_object(
+                'success', false,
+                'reason', 'UNAUTHORIZED_CLIENT_MISMATCH'
+            );
+        END IF;
+
+        -- Reject resource type mismatch
+        IF v_existing_resource_type <> p_resource_type THEN
+            RETURN jsonb_build_object(
+                'success', false,
+                'reason', 'RESOURCE_TYPE_MISMATCH',
+                'detail', 'Existing reservation ID is associated with a different resource type'
+            );
+        END IF;
+
+        -- Prevent a committed reservation from being reopened as active
+        IF v_existing_status = 'committed' THEN
+            RETURN jsonb_build_object(
+                'success', false,
+                'reason', 'CANNOT_REOPEN_COMMITTED_RESERVATION',
+                'detail', 'A committed reservation cannot be reopened as active without verified reconciliation and pruning'
+            );
+        END IF;
+
+        -- Reject reservation-ID reuse for closed states
+        IF v_existing_status IN ('released', 'pruned', 'expired') THEN
+            RETURN jsonb_build_object(
+                'success', false,
+                'reason', 'RESERVATION_ALREADY_CLOSED',
+                'detail', 'Closed reservation ID cannot be reused for new reservations'
+            );
+        END IF;
+    END IF;
+
+    -- 4. Expire stale active reservations (> 5 minutes old)
+    UPDATE public.supabase_buffer_reservations
+    SET status = 'expired', updated_at = NOW()
+    WHERE status = 'active' AND expires_at < NOW();
+
+    -- 5. Calculate cumulative active + committed storage usage
+    SELECT COALESCE(SUM(bytes_reserved), 0)
+    INTO v_total_storage
+    FROM public.supabase_buffer_reservations
+    WHERE status IN ('active', 'committed') AND resource_type = 'storage';
+
+    -- 6. Calculate cumulative active + committed database usage
+    SELECT COALESCE(SUM(bytes_reserved), 0)
+    INTO v_total_db
+    FROM public.supabase_buffer_reservations
+    WHERE status IN ('active', 'committed') AND resource_type = 'database';
+
+    -- If this is an existing active reservation renewal by the same client, subtract its previous contribution
+    IF v_is_existing_reservation AND v_existing_status = 'active' THEN
+        IF p_resource_type = 'storage' THEN
+            v_total_storage := GREATEST(0, v_total_storage - v_existing_bytes);
+        ELSE
+            v_total_db := GREATEST(0, v_total_db - v_existing_bytes);
+        END IF;
+    END IF;
+
+    v_grand_total := v_total_storage + v_total_db;
+
+    -- 7. Verify Partition Limits
+    IF p_resource_type = 'storage' THEN
+        IF (v_total_storage + p_bytes) > STORAGE_CEILING THEN
+            RETURN jsonb_build_object(
+                'success', false,
+                'reason', 'STORAGE_CEILING_EXCEEDED',
+                'active_storage_bytes', v_total_storage,
+                'storage_ceiling', STORAGE_CEILING
+            );
+        END IF;
+    ELSIF p_resource_type = 'database' THEN
+        IF (v_total_db + p_bytes) > DATABASE_CEILING THEN
+            RETURN jsonb_build_object(
+                'success', false,
+                'reason', 'DATABASE_CEILING_EXCEEDED',
+                'active_db_bytes', v_total_db,
+                'db_ceiling', DATABASE_CEILING
+            );
+        END IF;
+    END IF;
+
+    -- 8. Verify Overall Buffer Limit (850 MB allowed before 150 MB emergency reserve)
+    IF (v_grand_total + p_bytes) > MAX_ALLOWED_TOTAL THEN
+        RETURN jsonb_build_object(
+            'success', false,
+            'reason', 'CRITICAL_CEILING_REACHED',
+            'grand_total_bytes', v_grand_total,
+            'max_allowed_bytes', MAX_ALLOWED_TOTAL,
+            'emergency_reserve_bytes', CRITICAL_RESERVE
+        );
+    END IF;
+
+    -- 9. Insert new or update existing active reservation with 5-minute auto-expiry window
+    IF v_is_existing_reservation THEN
+        UPDATE public.supabase_buffer_reservations
+        SET bytes_reserved = p_bytes,
+            expires_at = NOW() + INTERVAL '5 minutes',
+            updated_at = NOW()
+        WHERE id = p_reservation_id AND status = 'active';
+    ELSE
+        INSERT INTO public.supabase_buffer_reservations (
+            id, client_id, resource_type, bytes_reserved, status, expires_at
+        ) VALUES (
+            p_reservation_id, v_caller, p_resource_type, p_bytes, 'active', NOW() + INTERVAL '5 minutes'
+        );
+    END IF;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'reservation_id', p_reservation_id,
+        'allocated_bytes', p_bytes,
+        'total_storage_usage', v_total_storage + CASE WHEN p_resource_type = 'storage' THEN p_bytes ELSE 0 END,
+        'total_db_usage', v_total_db + CASE WHEN p_resource_type = 'database' THEN p_bytes ELSE 0 END
+    );
+END;
+$$;
+
+-- ── Transactional Release / Commit / Prune RPC ────────────────────────────────
+CREATE OR REPLACE FUNCTION public.release_buffer_capacity(
+    p_reservation_id TEXT,
+    p_client_id TEXT,
+    p_status TEXT, -- 'committed', 'released', 'pruned'
+    p_actual_bytes BIGINT DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_caller TEXT;
+    v_existing_client TEXT;
+    v_existing_status TEXT;
+    v_existing_bytes BIGINT;
+    v_target_status TEXT;
+BEGIN
+    -- 1. Input Validation & Identity Verification
+    IF p_reservation_id IS NULL OR TRIM(p_reservation_id) = '' THEN
+        RETURN jsonb_build_object('success', false, 'reason', 'INVALID_IDENTIFIER');
+    END IF;
+
+    -- Authoritative caller identity: strictly bound to authenticated auth.uid() when present,
+    -- or explicit validated client identity for authenticated desktop client machines.
+    -- Anonymous unauthenticated callers are strictly prohibited from mutating buffer quota.
+    IF auth.uid() IS NOT NULL THEN
+        v_caller := auth.uid()::text;
+        IF p_client_id IS NOT NULL AND TRIM(p_client_id) <> '' AND TRIM(p_client_id) <> v_caller THEN
+            RETURN jsonb_build_object(
+                'success', false,
+                'reason', 'CLIENT_IDENTITY_MISMATCH',
+                'detail', 'Caller cannot release capacity on behalf of a different client ID'
+            );
+        END IF;
+    ELSIF (COALESCE(auth.jwt() ->> 'role', '') IN ('authenticated', 'service_role')) OR session_user IN ('postgres', 'supabase_admin') THEN
+        IF p_client_id IS NOT NULL AND TRIM(p_client_id) <> '' THEN
+            v_caller := TRIM(p_client_id);
+        ELSE
+            v_caller := COALESCE(auth.jwt() ->> 'role', 'service_role');
+        END IF;
+    ELSE
+        RETURN jsonb_build_object(
+            'success', false,
+            'reason', 'AUTHENTICATION_REQUIRED',
+            'detail', 'Anonymous quota operations are prohibited'
+        );
+    END IF;
+
+    v_target_status := CASE 
+        WHEN p_status IN ('committed', 'released', 'pruned') THEN p_status 
+        ELSE 'released' 
+    END;
+
+    -- Pruning committed data requires trusted server-side reconciliation (service_role, postgres session, or reconciliation_operator)
+    IF v_target_status = 'pruned' THEN
+        IF COALESCE(auth.jwt() ->> 'role', '') <> 'service_role'
+           AND COALESCE((auth.jwt() -> 'app_metadata' ->> 'role'), '') NOT IN ('reconciliation_operator', 'service_role')
+           AND NOT (auth.jwt() ->> 'role' IS NULL AND auth.uid() IS NULL AND session_user IN ('postgres', 'supabase_admin')) THEN
+            RETURN jsonb_build_object(
+                'success', false,
+                'reason', 'UNAUTHORIZED_PRUNING_DENIED',
+                'detail', 'Clients cannot mark committed quota as pruned. Trusted reconciliation verification required.'
+            );
+        END IF;
+    END IF;
+
+    -- Acquire transaction-level lock
+    PERFORM pg_advisory_xact_lock(84729103);
+
+    -- 2. Verify Client Ownership
+    SELECT client_id, status, bytes_reserved 
+    INTO v_existing_client, v_existing_status, v_existing_bytes
+    FROM public.supabase_buffer_reservations
+    WHERE id = p_reservation_id;
+
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object('success', false, 'reason', 'NOT_FOUND');
+    END IF;
+
+    -- Strict ownership check: Only owner, service_role, or authorized reconciliation operator (for pruning) can modify
+    IF COALESCE(auth.jwt() ->> 'role', '') <> 'service_role'
+       AND NOT (v_target_status = 'pruned' AND COALESCE((auth.jwt() -> 'app_metadata' ->> 'role'), '') IN ('reconciliation_operator', 'service_role'))
+       AND NOT (auth.jwt() ->> 'role' IS NULL AND auth.uid() IS NULL AND session_user IN ('postgres', 'supabase_admin'))
+       AND v_existing_client <> v_caller THEN
+        RETURN jsonb_build_object(
+            'success', false,
+            'reason', 'UNAUTHORIZED_CLIENT_MISMATCH'
+        );
+    END IF;
+
+    -- 3. Strict State Transition Validation
+    -- Active may transition to committed or released
+    IF v_existing_status = 'active' THEN
+        IF v_target_status NOT IN ('committed', 'released') THEN
+            RETURN jsonb_build_object('success', false, 'reason', 'INVALID_STATUS_TRANSITION', 'detail', 'active reservations may only transition to committed or released');
+        END IF;
+    -- Committed data may only transition to pruned (once temporary data is safely removed)
+    ELSIF v_existing_status = 'committed' THEN
+        IF v_target_status <> 'pruned' THEN
+            RETURN jsonb_build_object('success', false, 'reason', 'COMMITTED_QUOTA_CAN_ONLY_BE_PRUNED', 'detail', 'committed temporary data cannot be released until verified and pruned');
+        END IF;
+    ELSIF v_existing_status IN ('released', 'pruned', 'expired') THEN
+        RETURN jsonb_build_object('success', false, 'reason', 'RESERVATION_ALREADY_CLOSED');
+    END IF;
+
+    -- 4. Update reservation status and actual committed bytes
+    UPDATE public.supabase_buffer_reservations
+    SET status = v_target_status,
+        bytes_reserved = CASE 
+            WHEN v_target_status = 'committed' AND p_actual_bytes IS NOT NULL AND p_actual_bytes > 0 THEN p_actual_bytes
+            WHEN v_target_status IN ('released', 'pruned') THEN 0
+            ELSE bytes_reserved
+        END,
+        updated_at = NOW()
+    WHERE id = p_reservation_id;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'reservation_id', p_reservation_id,
+        'status', v_target_status
+    );
+END;
+$$;
+
+-- ── Buffer Quota Status Telemetry RPC ───────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.get_buffer_quota_status()
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_total_storage BIGINT;
+    v_total_db BIGINT;
+BEGIN
+    -- Telemetry visibility is restricted to authenticated staff and service_role
+    IF COALESCE(auth.jwt() ->> 'role', '') NOT IN ('authenticated', 'service_role')
+       AND session_user NOT IN ('postgres', 'supabase_admin') THEN
+        RETURN jsonb_build_object(
+            'success', false,
+            'reason', 'AUTHENTICATION_REQUIRED',
+            'detail', 'Anonymous quota telemetry queries are prohibited'
+        );
+    END IF;
+
+    SELECT
+        COALESCE(SUM(CASE WHEN resource_type = 'storage' THEN bytes_reserved ELSE 0 END), 0),
+        COALESCE(SUM(CASE WHEN resource_type = 'database' THEN bytes_reserved ELSE 0 END), 0)
+    INTO v_total_storage, v_total_db
+    FROM public.supabase_buffer_reservations
+    WHERE status IN ('active', 'committed');
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'storage_bytes_used', v_total_storage,
+        'storage_ceiling_bytes', 600000000,
+        'database_bytes_used', v_total_db,
+        'database_ceiling_bytes', 250000000,
+        'total_bytes_used', v_total_storage + v_total_db,
+        'hard_ceiling_bytes', 1000000000
+    );
+END;
+$$;
+
+-- Least-Privilege Function Permissions:
+-- Explicitly revoke execute from PUBLIC and anon to prevent unauthenticated quota consumption.
+-- Grant execute ONLY to authenticated staff and service_role.
+REVOKE EXECUTE ON FUNCTION public.reserve_buffer_capacity FROM PUBLIC, anon;
+REVOKE EXECUTE ON FUNCTION public.release_buffer_capacity FROM PUBLIC, anon;
+REVOKE EXECUTE ON FUNCTION public.get_buffer_quota_status FROM PUBLIC, anon;
+
+GRANT EXECUTE ON FUNCTION public.reserve_buffer_capacity TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.release_buffer_capacity TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.get_buffer_quota_status TO authenticated, service_role;
+
+-- ============================================================================
+-- Storage bucket 'make-order-files' RLS policies
+-- Grants upload, read, and update permissions to authenticated application users.
+-- Rejects unauthenticated/anon access completely.
+-- Restricts DELETE to service_role (used by server reconciliation daemon).
+-- ============================================================================
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'storage' AND table_name = 'objects') THEN
+        DROP POLICY IF EXISTS "Authenticated users can upload objects to make-order-files" ON storage.objects;
+        DROP POLICY IF EXISTS "Authenticated users can select objects from make-order-files" ON storage.objects;
+        DROP POLICY IF EXISTS "Authenticated users can update objects in make-order-files" ON storage.objects;
+
+        CREATE POLICY "Authenticated users can upload objects to make-order-files"
+        ON storage.objects FOR INSERT TO authenticated
+        WITH CHECK (bucket_id = 'make-order-files');
+
+        CREATE POLICY "Authenticated users can select objects from make-order-files"
+        ON storage.objects FOR SELECT TO authenticated
+        USING (bucket_id = 'make-order-files');
+
+        CREATE POLICY "Authenticated users can update objects in make-order-files"
+        ON storage.objects FOR UPDATE TO authenticated
+        USING (bucket_id = 'make-order-files');
+    END IF;
+END $$;
+
+NOTIFY pgrst, 'reload schema';
+

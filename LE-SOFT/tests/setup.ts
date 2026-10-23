@@ -47,6 +47,380 @@ vi.mock('electron', () => ({
   },
 }));
 
+// In-memory mock for better-sqlite3 to run flawlessly in Vitest without ABI rebuild conflicts
+vi.mock('better-sqlite3', async (importOriginal) => {
+  if (process.env.TEST_REAL_SQLITE === 'true') {
+    return importOriginal();
+  }
+  const globalTables = new Map<string, any[]>();
+
+  class MockStatement {
+    constructor(private sql: string) {}
+
+    private getTargetTable(): string {
+      const match = this.sql.match(/(?:from|into|update|delete\s+from)\s+([a-zA-Z0-9_]+)/i);
+      return match ? match[1].toLowerCase() : 'default';
+    }
+
+    run(...args: any[]) {
+      const table = this.getTargetTable();
+      let rows = globalTables.get(table);
+      if (!rows) {
+        rows = [];
+        globalTables.set(table, rows);
+      }
+
+      const lower = this.sql.trim().toLowerCase();
+      if (lower.startsWith('insert')) {
+        if (table === 'outbox_operations') {
+          const existing = rows.find(r => r.id === args[0]);
+          if (existing) {
+            throw new Error('UNIQUE constraint failed: outbox_operations.id');
+          }
+          if (args.length >= 14) {
+            rows.push({
+              id: args[0],
+              entity_type: args[1],
+              operation: args[2],
+              payload_json: args[3],
+              filter_json: args[4],
+              primary_key_col: args[5],
+              primary_key_val: args[6],
+              upsert_conflict: args[7],
+              dependency_op_id: args[8],
+              metadata_json: args[9],
+              target: args[10],
+              status: args[11],
+              retry_count: 0,
+              max_retries: args[12] || 10,
+              last_error: null,
+              created_at: args[13] || Date.now(),
+              updated_at: args[14] || Date.now(),
+            });
+          } else {
+            rows.push({
+              id: args[0],
+              entity_type: args[1],
+              operation: args[2],
+              payload_json: args[3],
+              filter_json: null,
+              primary_key_col: args[4],
+              primary_key_val: args[5],
+              upsert_conflict: null,
+              dependency_op_id: args[6],
+              metadata_json: null,
+              target: args[7],
+              status: args[8],
+              retry_count: 0,
+              max_retries: args[9] || 10,
+              last_error: null,
+              created_at: args[10] || Date.now(),
+              updated_at: args[11] || Date.now(),
+            });
+          }
+        } else if (table === 'durable_uploads') {
+          rows.push({
+            id: args[0],
+            local_path: args[1],
+            file_name: args[2],
+            mime_type: args[3],
+            size_bytes: args[4],
+            sha256: args[5],
+            subfolder: args[6],
+            entity_type: args[7],
+            entity_id: args[8],
+            field_name: args[9],
+            status: 'staged_local',
+            remote_url_nas: null,
+            remote_url_supabase: null,
+            retry_count: 0,
+            last_error: null,
+            created_at: args[10] || Date.now(),
+            updated_at: args[11] || Date.now(),
+          });
+        } else if (table === 'outbox_id_map') {
+          const existing = rows.find(r => r.op_id === args[0] && r.target === args[1]);
+          if (existing) {
+            existing.resolved_id = args[2];
+          } else {
+            rows.push({ op_id: args[0], target: args[1], resolved_id: args[2], created_at: args[3] });
+          }
+        } else if (table === 'pending_associations') {
+          const id = args[0];
+          const existing = rows.find(r => r.identifier === id);
+          if (existing) {
+            existing.entity_type = args[1];
+            existing.entity_id = args[2];
+            existing.field_name = args[3];
+            existing.updated_at = args[6] || Date.now();
+          } else {
+            rows.push({
+              identifier: id,
+              entity_type: args[1],
+              entity_id: args[2],
+              field_name: args[3],
+              retry_count: 0,
+              created_at: args[5] || Date.now(),
+              updated_at: args[6] || Date.now()
+            });
+          }
+        } else {
+          rows.push({ id: args[0], args });
+        }
+      } else if (lower.startsWith('update')) {
+        if (table === 'outbox_operations') {
+          if (lower.includes("status = 'completed'")) {
+            const id = args[1];
+            const r = rows.find(x => x.id === id);
+            if (r) { r.status = 'completed'; r.last_error = null; r.updated_at = args[0]; }
+          } else if (lower.includes("status = 'pending'")) {
+            for (const r of rows) {
+              if (r.status === 'blocked_dependency') r.status = 'pending';
+              if (r.status === 'dead_letter' && (!args[1] || r.id === args[1])) {
+                r.status = 'pending';
+                r.last_error = null;
+              }
+            }
+          } else if (lower.includes("status = 'dead_letter'")) {
+            const id = args[args.length - 1];
+            const err = args[0];
+            const r = rows.find(x => x.id === id);
+            if (r) { r.status = 'dead_letter'; r.last_error = err; }
+          } else if (lower.includes('status = ?')) {
+            const status = args[0];
+            const err = args[1] !== undefined ? args[1] : null;
+            const id = args[3];
+            const r = rows.find(x => x.id === id);
+            if (r) { r.status = status; r.last_error = err; }
+          }
+        } else if (table === 'durable_uploads') {
+          if (lower.includes('entity_type = ?')) {
+            const entityType = args[0];
+            const entityId = args[1];
+            const fieldName = args[2];
+            const updatedAt = args[3];
+            const uploadId = args[4];
+            const identifier = args[5];
+            const r = rows.find(x =>
+              x.id === uploadId ||
+              x.id === identifier ||
+              (x.local_path && (x.local_path.includes(uploadId) || (identifier && x.local_path.includes(identifier)))) ||
+              (x.remote_url_supabase && (x.remote_url_supabase.includes(uploadId) || (identifier && x.remote_url_supabase.includes(identifier)))) ||
+              (x.remote_url_nas && (x.remote_url_nas.includes(uploadId) || (identifier && x.remote_url_nas.includes(identifier))))
+            );
+            if (r) {
+              r.entity_type = entityType;
+              r.entity_id = entityId;
+              r.field_name = fieldName;
+              r.updated_at = updatedAt;
+              return { changes: 1 };
+            }
+            return { changes: 0 };
+          }
+          const id = args[args.length - 1];
+          const r = rows.find(x => x.id === id);
+          if (r) {
+            if (lower.includes("status = 'synced_nas'")) {
+              r.status = 'synced_nas';
+              r.remote_url_nas = args[0];
+              if (lower.includes('remote_url_supabase = null') || lower.includes('remote_url_supabase = ?')) {
+                r.remote_url_supabase = null;
+              }
+              r.last_error = null;
+              if (args[1] !== undefined) {
+                r.updated_at = args[1];
+              }
+            } else if (lower.includes("status = 'awaiting_association'")) {
+              r.status = 'awaiting_association';
+              r.remote_url_nas = args[0];
+              r.last_error = args[1] || null;
+            } else if (lower.includes("status = 'buffered_supabase'")) {
+              r.status = 'buffered_supabase';
+              if (lower.includes('remote_url_supabase = ?')) {
+                r.remote_url_supabase = args[0];
+              }
+              if (lower.includes('last_error = null')) {
+                r.last_error = null;
+                if (args[1] !== undefined) r.updated_at = args[1];
+              } else if (lower.includes('last_error = ?')) {
+                r.last_error = args[1] || null;
+                if (args[2] !== undefined) r.updated_at = args[2];
+              } else {
+                r.last_error = null;
+              }
+            } else if (lower.includes('remote_url_nas = ?')) {
+              r.remote_url_nas = args[0];
+              if (lower.includes('last_error = ?')) {
+                r.last_error = args[1];
+                if (args[2] !== undefined) r.updated_at = args[2];
+              }
+            } else if (lower.includes('retry_count = ?')) {
+              r.retry_count = args[0];
+              r.last_error = args[1];
+              if (lower.includes('updated_at = ?') && args[2] !== undefined) {
+                r.updated_at = args[2];
+              }
+            } else if (lower.includes('last_error = ?')) {
+              r.last_error = args[0];
+              if (lower.includes('updated_at = ?') && args[1] !== undefined) {
+                r.updated_at = args[1];
+              }
+            }
+            return { changes: 1 };
+          }
+          return { changes: 0 };
+        }
+      } else if (lower.startsWith('delete')) {
+        if (table === 'pending_associations') {
+          const id1 = args[0];
+          const id2 = args[1];
+          const idx = rows.findIndex(x => x.identifier === id1 || (id2 && x.identifier === id2));
+          if (idx >= 0) rows.splice(idx, 1);
+          return { changes: 1 };
+        }
+        const id = args[0];
+        const idx = rows.findIndex(x => x.id === id);
+        if (idx >= 0) rows.splice(idx, 1);
+      }
+      return { changes: 1 };
+    }
+
+    get(...args: any[]) {
+      const table = this.getTargetTable();
+      const rows = globalTables.get(table) || [];
+      const lower = this.sql.toLowerCase();
+      if (lower.includes('count(')) {
+        if (table === 'durable_uploads') {
+          return {
+            staged_cnt: rows.filter(r => r.status === 'staged_local').length,
+            buffered_cnt: rows.filter(r => r.status === 'buffered_supabase').length,
+            awaiting_assoc_cnt: rows.filter(r => r.status === 'awaiting_association').length,
+            total_bytes: rows.filter(r => r.status === 'staged_local' || r.status === 'buffered_supabase' || r.status === 'awaiting_association')
+                             .reduce((acc, r) => acc + (r.size_bytes || 0), 0)
+          };
+        }
+        if (table === 'pending_associations') {
+          return { cnt: rows.length };
+        }
+        return {
+          pending_cnt: rows.filter(r => r.status === 'pending').length,
+          buffered_cnt: rows.filter(r => r.status === 'buffered_supabase').length,
+          blocked_cnt: rows.filter(r => r.status === 'blocked_dependency').length,
+          dead_letter_cnt: rows.filter(r => r.status === 'dead_letter').length,
+          oldest_pending: rows[0]?.created_at || null,
+        };
+      }
+      if (table === 'pending_associations') {
+        const id1 = args[0];
+        const id2 = args[1];
+        const id3 = args[2] ? args[2].replace(/%/g, '') : null;
+        return rows.find(r => r.identifier === id1 || (id2 && r.identifier === id2) || (id3 && r.identifier.includes(id3)));
+      }
+      if (table === 'outbox_id_map') {
+        if (args.length >= 2) {
+          return rows.find(r => r.op_id === args[0] && r.target === args[1]);
+        }
+        return rows.find(r => r.op_id === args[0]);
+      }
+      if (table === 'durable_uploads') {
+        if (lower.includes('remote_url_supabase = ?') && !lower.includes('id = ?')) {
+          return rows.find(r => r.remote_url_supabase === args[0] || (args[1] && r.remote_url_supabase === args[1]));
+        }
+        if (lower.includes('remote_url_nas = ?') && !lower.includes('id = ?')) {
+          return rows.find(r => r.remote_url_nas === args[0] || (args[1] && r.remote_url_nas === args[1]));
+        }
+        if (lower.includes('id = ?') && !lower.includes('remote_url')) {
+          return rows.find(r => r.id === args[0]);
+        }
+      }
+      if (table === 'outbox_operations') {
+        if (lower.includes('dependency_op_id = ?')) {
+          return rows.find(r => r.dependency_op_id === args[0]);
+        }
+        if (lower.includes('id = ?')) {
+          return rows.find(r => r.id === args[0]);
+        }
+      }
+      if (args.length > 0) {
+        const match = rows.find(r =>
+          args.some(arg => arg && typeof arg === 'string' && (
+            r.id === arg ||
+            r.op_id === arg ||
+            (r.local_path && r.local_path.includes(arg.replace(/%/g, ''))) ||
+            (r.remote_url_supabase && r.remote_url_supabase.includes(arg.replace(/%/g, ''))) ||
+            (r.remote_url_nas && r.remote_url_nas.includes(arg.replace(/%/g, '')))
+          ))
+        );
+        return match || rows.find(r => r.id === args[0] || r.op_id === args[0]);
+      }
+      return rows[0];
+    }
+
+    all(...args: any[]) {
+      const table = this.getTargetTable();
+      const rows = globalTables.get(table) || [];
+      const lower = this.sql.toLowerCase();
+      if (table === 'pending_associations') {
+        return [...rows];
+      }
+      if (table === 'outbox_operations' && lower.includes('dependency_op_id = ?')) {
+        return rows.filter(r => r.dependency_op_id === args[0]);
+      }
+      if (lower.includes("status in ('pending', 'buffered_supabase'")) {
+        return rows.filter(r => r.status === 'pending' || r.status === 'buffered_supabase' || r.status === 'cleanup_pending');
+      }
+      if (lower.includes("status in ('staged_local', 'buffered_supabase'")) {
+        return rows.filter(r => r.status === 'staged_local' || r.status === 'buffered_supabase' || r.status === 'awaiting_association');
+      }
+      if (lower.includes("status = 'dead_letter'")) {
+        return rows.filter(r => r.status === 'dead_letter');
+      }
+      if (lower.includes("entity_type = ?")) {
+        return rows.filter(r => r.entity_type === args[0]);
+      }
+      return [...rows];
+    }
+  }
+
+  class MockDatabase {
+    constructor(_path?: string) {}
+    pragma(cmd?: string) {
+      if (cmd && cmd.includes('table_info(durable_uploads)')) {
+        return [
+          { name: 'id' },
+          { name: 'local_path' },
+          { name: 'file_name' },
+          { name: 'file_size' },
+          { name: 'mime_type' },
+          { name: 'original_filename' },
+          { name: 'subfolder' },
+          { name: 'status' },
+          { name: 'retry_count' },
+          { name: 'last_error' },
+          { name: 'remote_url_supabase' },
+          { name: 'remote_url_nas' },
+          { name: 'created_at' },
+          { name: 'updated_at' },
+          { name: 'entity_type' },
+          { name: 'entity_id' },
+          { name: 'field_name' }
+        ];
+      }
+      return [];
+    }
+    exec(_sql: string) {}
+    prepare(sql: string) {
+      return new MockStatement(sql);
+    }
+    transaction(fn: any) {
+      return (...args: any[]) => fn(...args);
+    }
+    close() {}
+  }
+
+  return { default: MockDatabase };
+});
+
 // Mock localStorage globally for node/vitest environment
 if (typeof globalThis.localStorage === 'undefined') {
   let store: Record<string, string> = {};

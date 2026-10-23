@@ -1,26 +1,31 @@
 {
   "name": "le-soft",
   "private": true,
-  "version": "1.8.12",
+  "version": "1.9.1",
   "description": "Leading Edge ECO-System Software",
   "author": "Leading Edge <leadingedge.com.bd>",
   "type": "module",
   "main": "core/main.cjs",
   "scripts": {
-    "dev": "vite",
+    "dev": "node scripts/run-electron-environment.cjs development --vite-only",
     "build": "vite build",
     "build:check": "tsc && vite build",
+    "build:wp-cad-viewer": "vite build --config vite.wp-cad.config.ts && node scripts/copy-wp-cad-source.cjs",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
-    "electron:build": "esbuild electron/main.ts --bundle --platform=node --target=node18 --external:electron --external:better-sqlite3 --external:mysql2 --external:bcryptjs --external:electron-updater --external:sharp --outfile=core/main.cjs && esbuild electron/preload.ts --bundle --platform=node --target=node18 --external:electron --outfile=core/preload.cjs && electron .",
-    "electron:dev": "concurrently -k \"vite\" \"npm run electron:build\"",
+    "electron:build:main": "node scripts/build-electron-main.cjs",
+    "electron:build": "npm run electron:build:main && electron .",
+    "electron:dev": "node scripts/run-electron-environment.cjs development",
+    "electron:staging": "node scripts/run-electron-environment.cjs staging",
+    "test": "node scripts/run-tests.cjs",
+    "test:pg": "node scripts/run-pg-tests.cjs",
     "rebuild": "electron-rebuild -f -w better-sqlite3",
     "postinstall": "electron-rebuild -f -w better-sqlite3",
-    "dist": "node build-electron.cjs && electron-builder --win",
-    "dist:mac": "node build-electron.cjs && electron-builder --mac",
+    "dist": "node build-electron.cjs && electron-builder --win --publish never",
+    "dist:mac": "node build-electron.cjs && electron-builder --mac --publish never",
     "dist:publish": "node build-electron.cjs && electron-builder --win -p always",
     "dist:mac:publish": "node build-electron.cjs && electron-builder --mac -p always",
-    "dist:all": "node build-electron.cjs && electron-builder --win --mac",
+    "dist:all": "node build-electron.cjs && electron-builder --win --mac --publish never",
     "manuscript:pdf": "node docs/generate_manuscript_pdf.cjs",
     "license:check": "node tools/generate-license.cjs --check",
     "license:generate": "node tools/generate-license.cjs",
@@ -43,6 +48,7 @@
     "clsx": "^2.1.1",
     "csv-parser": "^3.2.1",
     "dompurify": "^3.4.12",
+    "dxf-viewer": "^1.0.50",
     "electron-updater": "^6.8.3",
     "exceljs": "^3.10.0",
     "form-data": "^4.0.6",
@@ -52,6 +58,7 @@
     "jspdf-autotable": "^5.0.7",
     "lucide-react": "^0.363.0",
     "mysql2": "^3.17.1",
+    "pdf-lib": "^1.17.1",
     "pg": "^8.21.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
@@ -101,10 +108,26 @@
     ],
     "extraResources": [
       {
+        "from": "../icon.ico",
+        "to": "icon.ico"
+      },
+      {
         "from": "Logo",
         "to": "Logo",
         "filter": [
-          "**/*.png"
+          "**/*.png",
+          "**/*.icns"
+        ]
+      },
+      {
+        "from": "node_modules/dxf-viewer",
+        "to": "third-party/dxf-viewer",
+        "filter": [
+          "src/**/*",
+          "LICENSE",
+          "README.md",
+          "package.json",
+          "CONTRIBUTORS"
         ]
       }
     ],
@@ -139,7 +162,8 @@
     "publish": {
       "provider": "github",
       "owner": "sabbir-404",
-      "repo": "Leading-Edge-ECO-System"
+      "repo": "Leading-Edge-ECO-System",
+      "releaseType": "release"
     }
   }
 }

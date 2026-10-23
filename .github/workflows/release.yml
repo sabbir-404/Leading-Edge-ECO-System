@@ -9,7 +9,7 @@ on:
       version:
         description: 'Release version without leading v'
         required: true
-        default: '1.8.0'
+        default: '1.9.1'
 
 permissions:
   contents: write
@@ -47,13 +47,11 @@ jobs:
 
       - name: Build macOS Release
         run: npm run dist:mac
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish macOS Release Assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_VERSION: ${{ github.event.inputs.version || '1.8.0' }}
+          RELEASE_VERSION: ${{ github.event.inputs.version || '1.9.1' }}
           RELEASE_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -77,7 +75,6 @@ jobs:
             --repo "$RELEASE_REPO" \
             --clobber
 
-          gh release edit "$tag" --draft=false --repo "$RELEASE_REPO" || true
 
       - name: Upload macOS Artifacts
         uses: actions/upload-artifact@v4
@@ -127,14 +124,12 @@ jobs:
 
       - name: Build Windows Release
         run: npm run dist
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish Windows Release Assets
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_VERSION: ${{ github.event.inputs.version || '1.8.0' }}
+          RELEASE_VERSION: ${{ github.event.inputs.version || '1.9.1' }}
           RELEASE_REPO: ${{ github.repository }}
         run: |
           $ErrorActionPreference = 'Stop'
@@ -148,14 +143,10 @@ jobs:
           $title = "LE-SOFT $($tag.TrimStart('v'))"
           $notes = "LE-SOFT $($tag.TrimStart('v')) release."
 
-          gh release view $tag --repo $env:RELEASE_REPO *> $null
-          if ($LASTEXITCODE -ne 0) {
-            try {
-              gh release create $tag --repo $env:RELEASE_REPO --target $env:GITHUB_SHA --title $title --notes $notes
-            } catch {
-              Write-Host "Release may already exist or was created concurrently: $_"
-            }
-          }
+          # The macOS job runs first and creates/publishes the release. On tag
+          # pushes, electron-builder also uploads the Windows assets. Avoid
+          # probing/creating a duplicate release here; create attempts can fail
+          # with HTTP 422 when the tagged release already exists.
 
           $exe = (Get-ChildItem release -Filter 'LESOFT-Setup-*.exe' | Select-Object -First 1).FullName
           if (-not $exe) {
@@ -165,7 +156,6 @@ jobs:
           $latest = (Get-ChildItem release -Filter 'latest.yml' | Select-Object -First 1).FullName
 
           gh release upload "$tag" "$exe" "$blockmap" "$latest" --repo "$env:RELEASE_REPO" --clobber
-          gh release edit "$tag" --draft=false --repo "$env:RELEASE_REPO"
 
       - name: Upload Windows Artifact
         uses: actions/upload-artifact@v4

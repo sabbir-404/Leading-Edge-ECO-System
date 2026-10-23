@@ -8,6 +8,8 @@ vi.mock('../../electron/supabase', () => ({
     }
 }));
 
+let productSelects: string[] = [];
+
 describe('MAKE V1.1 — Intelligent Whole-Catalog Product Search Engine', () => {
     const mockProducts = [
         {
@@ -87,16 +89,20 @@ describe('MAKE V1.1 — Intelligent Whole-Catalog Product Search Engine', () => 
     beforeEach(() => {
         vi.clearAllMocks();
         MakeSearchService.invalidateCache();
+        productSelects = [];
 
         (supabase.from as any).mockImplementation((table: string) => {
             if (table === 'make_products') {
                 return {
-                    select: vi.fn().mockReturnValue({
-                        order: vi.fn().mockReturnValue({
-                            limit: vi.fn().mockResolvedValue({ data: mockProducts, error: null })
-                        }),
-                        data: mockProducts,
-                        error: null
+                    select: vi.fn((selection: string) => {
+                        productSelects.push(selection);
+                        return {
+                            order: vi.fn().mockReturnValue({
+                                limit: vi.fn().mockResolvedValue({ data: mockProducts, error: null })
+                            }),
+                            data: mockProducts,
+                            error: null
+                        };
                     })
                 };
             }
@@ -123,6 +129,14 @@ describe('MAKE V1.1 — Intelligent Whole-Catalog Product Search Engine', () => 
     });
 
     // ── 1. PRODUCT FIELDS SEARCH ──────────────────────────────────────────────
+    it('uses the explicit one-to-many size relationship to avoid ambiguous PostgREST embeds', async () => {
+        await MakeSearchService.searchProducts({ query: 'Executive' });
+
+        expect(productSelects.length).toBeGreaterThan(0);
+        expect(productSelects.every(selection => selection.includes('sizes:make_product_sizes!make_product_sizes_product_id_fkey(*)'))).toBe(true);
+        expect(productSelects.some(selection => selection.includes('sizes:make_product_sizes(*)'))).toBe(false);
+    });
+
     it('finds products by exact product name', async () => {
         const results = await MakeSearchService.searchProducts({ query: 'Executive Workstation Table' });
         expect(results.length).toBeGreaterThan(0);

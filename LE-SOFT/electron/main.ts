@@ -15,6 +15,7 @@ import { MediaProtocolService } from './services/media/MediaProtocolService';
 import { NASConnectionManager } from './services/make/NASConnectionManager';
 import { WindowsNotificationService } from './services/WindowsNotificationService';
 import { WatchdogService } from './services/WatchdogService';
+import { getManualUpdateFeedUrl, selectManualUpdateRelease, type GitHubReleaseLike } from './services/updater/versionCompare';
 
 // Register privileged custom scheme for secure media loading before app is ready
 MediaProtocolService.registerSchemeAsPrivileged();
@@ -108,34 +109,30 @@ function setupAutoUpdater() {
         });
     }
 
-    // Helper: fallback update check for unsigned macOS builds
+    // Helper: fallback update check for unsigned macOS builds.
+    // Uses SemVer precedence (handles 1.8.13-rc.1 etc.). The releases *list* endpoint is used
+    // because /releases/latest excludes prereleases; selectManualUpdateRelease() only offers
+    // prereleases to installs that are themselves prereleases (same default as electron-updater).
     const performManualMacCheck = async () => {
         try {
-            const response = await fetch('https://api.github.com/repos/sabbir-404/Leading-Edge-ECO-System/releases/latest');
+            const response = await fetch(getManualUpdateFeedUrl('sabbir-404', 'Leading-Edge-ECO-System'));
             if (!response.ok) return;
-            const data = await response.json();
-            if (data && data.tag_name) {
-                const current = app.getVersion().replace('v', '').split('.').map(Number);
-                const latest = data.tag_name.replace('v', '').split('.').map(Number);
-                
-                let isNewer = false;
-                for (let i = 0; i < 3; i++) {
-                    if ((latest[i] || 0) > (current[i] || 0)) { isNewer = true; break; }
-                    if ((latest[i] || 0) < (current[i] || 0)) { break; }
-                }
+            const releases = (await response.json()) as GitHubReleaseLike[];
+            const currentVersion = app.getVersion();
+            const newer = selectManualUpdateRelease(currentVersion, releases);
 
-                if (isNewer) {
-                    broadcast({ 
-                        status: 'available', 
-                        isManual: true,
-                        info: { 
-                            version: data.tag_name, 
-                            releaseNotes: 'Automatic installation is unavailable because this Mac build is unsigned. Please download the latest version from the releases page manually.' 
-                        } 
-                    });
-                } else {
-                    broadcast({ status: 'up-to-date' });
-                }
+            if (newer) {
+                updaterLogger.info(`Manual fallback: ${newer.tag_name} available (current: v${currentVersion})`);
+                broadcast({
+                    status: 'available',
+                    isManual: true,
+                    info: {
+                        version: newer.tag_name,
+                        releaseNotes: 'Automatic installation is unavailable because this Mac build is unsigned. Please download the latest version from the releases page manually.'
+                    }
+                });
+            } else {
+                broadcast({ status: 'up-to-date' });
             }
         } catch (err: any) { updaterLogger.error(`Manual fallback fetch failed: ${sanitizeUpdaterLog(err?.message)}`); }
     };
@@ -321,13 +318,15 @@ function createWindow() {
 
     log('Creating window...');
 
-    // Resolve app icon cross-platform:
-    //  - In packaged builds the icon is bundled alongside the binary
-    //  - In dev mode we resolve relative to the project root via __dirname
+    // Resolve the window icon from Electron's resources directory in packaged
+    // builds. electron-builder embeds the executable icon, but BrowserWindow
+    // needs a separate runtime asset or Windows falls back to the Electron icon.
     const isMac = process.platform === 'darwin';
-    const iconFile = isMac
-        ? path.join(__dirname, '../Logo/icon.icns')
-        : path.join(path.dirname(path.dirname(__dirname)), 'icon.ico');
+    const iconFile = app.isPackaged
+        ? path.join(process.resourcesPath, isMac ? 'Logo/icon.icns' : 'icon.ico')
+        : (isMac
+            ? path.resolve(__dirname, '../Logo/icon.icns')
+            : path.resolve(__dirname, '../../icon.ico'));
 
     const win = new BrowserWindow({
         width: 1280,
@@ -607,7 +606,7 @@ app.whenReady().then(() => {
             const responseHeaders = { ...details.responseHeaders };
             if (!responseHeaders['content-security-policy'] && !responseHeaders['Content-Security-Policy']) {
                 responseHeaders['Content-Security-Policy'] = [
-                    "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: app-media:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https://*.supabase.co https://storage.lenas.me http://100.88.85.6:* ws://localhost:* ws://127.0.0.1:* http://localhost:* http://127.0.0.1:*; media-src 'self' app-media: blob:; object-src 'none'; base-uri 'self';"
+                    "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: app-media:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' app-media: https://*.supabase.co https://storage.lenas.me http://100.88.85.6:* ws://localhost:* ws://127.0.0.1:* http://localhost:* http://127.0.0.1:*; frame-src 'self' app-media: blob:; media-src 'self' app-media: blob:; object-src app-media: blob:; base-uri 'self';"
                 ];
             }
             callback({ responseHeaders });
@@ -633,7 +632,7 @@ app.whenReady().then(() => {
                 initDB(),
                 new Promise((_, reject) => setTimeout(() => reject(new Error('Supabase init timed out')), 15000))
             ]);
-            log('Cloud DB ready');
+            log('Cloud DB startup probe complete; authenticated table checks run after sign-in');
 
             await Promise.race([
                 initOfflineDB(),

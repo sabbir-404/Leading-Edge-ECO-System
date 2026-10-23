@@ -35,6 +35,7 @@ class LEMakeAdminSettings {
 
     public function register_settings() {
         register_setting('le_make_settings_group', 'le_make_nas_tunnel_url', 'esc_url_raw');
+        register_setting('le_make_settings_group', 'le_make_nas_jwt_token', array($this, 'sanitize_nas_jwt_token'));
         register_setting('le_make_settings_group', 'le_make_cf_client_id', 'sanitize_text_field');
         register_setting('le_make_settings_group', 'le_make_cf_client_secret', array($this, 'sanitize_cf_secret'));
         register_setting('le_make_settings_group', 'le_make_supabase_url', 'esc_url_raw');
@@ -48,6 +49,39 @@ class LEMakeAdminSettings {
             return get_option('le_make_cf_client_secret', '');
         }
         return sanitize_text_field($input);
+    }
+
+    public function sanitize_nas_jwt_token($input) {
+        $input = is_string($input) ? trim($input) : '';
+        if ($input === '') {
+            return get_option('le_make_nas_jwt_token', '');
+        }
+        if (strlen($input) > 16384 || count(explode('.', $input)) !== 3) {
+            add_settings_error('le_make_nas_jwt_token', 'invalid_jwt', __('The NAS database credential must be a valid JWT. The existing credential was kept.', 'le-make-sales-portal'));
+            return get_option('le_make_nas_jwt_token', '');
+        }
+
+        $key_material = function_exists('wp_salt') ? wp_salt('auth') . wp_salt('secure_auth') : '';
+        if ($key_material === '' || !function_exists('openssl_encrypt')) {
+            add_settings_error('le_make_nas_jwt_token', 'encryption_unavailable', __('NAS credential storage could not be encrypted. Configure LE_MAKE_NAS_JWT_TOKEN in wp-config.php or the server environment.', 'le-make-sales-portal'));
+            return get_option('le_make_nas_jwt_token', '');
+        }
+
+        try {
+            $nonce = random_bytes(12);
+        } catch (Exception $e) {
+            add_settings_error('le_make_nas_jwt_token', 'nonce_unavailable', __('Secure random data was unavailable; the existing NAS credential was kept.', 'le-make-sales-portal'));
+            return get_option('le_make_nas_jwt_token', '');
+        }
+        $tag = '';
+        $key = hash('sha256', $key_material, true);
+        $ciphertext = openssl_encrypt($input, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $nonce, $tag);
+        if (!is_string($ciphertext) || strlen($tag) !== 16) {
+            add_settings_error('le_make_nas_jwt_token', 'encryption_failed', __('NAS credential encryption failed; the existing credential was kept.', 'le-make-sales-portal'));
+            return get_option('le_make_nas_jwt_token', '');
+        }
+
+        return 'enc:v1:' . base64_encode($nonce . $tag . $ciphertext);
     }
 
     public function sanitize_service_key($input) {
@@ -168,6 +202,7 @@ class LEMakeAdminSettings {
                 </div>
             </div>
 
+            <?php settings_errors('le_make_nas_jwt_token'); ?>
             <form method="post" action="options.php" style="background: white; border: 1px solid #e2e8f0; border-radius: 12px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.04);">
                 <?php settings_fields('le_make_settings_group'); ?>
                 <?php do_settings_sections('le_make_settings_group'); ?>
@@ -182,6 +217,21 @@ class LEMakeAdminSettings {
                         <td>
                             <input type="text" name="le_make_nas_tunnel_url" value="<?php echo esc_attr(get_option('le_make_nas_tunnel_url', LEMakeNasDbClient::DEFAULT_TUNNEL_URL)); ?>" class="regular-text" style="width: 100%; max-width: 500px;" placeholder="https://db.lenas.me" />
                             <p class="description">Public SSL tunnel connecting to the TrueNAS PostgREST container (Default: <code>https://db.lenas.me</code>).</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row" style="font-weight: 600;">NAS Database JWT</th>
+                        <td>
+                            <?php
+                            $nas_token_configured = !empty(get_option('le_make_nas_jwt_token')) || (defined('LE_MAKE_NAS_JWT_TOKEN') && LE_MAKE_NAS_JWT_TOKEN) || !empty(getenv('LE_MAKE_NAS_JWT_TOKEN'));
+                            ?>
+                            <input type="password" name="le_make_nas_jwt_token" value="" class="regular-text" style="width: 100%; max-width: 500px;" placeholder="<?php echo $nas_token_configured ? esc_attr__('JWT configured — leave blank to keep', 'le-make-sales-portal') : esc_attr__('Enter NAS PostgREST JWT', 'le-make-sales-portal'); ?>" autocomplete="new-password" />
+                            <?php if ($nas_token_configured): ?>
+                                <div style="margin-top: 5px; color: #059669; font-size: 12px; font-weight: 600;">✓ NAS database JWT is configured; its value is never displayed.</div>
+                            <?php else: ?>
+                                <div style="margin-top: 5px; color: #b45309; font-size: 12px;">Not configured. The portal will use Supabase when NAS rejects authorization.</div>
+                            <?php endif; ?>
+                            <p class="description">Use a NAS-signed PostgREST JWT with the application database role. The TrueNAS login password and Supabase keys are not valid. The settings form encrypts this value with the WordPress salts before saving; alternatively, define <code>LE_MAKE_NAS_JWT_TOKEN</code> in <code>wp-config.php</code> or the server environment. Leave blank to keep an existing value.</p>
                         </td>
                     </tr>
                     <tr>
@@ -228,14 +278,14 @@ class LEMakeAdminSettings {
                     <tr>
                         <th scope="row" style="font-weight: 600;">Service Role Key (Optional)</th>
                         <td>
-                            <?php $has_sb_key = !empty(get_option('le_make_supabase_service_key')) || (defined('LE_MAKE_SUPABASE_SERVICE_KEY') && LE_MAKE_SUPABASE_SERVICE_KEY); ?>
+                            <?php $has_sb_key = !empty(get_option('le_make_supabase_service_key')) || (defined('LE_MAKE_SUPABASE_SERVICE_KEY') && LE_MAKE_SUPABASE_SERVICE_KEY) || !empty(getenv('LE_MAKE_SUPABASE_SERVICE_KEY')); ?>
                             <input type="password" name="le_make_supabase_service_key" value="" class="regular-text" style="width: 100%; max-width: 500px;" placeholder="<?php echo $has_sb_key ? '•••••••••••••••• (Key configured — leave blank to keep)' : 'Enter Supabase Service Role Key'; ?>" autocomplete="new-password" />
                             <?php if ($has_sb_key): ?>
                                 <div style="margin-top: 5px; color: #059669; font-size: 12px; font-weight: 600;">✓ Service role key is securely stored server-side (never exposed in HTML)</div>
                             <?php else: ?>
                                 <div style="margin-top: 5px; color: #64748b; font-size: 12px;">Optional. Leave blank if not required.</div>
                             <?php endif; ?>
-                            <p class="description">Supabase privileged service-role key for backend storage management. Can also be defined via <code>LE_MAKE_SUPABASE_SERVICE_KEY</code> in <code>wp-config.php</code>.</p>
+                            <p class="description">Required for private cloud media reads and server-side database failover. Configure only on the WordPress server as <code>LE_MAKE_SUPABASE_SERVICE_KEY</code> in <code>wp-config.php</code> or the server environment. Never use the anon key here.</p>
                         </td>
                     </tr>
                 </table>

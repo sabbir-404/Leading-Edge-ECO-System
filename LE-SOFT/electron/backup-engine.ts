@@ -40,7 +40,7 @@ export class ResticBackupEngine {
 
         const cipher = crypto.createCipheriv(this.algorithm, key, iv);
         const encryptedData = Buffer.concat([cipher.update(rawData), cipher.final()]);
-        const authTag = cipher.getAuthTag();
+        const authTag = (cipher as any).getAuthTag();
 
         // Output format: salt(16) + iv(12) + authTag(16) + encryptedData
         const snapshotBuffer = Buffer.concat([salt, iv, authTag, encryptedData]);

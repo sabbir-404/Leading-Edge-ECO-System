@@ -12,7 +12,14 @@ import supabase from './supabase';
 export { supabase as default };
 
 export const initDB = async (): Promise<void> => {
-    // Verify Supabase connectivity on startup
+    // The cloud schema intentionally denies the anonymous role. Do not query
+    // application tables until Supabase Auth has supplied an authenticated JWT.
+    const { data: authState, error: authError } = await supabase.auth.getSession();
+    if (authError || !authState.session?.access_token) {
+        console.info('[DATABASE] Supabase DB probe deferred until sign-in; anonymous access is intentionally restricted.');
+        return;
+    }
+
     const { error } = await supabase.from('companies').select('id').limit(1);
     if (error) {
         console.error('[DATABASE] ⚠️  Supabase connection failed:', error.message);

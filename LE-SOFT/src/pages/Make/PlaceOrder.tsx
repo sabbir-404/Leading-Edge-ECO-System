@@ -4,13 +4,16 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Plus, AlertCircle, CheckCircle, Paperclip, X, FileText, 
   Trash2, MapPin, User, ShoppingBag, 
-  Palette, Maximize2, Tag, Shield, DollarSign, Lock, Box, Search, Save, FolderOpen, ChevronDown
+  Palette, Maximize2, Tag, Shield, DollarSign, Lock, Box, Search, Save, FolderOpen, ChevronDown, Copy, RefreshCw
 } from 'lucide-react';
 import DashboardLayout from '../../components/DashboardLayout';
 import { 
   getUserPricingPermissions,
   canCreateProductFromPlaceOrder,
-  isFactoryManager
+  isFactoryManager,
+  getUser,
+  isAdmin,
+  isSuperadmin
 } from '../../utils/permissions';
 import { ProductCreateModal } from './components/ProductCreateModal';
 import { 
@@ -26,6 +29,13 @@ import {
 } from '../../utils/placeOrderDraft';
 import { useToast } from '../../context/ToastContext';
 import { formatSizeDisplay } from '../../utils/formatSize';
+import {
+  calculateDeliveryDateFromWorkingDays,
+  calculateWorkingDaysBetween,
+  getTodayYmd
+} from '../../utils/workingDays';
+import { resolveImageSrc, handleImageLoadError } from '../../utils/imageSrc';
+import './PlaceOrder.css';
 
 const PRIORITIES = ['Low', 'Normal', 'High', 'Urgent'];
 
@@ -37,9 +47,26 @@ export const getColorSwatchColor = (value?: unknown): string => {
   return '#d1d5db';
 };
 
+const getOrderSizeLabel = (size: any, fallback?: any): string => {
+  const candidate = size || fallback;
+  if (!candidate) return 'Not available';
+  if (typeof candidate === 'string') {
+    const value = candidate.trim();
+    return value && !['standard size', 'standard dimensions'].includes(value.toLowerCase()) ? value : 'Not available';
+  }
+  const formatted = formatSizeDisplay(candidate);
+  const normalized = formatted.trim().toLowerCase();
+  if (normalized && !['standard size', 'standard dimensions'].includes(normalized)) return formatted;
+  const explicit = String(candidate.size_label || candidate.label || candidate.name || '').trim();
+  if (explicit && !['standard size', 'standard dimensions'].includes(explicit.toLowerCase())) return explicit;
+  const rawDimensions = String(candidate.dimensions_text || candidate.dimensions || '').trim();
+  return rawDimensions || 'Not available';
+};
+
 interface CartItem {
   _id: string;
   product_id?: number;
+  requestion_item_id?: number;
   product_code?: string;
   product_name: string;
   spec_id?: number;
@@ -55,12 +82,19 @@ interface CartItem {
   quantity: number;
   item_cost_price?: number | string;
   item_sale_price?: number | string | null;
+  discount_type?: 'percent' | 'amount' | null;
+  discount_value?: number | string | null;
+  discount_amount?: number | null;
+  final_item_price?: number | null;
+  max_discount_type?: 'percent' | 'amount' | null;
+  max_discount_value?: number | null;
   notes?: string;
   attachedFile?: {
     name: string;
     path?: string;
     base64?: string;
     url?: string;
+    uploadId?: string;
     type: string;
     previewUrl?: string;
   } | null;
@@ -76,8 +110,20 @@ const PlaceOrder: React.FC = () => {
   const [confirmedOrderNumber, setConfirmedOrderNumber] = useState<string | null>(null);
   const [showProductCreateModal, setShowProductCreateModal] = useState(false);
   const [autoOrderNumber, setAutoOrderNumber] = useState<string>('');
+  const [headerDateTime, setHeaderDateTime] = useState(() => new Date().toLocaleString());
   const [savedDrafts, setSavedDrafts] = useState<SavedPlaceOrderDraft[]>(() => loadSavedPlaceOrderDrafts());
   const [activeSavedDraftId, setActiveSavedDraftId] = useState<string | null>(null);
+  const [savedDraftSearch, setSavedDraftSearch] = useState('');
+  const isDraftsView = location.pathname.endsWith('/drafts');
+  useEffect(() => {
+    const timer = window.setInterval(() => setHeaderDateTime(new Date().toLocaleString()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const visibleSavedDrafts = savedDrafts.filter(draft => {
+    const q = savedDraftSearch.trim().toLowerCase();
+    if (!q) return true;
+    return [draft.title, draft.data.customerName, draft.data.selectedCustomerInfo?.name, draft.data.cartItems?.map(item => item.product_name).join(' ')].some(value => String(value || '').toLowerCase().includes(q));
+  });
 
   // Initial draft loaded synchronously to prevent any asynchronous typing wipes
   const initialDraft = React.useMemo(() => {
@@ -88,12 +134,55 @@ const PlaceOrder: React.FC = () => {
     }
   }, []);
 
+  // Order Discount state
+  const [discountType, setDiscountType] = useState<'percent' | 'amount'>(() => initialDraft.discountType || 'percent');
+  const [discountValue, setDiscountValue] = useState<string>(() => initialDraft.discountValue !== undefined && initialDraft.discountValue !== null ? String(initialDraft.discountValue) : '');
+
   // Order Header state
   const [priority, setPriority] = useState(() => initialDraft.priority || 'Normal');
-  const [targetDeliveryDate, setTargetDeliveryDate] = useState(() => initialDraft.targetDeliveryDate || '');
-  const [requestedDeliveryDate, setRequestedDeliveryDate] = useState(() => initialDraft.requestedDeliveryDate || '');
+  const [orderPlacementDate, setOrderPlacementDate] = useState<string>(() => initialDraft.orderPlacementDate || getTodayYmd());
+  const [targetDeliveryDays, setTargetDeliveryDays] = useState<string>(() => {
+    if (initialDraft.targetDeliveryDays !== undefined && initialDraft.targetDeliveryDays !== null && initialDraft.targetDeliveryDays !== '') {
+      return String(initialDraft.targetDeliveryDays);
+    }
+    if (initialDraft.targetDeliveryDate) {
+      const days = calculateWorkingDaysBetween(initialDraft.orderPlacementDate || getTodayYmd(), initialDraft.targetDeliveryDate);
+      return days > 0 ? String(days) : '';
+    }
+    return '';
+  });
+  const [requestedDeliveryDays, setRequestedDeliveryDays] = useState<string>(() => {
+    if (initialDraft.requestedDeliveryDays !== undefined && initialDraft.requestedDeliveryDays !== null && initialDraft.requestedDeliveryDays !== '') {
+      return String(initialDraft.requestedDeliveryDays);
+    }
+    if (initialDraft.requestedDeliveryDate) {
+      const days = calculateWorkingDaysBetween(initialDraft.orderPlacementDate || getTodayYmd(), initialDraft.requestedDeliveryDate);
+      return days > 0 ? String(days) : '';
+    }
+    return '';
+  });
+
+  const targetDeliveryCalc = React.useMemo(() => {
+    return calculateDeliveryDateFromWorkingDays(orderPlacementDate, targetDeliveryDays);
+  }, [orderPlacementDate, targetDeliveryDays]);
+
+  const requestedDeliveryCalc = React.useMemo(() => {
+    return calculateDeliveryDateFromWorkingDays(orderPlacementDate, requestedDeliveryDays);
+  }, [orderPlacementDate, requestedDeliveryDays]);
+
+  const targetDeliveryDate = targetDeliveryCalc.dateStr || '';
+  const requestedDeliveryDate = requestedDeliveryCalc.dateStr || '';
+
+  const currentUser = getUser();
+  const isAdminOrManager = isSuperadmin() || isAdmin();
+
   const [salesmen, setSalesmen] = useState<any[]>([]);
-  const [selectedSalesmanId, setSelectedSalesmanId] = useState(() => initialDraft.selectedSalesmanId || '');
+  const [selectedSalesmanId, setSelectedSalesmanId] = useState(() => {
+    if (isAdminOrManager) {
+      return initialDraft.selectedSalesmanId || '';
+    }
+    return currentUser.id ? String(currentUser.id) : (initialDraft.selectedSalesmanId || '');
+  });
 
   // Customer selection & Autocomplete
   const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(() => initialDraft.selectedCustomerId ?? null);
@@ -121,6 +210,7 @@ const PlaceOrder: React.FC = () => {
   // Catalog data for item picker
   const [catalogProducts, setCatalogProducts] = useState<any[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<any | null>(() => initialDraft.selectedProduct || null);
+  const [selectedProductImageError, setSelectedProductImageError] = useState(false);
   const [selectedSpec, setSelectedSpec] = useState<any | null>(() => {
     if (initialDraft.selectedSpecId && initialDraft.selectedProduct?.specifications) {
       return initialDraft.selectedProduct.specifications.find((s: any) => s.id === initialDraft.selectedSpecId) || null;
@@ -143,6 +233,9 @@ const PlaceOrder: React.FC = () => {
   const [itemQuantity, setItemQuantity] = useState<number>(() => initialDraft.itemQuantity ?? 1);
   const [itemCostPrice, setItemCostPrice] = useState<number | string>(() => initialDraft.itemCostPrice ?? '');
   const [itemSalePrice, setItemSalePrice] = useState<number | string>(() => initialDraft.itemSalePrice ?? '');
+  const [itemDiscountType, setItemDiscountType] = useState<'percent' | 'amount'>('percent');
+  const [itemDiscountValue, setItemDiscountValue] = useState<string>('');
+  const [moneyReceived, setMoneyReceived] = useState<string>(() => initialDraft.moneyReceived !== undefined && initialDraft.moneyReceived !== null ? String(initialDraft.moneyReceived) : '0');
   const [itemRemarks, setItemRemarks] = useState<string>(() => initialDraft.itemRemarks || '');
 
   // Per-item Invoice Attachment / CAD Drawing
@@ -150,9 +243,12 @@ const PlaceOrder: React.FC = () => {
     name: string;
     base64?: string;
     url?: string;
+    uploadId?: string;
     type: string;
     previewUrl?: string;
   } | null>(null);
+  const [itemFileProgress, setItemFileProgress] = useState<number | null>(null);
+  const pendingItemUploadsRef = React.useRef<Promise<void>[]>([]);
 
   const handleItemFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -170,16 +266,49 @@ const PlaceOrder: React.FC = () => {
       previewUrl = URL.createObjectURL(file);
     }
 
+    setItemFileProgress(0);
     const reader = new FileReader();
+    let finishUploadWait!: () => void;
+    const uploadWait = new Promise<void>(resolve => { finishUploadWait = resolve; });
+    pendingItemUploadsRef.current.push(uploadWait);
+    const clearUploadWait = () => {
+      finishUploadWait();
+      pendingItemUploadsRef.current = pendingItemUploadsRef.current.filter(task => task !== uploadWait);
+    };
+    reader.onprogress = event => {
+      if (event.lengthComputable) setItemFileProgress(Math.min(40, Math.round(event.loaded / event.total * 40)));
+    };
     reader.onload = () => {
       const base64 = (reader.result as string).split(',')[1] || (reader.result as string);
-      setAttachedFile({
+      const initialFile = {
         name: file.name,
         base64: base64,
         type: isCad ? 'cad' : (isPdf ? 'pdf' : (isImage ? 'image' : 'document')),
         previewUrl
-      });
+      };
+      setAttachedFile(initialFile);
+      void (async () => {
+        try {
+          setItemFileProgress(45);
+          const result = await window.electron?.makeUploadInvoiceAttachmentBuffer?.({ fileName: file.name, fileBase64: reader.result as string, attachmentType: isCad ? 'cad' : 'invoice_attachment' });
+          const ref = result?.durableKey || (result?.publicUrl && !result.publicUrl.includes('token=') ? result.publicUrl : undefined);
+          if (!result?.success && !result?.isPendingUpload) throw new Error(result?.error || 'File could not be saved to protected storage.');
+          if (ref) {
+            const persistentFile = { name: file.name, type: initialFile.type, url: ref, uploadId: result.uploadId, previewUrl };
+            setAttachedFile(current => current?.name === file.name ? persistentFile : current);
+            setCartItems(current => current.map(item => item.attachedFile?.name === file.name && item.attachedFile?.base64 === initialFile.base64 ? { ...item, attachedFile: persistentFile } : item));
+          }
+          setItemFileProgress(100);
+        } catch (error: any) {
+          setAttachedFile(current => current?.name === file.name ? { ...initialFile } : current);
+          setItemFileProgress(null);
+          showToast(`Attachment upload failed: ${error?.message || 'Retry the file attachment before saving a draft.'}`, 'error');
+        } finally {
+          clearUploadWait();
+        }
+      })();
     };
+    reader.onerror = () => { setItemFileProgress(null); showToast('Could not read the selected attachment.', 'error'); clearUploadWait(); };
     reader.readAsDataURL(file);
   };
 
@@ -188,6 +317,7 @@ const PlaceOrder: React.FC = () => {
       URL.revokeObjectURL(attachedFile.previewUrl);
     }
     setAttachedFile(null);
+    setItemFileProgress(null);
   };
 
   // Custom Size toggle & state for catalog products
@@ -218,8 +348,27 @@ const PlaceOrder: React.FC = () => {
     const dup = (location.state as any)?.duplicateFromOrder;
     if (dup && !isFactoryMgr) {
       if (dup.priority) setPriority(dup.priority);
-      if (dup.target_delivery_date || dup.delivery_date) setTargetDeliveryDate(dup.target_delivery_date || dup.delivery_date);
-      if (dup.requested_delivery_date) setRequestedDeliveryDate(dup.requested_delivery_date);
+      const basePlacement = dup.created_at ? dup.created_at.split('T')[0] : getTodayYmd();
+      setOrderPlacementDate(basePlacement);
+
+      const targetDate = dup.target_delivery_date || dup.delivery_date || '';
+      if (dup.target_delivery_days !== undefined && dup.target_delivery_days !== null && dup.target_delivery_days !== '') {
+        setTargetDeliveryDays(String(dup.target_delivery_days));
+      } else if (targetDate) {
+        const days = calculateWorkingDaysBetween(basePlacement, targetDate);
+        setTargetDeliveryDays(days > 0 ? String(days) : '');
+      } else {
+        setTargetDeliveryDays('');
+      }
+
+      if (dup.requested_delivery_days !== undefined && dup.requested_delivery_days !== null && dup.requested_delivery_days !== '') {
+        setRequestedDeliveryDays(String(dup.requested_delivery_days));
+      } else if (dup.requested_delivery_date) {
+        const reqDays = calculateWorkingDaysBetween(basePlacement, dup.requested_delivery_date);
+        setRequestedDeliveryDays(reqDays > 0 ? String(reqDays) : '');
+      } else {
+        setRequestedDeliveryDays('');
+      }
       if (dup.salesman_id) setSelectedSalesmanId(String(dup.salesman_id));
       if (dup.customer_id) setSelectedCustomerId(dup.customer_id);
       if (dup.customer_name) setCustomerName(dup.customer_name);
@@ -230,6 +379,10 @@ const PlaceOrder: React.FC = () => {
       if (dup.receiver_name) setReceiverName(dup.receiver_name);
       if (dup.receiver_phone) setReceiverPhone(dup.receiver_phone);
       if (dup.special_instructions) setSpecialInstructions(dup.special_instructions);
+
+      if (dup.discount_type) setDiscountType(dup.discount_type);
+      if (dup.discount_value !== undefined && dup.discount_value !== null) setDiscountValue(String(dup.discount_value));
+      setMoneyReceived('0');
 
       if (Array.isArray(dup.items) && dup.items.length > 0) {
         const mapped = dup.items.map((it: any) => ({
@@ -250,6 +403,8 @@ const PlaceOrder: React.FC = () => {
           quantity: it.quantity > 0 ? it.quantity : 1,
           item_cost_price: pricingPerms.canViewCostPrice ? (it.item_cost_price || it.unit_cost_price || 0) : 0,
           item_sale_price: pricingPerms.canViewSalePrice ? (it.item_sale_price || it.unit_sale_price || null) : null,
+          max_discount_type: it.max_discount_type || undefined,
+          max_discount_value: it.max_discount_value !== undefined && it.max_discount_value !== null ? Number(it.max_discount_value) : undefined,
           notes: it.designer_notes || it.notes || '',
           attachedFile: (it.technical_drawing_url || it.drawing_url) ? {
             name: 'Drawing Blueprint',
@@ -278,6 +433,174 @@ const PlaceOrder: React.FC = () => {
 
   // Multi-item Cart
   const [cartItems, setCartItems] = useState<CartItem[]>(() => (Array.isArray(initialDraft.cartItems) ? initialDraft.cartItems : []) as any);
+  const loadedRequestionItemRef = React.useRef<string | null>(null);
+
+  useEffect(() => {
+    const requestion = (location.state as any)?.requestion;
+    const requestItems = Array.isArray(requestion?.items) ? requestion.items : (requestion?.item ? [requestion.item] : []);
+    const requestKey = `${requestion?.request?.id || 'request'}:${requestItems.map((item: any) => item.id).join(',')}`;
+    if (!requestItems.length || loadedRequestionItemRef.current === requestKey) return;
+    loadedRequestionItemRef.current = requestKey;
+    setCustomerName((current: string) => current || requestion.request?.customer_name || '');
+    setCustomerPhone((current: string) => current || requestion.request?.customer_phone || '');
+    setCartItems((current: CartItem[]) => {
+      const existing = new Set(current.map(item => Number(item.requestion_item_id)).filter(Boolean));
+      const incoming = requestItems.filter((item: any) => !existing.has(Number(item.id))).map((requestItem: any) => ({
+          _id: `requestion-${requestItem.id}-${Date.now()}`,
+          product_id: requestItem.product_id || undefined,
+          product_code: requestItem.product_code || '',
+          product_name: requestItem.product_name,
+          quantity: Number(requestItem.quantity) || 1,
+          item_sale_price: requestItem.sale_price ?? null,
+          requestion_item_id: Number(requestItem.id),
+          spec_name: Array.isArray(requestItem.specification) ? requestItem.specification.join(', ') : String(requestItem.specification || ''),
+          dimensions_text: Array.isArray(requestItem.sizes) ? requestItem.sizes.join(', ') : String(requestItem.size_label || ''),
+          color_name: Array.isArray(requestItem.colors) ? requestItem.colors.join(', ') : String(requestItem.color_name || ''),
+          max_discount_type: requestItem.max_discount_type || 'percent',
+          max_discount_value: requestItem.max_discount_value ?? 0,
+          notes: requestItem.notes || '',
+          attachedFile: null
+        } as CartItem));
+      return incoming.length ? [...current, ...incoming] : current;
+    });
+  }, [location.state]);
+
+  // Authoritative real-time totals & discount recalculation
+  const pricingSummary = React.useMemo(() => {
+    const totalQty = cartItems.reduce((acc, i) => acc + i.quantity, 0);
+    const totalCostPrice = pricingPerms.canViewCostPrice
+      ? Math.round((cartItems.reduce((acc, i) => acc + (Number(i.item_cost_price) || 0) * i.quantity, 0) + Number.EPSILON) * 100) / 100
+      : 0;
+    const hasAnySalePrice = cartItems.some(i => i.item_sale_price !== null && i.item_sale_price !== undefined && i.item_sale_price !== '');
+    const subtotal = hasAnySalePrice
+      ? Math.round((cartItems.reduce((acc, i) => acc + (Number(i.item_sale_price) || 0) * i.quantity, 0) + Number.EPSILON) * 100) / 100
+      : null;
+
+    // Calculate maximum permitted discount across cart items
+    let totalAllowedDiscountAmount = 0;
+    let hasAnyConfiguredLimit = false;
+
+    if (subtotal !== null && subtotal > 0) {
+      for (const item of cartItems) {
+        const itemSale = item.item_sale_price !== null && item.item_sale_price !== undefined && item.item_sale_price !== ''
+          ? Number(item.item_sale_price)
+          : null;
+        if (itemSale !== null) {
+          const itemSub = itemSale * item.quantity;
+          if (item.max_discount_value !== undefined && item.max_discount_value !== null && !isNaN(Number(item.max_discount_value))) {
+            hasAnyConfiguredLimit = true;
+            const maxVal = Number(item.max_discount_value);
+            if (item.max_discount_type === 'amount') {
+              totalAllowedDiscountAmount += Math.min(itemSub, maxVal * item.quantity);
+            } else {
+              const pct = Math.min(100, Math.max(0, maxVal));
+              totalAllowedDiscountAmount += itemSub * (pct / 100);
+            }
+          } else {
+            // Backward-compatible default: no limit configured imposes no restriction
+            totalAllowedDiscountAmount += itemSub;
+          }
+        }
+      }
+    }
+
+    totalAllowedDiscountAmount = Math.round((totalAllowedDiscountAmount + Number.EPSILON) * 100) / 100;
+    const totalAllowedDiscountPercent = subtotal && subtotal > 0
+      ? Math.round(((totalAllowedDiscountAmount / subtotal) * 100 + Number.EPSILON) * 100) / 100
+      : 0;
+
+    let discountAmount = 0;
+    let discountValNum = 0;
+    let discountValidationError: string | null = null;
+
+    if (discountValue !== '' && discountValue !== undefined && discountValue !== null) {
+      const parsed = Number(discountValue);
+      if (isNaN(parsed) || parsed < 0) {
+        discountValidationError = 'Discount cannot be negative.';
+      } else {
+        discountValNum = Math.round((parsed + Number.EPSILON) * 100) / 100;
+        if (subtotal === null && discountValNum > 0) {
+          discountValidationError = 'Cannot apply discount when items do not have sale prices.';
+        } else if (discountType === 'percent') {
+          if (discountValNum > 100) {
+            discountValidationError = 'Discount percentage cannot exceed 100%.';
+          } else if (hasAnyConfiguredLimit && discountValNum > totalAllowedDiscountPercent + 0.001) {
+            discountValidationError = `Discount (${discountValNum}%) exceeds the maximum permitted discount limit (${totalAllowedDiscountPercent}%).`;
+          } else if (subtotal !== null) {
+            discountAmount = Math.round((subtotal * (discountValNum / 100) + Number.EPSILON) * 100) / 100;
+          }
+        } else {
+          // fixed amount mode
+          if (subtotal !== null && discountValNum > subtotal) {
+            discountValidationError = `Fixed discount (৳${discountValNum.toLocaleString()}) cannot exceed the subtotal (৳${subtotal.toLocaleString()}).`;
+          } else if (hasAnyConfiguredLimit && discountValNum > totalAllowedDiscountAmount + 0.001) {
+            discountValidationError = `Fixed discount (৳${discountValNum.toLocaleString()}) exceeds the maximum permitted limit (৳${totalAllowedDiscountAmount.toLocaleString()}).`;
+          } else {
+            discountAmount = discountValNum;
+          }
+        }
+      }
+    }
+
+    const finalSalePrice = subtotal !== null
+      ? Math.max(0, Math.round((subtotal - discountAmount + Number.EPSILON) * 100) / 100)
+      : null;
+
+    const marginAmount = finalSalePrice !== null && pricingPerms.canViewCostPrice
+      ? Math.round((finalSalePrice - totalCostPrice + Number.EPSILON) * 100) / 100
+      : null;
+
+    // Money received & Amount Due calculation
+    let moneyReceivedNum = 0;
+    let paymentValidationError: string | null = null;
+    const targetOrderTotal = finalSalePrice ?? subtotal;
+    if (moneyReceived !== '' && moneyReceived !== undefined && moneyReceived !== null) {
+      const trimmed = String(moneyReceived).trim();
+      if (trimmed.startsWith('-')) {
+        paymentValidationError = 'Money received cannot be negative.';
+      } else if (isNaN(Number(trimmed)) || !/^\d+(\.\d+)?$/.test(trimmed)) {
+        paymentValidationError = 'Money received must be a valid non-negative number.';
+      } else if (trimmed.includes('.') && trimmed.split('.')[1].length > 2) {
+        paymentValidationError = 'Money received cannot have more than 2 decimal places.';
+      } else {
+        moneyReceivedNum = Math.round((Number(trimmed) + Number.EPSILON) * 100) / 100;
+        if (targetOrderTotal !== null && moneyReceivedNum > targetOrderTotal + 0.001) {
+          paymentValidationError = `Money received (৳${moneyReceivedNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}) cannot exceed total order price (৳${targetOrderTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}).`;
+        }
+      }
+    }
+
+    const amountDue = targetOrderTotal !== null
+      ? Math.max(0, Math.round((targetOrderTotal - moneyReceivedNum + Number.EPSILON) * 100) / 100)
+      : 0;
+
+    const paymentStatus: 'paid' | 'partial' | 'unpaid' = (amountDue <= 0 && targetOrderTotal !== null && (targetOrderTotal > 0 || moneyReceivedNum > 0))
+      ? 'paid'
+      : (moneyReceivedNum > 0 ? 'partial' : 'unpaid');
+
+    const productionHold = amountDue > 0;
+
+    return {
+      totalQty,
+      totalCostPrice,
+      subtotal,
+      hasAnySalePrice,
+      hasAnyConfiguredLimit,
+      totalAllowedDiscountAmount,
+      totalAllowedDiscountPercent,
+      discountType,
+      discountValNum,
+      discountAmount,
+      discountValidationError,
+      finalSalePrice,
+      marginAmount,
+      moneyReceivedNum,
+      amountDue,
+      paymentStatus,
+      productionHold,
+      paymentValidationError
+    };
+  }, [cartItems, discountType, discountValue, moneyReceived, pricingPerms.canViewCostPrice]);
 
   // Search state
   const [productSearch, setProductSearch] = useState('');
@@ -285,8 +608,10 @@ const PlaceOrder: React.FC = () => {
   const productSearchSeqRef = React.useRef(0);
 
   // Invoice Attachments
-  const [invoiceAttachments, setInvoiceAttachments] = useState<{ name: string; url: string }[]>(() => Array.isArray(initialDraft.invoiceAttachments) ? initialDraft.invoiceAttachments : []);
+  const [invoiceAttachments, setInvoiceAttachments] = useState<{ name: string; url: string; isPending?: boolean }[]>(() => Array.isArray(initialDraft.invoiceAttachments) ? initialDraft.invoiceAttachments : []);
   const [uploadingInvoice, setUploadingInvoice] = useState(false);
+  const [invoiceUploadProgress, setInvoiceUploadProgress] = useState<Record<string, number>>({});
+  const invoiceUploadsActiveRef = React.useRef(0);
 
   // Submission & Feedback
   const [loading, setLoading] = useState(false);
@@ -301,6 +626,9 @@ const PlaceOrder: React.FC = () => {
     priority,
     targetDeliveryDate,
     requestedDeliveryDate,
+    targetDeliveryDays,
+    requestedDeliveryDays,
+    orderPlacementDate,
     selectedSalesmanId,
     selectedCustomerId,
     selectedCustomerInfo,
@@ -322,7 +650,7 @@ const PlaceOrder: React.FC = () => {
     itemSalePrice,
     itemRemarks,
     selectedItemAttachedFile: attachedFile
-      ? { name: attachedFile.name, url: attachedFile.url, type: attachedFile.type }
+      ? { name: attachedFile.name, url: attachedFile.url, uploadId: attachedFile.uploadId, type: attachedFile.type }
       : null,
     isCustomSize,
     customShape,
@@ -340,7 +668,10 @@ const PlaceOrder: React.FC = () => {
     customItemSize,
     customItemSpec,
     cartItems: cartItems as any,
-    invoiceAttachments
+    invoiceAttachments,
+    discountType,
+    discountValue,
+    moneyReceived
   });
 
   const handleLoadSavedDraft = (savedDraft: SavedPlaceOrderDraft) => {
@@ -353,9 +684,28 @@ const PlaceOrder: React.FC = () => {
 
     const d = savedDraft.data || {};
     const product = d.selectedProduct || null;
+    const placement = d.orderPlacementDate || getTodayYmd();
+    setOrderPlacementDate(placement);
+
+    if (d.targetDeliveryDays !== undefined && d.targetDeliveryDays !== null && d.targetDeliveryDays !== '') {
+      setTargetDeliveryDays(String(d.targetDeliveryDays));
+    } else if (d.targetDeliveryDate) {
+      const days = calculateWorkingDaysBetween(placement, d.targetDeliveryDate);
+      setTargetDeliveryDays(days > 0 ? String(days) : '');
+    } else {
+      setTargetDeliveryDays('');
+    }
+
+    if (d.requestedDeliveryDays !== undefined && d.requestedDeliveryDays !== null && d.requestedDeliveryDays !== '') {
+      setRequestedDeliveryDays(String(d.requestedDeliveryDays));
+    } else if (d.requestedDeliveryDate) {
+      const reqDays = calculateWorkingDaysBetween(placement, d.requestedDeliveryDate);
+      setRequestedDeliveryDays(reqDays > 0 ? String(reqDays) : '');
+    } else {
+      setRequestedDeliveryDays('');
+    }
+
     setPriority(d.priority || 'Normal');
-    setTargetDeliveryDate(d.targetDeliveryDate || '');
-    setRequestedDeliveryDate(d.requestedDeliveryDate || '');
     setSelectedSalesmanId(d.selectedSalesmanId || '');
     setSelectedCustomerId(d.selectedCustomerId ?? d.selectedCustomerInfo?.id ?? null);
     setSelectedCustomerInfo(d.selectedCustomerInfo || null);
@@ -378,7 +728,7 @@ const PlaceOrder: React.FC = () => {
     setItemSalePrice(d.itemSalePrice ?? '');
     setItemRemarks(d.itemRemarks || '');
     setAttachedFile(d.selectedItemAttachedFile?.url
-      ? { name: d.selectedItemAttachedFile.name, url: d.selectedItemAttachedFile.url, type: d.selectedItemAttachedFile.type }
+      ? { name: d.selectedItemAttachedFile.name, url: d.selectedItemAttachedFile.url, uploadId: d.selectedItemAttachedFile.uploadId, type: d.selectedItemAttachedFile.type }
       : null);
     setIsCustomSize(d.isCustomSize ?? false);
     setCustomShape(d.customShape || 'rect');
@@ -397,6 +747,9 @@ const PlaceOrder: React.FC = () => {
     setCustomItemSpec(d.customItemSpec || '');
     setCartItems(Array.isArray(d.cartItems) ? d.cartItems as any : []);
     setInvoiceAttachments(Array.isArray(d.invoiceAttachments) ? d.invoiceAttachments : []);
+    setDiscountType(d.discountType || 'percent');
+    setDiscountValue(d.discountValue !== undefined && d.discountValue !== null ? String(d.discountValue) : '');
+    setMoneyReceived(d.moneyReceived !== undefined && d.moneyReceived !== null ? String(d.moneyReceived) : '0');
     setShowColorOptions(false);
     setCustomerSearchQuery('');
     setCustomerSuggestions([]);
@@ -407,7 +760,8 @@ const PlaceOrder: React.FC = () => {
     showToast('Loaded saved draft: ' + savedDraft.title, 'success');
   };
 
-  const handleSaveAsDraft = () => {
+  const handleSaveAsDraft = async () => {
+    if (pendingItemUploadsRef.current.length) await Promise.all(pendingItemUploadsRef.current);
     const snapshot = buildCurrentDraftData();
     if (!hasMeaningfulPlaceOrderDraft(snapshot)) {
       showToast('Enter customer details or add an item before saving a draft.', 'warning');
@@ -446,6 +800,18 @@ const PlaceOrder: React.FC = () => {
     setSavedDrafts(loadSavedPlaceOrderDrafts());
     if (activeSavedDraftId === savedDraft.id) setActiveSavedDraftId(null);
     showToast('Saved draft deleted.', 'success');
+  };
+
+  const handleDuplicateSavedDraft = (savedDraft: SavedPlaceOrderDraft) => {
+    try {
+      const duplicatedData = JSON.parse(JSON.stringify(savedDraft.data));
+      const duplicatedTitle = `${savedDraft.title} (Copy)`;
+      const saved = saveNamedPlaceOrderDraft(duplicatedData, duplicatedTitle);
+      setSavedDrafts(loadSavedPlaceOrderDrafts());
+      showToast('Draft duplicated: ' + saved.draft.title, 'success');
+    } catch (err: any) {
+      showToast('Could not duplicate draft: ' + (err?.message || 'Storage error'), 'error');
+    }
   };
 
 
@@ -574,6 +940,9 @@ const PlaceOrder: React.FC = () => {
         priority,
         targetDeliveryDate,
         requestedDeliveryDate,
+        targetDeliveryDays,
+        requestedDeliveryDays,
+        orderPlacementDate,
         selectedSalesmanId,
         selectedCustomerId,
         selectedCustomerInfo,
@@ -593,6 +962,7 @@ const PlaceOrder: React.FC = () => {
         itemCostPrice,
         itemSalePrice,
         itemRemarks,
+        selectedItemAttachedFile: attachedFile ? { name: attachedFile.name, type: attachedFile.type, url: attachedFile.url, uploadId: attachedFile.uploadId } : null,
         isCustomSize,
         customShape,
         customLength,
@@ -609,19 +979,22 @@ const PlaceOrder: React.FC = () => {
         customItemSize,
         customItemSpec,
         cartItems: cartItems as any,
-        invoiceAttachments
+        invoiceAttachments,
+        discountType,
+        discountValue
       });
     }, 250);
     return () => clearTimeout(timer);
   }, [
-    priority, targetDeliveryDate, requestedDeliveryDate, selectedSalesmanId,
+    priority, targetDeliveryDate, requestedDeliveryDate, targetDeliveryDays, requestedDeliveryDays, orderPlacementDate, selectedSalesmanId,
     selectedCustomerId, selectedCustomerInfo,
     customerName, customerPhone, customerEmail, shippingAddress, locationLandmark,
-    receiverName, receiverPhone, specialInstructions, selectedProduct, selectedSpec,
+    receiverName, receiverPhone, specialInstructions, selectedProduct, selectedSpec, attachedFile,
     selectedSize, selectedColor, itemQuantity, itemCostPrice, itemSalePrice, itemRemarks,
     isCustomSize, customShape, customLength, customWidth, customHeight, customDiameter,
     customUnit, isCustomSpec, customSpecName, isCustomColor, customColorName,
-    isCustomItemMode, customItemName, customItemSize, customItemSpec, cartItems, invoiceAttachments
+    isCustomItemMode, customItemName, customItemSize, customItemSpec, cartItems, invoiceAttachments,
+    discountType, discountValue
   ]);
 
   const handleClearDraft = () => {
@@ -647,6 +1020,8 @@ const PlaceOrder: React.FC = () => {
 
     clearPlaceOrderDraft();
     setActiveSavedDraftId(null);
+    setDiscountType('percent');
+    setDiscountValue('');
     setShowColorOptions(false);
     setSelectedCustomerId(null);
     setSelectedCustomerInfo(null);
@@ -661,8 +1036,9 @@ const PlaceOrder: React.FC = () => {
     setReceiverPhone('');
     setSpecialInstructions('');
     setPriority('Normal');
-    setTargetDeliveryDate('');
-    setRequestedDeliveryDate('');
+    setTargetDeliveryDays('');
+    setRequestedDeliveryDays('');
+    setOrderPlacementDate(getTodayYmd());
     setSelectedSalesmanId('');
     setSelectedProduct(null);
     setSelectedSpec(null);
@@ -769,8 +1145,13 @@ const PlaceOrder: React.FC = () => {
     try {
       if (window.electron?.makePickAndUploadInvoiceAttachment) {
         const res = await window.electron.makePickAndUploadInvoiceAttachment();
-        if (res && res.success && res.publicUrl) {
-          setInvoiceAttachments(prev => [...prev, { name: res.fileName || 'Invoice Image', url: res.publicUrl }]);
+        const persistentUrl = res.durableKey || (res.publicUrl && !res.publicUrl.includes('token=') ? res.publicUrl : undefined) || res.durableKey;
+        if (res && (res.success || res.isPendingUpload) && persistentUrl) {
+          setInvoiceAttachments(prev => [...prev, {
+            name: res.fileName || 'Invoice Image',
+            url: persistentUrl,
+            isPending: Boolean(res.isPendingUpload)
+          }]);
         } else if (res && res.error) {
           alert('Upload failed: ' + res.error);
         }
@@ -783,47 +1164,13 @@ const PlaceOrder: React.FC = () => {
     }
   };
 
-  const handleMobileInvoiceCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (file.size > 15 * 1024 * 1024) {
-      alert('File size exceeds the 15 MB limit.');
-      return;
-    }
-
-    setUploadingInvoice(true);
-    try {
-      const reader = new FileReader();
-      reader.onload = async () => {
-        const base64 = reader.result as string;
-        if (window.electron?.makeUploadInvoiceAttachmentBuffer) {
-          const res = await window.electron.makeUploadInvoiceAttachmentBuffer({
-            fileName: file.name,
-            fileBase64: base64
-          });
-          if (res && res.success && res.publicUrl) {
-            setInvoiceAttachments(prev => [...prev, { name: file.name, url: res.publicUrl }]);
-          } else if (res && res.error) {
-            alert('Upload failed: ' + res.error);
-          }
-        } else {
-          setInvoiceAttachments(prev => [...prev, { name: file.name, url: base64 }]);
-        }
-        setUploadingInvoice(false);
-      };
-      reader.readAsDataURL(file);
-    } catch (err: any) {
-      console.error(err);
-      alert('Error uploading invoice image: ' + (err.message || 'Unknown error'));
-      setUploadingInvoice(false);
-    }
-  };
-
   const handleProductSelect = (productId: number, directProd?: any) => {
     const prod = directProd || searchResults.find(p => p.id === productId) || catalogProducts.find(p => p.id === productId) || null;
     setSelectedProduct(prod);
+    setSelectedProductImageError(false);
     setSelectedSpec(null);
-    setSelectedSize(null);
+    const activeSize = prod ? (prod.size || (prod.sizes && prod.sizes.length > 0 ? prod.sizes[0] : null)) : null;
+    setSelectedSize(activeSize);
     setSelectedColor(null);
     setIsCustomSpec(false);
     setCustomSpecName('');
@@ -835,8 +1182,8 @@ const PlaceOrder: React.FC = () => {
     setCustomHeight('');
     setCustomDiameter('');
     if (prod) {
-      setItemCostPrice(pricingPerms.canViewCostPrice ? (prod.purchase_price || '') : '');
-      setItemSalePrice(prod.selling_price || prod.mrp || '');
+      setItemCostPrice(pricingPerms.canViewCostPrice ? (prod.cost_price ?? prod.purchase_price ?? '') : '');
+      setItemSalePrice(prod.sale_price ?? prod.selling_price ?? prod.mrp ?? '');
     } else {
       setItemCostPrice('');
       setItemSalePrice('');
@@ -854,6 +1201,29 @@ const PlaceOrder: React.FC = () => {
   const handleAddItemToOrder = () => {
     const costP = pricingPerms.canViewCostPrice && itemCostPrice !== '' ? Math.max(0, Number(itemCostPrice) || 0) : 0;
     const saleP = itemSalePrice !== '' ? Math.max(0, Number(itemSalePrice) || 0) : null;
+    const qty = itemQuantity > 0 ? itemQuantity : 1;
+
+    // Line discount calculation
+    let lineDiscAmount = 0;
+    let lineDiscVal: number | null = null;
+    let lineDiscType: 'percent' | 'amount' | null = null;
+
+    if (itemDiscountValue !== '' && itemDiscountValue !== undefined && itemDiscountValue !== null && saleP !== null) {
+      const parsedD = Number(itemDiscountValue);
+      if (!isNaN(parsedD) && parsedD > 0) {
+        lineDiscType = itemDiscountType;
+        lineDiscVal = parsedD;
+        const lineBase = saleP * qty;
+        if (itemDiscountType === 'percent') {
+          const pct = Math.min(100, Math.max(0, parsedD));
+          lineDiscAmount = Math.round((lineBase * (pct / 100) + Number.EPSILON) * 100) / 100;
+        } else {
+          lineDiscAmount = Math.min(lineBase, Math.round((parsedD + Number.EPSILON) * 100) / 100);
+        }
+      }
+    }
+
+    const finalItemPrice = saleP !== null ? Math.max(0, Math.round(((saleP * qty) - lineDiscAmount + Number.EPSILON) * 100) / 100) : null;
 
     if (isCustomItemMode) {
       if (!customItemName.trim()) {
@@ -868,9 +1238,13 @@ const PlaceOrder: React.FC = () => {
         dimensions_text: customItemSize.trim() || undefined,
         custom_dimensions: customItemSize.trim() || undefined,
         is_customized: true,
-        quantity: itemQuantity > 0 ? itemQuantity : 1,
+        quantity: qty,
         item_cost_price: costP,
         item_sale_price: saleP,
+        discount_type: null,
+        discount_value: null,
+        discount_amount: 0,
+        final_item_price: saleP !== null ? (saleP * qty) : null,
         notes: itemRemarks,
         attachedFile: attachedFile ? { ...attachedFile } : null
       };
@@ -882,6 +1256,8 @@ const PlaceOrder: React.FC = () => {
       setItemQuantity(1);
       setItemCostPrice('');
       setItemSalePrice('');
+      setItemDiscountType('percent');
+      setItemDiscountValue('');
       setAttachedFile(null);
     } else {
       if (!selectedProduct) {
@@ -929,9 +1305,15 @@ const PlaceOrder: React.FC = () => {
         color_id: isCustomColor ? undefined : selectedColor?.id,
         color_name: finalColorName,
         color_code: isCustomColor ? undefined : selectedColor?.color_code,
-        quantity: itemQuantity > 0 ? itemQuantity : 1,
+        quantity: qty,
         item_cost_price: costP,
         item_sale_price: saleP,
+        discount_type: lineDiscType,
+        discount_value: lineDiscVal,
+        discount_amount: lineDiscAmount,
+        final_item_price: finalItemPrice,
+        max_discount_type: selectedProduct.max_discount_type || null,
+        max_discount_value: selectedProduct.max_discount_value !== undefined && selectedProduct.max_discount_value !== null ? Number(selectedProduct.max_discount_value) : null,
         notes: itemRemarks,
         attachedFile: attachedFile ? { ...attachedFile } : null
       };
@@ -950,6 +1332,8 @@ const PlaceOrder: React.FC = () => {
       setItemQuantity(1);
       setItemCostPrice('');
       setItemSalePrice('');
+      setItemDiscountType('percent');
+      setItemDiscountValue('');
       setAttachedFile(null);
     }
   };
@@ -959,40 +1343,70 @@ const PlaceOrder: React.FC = () => {
   };
 
   // ── Document & Invoice Upload ────────────────────────────────────────────
-  const handleUploadFileAttachment = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (file.size > 15 * 1024 * 1024) {
-      alert('File size exceeds the 15 MB limit.');
-      return;
-    }
+  const handleUploadFileAttachment = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
 
     setUploadingInvoice(true);
-    try {
-      const reader = new FileReader();
-      reader.onload = async () => {
-        const base64 = reader.result as string;
-        if (window.electron?.makeUploadInvoiceAttachmentBuffer) {
-          const res = await window.electron.makeUploadInvoiceAttachmentBuffer({
-            fileName: file.name,
-            fileBase64: base64
-          });
-          if (res && res.success && res.publicUrl) {
-            setInvoiceAttachments(prev => [...prev, { name: file.name, url: res.publicUrl }]);
-          } else if (res && res.error) {
-            alert('Upload failed: ' + res.error);
-          }
-        } else {
-          setInvoiceAttachments(prev => [...prev, { name: file.name, url: base64 }]);
-        }
-        setUploadingInvoice(false);
-      };
-      reader.readAsDataURL(file);
-    } catch (err: any) {
-      console.error(err);
-      alert('Error uploading document: ' + (err.message || 'Unknown error'));
-      setUploadingInvoice(false);
+    for (const file of files) {
+      if (file.size > 15 * 1024 * 1024) {
+        alert(`File "${file.name}" exceeds the 15 MB limit.`);
+        continue;
+      }
+
+      const progressKey = `${file.name}-${file.size}-${file.lastModified}`;
+      invoiceUploadsActiveRef.current += 1;
+      setUploadingInvoice(true);
+      setInvoiceUploadProgress(prev => ({ ...prev, [progressKey]: 0 }));
+      try {
+        await new Promise<void>((resolve) => {
+          const reader = new FileReader();
+          reader.onprogress = event => {
+            if (event.lengthComputable) setInvoiceUploadProgress(prev => ({ ...prev, [progressKey]: Math.min(40, Math.round(event.loaded / event.total * 40)) }));
+          };
+          reader.onload = async () => {
+            try {
+              const base64 = reader.result as string;
+              setInvoiceUploadProgress(prev => ({ ...prev, [progressKey]: 45 }));
+              if (window.electron?.makeUploadInvoiceAttachmentBuffer) {
+                setInvoiceUploadProgress(prev => ({ ...prev, [progressKey]: 55 }));
+                const res = await window.electron.makeUploadInvoiceAttachmentBuffer({
+                  fileName: file.name,
+                  fileBase64: base64
+                });
+                const persistentUrl = res.durableKey || (res.publicUrl && !res.publicUrl.includes('token=') ? res.publicUrl : undefined) || res.durableKey;
+                if (res && (res.success || res.isPendingUpload) && persistentUrl) {
+                  setInvoiceUploadProgress(prev => ({ ...prev, [progressKey]: 100 }));
+                  setInvoiceAttachments(prev => [...prev, {
+                    name: file.name,
+                    url: persistentUrl,
+                    isPending: Boolean(res.isPendingUpload)
+                  }]);
+                } else if (res && res.error) {
+                  alert(`Upload failed for "${file.name}": ` + res.error);
+                }
+              } else {
+                setInvoiceUploadProgress(prev => ({ ...prev, [progressKey]: 100 }));
+                setInvoiceAttachments(prev => [...prev, { name: file.name, url: base64 }]);
+              }
+            } catch (bufErr: any) {
+              console.error('Buffer upload exception:', bufErr);
+            } finally {
+              resolve();
+            }
+          };
+          reader.onerror = () => resolve();
+          reader.readAsDataURL(file);
+        });
+      } catch (err: any) {
+        console.error(err);
+      } finally {
+        invoiceUploadsActiveRef.current = Math.max(0, invoiceUploadsActiveRef.current - 1);
+        if (invoiceUploadsActiveRef.current === 0) setUploadingInvoice(false);
+        window.setTimeout(() => setInvoiceUploadProgress(prev => { const next = { ...prev }; delete next[progressKey]; return next; }), 1200);
+      }
     }
+    e.target.value = '';
   };
 
   // ── Submit Order ───────────────────────────────────────────────────────────
@@ -1007,8 +1421,12 @@ const PlaceOrder: React.FC = () => {
       return;
     }
 
-    if (!targetDeliveryDate) {
-      setError('Target Delivery Date is mandatory. Please select a target delivery date.');
+    if (!targetDeliveryDays || !targetDeliveryDate || targetDeliveryCalc.error) {
+      setError(targetDeliveryCalc.error || 'Target Delivery Date is mandatory. Please enter a valid number of working days.');
+      return;
+    }
+    if (requestedDeliveryDays && requestedDeliveryCalc.error) {
+      setError(requestedDeliveryCalc.error);
       return;
     }
 
@@ -1016,14 +1434,21 @@ const PlaceOrder: React.FC = () => {
     setError('');
 
     try {
-      const totalQty = cartItems.reduce((acc, i) => acc + i.quantity, 0);
-      const totalCostPrice = pricingPerms.canViewCostPrice 
-        ? cartItems.reduce((acc, i) => acc + (Number(i.item_cost_price) || 0) * i.quantity, 0)
-        : 0;
-      const hasAnySalePrice = cartItems.some(i => i.item_sale_price !== null && i.item_sale_price !== undefined && i.item_sale_price !== '');
-      const totalSalePrice = hasAnySalePrice 
-        ? cartItems.reduce((acc, i) => acc + (Number(i.item_sale_price) || 0) * i.quantity, 0)
-        : null;
+      if (pendingItemUploadsRef.current.length) await Promise.all(pendingItemUploadsRef.current);
+      if (pricingSummary.discountValidationError) {
+        alert(`Invalid discount: ${pricingSummary.discountValidationError}`);
+        setLoading(false);
+        return;
+      }
+      if (pricingSummary.paymentValidationError) {
+        alert(pricingSummary.paymentValidationError);
+        setLoading(false);
+        return;
+      }
+
+      const totalQty = pricingSummary.totalQty;
+      const totalCostPrice = pricingSummary.totalCostPrice;
+      const totalSalePrice = pricingSummary.subtotal;
 
       const mainTitle = cartItems.length === 1 
         ? cartItems[0].product_name 
@@ -1039,7 +1464,11 @@ const PlaceOrder: React.FC = () => {
         delivery_date: targetDeliveryDate,
         target_delivery_date: targetDeliveryDate,
         requested_delivery_date: requestedDeliveryDate || null,
-        salesman_id: selectedSalesmanId ? parseInt(selectedSalesmanId) : null,
+        target_delivery_days: Number(targetDeliveryDays) || null,
+        requested_delivery_days: requestedDeliveryDays ? Number(requestedDeliveryDays) : null,
+        salesman_id: isAdminOrManager
+          ? (selectedSalesmanId ? parseInt(selectedSalesmanId) : null)
+          : (currentUser.id ? parseInt(String(currentUser.id)) : (selectedSalesmanId ? parseInt(selectedSalesmanId) : null)),
         customer_id: selectedCustomerId || null,
         customer_name: customerName.trim(),
         customer_phone: customerPhone.trim(),
@@ -1051,9 +1480,20 @@ const PlaceOrder: React.FC = () => {
         special_instructions: specialInstructions.trim(),
         cost_price: totalCostPrice,
         sale_price: totalSalePrice,
+        discount_type: pricingSummary.discountValNum > 0 ? pricingSummary.discountType : null,
+        discount_value: pricingSummary.discountValNum > 0 ? pricingSummary.discountValNum : null,
+        discount_amount: pricingSummary.discountAmount,
+        final_price: pricingSummary.finalSalePrice,
+        money_received: pricingSummary.moneyReceivedNum,
+        amount_due: pricingSummary.amountDue,
+        payment_status: pricingSummary.paymentStatus,
+        production_hold: pricingSummary.productionHold,
+        hold_reason: pricingSummary.productionHold ? `Outstanding balance of ৳${pricingSummary.amountDue.toLocaleString()} due` : null,
+        admin_approval_status: 'none',
         invoice_attachments: invoiceAttachments.map(a => a.url),
         items: cartItems.map(i => ({
           product_id: i.product_id || null,
+          requestion_item_id: (i as any).requestion_item_id || null,
           product_name: i.product_name,
           spec_id: i.spec_id || null,
           spec_name: i.spec_name || null,
@@ -1065,6 +1505,12 @@ const PlaceOrder: React.FC = () => {
           quantity: i.quantity,
           item_cost_price: pricingPerms.canViewCostPrice ? (Number(i.item_cost_price) || 0) : 0,
           item_sale_price: i.item_sale_price !== null && i.item_sale_price !== undefined && i.item_sale_price !== '' ? Number(i.item_sale_price) : null,
+          discount_type: i.discount_type || null,
+          discount_value: i.discount_value !== undefined && i.discount_value !== null && i.discount_value !== '' ? Number(i.discount_value) : null,
+          discount_amount: i.discount_amount !== undefined && i.discount_amount !== null ? Number(i.discount_amount) : 0,
+          final_item_price: i.final_item_price !== undefined && i.final_item_price !== null ? Number(i.final_item_price) : null,
+          max_discount_type: i.max_discount_type || null,
+          max_discount_value: i.max_discount_value !== undefined && i.max_discount_value !== null ? Number(i.max_discount_value) : null,
           is_customized: !!i.is_customized,
           custom_dimensions: i.custom_dimensions || (i.is_customized ? i.dimensions_text : null),
           designer_notes: i.notes || null
@@ -1073,12 +1519,24 @@ const PlaceOrder: React.FC = () => {
 
       const orderId = order?.id;
       const createdItems = order?.items || [];
+      const attachmentWarnings: string[] = [];
 
       // Upload per-item drawings / attachments if attached via base64 buffer
       if (orderId && Array.isArray(createdItems)) {
         for (let idx = 0; idx < cartItems.length; idx++) {
           const item = cartItems[idx];
-          if (item.attachedFile && item.attachedFile.base64) {
+          if (item.attachedFile && item.attachedFile.uploadId && item.attachedFile.url) {
+            const createdItem = createdItems[idx];
+            if (createdItem?.id) {
+              const attached = await window.electron?.makeAssociateOrderAttachment?.({
+                uploadId: item.attachedFile.uploadId,
+                orderId,
+                itemId: createdItem.id,
+                fileRef: item.attachedFile.url
+              });
+              if (!attached?.success) attachmentWarnings.push(`${item.attachedFile.name}: ${attached?.error || 'attachment could not be linked'}`);
+            }
+          } else if (item.attachedFile && item.attachedFile.base64) {
             const createdItem = createdItems[idx];
             if (createdItem?.id && window.electron?.makeUploadInvoiceAttachmentBuffer) {
               try {
@@ -1097,6 +1555,7 @@ const PlaceOrder: React.FC = () => {
       }
 
       const confirmedNo = order?.order_number || (orderId ? `ORD-${orderId}` : 'Confirmed');
+      if (attachmentWarnings.length) showToast(`Order ${confirmedNo} was placed, but an attachment needs to be reattached: ${attachmentWarnings.join('; ')}`, 'warning');
       setConfirmedOrderNumber(confirmedNo);
       setSuccess(true);
 
@@ -1123,7 +1582,7 @@ const PlaceOrder: React.FC = () => {
       setCartItems([]);
       setCustomerName(''); setCustomerPhone(''); setCustomerEmail(''); setShippingAddress('');
       setLocationLandmark(''); setReceiverName(''); setReceiverPhone(''); setSpecialInstructions('');
-      setTargetDeliveryDate(''); setRequestedDeliveryDate('');
+      setTargetDeliveryDays(''); setRequestedDeliveryDays(''); setOrderPlacementDate(getTodayYmd());
       setInvoiceAttachments([]);
       setAttachedFile(null);
       setTimeout(() => {
@@ -1175,8 +1634,10 @@ const PlaceOrder: React.FC = () => {
 
   return (
     <DashboardLayout title="Place Customized Furniture Order">
-      <div style={{ maxWidth: '1000px', margin: '1.5rem auto', padding: '0 1.5rem' }}>
+      <div className="make-place-order-shell" style={{ maxWidth: '1000px', margin: '1.5rem auto', padding: '0 1.5rem' }}>
+        {!isDraftsView && <>
         <motion.div initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }}
+          className="make-place-order-card"
           style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '2rem', boxShadow: '0 4px 20px rgba(0,0,0,0.05)' }}>
 
           {/* Header */}
@@ -1207,7 +1668,7 @@ const PlaceOrder: React.FC = () => {
                     </span>
                   )}
                 </div>
-                <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-secondary)' }}>Active User: <strong>{designerName}</strong> • Order Number: Auto-generated</p>
+                <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-secondary)' }}>Active User: <strong>{designerName}</strong> • Order Number: Auto-generated • {headerDateTime}</p>
               </div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -1301,10 +1762,10 @@ const PlaceOrder: React.FC = () => {
             )}
           </AnimatePresence>
 
-          <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+          <form onSubmit={handleSubmit} className="make-place-order-form" style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
 
             {/* ── 1. CUSTOMER & DELIVERY INFO ────────────────────────────── */}
-            <div data-tutorial="make-place-order">
+            <div className="make-place-order-section make-place-order-customer" data-tutorial="make-place-order">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '10px' }}>
                 <p style={{ ...sectionTitle, margin: 0, border: 'none', padding: 0 }}>
                   <User size={18} color="var(--accent-color)" /> Customer &amp; Delivery Logistics
@@ -1499,7 +1960,7 @@ const PlaceOrder: React.FC = () => {
             </div>
 
             {/* ── 2. PRODUCT CATALOG SELECTION (ITEM BUILDER) ────────────── */}
-            <div style={{ background: 'var(--bg-secondary, rgba(0,0,0,0.02))', padding: '20px', borderRadius: '14px', border: '1px solid var(--border-color)' }}>
+            <div className="make-place-order-section make-place-order-products" style={{ background: 'var(--bg-secondary, rgba(0,0,0,0.02))', padding: '20px', borderRadius: '14px', border: '1px solid var(--border-color)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
                 <p style={{ ...sectionTitle, margin: 0, border: 'none', padding: 0 }}>
                   <ShoppingBag size={18} color="var(--accent-color)" /> Add Products to Order
@@ -1639,9 +2100,14 @@ const PlaceOrder: React.FC = () => {
                       </div>
                       <select value={selectedProduct?.id || ''} onChange={e => handleProductSelect(Number(e.target.value))} style={inputStyle}>
                         <option value="">-- Choose Product --</option>
-                        {(catalogProducts || []).map(p => (
-                          <option key={p.id} value={p.id}>{p.product_code ? `[${p.product_code}] ` : ''}{p.product_name}</option>
-                        ))}
+                        {(catalogProducts || []).map(p => {
+                          const sizeBadge = p.size_label || (p.sizes?.[0] ? formatSizeDisplay(p.sizes[0]) : '');
+                          return (
+                            <option key={p.id} value={p.id}>
+                              {p.product_code ? `[${p.product_code}] ` : ''}{p.product_name}{sizeBadge ? ` (${sizeBadge})` : ''}
+                            </option>
+                          );
+                        })}
                       </select>
                     </div>
 
@@ -1667,7 +2133,7 @@ const PlaceOrder: React.FC = () => {
                           onChange={e => handleSpecSelect(Number(e.target.value))} 
                           disabled={!selectedProduct || (selectedProduct.specifications || []).length === 0}
                           style={{ ...inputStyle, opacity: !selectedProduct ? 0.6 : 1 }}>
-                          <option value="">-- Standard / Choose Specification --</option>
+                          <option value="">{selectedProduct?.specifications?.length ? '-- Standard / Choose Specification --' : 'Not available'}</option>
                           {(selectedProduct?.specifications || []).map((s: any) => (
                             <option key={s.id} value={s.id}>{s.spec_code ? `[${s.spec_code}] ` : ''}{s.spec_name}</option>
                           ))}
@@ -1689,15 +2155,46 @@ const PlaceOrder: React.FC = () => {
                     </div>
                   </div>
 
+                  {selectedProduct && (
+                    <section className="make-place-order-selected-product" aria-label="Selected catalog product">
+                      <div className="make-place-order-product-image-wrap">
+                        {selectedProduct.main_image && !selectedProductImageError ? (
+                          <img
+                            src={resolveImageSrc(selectedProduct.main_image)}
+                            alt={selectedProduct.product_name || 'Selected product'}
+                            onError={event => {
+                              setSelectedProductImageError(true);
+                              handleImageLoadError(event, selectedProduct.main_image);
+                            }}
+                          />
+                        ) : (
+                          <div className="make-place-order-product-image-placeholder" aria-label="No product image available">
+                            <Box size={30} />
+                            <span>No image</span>
+                          </div>
+                        )}
+                      </div>
+                      <div className="make-place-order-product-overview">
+                        <div className="make-place-order-product-eyebrow">Selected catalog item</div>
+                        <h3>{selectedProduct.product_name}</h3>
+                        <div className="make-place-order-product-meta">
+                          {selectedProduct.product_code && <span>Code: {selectedProduct.product_code}</span>}
+                          {selectedProduct.category && <span>{selectedProduct.category}</span>}
+                        </div>
+                        <p>{selectedProduct.description || 'Product image and catalog details are ready for this order.'}</p>
+                      </div>
+                    </section>
+                  )}
+
                   {/* 3. Dimensions & Colors */}
                   {selectedProduct && (
                     <div className={isCustomSize ? '' : 'make-responsive-grid-2'} style={{ display: 'grid', gridTemplateColumns: isCustomSize ? '1fr' : undefined, gap: '1rem' }}>
-                      {/* Dimensions / Sizes Section */}
+                      {/* Dimensions / Sizes Section (Single Product Size) */}
                       {!isCustomSize ? (
                         <div>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '5px' }}>
                             <label style={{ ...labelStyle, margin: 0 }}>
-                              <Maximize2 size={13} style={{ display: 'inline', marginRight: '4px' }} /> Size / Dimensions
+                              <Maximize2 size={13} style={{ display: 'inline', marginRight: '4px' }} /> Assigned Product Size
                             </label>
                             <button 
                               type="button" 
@@ -1706,20 +2203,14 @@ const PlaceOrder: React.FC = () => {
                               <Plus size={12} /> Custom Size
                             </button>
                           </div>
-                          <select
-                            value={selectedSize?.id || ''}
-                            onChange={e => {
-                              const availableSizes = (selectedProduct.sizes && selectedProduct.sizes.length > 0) ? selectedProduct.sizes : (selectedSpec?.sizes || []);
-                              const sz = availableSizes.find((s: any) => s.id === Number(e.target.value)) || null;
-                              setSelectedSize(sz);
-                            }}
-                            style={inputStyle}>
-                            <option value="">-- Standard / Default Size --</option>
-                            {((selectedProduct.sizes && selectedProduct.sizes.length > 0) ? selectedProduct.sizes : (selectedSpec?.sizes || [])).map((sz: any) => {
-                              const label = formatSizeDisplay(sz);
-                              return <option key={sz.id} value={sz.id}>{label}</option>;
-                            })}
-                          </select>
+                          <div style={{ ...inputStyle, display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'var(--bg-secondary)' }}>
+                            <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                              {getOrderSizeLabel(selectedSize, selectedProduct.size || selectedProduct.size_label)}
+                            </span>
+                            <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#10b981', background: 'rgba(16,185,129,0.12)', padding: '2px 8px', borderRadius: '4px' }}>
+                              1 Active Size
+                            </span>
+                          </div>
                         </div>
                       ) : (
                         <div style={{ background: 'rgba(249,115,22,0.04)', border: '1px dashed #f97316', borderRadius: '10px', padding: '12px' }}>
@@ -1849,7 +2340,7 @@ const PlaceOrder: React.FC = () => {
                               <span style={{ flex: 1 }}>
                                 {selectedColor
                                   ? (selectedColor.color_name || 'Selected color') + (selectedColor.color_code ? ' (' + selectedColor.color_code + ')' : '')
-                                  : '-- Standard / Default Color --'}
+                                  : (selectedProduct.colors?.length || selectedSpec?.colors?.length ? '-- Standard / Default Color --' : 'Not available')}
                               </span>
                               <ChevronDown size={15} style={{ flexShrink: 0, opacity: 0.7 }} />
                             </button>
@@ -1892,7 +2383,7 @@ const PlaceOrder: React.FC = () => {
                                   }}
                                 >
                                   <span aria-hidden="true" style={{ width: '22px', height: '22px', flexShrink: 0, border: '1px solid var(--border-color)', borderRadius: '6px', background: 'linear-gradient(135deg, #fff 45%, #e5e7eb 45%, #e5e7eb 55%, #fff 55%)' }} />
-                                  <span>-- Standard / Default Color --</span>
+                                  <span>{selectedProduct.colors?.length || selectedSpec?.colors?.length ? '-- Standard / Default Color --' : 'Not available'}</span>
                                 </button>
                                 {((selectedProduct.colors && selectedProduct.colors.length > 0) ? selectedProduct.colors : (selectedSpec?.colors || [])).map((cl: any) => (
                                   <button
@@ -1993,6 +2484,51 @@ const PlaceOrder: React.FC = () => {
                     </div>
                   </div>
 
+                  {/* Line Item Discount for Catalog Product */}
+                  {pricingPerms.canViewSalePrice && (
+                    <div style={{ background: 'var(--bg-secondary)', padding: '10px 14px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px', flexWrap: 'wrap', gap: '6px' }}>
+                        <label style={{ ...labelStyle, margin: 0, display: 'flex', alignItems: 'center', gap: '5px' }}>
+                          <Tag size={13} /> Line Discount (Optional)
+                        </label>
+                        {selectedProduct?.max_discount_value !== undefined && selectedProduct?.max_discount_value !== null && (
+                          <span style={{ fontSize: '0.72rem', fontWeight: 600, padding: '2px 8px', borderRadius: '6px', background: 'rgba(16, 185, 129, 0.12)', color: '#059669', border: '1px solid rgba(16, 185, 129, 0.25)' }}>
+                            Max Limit: {selectedProduct.max_discount_value}{selectedProduct.max_discount_type === 'amount' ? '৳' : '%'}
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <select
+                          value={itemDiscountType}
+                          onChange={e => setItemDiscountType(e.target.value as 'percent' | 'amount')}
+                          style={{
+                            width: '135px',
+                            padding: '8px 10px',
+                            background: 'var(--input-bg)',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: '8px',
+                            color: 'var(--text-primary)',
+                            fontSize: '0.85rem',
+                            fontWeight: 600
+                          }}
+                        >
+                          <option value="percent">Percentage (%)</option>
+                          <option value="amount">Fixed (৳)</option>
+                        </select>
+                        <input
+                          type="number"
+                          min="0"
+                          step={itemDiscountType === 'percent' ? '0.1' : '1'}
+                          max={itemDiscountType === 'percent' ? '100' : undefined}
+                          placeholder={itemDiscountType === 'percent' ? 'e.g. 5' : 'e.g. 1000'}
+                          value={itemDiscountValue}
+                          onChange={e => setItemDiscountValue(e.target.value)}
+                          style={{ ...inputStyle, flex: 1, padding: '8px 12px' }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
                   {/* Per-Item Drawing / Image / PDF / CAD Attachment */}
                   <div style={{ background: 'var(--input-bg)', border: '1px dashed var(--border-color)', borderRadius: '8px', padding: '10px 14px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
@@ -2039,8 +2575,9 @@ const PlaceOrder: React.FC = () => {
                             {attachedFile.name}
                           </div>
                           <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
-                            {attachedFile.type === 'cad' ? 'CAD Model / Technical Drawing' : (attachedFile.type === 'pdf' ? 'PDF Document' : 'Image Blueprint')} &bull; Ready to attach
+                            {attachedFile.type === 'cad' ? 'CAD Model / Technical Drawing' : (attachedFile.type === 'pdf' ? 'PDF Document' : 'Image Blueprint')} &bull; {itemFileProgress !== null && itemFileProgress < 100 ? `Uploading securely… ${itemFileProgress}%` : 'Uploaded and ready to attach'}
                           </div>
+                          {itemFileProgress !== null && <div style={{ height: 5, background: 'var(--border-color)', borderRadius: 5, overflow: 'hidden', marginTop: 5 }}><div style={{ width: `${itemFileProgress}%`, height: '100%', background: 'var(--accent-color)', transition: 'width 0.2s' }} /></div>}
                         </div>
                       </div>
                     )}
@@ -2106,21 +2643,26 @@ const PlaceOrder: React.FC = () => {
                     {/* Sale Price */}
                     <div>
                       <label style={labelStyle}>
-                        <Tag size={13} style={{ display: 'inline', marginRight: '3px' }} /> Sale Price (BDT ৳) {pricingPerms.canEditSalePrice ? '*' : '(Designer Only)'}
+                        <Tag size={13} style={{ display: 'inline', marginRight: '3px' }} /> Sale Price (BDT ৳) {pricingPerms.canEditSalePrice || pricingPerms.isSalesperson ? '*' : '(Designer Only)'}
                       </label>
                       <input 
-                        type="number" 
-                        min={0} 
-                        disabled={!pricingPerms.canEditSalePrice}
-                        placeholder={pricingPerms.canEditSalePrice ? 'e.g. 22000' : '🔒 Set by Furniture Designer upon review'} 
-                        value={itemSalePrice} 
-                        onChange={e => setItemSalePrice(e.target.value)} 
-                        style={{ ...inputStyle, opacity: !pricingPerms.canEditSalePrice ? 0.7 : 1 }} 
+                        type="number"
+                        min={0}
+                        disabled={!pricingPerms.canEditSalePrice && !pricingPerms.isSalesperson}
+                        placeholder={pricingPerms.canEditSalePrice || pricingPerms.isSalesperson ? 'e.g. 22000' : '🔒 Set by Furniture Designer upon review'}
+                        value={itemSalePrice}
+                        onChange={e => setItemSalePrice(e.target.value)}
+                        style={{ ...inputStyle, opacity: (!pricingPerms.canEditSalePrice && !pricingPerms.isSalesperson) ? 0.7 : 1 }}
                       />
                       <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: '3px', display: 'block' }}>
-                        {pricingPerms.canEditSalePrice ? 'Entered by Designer / Admin' : '🔒 Pending designer review'}
+                        {pricingPerms.canEditSalePrice || pricingPerms.isSalesperson ? 'Entered by Sales / Designer / Admin' : '🔒 Pending designer review'}
                       </span>
                     </div>
+                  </div>
+
+                  {/* Custom/non-catalog items cannot receive discounts (enforced server-side too) */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(107,114,128,0.08)', padding: '8px 12px', borderRadius: '8px', border: '1px dashed var(--border-color)', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                    <Lock size={13} /> Discounts are not available for custom / non-catalog items.
                   </div>
 
                   {/* Per-Item Drawing / Image / PDF / CAD Attachment for Custom Item */}
@@ -2169,8 +2711,9 @@ const PlaceOrder: React.FC = () => {
                             {attachedFile.name}
                           </div>
                           <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
-                            {attachedFile.type === 'cad' ? 'CAD Model / Technical Drawing' : (attachedFile.type === 'pdf' ? 'PDF Document' : 'Image Blueprint')} &bull; Ready to attach
+                            {attachedFile.type === 'cad' ? 'CAD Model / Technical Drawing' : (attachedFile.type === 'pdf' ? 'PDF Document' : 'Image Blueprint')} &bull; {itemFileProgress !== null && itemFileProgress < 100 ? `Uploading securely… ${itemFileProgress}%` : 'Uploaded and ready to attach'}
                           </div>
+                          {itemFileProgress !== null && <div style={{ height: 5, background: 'var(--border-color)', borderRadius: 5, overflow: 'hidden', marginTop: 5 }}><div style={{ width: `${itemFileProgress}%`, height: '100%', background: 'var(--accent-color)', transition: 'width 0.2s' }} /></div>}
                         </div>
                       </div>
                     )}
@@ -2228,21 +2771,21 @@ const PlaceOrder: React.FC = () => {
                                   </span>
                                 )}
                               </div>
-                              {(item.spec_details || item.spec_name) && (
+                              {(item.spec_details || item.spec_name) ? (
                                 <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
                                   {item.spec_details || item.spec_name}
                                 </div>
-                              )}
+                              ) : <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Specification: Not available</div>}
                             </td>
                             <td style={{ padding: '10px 12px' }}>
                               <span style={{ color: item.is_customized ? '#c2410c' : 'var(--text-secondary)', fontWeight: item.is_customized ? 700 : 400 }}>
-                                {item.dimensions_text || item.custom_dimensions || '—'}
+                                {item.dimensions_text || item.custom_dimensions || 'Not available'}
                               </span>
                             </td>
                             <td style={{ padding: '10px 12px' }}>
                               {item.color_name ? (
                                 <span style={{ padding: '2px 8px', borderRadius: '10px', background: 'var(--input-bg)', fontWeight: 600 }}>{item.color_name}</span>
-                              ) : '—'}
+                              ) : 'Not available'}
                             </td>
                             <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 700 }}>{item.quantity}</td>
                             
@@ -2256,7 +2799,19 @@ const PlaceOrder: React.FC = () => {
                             {/* Sale Price */}
                             <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 600 }}>
                               {item.item_sale_price !== null && item.item_sale_price !== undefined && item.item_sale_price !== '' ? (
-                                `৳${Number(item.item_sale_price).toLocaleString()}`
+                                <div>
+                                  <div style={{ textDecoration: item.discount_amount && Number(item.discount_amount) > 0 ? 'line-through' : 'none', color: item.discount_amount && Number(item.discount_amount) > 0 ? 'var(--text-secondary)' : 'inherit' }}>৳{Number(item.item_sale_price).toLocaleString()}</div>
+                                  {item.discount_amount && Number(item.discount_amount) > 0 ? (
+                                    <div style={{ fontSize: '0.72rem', color: '#ef4444', fontWeight: 600 }}>
+                                      -৳{Number(item.discount_amount).toLocaleString()} ({item.discount_type === 'percent' ? `${item.discount_value}%` : 'fixed'})
+                                    </div>
+                                  ) : null}
+                                  {item.final_item_price !== null && item.final_item_price !== undefined && item.discount_amount && Number(item.discount_amount) > 0 ? (
+                                    <div style={{ fontSize: '0.9rem', color: 'var(--accent-color)', fontWeight: 800 }}>
+                                      Final: ৳{Number(item.final_item_price).toLocaleString()}
+                                    </div>
+                                  ) : null}
+                                </div>
                               ) : (
                                 <span style={{ color: '#94a3b8', fontSize: '0.75rem', fontStyle: 'italic', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '3px' }}>
                                   <Lock size={11} /> Pending Designer
@@ -2287,12 +2842,275 @@ const PlaceOrder: React.FC = () => {
                       </tbody>
                     </table>
                   </div>
+
+                  {/* Order Discount & Financial Summary Card */}
+                  <div style={{
+                    marginTop: '1.25rem',
+                    padding: '1.25rem',
+                    borderRadius: '12px',
+                    background: 'var(--card-bg)',
+                    border: '1px solid var(--border-color)',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.04)'
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '8px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Tag size={18} color="var(--accent-color)" />
+                        <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                          Order Discount &amp; Pricing Summary
+                        </h4>
+                      </div>
+                      {pricingSummary.hasAnyConfiguredLimit && (
+                        <span style={{
+                          fontSize: '0.75rem',
+                          fontWeight: 600,
+                          padding: '3px 8px',
+                          borderRadius: '6px',
+                          background: 'rgba(16, 185, 129, 0.1)',
+                          color: '#059669',
+                          border: '1px solid rgba(16, 185, 129, 0.25)'
+                        }}>
+                          Max Allowed Discount: {pricingSummary.totalAllowedDiscountPercent}% (৳{pricingSummary.totalAllowedDiscountAmount.toLocaleString()})
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="make-responsive-grid-2" style={{ gap: '1.5rem', alignItems: 'start' }}>
+                      {/* Left Column: Discount & Payment Configuration */}
+                      <div style={{ background: 'var(--bg-secondary)', padding: '1rem', borderRadius: '10px', border: '1px solid var(--border-color)' }}>
+                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '8px' }}>
+                          APPLY ORDER DISCOUNT
+                        </label>
+                        <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                          <select
+                            value={discountType}
+                            onChange={e => setDiscountType(e.target.value as 'percent' | 'amount')}
+                            style={{
+                              width: '140px',
+                              padding: '8px 10px',
+                              background: 'var(--input-bg)',
+                              border: '1px solid var(--border-color)',
+                              borderRadius: '8px',
+                              color: 'var(--text-primary)',
+                              fontSize: '0.85rem',
+                              fontWeight: 600
+                            }}
+                          >
+                            <option value="percent">Percentage (%)</option>
+                            <option value="amount">Fixed (৳)</option>
+                          </select>
+                          <input
+                            type="number"
+                            min="0"
+                            step={discountType === 'percent' ? '0.1' : '1'}
+                            max={discountType === 'percent' ? '100' : undefined}
+                            placeholder={discountType === 'percent' ? 'e.g. 10' : 'e.g. 5000'}
+                            value={discountValue}
+                            onChange={e => setDiscountValue(e.target.value)}
+                            style={{
+                              flex: 1,
+                              padding: '8px 12px',
+                              background: 'var(--input-bg)',
+                              border: `1px solid ${pricingSummary.discountValidationError ? '#ef4444' : 'var(--border-color)'}`,
+                              borderRadius: '8px',
+                              color: 'var(--text-primary)',
+                              fontSize: '0.85rem',
+                              fontWeight: 600
+                            }}
+                          />
+                        </div>
+
+                        {/* Helpful validation feedback */}
+                        {pricingSummary.discountValidationError ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#ef4444', fontSize: '0.78rem', fontWeight: 600, marginTop: '6px' }}>
+                            <AlertCircle size={14} />
+                            <span>{pricingSummary.discountValidationError}</span>
+                          </div>
+                        ) : discountValue && Number(discountValue) > 0 ? (
+                          <div style={{ fontSize: '0.75rem', color: '#10b981', fontWeight: 600, marginTop: '4px' }}>
+                            ✓ Valid discount: reduces total by ৳{pricingSummary.discountAmount.toLocaleString()}
+                          </div>
+                        ) : (
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                            Enter an optional order discount (up to permitted product catalog limits).
+                          </div>
+                        )}
+
+                        {/* Money Received (Initial Payment) */}
+                        {pricingPerms.canEnterInitialPayment && (
+                          <div style={{ marginTop: '1.25rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
+                            <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '8px' }}>
+                              MONEY RECEIVED (INITIAL PAYMENT)
+                            </label>
+                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                              <span style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-secondary)' }}>৳</span>
+                              <input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                placeholder="0.00"
+                                value={moneyReceived}
+                                onChange={e => setMoneyReceived(e.target.value)}
+                                style={{
+                                  flex: 1,
+                                  padding: '8px 12px',
+                                  background: 'var(--input-bg)',
+                                  border: `1px solid ${pricingSummary.paymentValidationError ? '#ef4444' : 'var(--border-color)'}`,
+                                  borderRadius: '8px',
+                                  color: 'var(--text-primary)',
+                                  fontSize: '0.85rem',
+                                  fontWeight: 600
+                                }}
+                              />
+                            </div>
+                            {pricingSummary.paymentValidationError ? (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#ef4444', fontSize: '0.78rem', fontWeight: 600, marginTop: '6px' }}>
+                                <AlertCircle size={14} />
+                                <span>{pricingSummary.paymentValidationError}</span>
+                              </div>
+                            ) : (
+                              <div style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                                Initial payment received at order placement (not full order total). Remaining balance becomes Amount Due.
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Right Column: Financial Totals Breakdown */}
+                      <div style={{ background: 'var(--bg-secondary)', padding: '1rem', borderRadius: '10px', border: '1px solid var(--border-color)' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.85rem' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-secondary)' }}>
+                            <span>Total Items / Qty:</span>
+                            <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{cartItems.length} lines ({pricingSummary.totalQty} units)</span>
+                          </div>
+
+                          {pricingPerms.canViewSalePrice && (
+                            <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-secondary)' }}>
+                              <span>Subtotal (Catalog Sale Price):</span>
+                              <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                                {pricingSummary.subtotal !== null ? `৳${pricingSummary.subtotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : 'Pending designer'}
+                              </span>
+                            </div>
+                          )}
+
+                          {pricingSummary.discountAmount > 0 && pricingPerms.canViewSalePrice && (
+                            <div style={{ display: 'flex', justifyContent: 'space-between', color: '#ef4444' }}>
+                              <span>Discount Applied ({discountType === 'percent' ? `${discountValue}%` : 'Fixed'}):</span>
+                              <span style={{ fontWeight: 700 }}>-৳{pricingSummary.discountAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                            </div>
+                          )}
+
+                          <div style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            paddingTop: '8px',
+                            borderTop: '1px dashed var(--border-color)',
+                            fontSize: '1rem',
+                            fontWeight: 800,
+                            color: 'var(--text-primary)'
+                          }}>
+                            <span>Order Total:</span>
+                            <span style={{ color: 'var(--accent-color)' }}>
+                              {pricingSummary.finalSalePrice !== null
+                                ? `৳${pricingSummary.finalSalePrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                : (pricingSummary.subtotal !== null ? `৳${pricingSummary.subtotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : 'Pending Designer')}
+                            </span>
+                          </div>
+
+                          {/* Payment & Balance Status */}
+                          {pricingPerms.canViewSalePrice && (
+                            <>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', color: '#10b981', paddingTop: '6px', borderTop: '1px dashed var(--border-color)' }}>
+                                <span>Money Received (Initial Payment):</span>
+                                <span style={{ fontWeight: 700 }}>৳{pricingSummary.moneyReceivedNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                              </div>
+
+                              <div style={{ display: 'flex', justifyContent: 'space-between', color: pricingSummary.amountDue > 0 ? '#ea580c' : '#10b981', fontWeight: 700 }}>
+                                <span>Amount Due:</span>
+                                <span>৳{pricingSummary.amountDue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                              </div>
+
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.78rem' }}>
+                                <span style={{ color: 'var(--text-secondary)' }}>Payment Status:</span>
+                                <span style={{
+                                  padding: '2px 8px',
+                                  borderRadius: '6px',
+                                  fontWeight: 700,
+                                  textTransform: 'uppercase',
+                                  fontSize: '0.72rem',
+                                  background: pricingSummary.paymentStatus === 'paid' ? 'rgba(16, 185, 129, 0.15)' : (pricingSummary.paymentStatus === 'partial' ? 'rgba(245, 158, 11, 0.15)' : 'rgba(239, 68, 68, 0.15)'),
+                                  color: pricingSummary.paymentStatus === 'paid' ? '#059669' : (pricingSummary.paymentStatus === 'partial' ? '#d97706' : '#dc2626'),
+                                  border: `1px solid ${pricingSummary.paymentStatus === 'paid' ? 'rgba(16, 185, 129, 0.3)' : (pricingSummary.paymentStatus === 'partial' ? 'rgba(245, 158, 11, 0.3)' : 'rgba(239, 68, 68, 0.3)')}`
+                                }}>
+                                  {pricingSummary.paymentStatus.toUpperCase()}
+                                </span>
+                              </div>
+                            </>
+                          )}
+
+                          {/* Internal Cost Breakdown - Strictly guarded */}
+                          {pricingPerms.canViewCostPrice && (
+                            <div style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              paddingTop: '6px',
+                              borderTop: '1px solid var(--border-color)',
+                              fontSize: '0.78rem',
+                              color: 'var(--text-secondary)'
+                            }}>
+                              <span>Total Estimated Cost:</span>
+                              <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                                ৳{pricingSummary.totalCostPrice.toLocaleString()}
+                              </span>
+                            </div>
+                          )}
+
+                          {pricingPerms.canViewCostPrice && pricingSummary.marginAmount !== null && (
+                            <div style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              fontSize: '0.78rem',
+                              fontWeight: 600,
+                              color: pricingSummary.marginAmount >= 0 ? '#10b981' : '#ef4444'
+                            }}>
+                              <span>Estimated Margin:</span>
+                              <span>
+                                {pricingSummary.marginAmount >= 0 ? '+' : ''}৳{pricingSummary.marginAmount.toLocaleString()}
+                                {pricingSummary.finalSalePrice && pricingSummary.finalSalePrice > 0
+                                  ? ` (${((pricingSummary.marginAmount / pricingSummary.finalSalePrice) * 100).toFixed(1)}%)`
+                                  : ''}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Amber Production Hold Warning Banner */}
+                    {pricingSummary.productionHold && (
+                      <div style={{
+                        marginTop: '1rem',
+                        padding: '12px 14px',
+                        borderRadius: '10px',
+                        background: 'rgba(245, 158, 11, 0.12)',
+                        border: '1px solid rgba(245, 158, 11, 0.35)',
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: '10px'
+                      }}>
+                        <AlertCircle size={18} color="#d97706" style={{ flexShrink: 0, marginTop: '2px' }} />
+                        <div style={{ fontSize: '0.82rem', color: '#b45309', lineHeight: 1.45 }}>
+                          <strong>Production Hold Active:</strong> Outstanding balance of ৳{pricingSummary.amountDue.toLocaleString()} remains unpaid. This order will automatically enter <em>Production Hold</em> status upon placement and cannot proceed through factory stages until full payment is collected or an Admin explicitly approves production release.
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
 
             {/* ── 3. ORDER METADATA & APPROVAL ASSIGNMENT ──────────────────── */}
-            <div>
+            <div className="make-place-order-section make-place-order-logistics">
               <p style={sectionTitle}><Tag size={18} color="var(--accent-color)" /> Order Logistics &amp; Assignment</p>
               <div className="make-responsive-grid-4" style={{ gap: '1rem' }}>
                 <div>
@@ -2302,53 +3120,86 @@ const PlaceOrder: React.FC = () => {
                   </select>
                 </div>
                 <div>
-                  <label style={labelStyle}>Target Delivery Date *</label>
-                  <input type="date" value={targetDeliveryDate} onChange={e => setTargetDeliveryDate(e.target.value)} required style={inputStyle} />
-                  <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '2px', display: 'block' }}>
-                    Mandatory delivery deadline
-                  </span>
+                  <label style={labelStyle}>Requested Delivery (Working Days)</label>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    placeholder="e.g. 10"
+                    value={requestedDeliveryDays}
+                    onChange={e => setRequestedDeliveryDays(e.target.value)}
+                    style={inputStyle}
+                  />
+                  <div style={{ marginTop: '4px', fontSize: '0.72rem', minHeight: '18px' }}>
+                    {requestedDeliveryCalc.error ? (
+                      <span style={{ color: '#ef4444' }}>{requestedDeliveryCalc.error}</span>
+                    ) : requestedDeliveryCalc.dateStr ? (
+                      <span style={{ color: 'var(--text-secondary)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                        📅 <strong>{requestedDeliveryCalc.formattedDisplay}</strong>
+                      </span>
+                    ) : (
+                      <span style={{ color: 'var(--text-secondary)', opacity: 0.7 }}>Optional client request</span>
+                    )}
+                  </div>
                 </div>
                 <div>
-                  <label style={labelStyle}>Requested Delivery Date</label>
-                  <input type="date" value={requestedDeliveryDate} onChange={e => setRequestedDeliveryDate(e.target.value)} style={inputStyle} />
-                  <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '2px', display: 'block' }}>
-                    Optional (client request)
-                  </span>
+                  <label style={labelStyle}>Target Delivery (Working Days) *</label>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    placeholder="e.g. 15"
+                    value={targetDeliveryDays}
+                    onChange={e => setTargetDeliveryDays(e.target.value)}
+                    required
+                    style={inputStyle}
+                  />
+                  <div style={{ marginTop: '4px', fontSize: '0.72rem', minHeight: '18px' }}>
+                    {targetDeliveryCalc.error ? (
+                      <span style={{ color: '#ef4444' }}>{targetDeliveryCalc.error}</span>
+                    ) : targetDeliveryCalc.dateStr ? (
+                      <span style={{ color: 'var(--accent-color)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                        📅 <strong>{targetDeliveryCalc.formattedDisplay}</strong>
+                      </span>
+                    ) : (
+                      <span style={{ color: 'var(--text-secondary)', opacity: 0.7 }}>Mandatory factory deadline</span>
+                    )}
+                  </div>
                 </div>
                 <div>
-                  <label style={labelStyle}>Assign Salesman (For Review)</label>
-                  <select value={selectedSalesmanId} onChange={e => setSelectedSalesmanId(e.target.value)} style={inputStyle}>
-                    <option value="">No Specific Salesman (Direct)</option>
-                    {(salesmen || []).map(s => (
-                      <option key={s.id} value={s.id}>{s.full_name} ({s.username})</option>
-                    ))}
-                  </select>
+                  <label style={labelStyle}>{isAdminOrManager ? 'Assign Salesperson (Admin Override)' : 'Salesperson'}</label>
+                  {isAdminOrManager ? (
+                    <select value={selectedSalesmanId} onChange={e => setSelectedSalesmanId(e.target.value)} style={inputStyle}>
+                      <option value="">No Specific Salesman (Direct)</option>
+                      {(salesmen || []).map(s => (
+                        <option key={s.id} value={s.id}>{s.full_name} ({s.username})</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div style={{ ...inputStyle, display: 'flex', alignItems: 'center', gap: '6px', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}>
+                      <User size={14} /> {currentUser.full_name || currentUser.username || 'Current user'}
+                      <span style={{ marginLeft: 'auto', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>From your session</span>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
 
             {/* ── 4. INVOICE ATTACHMENTS ─────────────────────────────────── */}
-            <div data-tutorial="make-invoice-attachments">
+            <div className="make-place-order-section make-place-order-attachments" data-tutorial="make-invoice-attachments">
               <p style={sectionTitle}><FileText size={18} color="var(--accent-color)" /> Invoice Attachments &amp; Documents</p>
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-                <button type="button" onClick={handlePickDesktopInvoice} disabled={uploadingInvoice}
-                  style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '9px 16px', background: 'var(--input-bg)', border: '1px dashed var(--border-color)', borderRadius: '8px', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '0.875rem', fontWeight: 600 }}>
-                  <Paperclip size={16} /> Choose Invoice Image (Desktop File)
+                <button type="button" onClick={handlePickDesktopInvoice} disabled={uploadingInvoice} aria-busy={uploadingInvoice}
+                  style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '9px 16px', background: 'var(--input-bg)', border: '1px dashed var(--border-color)', borderRadius: '8px', cursor: uploadingInvoice ? 'not-allowed' : 'pointer', opacity: uploadingInvoice ? 0.65 : 1, color: 'var(--text-secondary)', fontSize: '0.875rem', fontWeight: 600 }}>
+                  {uploadingInvoice
+                    ? <><RefreshCw size={16} className="upload-spinner" /> Uploading…</>
+                    : <><Paperclip size={16} /> Choose Invoice Image (Desktop File)</>}
                 </button>
-                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '9px 16px', background: 'rgba(99,102,241,0.08)', border: '1px dashed var(--accent-color)', borderRadius: '8px', cursor: 'pointer', color: 'var(--accent-color)', fontSize: '0.875rem', fontWeight: 600 }}>
-                  <Paperclip size={16} /> Take Photo / Camera (Mobile Web)
-                  <input
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    onChange={handleMobileInvoiceCapture}
-                    style={{ display: 'none' }}
-                  />
-                </label>
                 <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '9px 16px', background: 'var(--input-bg)', border: '1px dashed var(--border-color)', borderRadius: '8px', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '0.875rem', fontWeight: 600 }}>
-                  <Paperclip size={16} /> Attach Document / PDF
+                  <Paperclip size={16} /> {uploadingInvoice ? 'Uploading in background · Attach more' : 'Attach Document / PDF'}
                   <input
                     type="file"
+                    multiple
                     accept="application/pdf,image/*"
                     onChange={handleUploadFileAttachment}
                     style={{ display: 'none' }}
@@ -2359,12 +3210,22 @@ const PlaceOrder: React.FC = () => {
                 </span>
               </div>
 
+              {Object.entries(invoiceUploadProgress).map(([key, progress]) => <div key={key} style={{ marginTop: 8, padding: '8px 10px', border: '1px solid var(--border-color)', borderRadius: 8, fontSize: 12, color: 'var(--text-secondary)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}><span>{key.split('-').slice(0, -2).join('-')} · {progress >= 100 ? 'Saved' : 'Saving securely'}</span><strong>{progress}%</strong></div>
+                <div style={{ height: 4, marginTop: 5, background: 'var(--border-color)', borderRadius: 4, overflow: 'hidden' }}><div style={{ width: `${progress}%`, height: '100%', background: 'var(--accent-color)', transition: 'width .2s' }} /></div>
+              </div>)}
+
               {invoiceAttachments.length > 0 && (
                 <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   {invoiceAttachments.map((att, i) => (
                     <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: '8px' }}>
                       <FileText size={15} color="var(--accent-color)" />
                       <span style={{ flex: 1, fontSize: '0.85rem', color: 'var(--text-primary)' }}>{att.name}</span>
+                      {att.isPending && (
+                        <span style={{ fontSize: '0.7rem', padding: '2px 6px', borderRadius: '4px', background: 'rgba(234, 179, 8, 0.15)', color: '#d97706', fontWeight: 600 }}>
+                          PENDING UPLOAD
+                        </span>
+                      )}
                       <button type="button" onClick={() => setInvoiceAttachments(prev => prev.filter((_, idx) => idx !== i))}
                         style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}>
                         <X size={14} />
@@ -2411,6 +3272,8 @@ const PlaceOrder: React.FC = () => {
             </div>
           </form>
 
+        </motion.div></>}
+
           {/* Individually saved drafts are separate from the auto-restored working copy above. */}
           <section style={{
             marginTop: '20px',
@@ -2430,9 +3293,10 @@ const PlaceOrder: React.FC = () => {
                 {savedDrafts.length} saved
               </span>
             </div>
-            {savedDrafts.length === 0 ? (
+            <input aria-label="Search order drafts" value={savedDraftSearch} onChange={e => setSavedDraftSearch(e.target.value)} placeholder="Search drafts by title, customer, or product…" style={{ width: '100%', margin: '0 0 12px', padding: '10px 12px', border: '1px solid var(--border-color)', borderRadius: 8, background: 'var(--input-bg)', color: 'var(--text-primary)', boxSizing: 'border-box' }} />
+            {visibleSavedDrafts.length === 0 ? (
               <div style={{ padding: '22px 12px', textAlign: 'center', color: 'var(--text-secondary)', border: '1px dashed var(--border-color)', borderRadius: '10px', fontSize: '0.88rem' }}>
-                No saved drafts yet. Fill in an order and select “Save as Draft”.
+                {savedDrafts.length ? 'No drafts match this search.' : 'No saved drafts yet. Fill in an order and select “Save as Draft”.'}
               </div>
             ) : (
               <div style={{ overflowX: 'auto' }}>
@@ -2447,7 +3311,7 @@ const PlaceOrder: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {savedDrafts.map(savedDraft => {
+                    {visibleSavedDrafts.map(savedDraft => {
                       const itemCount = Array.isArray(savedDraft.data.cartItems)
                         ? savedDraft.data.cartItems.length
                         : (savedDraft.data.selectedProduct ? 1 : 0);
@@ -2459,7 +3323,9 @@ const PlaceOrder: React.FC = () => {
                           <td style={{ padding: '11px 12px', color: 'var(--text-primary)', fontWeight: 700 }}>
                             {savedDraft.title}
                             <div style={{ marginTop: '3px', fontSize: '0.74rem', fontWeight: 400, color: 'var(--text-secondary)' }}>
-                              {savedDraft.data.targetDeliveryDate ? 'Target: ' + savedDraft.data.targetDeliveryDate : 'Target date not set'}
+                              {savedDraft.data.targetDeliveryDate
+                                ? `Target: ${savedDraft.data.targetDeliveryDate}${savedDraft.data.targetDeliveryDays ? ` (${savedDraft.data.targetDeliveryDays} working days)` : ''}`
+                                : 'Target date not set'}
                             </div>
                           </td>
                           <td style={{ padding: '11px 12px', color: 'var(--text-primary)' }}>{customer}</td>
@@ -2472,6 +3338,14 @@ const PlaceOrder: React.FC = () => {
                               style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '6px 9px', marginRight: '6px', borderRadius: '7px', border: '1px solid var(--border-color)', background: 'var(--card-bg, #fff)', color: 'var(--text-primary)', cursor: 'pointer', fontWeight: 700 }}
                             >
                               <FolderOpen size={14} /> Load
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDuplicateSavedDraft(savedDraft)}
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '6px 9px', marginRight: '6px', borderRadius: '7px', border: '1px solid var(--border-color)', background: 'var(--card-bg, #fff)', color: 'var(--text-primary)', cursor: 'pointer', fontWeight: 700 }}
+                              title="Duplicate draft"
+                            >
+                              <Copy size={14} /> Duplicate
                             </button>
                             <button
                               type="button"
@@ -2489,7 +3363,6 @@ const PlaceOrder: React.FC = () => {
               </div>
             )}
           </section>
-        </motion.div>
       </div>
 
       {showProductCreateModal && (

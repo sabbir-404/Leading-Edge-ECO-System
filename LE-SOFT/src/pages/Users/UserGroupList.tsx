@@ -20,7 +20,10 @@ const PERMISSION_KEYS = [
     // CRM
     'read_customer', 'write_customer', 'delete_customer', 'read_quotation', 'write_quotation', 'see_all_customers', 'view_customer_contact', 'view_customer_financials', 'view_customer_ledger',
     // MAKE
-    'read_make', 'write_make', 'alter_make', 'read_make_catalog', 'write_make_catalog', 'create_product_from_place_order', 'manage_global_product_attributes', 'set_make_cost_price', 'set_make_sale_price', 'approve_make_order', 'access_make_sales_portal',
+    'read_make', 'write_make', 'alter_make', 'read_make_catalog', 'write_make_catalog', 'create_product_from_place_order', 'manage_global_product_attributes', 'set_make_cost_price', 'set_make_sale_price',
+    'view_product_blueprint', 'view_product_drawing', 'view_product_cost_price', 'view_product_sale_price', 'view_product_max_discount',
+    'approve_make_order', 'make_record_payment', 'record_make_order_payment', 'request_make_production_approval', 'decide_make_production_approval', 'update_make_production_stage',
+    'read_make_costing_requests', 'read_all_make_costing_requests', 'create_make_costing_request', 'price_make_costing_request', 'delete_make_costing_request', 'place_order_from_costing_request', 'access_make_sales_portal',
     // HRM
     'read_hrm', 'write_hrm', 'approve_leave', 'view_payroll',
     // Settings & Security

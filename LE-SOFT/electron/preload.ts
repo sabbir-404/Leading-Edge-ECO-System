@@ -274,12 +274,16 @@ contextBridge.exposeInMainWorld('electron', {
     makeGetPdfUrls: (orderId: number | string) => ipcRenderer.invoke('make-get-pdf-urls', orderId),
     makeDeletePdf: (data: any) => ipcRenderer.invoke('make-delete-pdf', data),
     makeDownloadPdf: (data: any) => ipcRenderer.invoke('make-download-pdf', data),
+    makeResolveAttachmentUrl: (url: string) => ipcRenderer.invoke('make-resolve-attachment-url', url),
     makeUploadItemPdf: (data: any) => ipcRenderer.invoke('make-upload-item-pdf', data),
     makeDeleteItemPdf: (data: any) => ipcRenderer.invoke('make-delete-item-pdf', data),
     makePickAndUploadDrawing: (data: { orderId: number | string; itemId?: number | string }) => ipcRenderer.invoke('make-pick-and-upload-drawing', data),
     makePickAndUploadStagePhoto: (data: { orderId: number | string }) => ipcRenderer.invoke('make-pick-and-upload-stage-photo', data),
     makePickAndUploadInvoiceAttachment: (data?: { orderId?: number | string }) => ipcRenderer.invoke('make-pick-and-upload-invoice-attachment', data),
-    makeUploadInvoiceAttachmentBuffer: (data: { fileName: string; fileBase64: string; orderId?: number | string; itemId?: number | string }) => ipcRenderer.invoke('make-upload-invoice-attachment-buffer', data),
+    makePickAndUploadBlueprint: (data?: { productId?: number | string }) => ipcRenderer.invoke('make-pick-and-upload-blueprint', data),
+    makePickAndUploadProductDrawing: (data?: { productId?: number | string }) => ipcRenderer.invoke('make-pick-and-upload-product-drawing', data),
+    makeUploadInvoiceAttachmentBuffer: (data: { fileName: string; fileBase64: string; attachmentType?: 'cad' | 'invoice_attachment'; orderId?: number | string; itemId?: number | string }) => ipcRenderer.invoke('make-upload-invoice-attachment-buffer', data),
+    makeAssociateOrderAttachment: (data: { uploadId: string; orderId: number | string; itemId: number | string; fileRef: string }) => ipcRenderer.invoke('make-associate-order-attachment', data),
     // Make — Parts / Dimensions
     makeGetOrderParts: (orderId: number | string) => ipcRenderer.invoke('make-get-order-parts', orderId),
     makeUpsertPart: (part: any) => ipcRenderer.invoke('make-upsert-part', part),
@@ -315,6 +319,8 @@ contextBridge.exposeInMainWorld('electron', {
 
     // Make — Multi-Item Orders, Pricing & Versioning
     makeGetOrderItems: (orderId: number | string) => ipcRenderer.invoke('make-get-order-items', orderId),
+    makeRemoveOrderItem: (data: { orderId: number; itemId: number }) => ipcRenderer.invoke('make-remove-order-item', data),
+    makeUpdateOrderItemQuantity: (data: { orderId: number; itemId: number; quantity: number }) => ipcRenderer.invoke('make-update-order-item-quantity', data),
     makeDesignerSaveSpecsAndPricing: (data: any) => ipcRenderer.invoke('make-designer-save-specs-and-pricing', data),
     makeGetOrderVersions: (orderId: number | string) => ipcRenderer.invoke('make-get-order-versions', orderId),
     makeGetVersionDiff: (orderIdOrData: any, fromVersion?: number, toVersion?: number) => {
@@ -326,6 +332,23 @@ contextBridge.exposeInMainWorld('electron', {
     makeUpdateProductionStage: (data: any) => ipcRenderer.invoke('make-update-production-stage', data),
     makeSearchCustomers: (query: string) => ipcRenderer.invoke('make-search-customers', query),
     makeGetCustomerDetails: (customerId: number | string) => ipcRenderer.invoke('make-get-customer-details', customerId),
+    makeRequestProductionApproval: (data: { orderId: number | string; notes?: string }) => ipcRenderer.invoke('make-request-production-approval', data),
+    makeDecideProductionApproval: (data: { orderId: number | string; decision: 'approved' | 'rejected'; notes?: string }) => ipcRenderer.invoke('make-decide-production-approval', data),
+    makeRecordOrderPayment: (data: { orderId: number | string; amount: number; paymentMethod?: string; reference?: string; notes?: string }) => ipcRenderer.invoke('make-record-order-payment', data),
+    makeGetOrderPayments: (orderId: number | string) => ipcRenderer.invoke('make-get-order-payments', orderId),
+    makeCreateCostingRequest: (data: any) => ipcRenderer.invoke('make-create-costing-request', data),
+    onMakeUploadProgress: (callback: (progress: { operationId: string; fileName?: string; phase: string; uploadedBytes: number; totalBytes: number; percent: number }) => void) => {
+        const handler = (_event: Electron.IpcRendererEvent, progress: any) => callback(progress);
+        ipcRenderer.on('make-upload-progress', handler);
+        return () => ipcRenderer.removeListener('make-upload-progress', handler);
+    },
+    makeGetCostingRequests: () => ipcRenderer.invoke('make-get-costing-requests'),
+    makeUploadCostingRequestFile: (data: { requestId: number }) => ipcRenderer.invoke('make-upload-costing-request-file', data),
+    makeUploadCostingRequestItemFile: (data: { requestId: number; itemId: number }) => ipcRenderer.invoke('make-upload-costing-request-item-file', data),
+    makePickCostingProductAsset: (data: { kind: 'image' | 'blueprint' | 'product_drawing'; requestId: number; itemId: number }) => ipcRenderer.invoke('make-pick-costing-product-asset', data),
+    makeCompleteCostingRequestItem: (data: any) => ipcRenderer.invoke('make-complete-costing-request-item', data),
+    makeDeleteCostingRequest: (data: { requestId: number }) => ipcRenderer.invoke('make-delete-costing-request', data),
+    makeOrderFromCostingRequest: (payload: number | { requestId?: number; itemId?: number }) => ipcRenderer.invoke('make-order-from-costing-request', payload),
     // License — Cloud
     checkLicenseCloud: () => ipcRenderer.invoke('check-license-cloud'),
     activateLicenseCloud: (data: any) => ipcRenderer.invoke('activate-license-cloud', data),
@@ -532,5 +555,16 @@ contextBridge.exposeInMainWorld('electron', {
     sendWatchdogPong: () => {
         ipcRenderer.send('watchdog-pong');
     },
+
+    // ─── SMART FAILOVER, DURABLE OUTBOX & 1GB QUOTA ───
+    getOutboxStatus: () => ipcRenderer.invoke('get-outbox-status'),
+    getDeadLetterOperations: () => ipcRenderer.invoke('get-dead-letter-operations'),
+    replayDeadLetterOperation: (id: string) => ipcRenderer.invoke('replay-dead-letter-operation', id),
+    replayAllDeadLetters: () => ipcRenderer.invoke('replay-all-dead-letters'),
+    getSupabaseQuotaStatus: () => ipcRenderer.invoke('get-supabase-quota-status'),
+    auditSupabaseQuota: () => ipcRenderer.invoke('audit-supabase-quota'),
+    getConsolidatedHealth: () => ipcRenderer.invoke('get-consolidated-health'),
+    getPendingUploads: () => ipcRenderer.invoke('get-pending-uploads'),
+    retryStagedUpload: (id: string) => ipcRenderer.invoke('retry-staged-upload', id),
 
 });

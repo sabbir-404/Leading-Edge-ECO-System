@@ -64,12 +64,12 @@ describe('LE-SOFT 1.8.11 Cycle — Engineering Verification Suite', () => {
             setUser('factory manager');
             expect(canViewSalePrice()).toBe(false);
 
-            // Permitted roles
+            // Sale pricing is restricted to administrators and furniture designers.
             setUser('furniture_designer');
             expect(canViewSalePrice()).toBe(true);
 
             setUser('salesperson');
-            expect(canViewSalePrice()).toBe(true);
+            expect(canViewSalePrice()).toBe(false);
 
             setUser('admin');
             expect(canViewSalePrice()).toBe(true);

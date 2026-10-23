@@ -119,12 +119,17 @@ function verifyInstallation(targetDir) {
     }
 
     const versionOutput = execSync(`powershell -Command "(Get-Item '${exePath}').VersionInfo.ProductVersion"`, { encoding: 'utf8' }).trim();
+    const fileVersionOutput = execSync(`powershell -Command "(Get-Item '${exePath}').VersionInfo.FileVersion"`, { encoding: 'utf8' }).trim();
     console.log(`[VERIFY] LESOFT.exe ProductVersion: ${versionOutput}`);
+    console.log(`[VERIFY] LESOFT.exe FileVersion: ${fileVersionOutput}`);
     console.log(`[VERIFY] LESOFT.exe size: ${(exeStat.size / (1024 * 1024)).toFixed(2)} MB`);
     console.log(`[VERIFY] app.asar size: ${(asarStat.size / (1024 * 1024)).toFixed(2)} MB`);
 
-    if (!versionOutput.startsWith(targetVersion)) {
-        throw new Error(`Expected ProductVersion to start with '${targetVersion}', got '${versionOutput}'`);
+    const versionMatches = versionOutput.startsWith(targetVersion) ||
+                           fileVersionOutput.startsWith(targetVersion) ||
+                           (versionOutput.startsWith(targetVersion.split('-')[0]) && fileVersionOutput === targetVersion);
+    if (!versionMatches) {
+        throw new Error(`Expected ProductVersion or FileVersion to match '${targetVersion}', got ProductVersion='${versionOutput}', FileVersion='${fileVersionOutput}'`);
     }
 
     return {

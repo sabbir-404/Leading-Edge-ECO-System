@@ -3,7 +3,7 @@
  * Plugin Name: LE-SOFT MAKE — Sales & Furniture Design Portal
  * Plugin URI:  https://leadingedge.me
  * Description: Connected Sales & Design Portal for LE-SOFT MAKE module with centralized Product Database, custom dimensional sizing, version-tracked approvals, and direct TrueNAS PostgREST / Supabase integration.
- * Version:     1.8.1
+ * Version:     1.8.15
  * Author:      Leading Edge Technologies
  * Author URI:  https://leadingedge.me
  * Text Domain: le-make-sales-portal
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
     exit; // Exit if accessed directly
 }
 
-define('LE_MAKE_PLUGIN_VERSION', '1.8.1');
+define('LE_MAKE_PLUGIN_VERSION', '1.8.15');
 define('LE_MAKE_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('LE_MAKE_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -73,31 +73,50 @@ class LEMakeSalesPortalPlugin {
     }
 
     public function register_roles_and_caps() {
-        // 1. Salesperson Role
-        add_role('make_salesperson', __('Salesperson', 'le-make-sales-portal'), array(
+        $sales_caps = array(
             'read'                     => true,
             'access_make_sales_portal' => true,
             'create_make_orders'       => true,
             'approve_make_orders'      => true,
-        ));
+            'make_record_payment'      => true,
+            'request_make_production_approval' => true,
+            'read_make_costing_requests' => true,
+            'create_make_costing_request' => true,
+            'place_order_from_costing_request' => true,
+        );
+        add_role('make_salesperson', __('Salesman', 'le-make-sales-portal'), $sales_caps);
 
-        // 2. Furniture Designer Role
-        add_role('make_designer', __('Furniture Designer', 'le-make-sales-portal'), array(
+        $designer_caps = array(
             'read'                     => true,
             'access_make_sales_portal' => true,
             'create_make_orders'       => true,
             'approve_make_orders'      => true,
             'set_make_pricing'         => true,
             'review_make_specs'        => true,
-        ));
+            'read_make_costing_requests' => true,
+            'read_all_make_costing_requests' => true,
+            'price_make_costing_request' => true,
+            'delete_make_costing_request' => true,
+            'place_order_from_costing_request' => true,
+        );
+        add_role('make_designer', __('Furniture Designer', 'le-make-sales-portal'), $designer_caps);
 
-        // 3. Factory Manager Role
-        add_role('make_factory_manager', __('Factory Manager', 'le-make-sales-portal'), array(
+        $factory_caps = array(
             'read'                     => true,
             'access_make_sales_portal' => true,
             'update_production_status' => true,
             'upload_production_photos' => true,
-        ));
+            'read_make_costing_requests' => true,
+            'read_all_make_costing_requests' => true,
+        );
+        add_role('make_factory_manager', __('Factory Manager', 'le-make-sales-portal'), $factory_caps);
+
+        // add_role() leaves existing role definitions untouched. Explicitly
+        // update their caps on init so upgrades grant the new workflows too.
+        foreach (array('make_salesperson' => $sales_caps, 'make_designer' => $designer_caps, 'make_factory_manager' => $factory_caps) as $slug => $caps) {
+            $role = get_role($slug);
+            if ($role) foreach ($caps as $cap => $grant) { if ($grant) $role->add_cap($cap); }
+        }
 
         // 4. Add capabilities to administrator
         $admin = get_role('administrator');
@@ -111,6 +130,9 @@ class LEMakeSalesPortalPlugin {
             $admin->add_cap('upload_production_photos');
             $admin->add_cap('manage_make_settings');
             $admin->add_cap('modify_all_make_data');
+            foreach (array('read_make_costing_requests', 'read_all_make_costing_requests', 'create_make_costing_request', 'price_make_costing_request', 'delete_make_costing_request', 'place_order_from_costing_request') as $cap) {
+                $admin->add_cap($cap);
+            }
         }
     }
 
@@ -143,6 +165,9 @@ class LEMakeSalesPortalPlugin {
     }
 
     public function filter_script_loader_tag($tag, $handle) {
+        if ($handle === 'le-make-cad-viewer-js') {
+            return str_replace('<script ', '<script type="module" data-no-optimize="1" data-cfasync="false" ', $tag);
+        }
         if ($handle === 'le-make-portal-js') {
             return str_replace('<script ', '<script data-no-optimize="1" data-cfasync="false" ', $tag);
         }
@@ -198,13 +223,34 @@ class LEMakeSalesPortalPlugin {
             }
 
             if (!wp_script_is('le-make-portal-js', 'enqueued')) {
+                $watermark_file = LE_MAKE_PLUGIN_DIR . 'assets/js/pdf-watermark.js';
+                if (file_exists($watermark_file)) {
+                    wp_enqueue_script(
+                        'le-make-pdf-watermark-js',
+                        LE_MAKE_PLUGIN_URL . 'assets/js/pdf-watermark.js',
+                        array(),
+                        LE_MAKE_PLUGIN_VERSION . '.' . filemtime($watermark_file),
+                        true
+                    );
+                }
                 wp_enqueue_script(
                     'le-make-portal-js',
                     LE_MAKE_PLUGIN_URL . 'assets/js/portal.js',
-                    array(),
+                    file_exists($watermark_file) ? array('le-make-pdf-watermark-js') : array(),
                     $js_ver,
                     true
                 );
+
+                $cad_viewer_file = LE_MAKE_PLUGIN_DIR . 'assets/cad-viewer/cad-viewer.js';
+                if (file_exists($cad_viewer_file) && !wp_script_is('le-make-cad-viewer-js', 'enqueued')) {
+                    wp_enqueue_script(
+                        'le-make-cad-viewer-js',
+                        LE_MAKE_PLUGIN_URL . 'assets/cad-viewer/cad-viewer.js',
+                        array(),
+                        LE_MAKE_PLUGIN_VERSION . '.' . filemtime($cad_viewer_file),
+                        true
+                    );
+                }
 
                 $is_logged_in = is_user_logged_in();
                 $user_payload = null;
@@ -218,7 +264,7 @@ class LEMakeSalesPortalPlugin {
                     $is_factory_manager = in_array('make_factory_manager', (array)$user_roles, true) || in_array('factory_manager', (array)$user_roles, true) || current_user_can('update_production_status');
                     $is_salesperson = in_array('make_salesperson', (array)$user_roles, true) || (!$is_admin && !$is_designer && !$is_factory_manager);
 
-                    $display_role = 'Salesperson';
+                    $display_role = 'Salesman';
                     if ($is_admin) {
                         $display_role = 'Administrator';
                     } elseif ($is_designer) {

@@ -153,11 +153,11 @@ function __metadata(metadataKey, metadataValue) {
 }
 function __awaiter(thisArg, _arguments, P, generator) {
   function adopt(value) {
-    return value instanceof P ? value : new P(function(resolve) {
-      resolve(value);
+    return value instanceof P ? value : new P(function(resolve2) {
+      resolve2(value);
     });
   }
-  return new (P || (P = Promise))(function(resolve, reject) {
+  return new (P || (P = Promise))(function(resolve2, reject) {
     function fulfilled(value) {
       try {
         step(generator.next(value));
@@ -173,7 +173,7 @@ function __awaiter(thisArg, _arguments, P, generator) {
       }
     }
     function step(result) {
-      result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected);
+      result.done ? resolve2(result.value) : adopt(result.value).then(fulfilled, rejected);
     }
     step((generator = generator.apply(thisArg, _arguments || [])).next());
   });
@@ -364,14 +364,14 @@ function __asyncValues(o) {
   }, i2);
   function verb(n) {
     i2[n] = o[n] && function(v) {
-      return new Promise(function(resolve, reject) {
-        v = o[n](v), settle(resolve, reject, v.done, v.value);
+      return new Promise(function(resolve2, reject) {
+        v = o[n](v), settle(resolve2, reject, v.done, v.value);
       });
     };
   }
-  function settle(resolve, reject, d, v) {
+  function settle(resolve2, reject, d, v) {
     Promise.resolve(v).then(function(v2) {
-      resolve({ value: v2, done: d });
+      resolve2({ value: v2, done: d });
     }, reject);
   }
 }
@@ -463,13 +463,13 @@ function __disposeResources(env) {
   }
   return next2();
 }
-function __rewriteRelativeImportExtension(path21, preserveJsx) {
-  if (typeof path21 === "string" && /^\.\.?\//.test(path21)) {
-    return path21.replace(/\.(tsx)$|((?:\.d)?)((?:\.[^./]+?)?)\.([cm]?)ts$/i, function(m2, tsx, d, ext, cm) {
+function __rewriteRelativeImportExtension(path25, preserveJsx) {
+  if (typeof path25 === "string" && /^\.\.?\//.test(path25)) {
+    return path25.replace(/\.(tsx)$|((?:\.d)?)((?:\.[^./]+?)?)\.([cm]?)ts$/i, function(m2, tsx, d, ext, cm) {
       return tsx ? preserveJsx ? ".jsx" : ".js" : d && (!ext || !cm) ? m2 : d + ext + "." + cm.toLowerCase() + "js";
     });
   }
-  return path21;
+  return path25;
 }
 var extendStatics, __assign, __createBinding, __setModuleDefault, ownKeys, _SuppressedError, tslib_es6_default;
 var init_tslib_es6 = __esm({
@@ -944,18 +944,18 @@ var require_main = __commonJS({
 
 // node_modules/@supabase/postgrest-js/dist/index.mjs
 function sleep(ms, signal) {
-  return new Promise((resolve) => {
+  return new Promise((resolve2) => {
     if (signal === null || signal === void 0 ? void 0 : signal.aborted) {
-      resolve();
+      resolve2();
       return;
     }
     const id = setTimeout(() => {
       signal === null || signal === void 0 || signal.removeEventListener("abort", onAbort);
-      resolve();
+      resolve2();
     }, ms);
     function onAbort() {
       clearTimeout(id);
-      resolve();
+      resolve2();
     }
     signal === null || signal === void 0 || signal.addEventListener("abort", onAbort);
   });
@@ -9081,15 +9081,15 @@ var require_RealtimeChannel = __commonJS({
             }
           }
         } else {
-          return new Promise((resolve) => {
+          return new Promise((resolve2) => {
             var _a9, _b2, _c;
             const push = this.channelAdapter.push(args.type, args, opts.timeout || this.timeout);
             if (args.type === "broadcast" && !((_c = (_b2 = (_a9 = this.params) === null || _a9 === void 0 ? void 0 : _a9.config) === null || _b2 === void 0 ? void 0 : _b2.broadcast) === null || _c === void 0 ? void 0 : _c.ack)) {
-              resolve("ok");
+              resolve2("ok");
             }
-            push.receive("ok", () => resolve("ok"));
-            push.receive("error", () => resolve("error"));
-            push.receive("timeout", () => resolve("timed out"));
+            push.receive("ok", () => resolve2("ok"));
+            push.receive("error", () => resolve2("error"));
+            push.receive("timeout", () => resolve2("timed out"));
           });
         }
       }
@@ -9114,8 +9114,8 @@ var require_RealtimeChannel = __commonJS({
        * @category Realtime
        */
       async unsubscribe(timeout = this.timeout) {
-        return new Promise((resolve) => {
-          this.channelAdapter.unsubscribe(timeout).receive("ok", () => resolve("ok")).receive("timeout", () => resolve("timed out")).receive("error", () => resolve("error"));
+        return new Promise((resolve2) => {
+          this.channelAdapter.unsubscribe(timeout).receive("ok", () => resolve2("ok")).receive("timeout", () => resolve2("timed out")).receive("error", () => resolve2("error"));
         });
       }
       /**
@@ -9319,11 +9319,11 @@ var require_socketAdapter = __commonJS({
         this.socket.connect();
       }
       disconnect(callback, code, reason, timeout = 1e4) {
-        return new Promise((resolve) => {
-          setTimeout(() => resolve("timeout"), timeout);
+        return new Promise((resolve2) => {
+          setTimeout(() => resolve2("timeout"), timeout);
           this.socket.disconnect(() => {
             callback();
-            resolve("ok");
+            resolve2("ok");
           }, code, reason);
         });
       }
@@ -9650,12 +9650,12 @@ Option 2: Install and provide the "ws" package:
        * @category Realtime
        */
       async removeAllChannels() {
-        const promises = this.channels.map(async (channel) => {
+        const promises2 = this.channels.map(async (channel) => {
           const result2 = await channel.unsubscribe();
           channel.teardown();
           return result2;
         });
-        const result = await Promise.all(promises);
+        const result = await Promise.all(promises2);
         await this.disconnect();
         return result;
       }
@@ -10080,8 +10080,8 @@ var require_main2 = __commonJS({
 });
 
 // node_modules/iceberg-js/dist/index.mjs
-function buildUrl(baseUrl, path21, query) {
-  const url2 = new URL(path21, baseUrl);
+function buildUrl(baseUrl, path25, query) {
+  const url2 = new URL(path25, baseUrl);
   if (query) {
     for (const [key, value] of Object.entries(query)) {
       if (value !== void 0) {
@@ -10111,12 +10111,12 @@ function createFetchClient(options) {
   return {
     async request({
       method,
-      path: path21,
+      path: path25,
       query,
       body,
       headers
     }) {
-      const url2 = buildUrl(options.baseUrl, path21, query);
+      const url2 = buildUrl(options.baseUrl, path25, query);
       const authHeaders = await buildAuthHeaders(options.auth);
       const res = await fetchFn(url2, {
         method,
@@ -10685,7 +10685,7 @@ function normalizeHeaders(headers) {
   return result;
 }
 async function _handleRequest(fetcher, method, url2, options, parameters, body, namespace) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve2, reject) => {
     fetcher(url2, _getRequestParams(method, options, parameters, body)).then((result) => {
       if (!result.ok) throw result;
       if (options === null || options === void 0 ? void 0 : options.noResolveJson) return result;
@@ -10695,7 +10695,7 @@ async function _handleRequest(fetcher, method, url2, options, parameters, body, 
         if (!contentType || !contentType.includes("application/json")) return {};
       }
       return result.json();
-    }).then((data2) => resolve(data2)).catch((error51) => handleError(error51, reject, options, namespace));
+    }).then((data2) => resolve2(data2)).catch((error51) => handleError(error51, reject, options, namespace));
   });
 }
 function createFetchApi(namespace = "storage") {
@@ -11014,7 +11014,7 @@ var init_dist3 = __esm({
       * @param path The relative file path. Should be of the format `folder/subfolder/filename.png`. The bucket must already exist before attempting to upload.
       * @param fileBody The body of the file to be stored in the bucket.
       */
-      async uploadOrUpdate(method, path21, fileBody, fileOptions) {
+      async uploadOrUpdate(method, path25, fileBody, fileOptions) {
         var _this = this;
         return _this.handleOperation(async () => {
           let body;
@@ -11038,7 +11038,7 @@ var init_dist3 = __esm({
             if ((typeof ReadableStream !== "undefined" && body instanceof ReadableStream || body && typeof body === "object" && "pipe" in body && typeof body.pipe === "function") && !options.duplex) options.duplex = "half";
           }
           if (fileOptions === null || fileOptions === void 0 ? void 0 : fileOptions.headers) for (const [key, value] of Object.entries(fileOptions.headers)) headers = setHeader(headers, key, value);
-          const cleanPath = _this._removeEmptyFolders(path21);
+          const cleanPath = _this._removeEmptyFolders(path25);
           const _path = _this._getFinalPath(cleanPath);
           const data2 = await (method == "PUT" ? put : post)(_this.fetch, `${_this.url}/object/${_path}`, body, _objectSpread22({ headers }, (options === null || options === void 0 ? void 0 : options.duplex) ? { duplex: options.duplex } : {}));
           return {
@@ -11115,8 +11115,8 @@ var init_dist3 = __esm({
       * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works
       * - For React Native, using either `Blob`, `File` or `FormData` does not work as intended. Upload file using `ArrayBuffer` from base64 file data instead, see example below.
       */
-      async upload(path21, fileBody, fileOptions) {
-        return this.uploadOrUpdate("POST", path21, fileBody, fileOptions);
+      async upload(path25, fileBody, fileOptions) {
+        return this.uploadOrUpdate("POST", path25, fileBody, fileOptions);
       }
       /**
       * Upload a file with a token generated from `createSignedUploadUrl`.
@@ -11156,9 +11156,9 @@ var init_dist3 = __esm({
       *   - `objects` table permissions: none
       * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works
       */
-      async uploadToSignedUrl(path21, token, fileBody, fileOptions) {
+      async uploadToSignedUrl(path25, token, fileBody, fileOptions) {
         var _this3 = this;
-        const cleanPath = _this3._removeEmptyFolders(path21);
+        const cleanPath = _this3._removeEmptyFolders(path25);
         const _path = _this3._getFinalPath(cleanPath);
         const url2 = new URL(_this3.url + `/object/upload/sign/${_path}`);
         url2.searchParams.set("token", token);
@@ -11227,10 +11227,10 @@ var init_dist3 = __esm({
       *   - `objects` table permissions: `insert`
       * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works
       */
-      async createSignedUploadUrl(path21, options) {
+      async createSignedUploadUrl(path25, options) {
         var _this4 = this;
         return _this4.handleOperation(async () => {
-          let _path = _this4._getFinalPath(path21);
+          let _path = _this4._getFinalPath(path25);
           const headers = _objectSpread22({}, _this4.headers);
           if (options === null || options === void 0 ? void 0 : options.upsert) headers["x-upsert"] = "true";
           const data2 = await post(_this4.fetch, `${_this4.url}/object/upload/sign/${_path}`, {}, { headers });
@@ -11239,7 +11239,7 @@ var init_dist3 = __esm({
           if (!token) throw new StorageError("No token returned by API");
           return {
             signedUrl: url2.toString(),
-            path: path21,
+            path: path25,
             token
           };
         });
@@ -11299,8 +11299,8 @@ var init_dist3 = __esm({
       * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works
       * - For React Native, using either `Blob`, `File` or `FormData` does not work as intended. Update file using `ArrayBuffer` from base64 file data instead, see example below.
       */
-      async update(path21, fileBody, fileOptions) {
-        return this.uploadOrUpdate("PUT", path21, fileBody, fileOptions);
+      async update(path25, fileBody, fileOptions) {
+        return this.uploadOrUpdate("PUT", path25, fileBody, fileOptions);
       }
       /**
       * Moves an existing file to a new path in the same bucket.
@@ -11451,10 +11451,10 @@ var init_dist3 = __esm({
       *   - `objects` table permissions: `select`
       * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works
       */
-      async createSignedUrl(path21, expiresIn, options) {
+      async createSignedUrl(path25, expiresIn, options) {
         var _this8 = this;
         return _this8.handleOperation(async () => {
-          let _path = _this8._getFinalPath(path21);
+          let _path = _this8._getFinalPath(path25);
           const hasTransform = typeof (options === null || options === void 0 ? void 0 : options.transform) === "object" && options.transform !== null && Object.keys(options.transform).length > 0;
           let data2 = await post(_this8.fetch, `${_this8.url}/object/sign/${_path}`, _objectSpread22({ expiresIn }, hasTransform ? { transform: options.transform } : {}), { headers: _this8.headers });
           const query = new URLSearchParams();
@@ -11590,13 +11590,13 @@ var init_dist3 = __esm({
       *   - `objects` table permissions: `select`
       * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works
       */
-      download(path21, options, parameters) {
+      download(path25, options, parameters) {
         const renderPath = typeof (options === null || options === void 0 ? void 0 : options.transform) === "object" && options.transform !== null && Object.keys(options.transform).length > 0 ? "render/image/authenticated" : "object";
         const query = new URLSearchParams();
         if (options === null || options === void 0 ? void 0 : options.transform) this.applyTransformOptsToQuery(query, options.transform);
         if ((options === null || options === void 0 ? void 0 : options.cacheNonce) != null) query.set("cacheNonce", String(options.cacheNonce));
         const queryString = query.toString();
-        const _path = this._getFinalPath(path21);
+        const _path = this._getFinalPath(path25);
         const downloadFn = () => get(this.fetch, `${this.url}/${renderPath}/${_path}${queryString ? `?${queryString}` : ""}`, {
           headers: this.headers,
           noResolveJson: true
@@ -11627,9 +11627,9 @@ var init_dist3 = __esm({
       * }
       * ```
       */
-      async info(path21) {
+      async info(path25) {
         var _this10 = this;
-        const _path = _this10._getFinalPath(path21);
+        const _path = _this10._getFinalPath(path25);
         return _this10.handleOperation(async () => {
           return recursiveToCamel(await get(_this10.fetch, `${_this10.url}/object/info/${_path}`, { headers: _this10.headers }));
         });
@@ -11650,9 +11650,9 @@ var init_dist3 = __esm({
       *   .exists('folder/avatar1.png')
       * ```
       */
-      async exists(path21) {
+      async exists(path25) {
         var _this11 = this;
-        const _path = _this11._getFinalPath(path21);
+        const _path = _this11._getFinalPath(path25);
         try {
           await head(_this11.fetch, `${_this11.url}/object/${_path}`, { headers: _this11.headers });
           return {
@@ -11731,8 +11731,8 @@ var init_dist3 = __esm({
       *   - `objects` table permissions: none
       * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works
       */
-      getPublicUrl(path21, options) {
-        const _path = this._getFinalPath(path21);
+      getPublicUrl(path25, options) {
+        const _path = this._getFinalPath(path25);
         const query = new URLSearchParams();
         if (options === null || options === void 0 ? void 0 : options.download) query.set("download", options.download === true ? "" : options.download);
         if (options === null || options === void 0 ? void 0 : options.transform) this.applyTransformOptsToQuery(query, options.transform);
@@ -11871,10 +11871,10 @@ var init_dist3 = __esm({
       *   - `objects` table permissions: `select`
       * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works
       */
-      async list(path21, options, parameters) {
+      async list(path25, options, parameters) {
         var _this13 = this;
         return _this13.handleOperation(async () => {
-          const body = _objectSpread22(_objectSpread22(_objectSpread22({}, DEFAULT_SEARCH_OPTIONS), options), {}, { prefix: path21 || "" });
+          const body = _objectSpread22(_objectSpread22(_objectSpread22({}, DEFAULT_SEARCH_OPTIONS), options), {}, { prefix: path25 || "" });
           return await post(_this13.fetch, `${_this13.url}/object/list/${_this13.bucketId}`, body, { headers: _this13.headers }, parameters);
         });
       }
@@ -11939,11 +11939,11 @@ var init_dist3 = __esm({
         if (typeof Buffer !== "undefined") return Buffer.from(data2).toString("base64");
         return btoa(data2);
       }
-      _getFinalPath(path21) {
-        return `${this.bucketId}/${path21.replace(/^\/+/, "")}`;
+      _getFinalPath(path25) {
+        return `${this.bucketId}/${path25.replace(/^\/+/, "")}`;
       }
-      _removeEmptyFolders(path21) {
-        return path21.replace(/^\/|\/$/g, "").replace(/\/+/g, "/");
+      _removeEmptyFolders(path25) {
+        return path25.replace(/^\/|\/$/g, "").replace(/\/+/g, "/");
       }
       /** Modifies the `query`, appending values the from `transform` */
       applyTransformOptsToQuery(query, transform2) {
@@ -20174,14 +20174,14 @@ var require_GoTrueClient = __commonJS({
             this.broadcastChannel.postMessage({ event, session: session2 });
           }
           const errors2 = [];
-          const promises = Array.from(this.stateChangeEmitters.values()).map(async (x2) => {
+          const promises2 = Array.from(this.stateChangeEmitters.values()).map(async (x2) => {
             try {
               await x2.callback(event, session2);
             } catch (e2) {
               errors2.push(e2);
             }
           });
-          await Promise.all(promises);
+          await Promise.all(promises2);
           if (errors2.length > 0) {
             for (let i2 = 0; i2 < errors2.length; i2 += 1) {
               console.error(errors2[i2]);
@@ -21489,11 +21489,11 @@ __export(dist_exports, {
 });
 function __awaiter2(thisArg, _arguments, P, generator) {
   function adopt(value) {
-    return value instanceof P ? value : new P(function(resolve) {
-      resolve(value);
+    return value instanceof P ? value : new P(function(resolve2) {
+      resolve2(value);
     });
   }
-  return new (P || (P = Promise))(function(resolve, reject) {
+  return new (P || (P = Promise))(function(resolve2, reject) {
     function fulfilled(value) {
       try {
         step(generator.next(value));
@@ -21509,7 +21509,7 @@ function __awaiter2(thisArg, _arguments, P, generator) {
       }
     }
     function step(result) {
-      result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected);
+      result.done ? resolve2(result.value) : adopt(result.value).then(fulfilled, rejected);
     }
     step((generator = generator.apply(thisArg, _arguments || [])).next());
   });
@@ -23035,6 +23035,7 @@ var init_DatabaseFailoverEngine = __esm({
       lastWorkingNasUrl = null;
       connectionStatePath;
       isNasReachable = false;
+      nasAuthorizationError = null;
       consecutiveFailures = 0;
       MAX_CONSECUTIVE_FAILURES = 2;
       // Require 2 consecutive failures before degrading to avoid false-positive on single transient timeout
@@ -23138,27 +23139,31 @@ var init_DatabaseFailoverEngine = __esm({
         }
       }
       getActiveClient() {
-        const inCooldown = Date.now() < this.cooldownUntil;
-        if (this.circuitState === "degraded" || this.circuitState === "offline" || inCooldown) {
-          if (this.supabaseClient) {
-            return this.supabaseClient;
-          }
-        }
-        if ((this.circuitState === "healthy" || this.circuitState === "recovering") && this.nasClient) {
-          return this.nasClient;
-        }
         if (this.supabaseClient) {
           return this.supabaseClient;
+        }
+        if (this.supabaseAdmin) {
+          return this.supabaseAdmin;
         }
         if (this.nasClient) {
           return this.nasClient;
         }
         throw new Error("No database client available.");
       }
+      /**
+       * Redacts tokens, connection strings, passwords, and sensitive keys from error strings
+       */
+      static sanitizeError(err) {
+        if (!err) return "unknown";
+        const msg = typeof err === "string" ? err : err.message || JSON.stringify(err);
+        return msg.replace(/(Bearer\s+)[A-Za-z0-9\-_.]+/gi, "$1[REDACTED]").replace(/(apikey[:=]\s*)[A-Za-z0-9\-_.]+/gi, "$1[REDACTED]").replace(/(postgres:\/\/[^:]+:)[^@]+(@)/gi, "$1[REDACTED]$2").replace(/(password[:=]\s*)[^&\s]+/gi, "$1[REDACTED]");
+      }
       logDiagnostic(payload) {
         const cleanPayload = {
           timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-          ...payload
+          ...payload,
+          reason: payload.reason ? _DatabaseFailoverEngine.sanitizeError(payload.reason) : void 0,
+          error: payload.error ? _DatabaseFailoverEngine.sanitizeError(payload.error) : void 0
         };
         console.log(`[DB:DIAGNOSTIC] ${JSON.stringify(cleanPayload)}`);
         try {
@@ -23196,6 +23201,7 @@ var init_DatabaseFailoverEngine = __esm({
           connectionTier: this.connectionTier,
           activeNasUrl: this.activeNasUrl,
           isNasReachable: this.isNasReachable,
+          nasAuthorizationError: this.nasAuthorizationError,
           consecutiveFailures: this.consecutiveFailures,
           pendingReconciliationCount: this.getPendingJournalEntries().length,
           pendingMirrorRetriesCount: this.mirrorRetryEntries.length,
@@ -23237,18 +23243,22 @@ var init_DatabaseFailoverEngine = __esm({
        * Pings a specific URL with a bounded timeout using HEAD to avoid downloading schema bodies.
        */
       async pingUrl(url2, timeoutMs = 1200, headers = {}) {
+        let timeoutId;
         try {
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+          timeoutId = setTimeout(() => controller.abort(), timeoutMs);
           const res = await fetch(url2, {
             method: "HEAD",
             signal: controller.signal,
             headers
           });
-          clearTimeout(timeoutId);
-          return res.ok;
+          const contentType = res.headers?.get?.("content-type") || "";
+          if (res.status === 403 && contentType.toLowerCase().includes("text/html")) return false;
+          return true;
         } catch {
           return false;
+        } finally {
+          if (timeoutId) clearTimeout(timeoutId);
         }
       }
       /**
@@ -23375,6 +23385,9 @@ var init_DatabaseFailoverEngine = __esm({
           }
           if (!success2) {
             console.warn("[DB:RECOVERY] NAS real query failed:", queryError?.message || "unknown error");
+            if (_DatabaseFailoverEngine.isAuthorizationError(queryError)) {
+              this.recordNasAuthorizationFailure(queryError);
+            }
             return false;
           }
           const duration3 = Date.now() - t0;
@@ -23441,13 +23454,17 @@ var init_DatabaseFailoverEngine = __esm({
       }
       // ── Circuit Breaker Actions ──────────────────────────────────────────────────
       recordNasFailure(err) {
+        if (_DatabaseFailoverEngine.isAuthorizationError(err)) {
+          this.recordNasAuthorizationFailure(err);
+          return;
+        }
         if (this.isBackgroundBootstrap) {
           console.warn("[DB:FAILOVER] Ignoring NAS failure during background bootstrap (not penalizing primary health):", err?.message || "unknown");
           return;
         }
         this.consecutiveFailures++;
         this.metrics.failedNasQueries++;
-        const isHardFailure = err?.message && (err.message.includes("ECONNREFUSED") || err.message.includes("HTML response") || err.message.includes("proxy/gateway") || err.message.includes("authorization rejected") || err.message.includes("502") || err.message.includes("503") || err.message.includes("504"));
+        const isHardFailure = err?.message && (err.message.includes("ECONNREFUSED") || err.message.includes("HTML response") || err.message.includes("proxy/gateway") || err.message.includes("502") || err.message.includes("503") || err.message.includes("504"));
         const isTimeoutOrTransient = err?.message && (err.message.includes("fetch failed") || err.message.includes("ETIMEDOUT") || err.message.includes("network") || err.message.includes("timeout") || err.message.includes("Connection")) || err?.code === "PGRST000";
         const backoffStep = Math.min(4, Math.max(0, this.consecutiveFailures - 1));
         this.cooldownDurationMs = Math.min(12e4, 3e4 * Math.pow(1.5, backoffStep));
@@ -23484,8 +23501,28 @@ var init_DatabaseFailoverEngine = __esm({
           }
         }
       }
+      static isAuthorizationError(err) {
+        const status = Number(err?.status ?? err?.statusCode ?? err?.response?.status);
+        const message = String(err?.message || err || "").toLowerCase();
+        if (/html response|proxy\/gateway|proxy\/access blocked|unexpected html/.test(message)) return false;
+        return status === 401 || status === 403 || /database authorization rejected|postgrest authentication error|jwt (?:expired|invalid)|invalid jwt|permission denied|not authorized|unauthorized|forbidden/.test(message);
+      }
+      recordNasAuthorizationFailure(err) {
+        this.isNasReachable = true;
+        this.nasAuthorizationError = _DatabaseFailoverEngine.sanitizeError(err);
+        this.metrics.failedNasQueries++;
+        this.lastHealthCheckTime = Date.now();
+        this.consecutiveFailures = 0;
+        this.cooldownUntil = 0;
+        this.circuitState = "degraded";
+        this.activeTarget = "supabase";
+        this.broadcastStatus();
+        console.warn("[DB:FAILOVER] NAS is reachable but rejected database authorization. Routing database operations to Supabase until credentials are corrected.");
+      }
       recordNasSuccess(durationMs) {
         this.consecutiveFailures = 0;
+        this.isNasReachable = true;
+        this.nasAuthorizationError = null;
         this.cooldownUntil = 0;
         this.cooldownDurationMs = 3e4;
         if (typeof durationMs === "number" && durationMs >= 0) {
@@ -23527,10 +23564,14 @@ var init_DatabaseFailoverEngine = __esm({
               this.recordNasSuccess(duration3);
               return { data: res.data, error: null, databaseUsed: "nas" };
             }
-            if (res.error?.code && !["ECONNREFUSED", "ETIMEDOUT", "PGRST000"].includes(res.error.code)) {
-              return { data: res.data, error: res.error, databaseUsed: "nas" };
+            if (_DatabaseFailoverEngine.isAuthorizationError(res.error)) {
+              this.recordNasAuthorizationFailure(res.error);
+            } else {
+              if (res.error?.code && !["ECONNREFUSED", "ETIMEDOUT", "PGRST000"].includes(res.error.code)) {
+                return { data: res.data, error: res.error, databaseUsed: "nas" };
+              }
+              this.recordNasFailure(res.error);
             }
-            this.recordNasFailure(res.error);
           } catch (err) {
             this.recordNasFailure(err);
           }
@@ -23570,20 +23611,25 @@ var init_DatabaseFailoverEngine = __esm({
             );
             res = await Promise.race([writeFn(this.nasClient), timeoutPromise]);
           } catch (err) {
-            this.recordNasFailure(err);
-            console.error(`[DB:FAILOVER] Ambiguous write timeout on NAS for ${writeDesc} (${metadata.table}). Preventing duplicate replay to Supabase.`);
-            this.journalWrite({
-              table: metadata.table,
-              operation: metadata.operation,
-              primaryKey: metadata.primaryKey,
-              data: metadata.data,
-              filter: metadata.filter
-            });
-            return {
-              data: null,
-              error: new Error(`NAS write timeout on ${writeDesc}: operation sent to primary database but response timed out. Replay halted to prevent duplicate mutations.`),
-              databaseUsed: "nas"
-            };
+            if (_DatabaseFailoverEngine.isAuthorizationError(err)) {
+              this.recordNasAuthorizationFailure(err);
+              res = { data: null, error: err };
+            } else {
+              this.recordNasFailure(err);
+              console.error(`[DB:FAILOVER] Ambiguous write failure on NAS for ${writeDesc} (${metadata.table}). Preventing duplicate replay to Supabase.`);
+              this.journalWrite({
+                table: metadata.table,
+                operation: metadata.operation,
+                primaryKey: metadata.primaryKey,
+                data: metadata.data,
+                filter: metadata.filter
+              });
+              return {
+                data: null,
+                error: new Error(`NAS write timeout on ${writeDesc}: operation sent to primary database but response timed out. Replay halted to prevent duplicate mutations.`),
+                databaseUsed: "nas"
+              };
+            }
           }
           const duration3 = Date.now() - t0;
           this.metrics.lastQueryDurationMs = duration3;
@@ -23602,16 +23648,20 @@ var init_DatabaseFailoverEngine = __esm({
             });
             return { data: res.data, error: null, databaseUsed: "nas" };
           }
-          const isPgError = res.error?.code || res.error?.details || res.error?.hint;
-          if (isPgError) {
-            return { data: null, error: res.error, databaseUsed: "nas" };
+          if (_DatabaseFailoverEngine.isAuthorizationError(res.error)) {
+            this.recordNasAuthorizationFailure(res.error);
+          } else {
+            const isPgError = res.error?.code || res.error?.details || res.error?.hint;
+            if (isPgError) {
+              return { data: null, error: res.error, databaseUsed: "nas" };
+            }
+            this.recordNasFailure(res.error);
+            return {
+              data: null,
+              error: res.error,
+              databaseUsed: "nas"
+            };
           }
-          this.recordNasFailure(res.error);
-          return {
-            data: null,
-            error: res.error,
-            databaseUsed: "nas"
-          };
         }
         if (!this.supabaseClient) {
           return { data: null, error: new Error("Supabase fallback client is not configured"), databaseUsed: "supabase" };
@@ -23735,17 +23785,54 @@ var init_DatabaseFailoverEngine = __esm({
       getMirrorRetryEntries() {
         return [...this.mirrorRetryEntries];
       }
+      /**
+       * A cloud mirror retry is only valid while its source row still exists on the
+       * authoritative NAS. This also removes stale journal entries after an order
+       * or catalog purge, instead of retrying a guaranteed FK failure forever.
+       * If the NAS cannot be queried, keep the retry: absence must be confirmed.
+       */
+      async keepOnlyExistingNasRows(item) {
+        if (item.operation === "delete" || !this.nasClient) return true;
+        const rows = Array.isArray(item.data) ? item.data : [item.data];
+        const keyName = (rows.length === 1 ? item.primaryKey?.name : void 0) || (rows.every((row) => row && row.id !== void 0) ? "id" : void 0);
+        if (!keyName || rows.length === 0) return rows.length !== 0;
+        const keys = rows.map((row) => (rows.length === 1 ? item.primaryKey?.value : void 0) ?? row?.[keyName]).filter((value) => value !== void 0 && value !== null);
+        if (keys.length !== rows.length) return true;
+        try {
+          let query = this.nasClient.from(item.table).select(keyName);
+          query = keys.length === 1 ? query.eq(keyName, keys[0]) : query.in(keyName, keys);
+          const { data: data2, error: error51 } = keys.length === 1 && typeof query.maybeSingle === "function" ? await query.maybeSingle() : await query;
+          if (error51 || data2 === void 0) return true;
+          const existingKeys = new Set((Array.isArray(data2) ? data2 : data2 ? [data2] : []).map((row) => row?.[keyName]));
+          const survivingRows = rows.filter((_row, index2) => existingKeys.has(keys[index2]));
+          if (survivingRows.length === 0) {
+            console.info(`[DB:SYNC] Dropping stale cloud mirror retry for deleted NAS row(s) in ${item.table}.`);
+            return false;
+          }
+          if (survivingRows.length !== rows.length) {
+            item.data = Array.isArray(item.data) ? survivingRows : survivingRows[0];
+          }
+          return true;
+        } catch {
+          return true;
+        }
+      }
       async processPendingMirrorRetries() {
         const client = this.supabaseAdmin || this.supabaseClient;
         if (!client || this.mirrorRetryEntries.length === 0 || this.isRetryingMirror) {
-          return { succeeded: 0, failed: 0 };
+          return { succeeded: 0, failed: 0, discarded: 0 };
         }
         this.isRetryingMirror = true;
         let succeeded = 0;
         let failed = 0;
+        let discarded = 0;
         const remaining = [];
         for (const item of this.mirrorRetryEntries) {
           try {
+            if (!await this.keepOnlyExistingNasRows(item)) {
+              discarded++;
+              continue;
+            }
             await this.mirrorWriteToCloud(client, item, item.data);
             succeeded++;
           } catch (err) {
@@ -23759,7 +23846,7 @@ var init_DatabaseFailoverEngine = __esm({
         this.persistMirrorJournal();
         this.isRetryingMirror = false;
         this.broadcastStatus();
-        return { succeeded, failed };
+        return { succeeded, failed, discarded };
       }
       // ── Freshness & Bootstrap Engine ─────────────────────────────────────────────
       loadFreshness() {
@@ -24469,6 +24556,2995 @@ MCowBQYDK2VwAyEAN1VUr6FWOFsJI5xKtlVlLJg167CVtx8d7+tgebClPxI=
   }
 });
 
+// electron/services/quota/SupabaseQuotaManager.ts
+var SupabaseQuotaManager_exports = {};
+__export(SupabaseQuotaManager_exports, {
+  SupabaseQuotaManager: () => SupabaseQuotaManager
+});
+var import_electron5, import_fs5, import_path5, SupabaseQuotaManager;
+var init_SupabaseQuotaManager = __esm({
+  "electron/services/quota/SupabaseQuotaManager.ts"() {
+    "use strict";
+    import_electron5 = require("electron");
+    import_fs5 = __toESM(require("fs"), 1);
+    import_path5 = __toESM(require("path"), 1);
+    SupabaseQuotaManager = class _SupabaseQuotaManager {
+      static instance = null;
+      // Soft operational target & partition definitions (in bytes)
+      static HARD_CEILING_BYTES = 3e9;
+      // 3 GB soft operational target
+      static STORAGE_CEILING_BYTES = 22e8;
+      // 2.2 GB operational allocation for images/CAD
+      static DATABASE_CEILING_BYTES = 5e8;
+      // 500 MB operational allocation for DB rows
+      static CRITICAL_RESERVE_BYTES = 3e8;
+      // 300 MB emergency reserve floor
+      static WARNING_THRESHOLD_BYTES = 24e8;
+      // 2.4 GB (80%) - triggers accelerated reconciliation
+      static CRITICAL_THRESHOLD_BYTES = 285e7;
+      // 2.85 GB (95%)
+      clientId;
+      client = null;
+      reconciliationClient = null;
+      stateFilePath;
+      // In-memory atomic reservation tracking (local view)
+      activeStorageReservations = /* @__PURE__ */ new Map();
+      activeDatabaseReservations = /* @__PURE__ */ new Map();
+      // Measured byte metrics
+      measuredDatabaseBytes = 0;
+      measuredStorageBytes = 0;
+      lastMeasuredAt = 0;
+      oldestPendingTime = null;
+      blockedOperationsCount = 0;
+      isMeasurementStale = false;
+      isAuditing = false;
+      constructor(clientId, client) {
+        this.clientId = clientId || (process.env.LESOFT_CLIENT_ID || (import_electron5.app?.getPath ? import_electron5.app.getPath("userData") : process.cwd()).replace(/[^a-zA-Z0-9_-]/g, "_"));
+        this.client = client || null;
+        const userData = import_electron5.app?.getPath ? import_electron5.app.getPath("userData") : import_path5.default.join(process.env.APPDATA || process.cwd(), "le-soft");
+        this.stateFilePath = import_path5.default.join(userData, `supabase_quota_state_${this.clientId.slice(0, 16)}.json`);
+        this.loadPersistedState();
+      }
+      static getInstance() {
+        if (!_SupabaseQuotaManager.instance) {
+          _SupabaseQuotaManager.instance = new _SupabaseQuotaManager();
+        }
+        return _SupabaseQuotaManager.instance;
+      }
+      registerClient(client) {
+        this.client = client;
+      }
+      registerClients(clients) {
+        this.client = clients.supabase;
+        if (clients.reconciliation !== void 0) {
+          this.reconciliationClient = clients.reconciliation;
+        }
+      }
+      /**
+       * Registers a trusted reconciliation client (e.g. an authenticated reconciliation operator session)
+       * for pruning committed buffer capacity without embedding service-role secrets in desktop client config.
+       */
+      registerReconciliationClient(client) {
+        this.reconciliationClient = client;
+      }
+      /**
+       * Resolves the authoritative client identity expected by PostgreSQL RPC.
+       * When caller has an authenticated Supabase session, auth.uid() is authoritative.
+       * If no authenticated user is present (e.g. background worker or test environment),
+       * falls back to the configured clientId.
+       */
+      async resolveAuthoritativeClientId(overrideClient, explicitClientId) {
+        if (explicitClientId && explicitClientId.trim()) {
+          return explicitClientId.trim();
+        }
+        const activeClient = overrideClient || this.client;
+        if (activeClient) {
+          try {
+            const sessionRes = await activeClient.auth.getSession();
+            const uid = sessionRes?.data?.session?.user?.id;
+            if (uid && typeof uid === "string" && uid.trim().length > 0) {
+              return uid.trim();
+            }
+          } catch {
+          }
+          try {
+            const userRes = await activeClient.auth.getUser();
+            const uid = userRes?.data?.user?.id;
+            if (uid && typeof uid === "string" && uid.trim().length > 0) {
+              return uid.trim();
+            }
+          } catch {
+          }
+        }
+        return this.clientId;
+      }
+      recordUsage(_source, storageBytes, dbBytes) {
+        this.measuredStorageBytes = storageBytes;
+        this.measuredDatabaseBytes = dbBytes;
+        this.lastMeasuredAt = Date.now();
+        this.isMeasurementStale = false;
+        this.persistState();
+      }
+      loadPersistedState() {
+        try {
+          if (import_fs5.default.existsSync(this.stateFilePath)) {
+            const raw = import_fs5.default.readFileSync(this.stateFilePath, "utf-8");
+            const parsed = JSON.parse(raw);
+            this.measuredDatabaseBytes = Number(parsed.measuredDatabaseBytes) || 0;
+            this.measuredStorageBytes = Number(parsed.measuredStorageBytes) || 0;
+            this.lastMeasuredAt = Number(parsed.lastMeasuredAt) || 0;
+          }
+        } catch {
+          this.measuredDatabaseBytes = 0;
+          this.measuredStorageBytes = 0;
+          this.lastMeasuredAt = 0;
+        }
+      }
+      persistState() {
+        try {
+          import_fs5.default.mkdirSync(import_path5.default.dirname(this.stateFilePath), { recursive: true });
+          import_fs5.default.writeFileSync(this.stateFilePath, JSON.stringify({
+            measuredDatabaseBytes: this.measuredDatabaseBytes,
+            measuredStorageBytes: this.measuredStorageBytes,
+            lastMeasuredAt: this.lastMeasuredAt,
+            updatedAt: Date.now()
+          }, null, 2), "utf-8");
+        } catch {
+        }
+      }
+      // ── Atomic Reservation Mechanism ─────────────────────────────────────────────
+      /**
+       * Attempts to atomically reserve storage quota for a file upload.
+       * Enforces shared server-side reservation across multiple desktop clients when client is registered.
+       * Uses authenticated auth.uid() by default to satisfy CLIENT_IDENTITY_MISMATCH constraints.
+       * Returns true if reservation is accepted, false if capacity would be exceeded or uncertain.
+       */
+      async reserveStorageQuota(reservationId, bytesNeeded, callerClientId) {
+        if (bytesNeeded <= 0) return true;
+        if (this.client) {
+          try {
+            const authoritativeClientId = await this.resolveAuthoritativeClientId(this.client, callerClientId);
+            const { data: data2, error: error51 } = await this.client.rpc("reserve_buffer_capacity", {
+              p_reservation_id: reservationId,
+              p_client_id: authoritativeClientId,
+              p_resource_type: "storage",
+              p_bytes: bytesNeeded
+            });
+            if (!error51 && data2) {
+              if (data2.success === true) {
+                this.activeStorageReservations.set(reservationId, bytesNeeded);
+                return true;
+              } else {
+                this.blockedOperationsCount++;
+                console.warn(`[QUOTA] Shared storage reservation REJECTED for ${reservationId} (${bytesNeeded} B). Reason: ${data2.reason}`);
+                return false;
+              }
+            }
+            this.blockedOperationsCount++;
+            console.warn(`[QUOTA] Shared quota RPC error: ${error51?.message || "Unknown RPC failure"}. Failing closed to local storage.`);
+            return false;
+          } catch (ex) {
+            this.blockedOperationsCount++;
+            console.warn(`[QUOTA] Shared quota verification exception. Retaining work locally:`, ex.message);
+            return false;
+          }
+        }
+        const currentReserved = this.getTotalReservedStorageBytes();
+        const prospectiveStorageTotal = this.measuredStorageBytes + currentReserved + bytesNeeded;
+        const prospectiveGrandTotal = this.getCurrentTotalUsageBytes() + bytesNeeded;
+        if (prospectiveStorageTotal > _SupabaseQuotaManager.STORAGE_CEILING_BYTES || prospectiveGrandTotal > _SupabaseQuotaManager.CRITICAL_THRESHOLD_BYTES) {
+          this.blockedOperationsCount++;
+          return false;
+        }
+        this.activeStorageReservations.set(reservationId, bytesNeeded);
+        return true;
+      }
+      async releaseStorageQuota(reservationId, confirmedUploadedBytes = 0, statusOverride, callerClientId) {
+        this.activeStorageReservations.delete(reservationId);
+        if (this.client) {
+          try {
+            const finalStatus = statusOverride || (confirmedUploadedBytes > 0 ? "committed" : "released");
+            const authoritativeClientId = await this.resolveAuthoritativeClientId(this.client, callerClientId);
+            const { data: data2, error: error51 } = await this.client.rpc("release_buffer_capacity", {
+              p_reservation_id: reservationId,
+              p_client_id: authoritativeClientId,
+              p_status: finalStatus,
+              p_actual_bytes: confirmedUploadedBytes
+            });
+            if (error51 || !data2 || data2.success !== true) {
+              console.warn(`[QUOTA] Failed to transition storage capacity via RPC for ${reservationId} (status=${finalStatus}): ${error51?.message || data2?.reason || "Unknown error"}`);
+              return false;
+            }
+            if (confirmedUploadedBytes > 0) {
+              this.measuredStorageBytes += confirmedUploadedBytes;
+              this.persistState();
+            }
+            return true;
+          } catch (err) {
+            console.warn("[QUOTA] Failed to release storage capacity via RPC:", err.message);
+            return false;
+          }
+        }
+        if (confirmedUploadedBytes > 0) {
+          this.measuredStorageBytes += confirmedUploadedBytes;
+          this.persistState();
+        }
+        return true;
+      }
+      async pruneConfirmedStorage(reservationId, bytesPruned, callerClientId) {
+        const activeClient = this.reconciliationClient || this.client;
+        if (activeClient) {
+          try {
+            const authoritativeClientId = await this.resolveAuthoritativeClientId(activeClient, callerClientId);
+            const { data: data2, error: error51 } = await activeClient.rpc("release_buffer_capacity", {
+              p_reservation_id: reservationId,
+              p_client_id: authoritativeClientId,
+              p_status: "pruned",
+              p_actual_bytes: 0
+            });
+            if (error51 || !data2 || data2.success !== true) {
+              console.warn(`[QUOTA] Failed to prune storage buffer capacity via RPC for ${reservationId}: ${error51?.message || data2?.reason || "Unknown error"}`);
+              return false;
+            }
+            if (bytesPruned > 0) {
+              this.measuredStorageBytes = Math.max(0, this.measuredStorageBytes - bytesPruned);
+              this.persistState();
+            }
+            return true;
+          } catch (err) {
+            console.warn("[QUOTA] Exception pruning storage capacity:", err.message);
+            return false;
+          }
+        }
+        if (bytesPruned > 0) {
+          this.measuredStorageBytes = Math.max(0, this.measuredStorageBytes - bytesPruned);
+          this.persistState();
+        }
+        return true;
+      }
+      /**
+       * Attempts to atomically reserve database quota for an offline fallback row batch.
+       */
+      async reserveDatabaseQuota(reservationId, estimatedBytes, callerClientId) {
+        if (estimatedBytes <= 0) return true;
+        if (this.client) {
+          try {
+            const authoritativeClientId = await this.resolveAuthoritativeClientId(this.client, callerClientId);
+            const { data: data2, error: error51 } = await this.client.rpc("reserve_buffer_capacity", {
+              p_reservation_id: reservationId,
+              p_client_id: authoritativeClientId,
+              p_resource_type: "database",
+              p_bytes: estimatedBytes
+            });
+            if (!error51 && data2) {
+              if (data2.success === true) {
+                this.activeDatabaseReservations.set(reservationId, estimatedBytes);
+                return true;
+              } else {
+                this.blockedOperationsCount++;
+                console.warn(`[QUOTA] Shared database reservation REJECTED for ${reservationId}. Reason: ${data2.reason}`);
+                return false;
+              }
+            }
+            this.blockedOperationsCount++;
+            console.warn(`[QUOTA] Shared DB quota RPC error: ${error51?.message || "Unknown"}. Failing closed.`);
+            return false;
+          } catch (ex) {
+            this.blockedOperationsCount++;
+            console.warn(`[QUOTA] Shared DB quota exception:`, ex.message);
+            return false;
+          }
+        }
+        const currentReserved = this.getTotalReservedDatabaseBytes();
+        const prospectiveDbTotal = this.measuredDatabaseBytes + currentReserved + estimatedBytes;
+        const prospectiveGrandTotal = this.getCurrentTotalUsageBytes() + estimatedBytes;
+        if (prospectiveDbTotal > _SupabaseQuotaManager.DATABASE_CEILING_BYTES || prospectiveGrandTotal > _SupabaseQuotaManager.CRITICAL_THRESHOLD_BYTES) {
+          this.blockedOperationsCount++;
+          return false;
+        }
+        this.activeDatabaseReservations.set(reservationId, estimatedBytes);
+        return true;
+      }
+      async releaseDatabaseQuota(reservationId, confirmedWrittenBytes = 0, statusOverride, callerClientId) {
+        this.activeDatabaseReservations.delete(reservationId);
+        if (this.client) {
+          try {
+            const finalStatus = statusOverride || (confirmedWrittenBytes > 0 ? "committed" : "released");
+            const authoritativeClientId = await this.resolveAuthoritativeClientId(this.client, callerClientId);
+            const { data: data2, error: error51 } = await this.client.rpc("release_buffer_capacity", {
+              p_reservation_id: reservationId,
+              p_client_id: authoritativeClientId,
+              p_status: finalStatus,
+              p_actual_bytes: confirmedWrittenBytes
+            });
+            if (error51 || !data2 || data2.success !== true) {
+              console.warn(`[QUOTA] Failed to transition database capacity via RPC for ${reservationId} (status=${finalStatus}): ${error51?.message || data2?.reason || "Unknown error"}`);
+              return false;
+            }
+            if (confirmedWrittenBytes > 0) {
+              this.measuredDatabaseBytes += confirmedWrittenBytes;
+              this.persistState();
+            }
+            return true;
+          } catch (err) {
+            console.warn("[QUOTA] Failed to release database capacity via RPC:", err.message);
+            return false;
+          }
+        }
+        if (confirmedWrittenBytes > 0) {
+          this.measuredDatabaseBytes += confirmedWrittenBytes;
+          this.persistState();
+        }
+        return true;
+      }
+      async pruneConfirmedDatabase(reservationId, bytesPruned, callerClientId) {
+        const activeClient = this.reconciliationClient || this.client;
+        if (activeClient) {
+          try {
+            const authoritativeClientId = await this.resolveAuthoritativeClientId(activeClient, callerClientId);
+            const { data: data2, error: error51 } = await activeClient.rpc("release_buffer_capacity", {
+              p_reservation_id: reservationId,
+              p_client_id: authoritativeClientId,
+              p_status: "pruned",
+              p_actual_bytes: 0
+            });
+            if (error51 || !data2 || data2.success !== true) {
+              console.warn(`[QUOTA] Failed to prune database buffer capacity via RPC for ${reservationId}: ${error51?.message || data2?.reason || "Unknown error"}`);
+              return false;
+            }
+            if (bytesPruned > 0) {
+              this.measuredDatabaseBytes = Math.max(0, this.measuredDatabaseBytes - bytesPruned);
+              this.persistState();
+            }
+            return true;
+          } catch (err) {
+            console.warn("[QUOTA] Exception pruning database capacity:", err.message);
+            return false;
+          }
+        }
+        if (bytesPruned > 0) {
+          this.measuredDatabaseBytes = Math.max(0, this.measuredDatabaseBytes - bytesPruned);
+          this.persistState();
+        }
+        return true;
+      }
+      deductConfirmedPrunedStorage(bytesRemoved) {
+        if (bytesRemoved > 0) {
+          this.measuredStorageBytes = Math.max(0, this.measuredStorageBytes - bytesRemoved);
+          this.persistState();
+        }
+      }
+      deductConfirmedPrunedDatabase(bytesRemoved) {
+        if (bytesRemoved > 0) {
+          this.measuredDatabaseBytes = Math.max(0, this.measuredDatabaseBytes - bytesRemoved);
+          this.persistState();
+        }
+      }
+      canAcceptStorageUpload(bytesNeeded = 0) {
+        if (bytesNeeded < 0) return false;
+        if (this.isMeasurementStale && this.getCurrentTotalUsageBytes() > 225e7) return false;
+        const currentReserved = this.getTotalReservedStorageBytes();
+        const prospectiveStorageTotal = this.measuredStorageBytes + currentReserved + bytesNeeded;
+        const prospectiveGrandTotal = this.getCurrentTotalUsageBytes() + bytesNeeded;
+        return prospectiveStorageTotal <= _SupabaseQuotaManager.STORAGE_CEILING_BYTES && prospectiveGrandTotal <= _SupabaseQuotaManager.CRITICAL_THRESHOLD_BYTES;
+      }
+      canAcceptDatabaseWrite(bytesNeeded = 0) {
+        if (bytesNeeded < 0) return false;
+        if (this.isMeasurementStale && this.getCurrentTotalUsageBytes() > 225e7) return false;
+        const currentReserved = this.getTotalReservedDatabaseBytes();
+        const prospectiveDbTotal = this.measuredDatabaseBytes + currentReserved + bytesNeeded;
+        const prospectiveGrandTotal = this.getCurrentTotalUsageBytes() + bytesNeeded;
+        return prospectiveDbTotal <= _SupabaseQuotaManager.DATABASE_CEILING_BYTES && prospectiveGrandTotal <= _SupabaseQuotaManager.CRITICAL_THRESHOLD_BYTES;
+      }
+      auditTimer = null;
+      async auditUsage() {
+        return this.auditLiveCloudUsage();
+      }
+      startBackgroundAudit(intervalMs = 6e4) {
+        if (this.auditTimer) return;
+        this.auditTimer = setInterval(() => {
+          this.auditLiveCloudUsage().catch(() => {
+          });
+        }, intervalMs);
+      }
+      stopBackgroundAudit() {
+        if (this.auditTimer) {
+          clearInterval(this.auditTimer);
+          this.auditTimer = null;
+        }
+      }
+      // ── Metric Calculation ───────────────────────────────────────────────────────
+      getTotalReservedStorageBytes() {
+        let total = 0;
+        for (const bytes of this.activeStorageReservations.values()) {
+          total += bytes;
+        }
+        return total;
+      }
+      getTotalReservedDatabaseBytes() {
+        let total = 0;
+        for (const bytes of this.activeDatabaseReservations.values()) {
+          total += bytes;
+        }
+        return total;
+      }
+      getCurrentTotalUsageBytes() {
+        return this.measuredDatabaseBytes + this.measuredStorageBytes + this.getTotalReservedStorageBytes() + this.getTotalReservedDatabaseBytes();
+      }
+      getQuotaStatus() {
+        const totalUsed = this.getCurrentTotalUsageBytes();
+        let status = "ok";
+        if (totalUsed >= _SupabaseQuotaManager.HARD_CEILING_BYTES) {
+          status = "exceeded";
+        } else if (totalUsed >= _SupabaseQuotaManager.CRITICAL_THRESHOLD_BYTES) {
+          status = "critical";
+        } else if (totalUsed >= _SupabaseQuotaManager.WARNING_THRESHOLD_BYTES) {
+          status = "warning";
+        }
+        const totalReserved = this.getTotalReservedStorageBytes() + this.getTotalReservedDatabaseBytes();
+        return {
+          databaseBytes: this.measuredDatabaseBytes,
+          storageBytes: this.measuredStorageBytes,
+          reservedBytes: totalReserved,
+          totalUsedBytes: totalUsed,
+          hardLimitBytes: _SupabaseQuotaManager.HARD_CEILING_BYTES,
+          databaseLimitBytes: _SupabaseQuotaManager.DATABASE_CEILING_BYTES,
+          storageLimitBytes: _SupabaseQuotaManager.STORAGE_CEILING_BYTES,
+          reserveLimitBytes: _SupabaseQuotaManager.CRITICAL_RESERVE_BYTES,
+          remainingStorageBufferBytes: Math.max(0, _SupabaseQuotaManager.STORAGE_CEILING_BYTES - (this.measuredStorageBytes + this.getTotalReservedStorageBytes())),
+          remainingDatabaseBufferBytes: Math.max(0, _SupabaseQuotaManager.DATABASE_CEILING_BYTES - (this.measuredDatabaseBytes + this.getTotalReservedDatabaseBytes())),
+          remainingTotalBytes: Math.max(0, _SupabaseQuotaManager.HARD_CEILING_BYTES - totalUsed),
+          status,
+          lastMeasuredAt: this.lastMeasuredAt,
+          oldestPendingUploadTime: this.oldestPendingTime,
+          blockedOperationsCount: this.blockedOperationsCount
+        };
+      }
+      setOldestPendingTime(timestamp) {
+        this.oldestPendingTime = timestamp;
+      }
+      // ── Live Audit of Supabase Cloud Usage ───────────────────────────────────────
+      /**
+       * Recursive crawler that measures all nested Supabase Storage objects.
+       */
+      async crawlStorageBucketRecursive(bucket, prefix = "") {
+        let totalBytes = 0;
+        let fileCount = 0;
+        let offset = 0;
+        const limit = 100;
+        let hasMore = true;
+        while (hasMore) {
+          try {
+            const { data: data2, error: error51 } = await this.client.storage.from(bucket).list(prefix, { limit, offset, sortBy: { column: "name", order: "asc" } });
+            if (error51 || !data2 || data2.length === 0) {
+              hasMore = false;
+              break;
+            }
+            for (const item of data2) {
+              if (item.metadata && typeof item.metadata.size === "number") {
+                totalBytes += item.metadata.size;
+                fileCount++;
+              } else if (!item.id || item.id === null) {
+                const nestedPath = prefix ? `${prefix}/${item.name}` : item.name;
+                const subResult = await this.crawlStorageBucketRecursive(bucket, nestedPath);
+                totalBytes += subResult.totalBytes;
+                fileCount += subResult.fileCount;
+              }
+            }
+            if (data2.length < limit) {
+              hasMore = false;
+            } else {
+              offset += limit;
+            }
+          } catch {
+            hasMore = false;
+            break;
+          }
+        }
+        return { totalBytes, fileCount };
+      }
+      /**
+       * Conducts a read-only live measurement of Supabase Database table footprints
+       * and Supabase Storage bucket volume.
+       */
+      async auditLiveCloudUsage() {
+        if (!this.client || this.isAuditing) {
+          return this.getQuotaStatus();
+        }
+        this.isAuditing = true;
+        try {
+          console.log("[QUOTA] Performing live measurement of Supabase fallback buffer...");
+          let totalStorageBytes = 0;
+          try {
+            const rootCrawl = await this.crawlStorageBucketRecursive("make-order-files", "");
+            totalStorageBytes = rootCrawl.totalBytes;
+            const knownSubfolders = ["product-images", "cad-models", "technical-drawings", "order-drawings", "order-photos", "bill-attachments", "temp"];
+            for (const sub of knownSubfolders) {
+              const subCrawl = await this.crawlStorageBucketRecursive("make-order-files", sub);
+              if (rootCrawl.fileCount === 0) {
+                totalStorageBytes += subCrawl.totalBytes;
+              }
+            }
+          } catch (storageErr) {
+            console.warn("[QUOTA] Storage crawl exception:", storageErr.message);
+            this.isMeasurementStale = true;
+          }
+          let totalDatabaseBytes = 0;
+          let hadTableFailure = false;
+          const tablesToInspect = [
+            { name: "bills", avgBytesPerRow: 600 },
+            { name: "bill_items", avgBytesPerRow: 400 },
+            { name: "billing_customers", avgBytesPerRow: 500 },
+            { name: "customer_payments", avgBytesPerRow: 300 },
+            { name: "customer_addresses", avgBytesPerRow: 350 },
+            { name: "exchange_orders", avgBytesPerRow: 500 },
+            { name: "exchange_items", avgBytesPerRow: 350 },
+            { name: "make_orders", avgBytesPerRow: 1500 },
+            { name: "make_order_items", avgBytesPerRow: 800 },
+            { name: "make_products", avgBytesPerRow: 1e3 },
+            { name: "company_settings", avgBytesPerRow: 1200 },
+            { name: "system_audit_log", avgBytesPerRow: 500 },
+            { name: "shipping_status_log", avgBytesPerRow: 400 },
+            { name: "nas_client_registry", avgBytesPerRow: 300 },
+            { name: "supabase_buffer_reservations", avgBytesPerRow: 250 }
+          ];
+          await Promise.allSettled(tablesToInspect.map(async (t2) => {
+            try {
+              const { count, error: error51 } = await this.client.from(t2.name).select("id", { count: "exact", head: true });
+              if (!error51 && typeof count === "number") {
+                totalDatabaseBytes += Math.round(count * t2.avgBytesPerRow * 1.4);
+              } else if (error51) {
+                hadTableFailure = true;
+              }
+            } catch {
+              hadTableFailure = true;
+            }
+          }));
+          this.isMeasurementStale = hadTableFailure;
+          this.measuredStorageBytes = totalStorageBytes;
+          this.measuredDatabaseBytes = totalDatabaseBytes;
+          this.lastMeasuredAt = Date.now();
+          this.persistState();
+          const status = this.getQuotaStatus();
+          console.log(`[QUOTA] Live audit complete: DB: ${(status.databaseBytes / (1024 * 1024)).toFixed(2)} MB, Storage: ${(status.storageBytes / (1024 * 1024)).toFixed(2)} MB, Total: ${(status.totalUsedBytes / (1024 * 1024)).toFixed(2)} MB / 1000 MB. Status: ${status.status.toUpperCase()}`);
+          return status;
+        } catch (err) {
+          console.error("[QUOTA] Live quota audit error:", err.message);
+          this.isMeasurementStale = true;
+          return this.getQuotaStatus();
+        } finally {
+          this.isAuditing = false;
+        }
+      }
+    };
+  }
+});
+
+// electron/field-encryption.ts
+function getLicenseKey() {
+  try {
+    const cfgPath = import_path6.default.join(getUserDataPath(), "supabase-config.json");
+    if (import_fs6.default.existsSync(cfgPath)) {
+      const raw = import_fs6.default.readFileSync(cfgPath, "utf-8");
+      const cfg = JSON.parse(raw);
+      const key = cfg.serviceRoleKey || cfg.anonKey;
+      if (key && typeof key === "string") {
+        return key.startsWith("enc:v1:") ? decryptStandardSecret(key) : key;
+      }
+    }
+  } catch {
+  }
+  return "";
+}
+function getOrCreateMachineMasterSeed() {
+  const keyPath = import_path6.default.join(getUserDataPath(), MASTER_SEED_FILE);
+  if (import_fs6.default.existsSync(keyPath)) {
+    try {
+      const fileContent = import_fs6.default.readFileSync(keyPath, "utf-8");
+      const decryptedHex = decryptStandardSecret(fileContent);
+      const seedBuf = Buffer.from(decryptedHex, "hex");
+      if (seedBuf.length === 32) {
+        return seedBuf;
+      }
+    } catch (err) {
+      console.warn("[FieldEncryption] Error reading protected master seed, generating new one:", err);
+    }
+  }
+  const newSeed = import_crypto5.default.randomBytes(32);
+  try {
+    const encryptedEnvelope = encryptStandardSecret(newSeed.toString("hex"));
+    import_fs6.default.writeFileSync(keyPath, encryptedEnvelope, { encoding: "utf-8", mode: 384 });
+    try {
+      import_fs6.default.chmodSync(keyPath, 384);
+    } catch {
+    }
+  } catch (err) {
+    console.error("[FieldEncryption] Failed to persist protected master seed:", err);
+  }
+  return newSeed;
+}
+function initEncryptionKey() {
+  const licenseKey = getLicenseKey();
+  const machineSeed = getOrCreateMachineMasterSeed();
+  const legacyIkm = licenseKey || "default-lesoft-key";
+  _legacyE1Key = import_crypto5.default.createHmac("sha256", LEGACY_SALT).update(legacyIkm).digest();
+  const ikm = Buffer.concat([
+    machineSeed,
+    Buffer.from(licenseKey || "lesoft-v3-root", "utf-8")
+  ]);
+  const masterSalt = import_crypto5.default.createHash("sha256").update(machineSeed).digest();
+  _masterKey = Buffer.from(import_crypto5.default.hkdfSync("sha256", ikm, masterSalt, Buffer.from("lesoft-field-master-v3", "utf-8"), 32));
+  console.log("[Encryption] Master field encryption key initialized.");
+}
+function getMasterKey() {
+  if (!_masterKey) initEncryptionKey();
+  return _masterKey;
+}
+function getLegacyE1Key() {
+  if (!_legacyE1Key) initEncryptionKey();
+  return _legacyE1Key;
+}
+function clearEncryptionKey() {
+  _masterKey = null;
+  _legacyE1Key = null;
+  console.log("[Encryption] Keys cleared from memory.");
+}
+function encryptField(text3) {
+  if (!text3) return text3 || "";
+  if (typeof text3 === "string" && (text3.startsWith(V3_PREFIX) || text3.startsWith(V1_PREFIX) || text3.startsWith(V2_CBC_PREFIX))) {
+    return text3;
+  }
+  const masterKey = getMasterKey();
+  try {
+    const salt = import_crypto5.default.randomBytes(SALT_LEN);
+    const iv = import_crypto5.default.randomBytes(IV_LEN);
+    const recordKey = Buffer.from(import_crypto5.default.hkdfSync("sha256", masterKey, salt, HKDF_INFO, 32));
+    const cipher = import_crypto5.default.createCipheriv(CIPHER_GCM2, recordKey, iv);
+    const ciphertextBuf = Buffer.concat([
+      cipher.update(text3, "utf8"),
+      cipher.final()
+    ]);
+    const tag = cipher.getAuthTag();
+    const combined = Buffer.concat([salt, iv, tag, ciphertextBuf]);
+    return `${V3_PREFIX}${combined.toString("base64")}`;
+  } catch (e2) {
+    console.error("[Encrypt] V3 GCM encryption failed:", e2);
+    throw e2;
+  }
+}
+function decryptField(encryptedText) {
+  if (!encryptedText || typeof encryptedText !== "string") {
+    return encryptedText || "";
+  }
+  if (encryptedText.startsWith(V3_PREFIX)) {
+    try {
+      const masterKey = getMasterKey();
+      const combined = Buffer.from(encryptedText.slice(V3_PREFIX.length), "base64");
+      if (combined.length < SALT_LEN + IV_LEN + TAG_LEN) {
+        console.warn("[Decrypt e3] Payload length too short.");
+        return encryptedText;
+      }
+      const salt = combined.subarray(0, SALT_LEN);
+      const iv = combined.subarray(SALT_LEN, SALT_LEN + IV_LEN);
+      const tag = combined.subarray(SALT_LEN + IV_LEN, SALT_LEN + IV_LEN + TAG_LEN);
+      const ciphertext = combined.subarray(SALT_LEN + IV_LEN + TAG_LEN);
+      const recordKey = Buffer.from(import_crypto5.default.hkdfSync("sha256", masterKey, salt, HKDF_INFO, 32));
+      const decipher = import_crypto5.default.createDecipheriv(CIPHER_GCM2, recordKey, iv);
+      decipher.setAuthTag(tag);
+      return decipher.update(ciphertext).toString("utf8") + decipher.final("utf8");
+    } catch (err) {
+      console.warn("[Decrypt e3] GCM authentication verification failed (tampered ciphertext or invalid key).");
+      return encryptedText;
+    }
+  }
+  if (encryptedText.startsWith(V1_PREFIX)) {
+    try {
+      const legacyKey = getLegacyE1Key();
+      const combined = Buffer.from(encryptedText.slice(V1_PREFIX.length), "base64");
+      if (combined.length < IV_LEN + TAG_LEN) {
+        console.warn("[Decrypt e1] Payload length too short.");
+        return encryptedText;
+      }
+      const iv = combined.subarray(0, IV_LEN);
+      const tag = combined.subarray(IV_LEN, IV_LEN + TAG_LEN);
+      const ciphertext = combined.subarray(IV_LEN + TAG_LEN);
+      const decipher = import_crypto5.default.createDecipheriv(CIPHER_GCM2, legacyKey, iv);
+      decipher.setAuthTag(tag);
+      return decipher.update(ciphertext).toString("utf8") + decipher.final("utf8");
+    } catch {
+      console.warn("[Decrypt e1] GCM auth failed \u2014 key mismatch or tampered data.");
+      return encryptedText;
+    }
+  }
+  if (encryptedText.startsWith(V2_CBC_PREFIX)) {
+    try {
+      const legacyKey = getLegacyE1Key();
+      const parts = encryptedText.split(":");
+      if (parts.length !== 3) return encryptedText;
+      const iv = Buffer.from(parts[1], "hex");
+      const decipher = import_crypto5.default.createDecipheriv("aes-256-cbc", legacyKey, iv);
+      let decrypted = decipher.update(parts[2], "hex", "utf8");
+      decrypted += decipher.final("utf8");
+      return decrypted;
+    } catch (e2) {
+      console.error("[Decrypt e2] CBC decryption failed:", e2.message);
+      return encryptedText;
+    }
+  }
+  return encryptedText;
+}
+function encryptObject(obj) {
+  if (!obj || typeof obj !== "object") return obj;
+  const result = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v === null || v === void 0 || SKIP_KEYS.has(k)) {
+      result[k] = v;
+    } else if (typeof v === "string" && v.length > 0) {
+      result[k] = encryptField(v);
+    } else if (typeof v === "number") {
+      result[k] = v;
+    } else if (typeof v === "boolean") {
+      result[k] = v;
+    } else if (typeof v === "object") {
+      result[k] = encryptField(JSON.stringify(v));
+    } else {
+      result[k] = v;
+    }
+  }
+  return result;
+}
+function decryptObject(obj) {
+  if (!obj || typeof obj !== "object") return obj;
+  const result = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (typeof v === "string" && (v.startsWith(V3_PREFIX) || v.startsWith(V1_PREFIX) || v.startsWith(V2_CBC_PREFIX))) {
+      const plain = decryptField(v);
+      if (plain.startsWith("{") || plain.startsWith("[")) {
+        try {
+          result[k] = JSON.parse(plain);
+        } catch {
+          result[k] = plain;
+        }
+      } else if (!isNaN(Number(plain)) && plain.trim() !== "") {
+        result[k] = Number(plain);
+      } else {
+        result[k] = plain;
+      }
+    } else {
+      result[k] = v;
+    }
+  }
+  return result;
+}
+function decryptRows(rows) {
+  if (!rows || !Array.isArray(rows)) return [];
+  return rows.map(decryptObject);
+}
+async function decryptRowsAsync(rows, chunkSize = 200) {
+  if (!rows || !Array.isArray(rows)) return [];
+  const result = [];
+  for (let i2 = 0; i2 < rows.length; i2 += chunkSize) {
+    const chunk = rows.slice(i2, i2 + chunkSize);
+    result.push(...chunk.map(decryptObject));
+    await new Promise((resolve2) => setImmediate(resolve2));
+  }
+  return result;
+}
+async function encryptRowsAsync(rows, chunkSize = 200) {
+  if (!rows || !Array.isArray(rows)) return [];
+  const result = [];
+  for (let i2 = 0; i2 < rows.length; i2 += chunkSize) {
+    const chunk = rows.slice(i2, i2 + chunkSize);
+    result.push(...chunk.map(encryptObject));
+    await new Promise((resolve2) => setImmediate(resolve2));
+  }
+  return result;
+}
+var import_crypto5, import_fs6, import_path6, CIPHER_GCM2, V3_PREFIX, V1_PREFIX, V2_CBC_PREFIX, SALT_LEN, IV_LEN, TAG_LEN, HKDF_INFO, MASTER_SEED_FILE, LEGACY_SALT, _masterKey, _legacyE1Key, SKIP_KEYS;
+var init_field_encryption = __esm({
+  "electron/field-encryption.ts"() {
+    "use strict";
+    import_crypto5 = __toESM(require("crypto"), 1);
+    import_fs6 = __toESM(require("fs"), 1);
+    import_path6 = __toESM(require("path"), 1);
+    init_secure_storage();
+    CIPHER_GCM2 = "aes-256-gcm";
+    V3_PREFIX = "e3:";
+    V1_PREFIX = "e1:";
+    V2_CBC_PREFIX = "e2:";
+    SALT_LEN = 16;
+    IV_LEN = 12;
+    TAG_LEN = 16;
+    HKDF_INFO = Buffer.from("lesoft-field-encryption-v3", "utf-8");
+    MASTER_SEED_FILE = ".field-master-seed.key";
+    LEGACY_SALT = import_crypto5.default.createHash("sha256").update("lesoft-e2e-salt-v1").digest();
+    _masterKey = null;
+    _legacyE1Key = null;
+    SKIP_KEYS = /* @__PURE__ */ new Set([
+      "id",
+      "auth_id",
+      "user_id",
+      "employee_id",
+      "customer_id",
+      "bill_id",
+      "group_id",
+      "order_id",
+      "sender_id",
+      "receiver_id",
+      "product_id",
+      "created_at",
+      "updated_at",
+      "last_active",
+      "date",
+      "check_in",
+      "check_out",
+      "from_date",
+      "to_date",
+      "month",
+      "delivery_date",
+      "paid_at",
+      "invoice_date",
+      "is_active",
+      "email_confirm",
+      "is_read",
+      "is_online",
+      "is_visible",
+      "password_hash",
+      // already hashed
+      "permissions",
+      // JSONB
+      "le_local_id",
+      // mysql sync key
+      // Linkages and Search keys (PlainText for indexability and reliability)
+      "username",
+      "full_name",
+      "role",
+      "invoice_number",
+      "sku",
+      "name",
+      "phone",
+      "email",
+      "product_name",
+      "customer_name",
+      "platform",
+      "status",
+      "type",
+      "device_type",
+      "employee_code",
+      "crm_state"
+    ]);
+  }
+});
+
+// electron/services/outbox/DurableOutboxService.ts
+var DurableOutboxService_exports = {};
+__export(DurableOutboxService_exports, {
+  DurableOutboxService: () => DurableOutboxService
+});
+var import_better_sqlite3, import_electron6, import_fs7, import_path7, import_crypto6, DurableOutboxService;
+var init_DurableOutboxService = __esm({
+  "electron/services/outbox/DurableOutboxService.ts"() {
+    "use strict";
+    import_better_sqlite3 = __toESM(require("better-sqlite3"), 1);
+    import_electron6 = require("electron");
+    import_fs7 = __toESM(require("fs"), 1);
+    import_path7 = __toESM(require("path"), 1);
+    import_crypto6 = __toESM(require("crypto"), 1);
+    init_SupabaseQuotaManager();
+    init_field_encryption();
+    DurableOutboxService = class _DurableOutboxService {
+      static instance = null;
+      static customHandlers = /* @__PURE__ */ new Map();
+      db = null;
+      dbPath;
+      nasClient = null;
+      supabaseClient = null;
+      static registerCustomHandler(entityType, handler) {
+        _DurableOutboxService.customHandlers.set(entityType, handler);
+      }
+      drainTimer = null;
+      isDraining = false;
+      constructor() {
+        const userData = import_electron6.app?.getPath ? import_electron6.app.getPath("userData") : import_path7.default.join(process.env.APPDATA || process.cwd(), "le-soft");
+        this.dbPath = import_path7.default.join(userData, "lesoft_durable_outbox.db");
+        this.initDatabase();
+      }
+      static getInstance() {
+        if (!_DurableOutboxService.instance) {
+          _DurableOutboxService.instance = new _DurableOutboxService();
+        }
+        return _DurableOutboxService.instance;
+      }
+      registerClients(clients) {
+        this.nasClient = clients.nas;
+        this.supabaseClient = clients.supabase;
+      }
+      initDatabase() {
+        try {
+          import_fs7.default.mkdirSync(import_path7.default.dirname(this.dbPath), { recursive: true });
+          this.db = new import_better_sqlite3.default(this.dbPath);
+          this.db.pragma("journal_mode = WAL");
+          this.db.pragma("synchronous = NORMAL");
+          this.db.exec(`
+                CREATE TABLE IF NOT EXISTS outbox_operations (
+                    id TEXT PRIMARY KEY,
+                    entity_type TEXT NOT NULL,
+                    operation TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    filter_json TEXT,
+                    primary_key_col TEXT DEFAULT 'id',
+                    primary_key_val TEXT,
+                    upsert_conflict TEXT,
+                    dependency_op_id TEXT,
+                    metadata_json TEXT,
+                    target TEXT DEFAULT 'both',
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    retry_count INTEGER DEFAULT 0,
+                    max_retries INTEGER DEFAULT 10,
+                    last_error TEXT,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_outbox_status ON outbox_operations(status);
+                CREATE INDEX IF NOT EXISTS idx_outbox_created ON outbox_operations(created_at);
+                CREATE INDEX IF NOT EXISTS idx_outbox_dep ON outbox_operations(dependency_op_id);
+
+                CREATE TABLE IF NOT EXISTS outbox_id_map (
+                    op_id TEXT NOT NULL,
+                    target TEXT NOT NULL,
+                    resolved_id TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    PRIMARY KEY(op_id, target)
+                );
+            `);
+          try {
+            this.db.exec("ALTER TABLE outbox_operations ADD COLUMN filter_json TEXT");
+          } catch {
+          }
+          try {
+            this.db.exec("ALTER TABLE outbox_operations ADD COLUMN upsert_conflict TEXT");
+          } catch {
+          }
+          try {
+            this.db.exec("ALTER TABLE outbox_operations ADD COLUMN metadata_json TEXT");
+          } catch {
+          }
+          console.log("[DurableOutbox] Initialized SQLite outbox at:", this.dbPath);
+        } catch (err) {
+          console.error("[DurableOutbox] Failed to initialize SQLite database:", err.message);
+        }
+      }
+      callbacks = /* @__PURE__ */ new Map();
+      registerCallbacks(opId, cb) {
+        this.callbacks.set(opId, cb);
+      }
+      invokeCallbacks(opId, success2, resultOrError) {
+        const cb = this.callbacks.get(opId);
+        if (cb) {
+          this.callbacks.delete(opId);
+          try {
+            if (success2) {
+              cb.onSuccess?.(resultOrError);
+            } else {
+              cb.onError?.(resultOrError instanceof Error ? resultOrError : new Error(String(resultOrError)));
+            }
+          } catch (err) {
+            console.warn("[DurableOutbox] Callback invocation error:", err);
+          }
+        }
+      }
+      // ── Atomic Enqueue API ───────────────────────────────────────────────────────
+      /**
+       * Enqueues an operation or atomic batch of operations into SQLite.
+       * All items are committed in a single SQLite transaction.
+       * Fails closed if the durable database is uninitialized.
+       */
+      enqueueBatch(operations) {
+        if (!this.db) {
+          throw new Error("[DurableOutbox] SQLite database is not initialized. Cannot perform durable write.");
+        }
+        if (operations.length === 0) return [];
+        const generatedIds = [];
+        const now = Date.now();
+        const insertStmt = this.db.prepare(`
+            INSERT INTO outbox_operations (
+                id, entity_type, operation, payload_json, filter_json,
+                primary_key_col, primary_key_val, upsert_conflict,
+                dependency_op_id, metadata_json, target, status,
+                retry_count, max_retries, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+        `);
+        const transaction = this.db.transaction((ops) => {
+          for (const op of ops) {
+            const id = op.id || `op_${now}_${import_crypto6.default.randomBytes(4).toString("hex")}`;
+            generatedIds.push(id);
+            const status = op.dependencyOpId ? "blocked_dependency" : "pending";
+            const filterJson = op.filter ? JSON.stringify(op.filter) : null;
+            const metadataJson = op.metadata || op.idempotencyKey ? JSON.stringify({ ...op.metadata, idempotencyKey: op.idempotencyKey }) : null;
+            insertStmt.run(
+              id,
+              op.entityType,
+              op.operation,
+              JSON.stringify(op.payload || {}),
+              filterJson,
+              op.primaryKeyCol || "id",
+              op.primaryKeyVal || null,
+              op.upsertConflict || null,
+              op.dependencyOpId || null,
+              metadataJson,
+              op.target || "both",
+              status,
+              op.maxRetries || 10,
+              now,
+              now
+            );
+          }
+        });
+        try {
+          transaction(operations);
+          this.broadcastOutboxStatus();
+          return generatedIds;
+        } catch (err) {
+          console.error("[DurableOutbox] Failed to commit atomic enqueue transaction:", err.message);
+          throw err;
+        }
+      }
+      enqueueSingle(op) {
+        const ids = this.enqueueBatch([op]);
+        return ids[0];
+      }
+      /**
+       * Finds an uncommitted/pending outbox operation for a given make_orders ID.
+       * Used by child workflows (e.g. stage updates) to detect when a parent order
+       * is staged locally in the outbox and not yet committed to Supabase Cloud.
+       */
+      findPendingOrderOperation(orderId) {
+        if (!this.db) return null;
+        try {
+          const rows = this.db.prepare(`
+                SELECT * FROM outbox_operations
+                WHERE entity_type = 'make_orders'
+                  AND status IN ('pending', 'blocked_dependency')
+                ORDER BY created_at ASC
+            `).all();
+          for (const r2 of rows) {
+            try {
+              const payload = JSON.parse(r2.payload_json || "{}");
+              if (payload.id == orderId || r2.primary_key_val == String(orderId)) {
+                return {
+                  id: r2.id,
+                  entityType: r2.entity_type,
+                  operation: r2.operation,
+                  payload,
+                  filter: r2.filter_json ? JSON.parse(r2.filter_json) : null,
+                  primaryKeyCol: r2.primary_key_col,
+                  primaryKeyVal: r2.primary_key_val,
+                  upsertConflict: r2.upsert_conflict,
+                  dependencyOpId: r2.dependency_op_id,
+                  metadata: r2.metadata_json ? JSON.parse(r2.metadata_json) : null,
+                  target: r2.target,
+                  status: r2.status,
+                  retryCount: r2.retry_count,
+                  maxRetries: r2.max_retries,
+                  lastError: r2.last_error,
+                  createdAt: r2.created_at,
+                  updatedAt: r2.updated_at
+                };
+              }
+            } catch {
+            }
+          }
+        } catch {
+        }
+        return null;
+      }
+      // ── Drain & Synchronization Engine ──────────────────────────────────────────
+      startWorker(intervalMs = 500) {
+        if (this.drainTimer) return;
+        this.drainTimer = setInterval(() => this.drainNextBatch().catch(() => {
+        }), intervalMs);
+        console.log(`[DurableOutbox] Background outbox worker started (interval: ${intervalMs}ms).`);
+      }
+      stopWorker() {
+        if (this.drainTimer) {
+          clearInterval(this.drainTimer);
+          this.drainTimer = null;
+        }
+      }
+      /**
+       * Drains pending outbox operations with dependency checks and error classification.
+       * Returns the number of operations processed.
+       */
+      async drainNextBatch(batchSize = 10) {
+        if (!this.db || this.isDraining) return 0;
+        this.isDraining = true;
+        let processedCount = 0;
+        try {
+          this.unblockResolvedDependencies();
+          const rows = this.db.prepare(`
+                SELECT * FROM outbox_operations
+                WHERE status IN ('pending', 'buffered_supabase', 'cleanup_pending')
+                ORDER BY created_at ASC
+                LIMIT ?
+            `).all(batchSize);
+          if (rows.length === 0) return 0;
+          for (const r2 of rows) {
+            const record2 = {
+              id: r2.id,
+              entityType: r2.entity_type,
+              operation: r2.operation,
+              payload: JSON.parse(r2.payload_json || "{}"),
+              filter: r2.filter_json ? JSON.parse(r2.filter_json) : null,
+              primaryKeyCol: r2.primary_key_col || "id",
+              primaryKeyVal: r2.primary_key_val,
+              upsertConflict: r2.upsert_conflict || null,
+              dependencyOpId: r2.dependency_op_id,
+              metadata: r2.metadata_json ? JSON.parse(r2.metadata_json) : null,
+              target: r2.target,
+              status: r2.status,
+              retryCount: r2.retry_count,
+              maxRetries: r2.max_retries,
+              lastError: r2.last_error,
+              createdAt: r2.created_at,
+              updatedAt: r2.updated_at
+            };
+            await this.processRecord(record2);
+            processedCount++;
+          }
+          this.broadcastOutboxStatus();
+          return processedCount;
+        } catch (err) {
+          console.error("[DurableOutbox] Exception during drain loop:", err.message);
+          return processedCount;
+        } finally {
+          this.isDraining = false;
+        }
+      }
+      unblockResolvedDependencies() {
+        if (!this.db) return;
+        try {
+          this.db.prepare(`
+                UPDATE outbox_operations
+                SET status = 'pending', updated_at = ?
+                WHERE status = 'blocked_dependency'
+                  AND (
+                      dependency_op_id IN (
+                          SELECT id FROM outbox_operations WHERE status IN ('completed', 'synced_nas', 'buffered_supabase')
+                      )
+                      OR dependency_op_id IN (
+                          SELECT op_id FROM outbox_id_map
+                      )
+                  )
+            `).run(Date.now());
+        } catch {
+        }
+      }
+      static estimateDatabaseBytes(payload, _operation) {
+        if (!payload) return 512;
+        try {
+          const jsonStr = typeof payload === "string" ? payload : JSON.stringify(payload);
+          const rawBytes = Buffer.byteLength(jsonStr, "utf8");
+          const multiplier = 1.4;
+          const rowOverhead = 256;
+          if (Array.isArray(payload)) {
+            const count = payload.length || 1;
+            return Math.max(512 * count, Math.ceil(rawBytes * multiplier + rowOverhead * count));
+          }
+          return Math.max(512, Math.ceil(rawBytes * multiplier + rowOverhead));
+        } catch {
+          return 512;
+        }
+      }
+      async processRecord(record2) {
+        const { id, entityType, operation, target, status } = record2;
+        if (_DurableOutboxService.customHandlers.has(entityType)) {
+          const handler = _DurableOutboxService.customHandlers.get(entityType);
+          const alreadyDone = this.hasTargetRecord(id, "custom");
+          if (alreadyDone) {
+            this.markCompleted(id);
+            this.invokeCallbacks(id, true, { completed: true });
+            return;
+          }
+          try {
+            await handler(record2.payload);
+            this.recordResolvedId(id, "custom", "completed");
+            this.markCompleted(id);
+            this.invokeCallbacks(id, true, { completed: true });
+            return;
+          } catch (err) {
+            console.warn(`[DurableOutbox] Custom operation ${entityType} failed for op ${id}:`, err.message);
+            const nextRetry = record2.retryCount + 1;
+            if (nextRetry >= record2.maxRetries) {
+              this.markDeadLetter(id, `Custom operation ${entityType} failed after ${nextRetry} retries: ${err.message}`);
+            } else {
+              this.incrementRetry(id, record2.retryCount, record2.maxRetries);
+            }
+            return;
+          }
+        }
+        const isSbTarget = target === "supabase" || target === "both";
+        const isNasTarget = target === "nas" || target === "both";
+        let sbSuccess = status === "synced_nas" || status === "completed" || this.hasTargetRecord(id, "supabase");
+        let nasSuccess = status === "completed" || this.hasTargetRecord(id, "nas");
+        if (isSbTarget && !sbSuccess && this.supabaseClient) {
+          const sbPayload = record2.dependencyOpId ? this.resolveDependentPayload(record2.dependencyOpId, record2.payload, "supabase") : record2.payload;
+          const quotaMgr = SupabaseQuotaManager.getInstance();
+          const estBytes = _DurableOutboxService.estimateDatabaseBytes(sbPayload, operation);
+          const canBuffer = await quotaMgr.reserveDatabaseQuota(`db_${id}`, estBytes);
+          if (canBuffer) {
+            try {
+              const result = await this.executeOnClient(
+                this.supabaseClient,
+                entityType,
+                operation,
+                sbPayload,
+                record2.primaryKeyCol,
+                record2.filter,
+                record2.upsertConflict
+              );
+              if (result.success) {
+                const committed = await quotaMgr.releaseDatabaseQuota(`db_${id}`, estBytes, "committed");
+                if (committed) {
+                  sbSuccess = true;
+                  if (result.resolvedId) {
+                    this.recordResolvedId(id, "supabase", result.resolvedId);
+                  }
+                } else {
+                  console.warn(`[Outbox] Supabase buffer quota commit rejected or ambiguous for op ${id}. Retaining in local outbox.`);
+                  sbSuccess = false;
+                }
+              } else {
+                await quotaMgr.releaseDatabaseQuota(`db_${id}`, 0, "released");
+                const classified = this.classifyError(result.error);
+                if (classified.isPermanent) {
+                  if (classified.code === "23503" || classified.message.includes("foreign key")) {
+                    this.markStatus(id, "blocked_dependency", `Waiting for parent entity to commit to Supabase: ${classified.message}`);
+                    return;
+                  }
+                  this.markDeadLetter(id, `Supabase permanent error: ${classified.message}`);
+                  return;
+                }
+              }
+            } catch (err) {
+              await quotaMgr.releaseDatabaseQuota(`db_${id}`, 0, "released");
+            }
+          }
+        }
+        if (sbSuccess && isNasTarget && !nasSuccess && this.nasClient) {
+          const nasPayload = record2.dependencyOpId ? this.resolveDependentPayload(record2.dependencyOpId, record2.payload, "nas") : record2.payload;
+          try {
+            const result = await this.executeOnClient(
+              this.nasClient,
+              entityType,
+              operation,
+              nasPayload,
+              record2.primaryKeyCol,
+              record2.filter,
+              record2.upsertConflict
+            );
+            if (result.success) {
+              nasSuccess = true;
+              if (result.resolvedId) {
+                this.recordResolvedId(id, "nas", result.resolvedId);
+              }
+            } else {
+              const classified = this.classifyError(result.error);
+              if (classified.code === "42703" || classified.message.includes("installation_charge") || classified.message.includes("installation_note")) {
+                console.warn(`[Outbox] NAS schema warning (column missing on TrueNAS replica): ${classified.message}`);
+              }
+            }
+          } catch (err) {
+            console.warn(`[Outbox] TrueNAS replication exception for op ${id}:`, err.message);
+          }
+        }
+        if (sbSuccess && (!isNasTarget || nasSuccess)) {
+          this.markCompleted(id);
+          this.invokeCallbacks(id, true, { completed: true });
+        } else if (sbSuccess && isNasTarget && !nasSuccess) {
+          this.markStatus(id, "buffered_supabase", "Committed to Supabase; TrueNAS replication pending.");
+          this.invokeCallbacks(id, true, { completed: true, replicationPending: true });
+        } else {
+          this.incrementRetry(id, record2.retryCount, record2.maxRetries);
+        }
+      }
+      resolveDependentPayload(dependencyOpId, payload, target) {
+        if (!this.db) return payload;
+        try {
+          let resolvedId = null;
+          if (target) {
+            const row = this.db.prepare(`
+                    SELECT resolved_id FROM outbox_id_map
+                    WHERE op_id = ? AND target = ?
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                `).get(dependencyOpId, target);
+            if (row?.resolved_id) {
+              resolvedId = row.resolved_id;
+            }
+          } else {
+            const row = this.db.prepare(`
+                    SELECT resolved_id FROM outbox_id_map
+                    WHERE op_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                `).get(dependencyOpId);
+            if (row?.resolved_id) {
+              resolvedId = row.resolved_id;
+            }
+          }
+          if (!resolvedId) {
+            const parentOp = this.db.prepare(`
+                    SELECT payload_json FROM outbox_operations
+                    WHERE id = ?
+                `).get(dependencyOpId);
+            if (parentOp?.payload_json) {
+              try {
+                const parsed = JSON.parse(parentOp.payload_json);
+                if (parsed && typeof parsed === "object") {
+                  if (parsed.id) resolvedId = String(parsed.id);
+                }
+              } catch {
+              }
+            }
+          }
+          if (resolvedId) {
+            const resolvedIdNum = Number(resolvedId);
+            const finalId = !isNaN(resolvedIdNum) && resolvedIdNum > 0 ? resolvedIdNum : resolvedId;
+            const bindId = (item) => {
+              if (!item || typeof item !== "object") return item;
+              const cloned = { ...item };
+              if (cloned.bill_id === void 0 || cloned.bill_id === null || cloned.bill_id === 0 || cloned.bill_id === "") {
+                cloned.bill_id = finalId;
+              }
+              if (cloned.customer_id === void 0 || cloned.customer_id === null || cloned.customer_id === 0 || cloned.customer_id === "") {
+                cloned.customer_id = finalId;
+              }
+              if (cloned.order_id === void 0 || cloned.order_id === null || cloned.order_id === 0 || cloned.order_id === "") {
+                cloned.order_id = finalId;
+              }
+              if (cloned.parent_id === void 0 || cloned.parent_id === null || cloned.parent_id === 0 || cloned.parent_id === "") {
+                cloned.parent_id = finalId;
+              }
+              if (cloned.shipment_id === void 0 || cloned.shipment_id === null || cloned.shipment_id === 0 || cloned.shipment_id === "") {
+                cloned.shipment_id = finalId;
+              }
+              return cloned;
+            };
+            if (Array.isArray(payload)) {
+              return payload.map(bindId);
+            } else {
+              return bindId(payload);
+            }
+          }
+        } catch {
+        }
+        return payload;
+      }
+      recordResolvedId(opId, target, resolvedId) {
+        if (!this.db) return;
+        try {
+          this.db.prepare(`
+                INSERT INTO outbox_id_map (op_id, target, resolved_id, created_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(op_id, target) DO UPDATE SET resolved_id = excluded.resolved_id
+            `).run(opId, target, String(resolvedId), Date.now());
+        } catch {
+        }
+      }
+      hasTargetRecord(opId, target) {
+        if (!this.db) return false;
+        try {
+          const row = this.db.prepare(`
+                SELECT 1 FROM outbox_id_map WHERE op_id = ? AND target = ?
+            `).get(opId, target);
+          return !!row;
+        } catch {
+          return false;
+        }
+      }
+      getResolvedId(opId, target) {
+        if (!this.db) return null;
+        try {
+          const row = this.db.prepare(`
+                SELECT resolved_id FROM outbox_id_map
+                WHERE op_id = ? AND target = ?
+                ORDER BY created_at DESC
+                LIMIT 1
+            `).get(opId, target);
+          return row?.resolved_id ? String(row.resolved_id) : null;
+        } catch {
+          return null;
+        }
+      }
+      async executeOnClient(client, table, op, payload, primaryKeyCol = "id", filter4, upsertConflict) {
+        try {
+          const encData = Array.isArray(payload) ? await encryptRowsAsync(payload, 100) : payload && typeof payload === "object" ? encryptObject(payload) : payload;
+          if (table === "inventory_decrement") {
+            const d = encData;
+            const pId = Number(d.product_id);
+            const qty = Number(d.quantity || 0);
+            if (!pId || !qty) return { success: true, affectedRows: 0 };
+            const { data: prod, error: pErr } = await client.from("products").select("quantity").eq("id", pId).maybeSingle();
+            if (pErr) return { success: false, error: pErr };
+            if (prod) {
+              const currentQty = Number(prod.quantity || 0);
+              const newQty = Math.max(0, currentQty - qty);
+              const { error: updErr } = await client.from("products").update({ quantity: newQty }).eq("id", pId);
+              if (updErr) return { success: false, error: updErr };
+            }
+            return { success: true, resolvedId: `dec_${pId}_${qty}`, affectedRows: 1 };
+          }
+          if (table === "bill_shipping") {
+            const d = encData;
+            let realBillId = d.bill_id;
+            if (d.invoice_number && (!realBillId || realBillId === 0)) {
+              const { data: b } = await client.from("bills").select("id").eq("invoice_number", d.invoice_number).maybeSingle();
+              if (b?.id) realBillId = b.id;
+            }
+            const { data: sh, error: shErr } = await client.from("bill_shipping").upsert({
+              bill_id: realBillId,
+              ship_to_name: d.ship_to_name,
+              ship_to_address: d.ship_to_address,
+              ship_to_phone: d.ship_to_phone || "",
+              ship_from_name: d.ship_from_name || "",
+              ship_from_address: d.ship_from_address || "",
+              shipping_charge: d.shipping_charge || 0,
+              updated_by: d.updated_by,
+              status: "pending_payment"
+            }, { onConflict: "bill_id" }).select("id").maybeSingle();
+            if (shErr) return { success: false, error: shErr };
+            const resolvedId = sh?.id ? String(sh.id) : void 0;
+            return { success: true, resolvedId, affectedRows: 1 };
+          }
+          if (op === "insert") {
+            if (table === "bills") {
+              const res = await client.from(table).upsert(encData, { onConflict: "invoice_number" }).select(primaryKeyCol).maybeSingle();
+              if (res.error) return { success: false, error: res.error };
+              const resolvedId = res.data ? String(res.data[primaryKeyCol]) : void 0;
+              return { success: true, resolvedId, affectedRows: 1 };
+            }
+            if (table === "bill_items") {
+              const items = Array.isArray(encData) ? encData : [encData];
+              const firstBillId = items[0]?.bill_id;
+              if (firstBillId) {
+                try {
+                  const query = client.from("bill_items");
+                  if (query && typeof query.select === "function") {
+                    const sel = query.select("id");
+                    if (sel && typeof sel.eq === "function") {
+                      const { data: existing } = await sel.eq("bill_id", firstBillId);
+                      if (existing && existing.length >= items.length) {
+                        return { success: true, resolvedId: String(existing[0].id), affectedRows: existing.length };
+                      }
+                      if (existing && existing.length > 0 && typeof query.delete === "function") {
+                        const del = query.delete();
+                        if (del && typeof del.eq === "function") {
+                          await del.eq("bill_id", firstBillId);
+                        }
+                      }
+                    }
+                  }
+                } catch {
+                }
+              }
+            }
+            if (table === "make_orders") {
+              const d = encData;
+              if (d.bill_id && d.description) {
+                try {
+                  const query = client.from("make_orders");
+                  if (query && typeof query.select === "function") {
+                    const sel = query.select("id");
+                    if (sel && typeof sel.eq === "function") {
+                      const eq1 = sel.eq("bill_id", d.bill_id);
+                      if (eq1 && typeof eq1.eq === "function") {
+                        const eq2 = eq1.eq("description", d.description);
+                        if (eq2 && typeof eq2.maybeSingle === "function") {
+                          const { data: existing } = await eq2.maybeSingle();
+                          if (existing?.id) {
+                            return { success: true, resolvedId: String(existing.id), affectedRows: 1 };
+                          }
+                        }
+                      }
+                    }
+                  }
+                } catch {
+                }
+              }
+            }
+            if (Array.isArray(encData)) {
+              const res = await client.from(table).insert(encData).select(primaryKeyCol);
+              if (res.error) return { success: false, error: res.error };
+              const rows = res.data || [];
+              const resolvedId = rows.length > 0 ? String(rows[0][primaryKeyCol]) : void 0;
+              return { success: true, resolvedId, affectedRows: rows.length };
+            } else {
+              const res = await client.from(table).insert(encData).select(primaryKeyCol).maybeSingle();
+              if (res.error) return { success: false, error: res.error };
+              const resolvedId = res.data ? String(res.data[primaryKeyCol]) : void 0;
+              return { success: true, resolvedId, affectedRows: res.data ? 1 : 0 };
+            }
+          } else if (op === "upsert") {
+            const conflictOption = upsertConflict ? { onConflict: upsertConflict } : primaryKeyCol ? { onConflict: primaryKeyCol } : void 0;
+            if (Array.isArray(encData)) {
+              const res = await client.from(table).upsert(encData, conflictOption).select(primaryKeyCol);
+              if (res.error) return { success: false, error: res.error };
+              const rows = res.data || [];
+              const resolvedId = rows.length > 0 ? String(rows[0][primaryKeyCol]) : void 0;
+              return { success: true, resolvedId, affectedRows: rows.length };
+            } else {
+              const res = await client.from(table).upsert(encData, conflictOption).select(primaryKeyCol).maybeSingle();
+              if (res.error) return { success: false, error: res.error };
+              const resolvedId = res.data ? String(res.data[primaryKeyCol]) : void 0;
+              return { success: true, resolvedId, affectedRows: res.data ? 1 : 0 };
+            }
+          } else if (op === "update") {
+            let query = client.from(table).update(encData);
+            if (filter4 && filter4.length > 0) {
+              for (const f3 of filter4) {
+                query = query.eq(f3.column, f3.value);
+              }
+            } else {
+              const pkVal = encData?.[primaryKeyCol];
+              if (!pkVal) return { success: false, error: new Error(`Missing ${primaryKeyCol} or filter in update payload`) };
+              query = query.eq(primaryKeyCol, pkVal);
+            }
+            const res = await query.select(primaryKeyCol);
+            if (res.error) return { success: false, error: res.error };
+            const count = Array.isArray(res.data) ? res.data.length : res.data ? 1 : 0;
+            return { success: true, affectedRows: count };
+          } else if (op === "delete") {
+            let query = client.from(table).delete();
+            if (filter4 && filter4.length > 0) {
+              for (const f3 of filter4) {
+                query = query.eq(f3.column, f3.value);
+              }
+            } else {
+              const pkVal = encData?.[primaryKeyCol] || encData;
+              if (!pkVal) return { success: false, error: new Error(`Missing ${primaryKeyCol} or filter in delete payload`) };
+              query = query.eq(primaryKeyCol, pkVal);
+            }
+            const res = await query.select(primaryKeyCol);
+            if (res.error) return { success: false, error: res.error };
+            const count = Array.isArray(res.data) ? res.data.length : res.data ? 1 : 0;
+            return { success: true, affectedRows: count };
+          }
+          return { success: false, error: new Error(`Unsupported operation: ${op}`) };
+        } catch (e2) {
+          return { success: false, error: e2 };
+        }
+      }
+      // ── Error Classification ────────────────────────────────────────────────────
+      classifyError(err) {
+        if (!err) return { isPermanent: false, message: "Unknown error" };
+        const msg = String(err.message || err.details || err || "");
+        const code = String(err.code || "");
+        const isPermanent = code === "42703" || code === "23502" || code === "23503" || code === "42P01" || msg.includes("does not exist") || msg.includes("foreign key") || msg.includes("violates not-null") || msg.includes("invalid input syntax") || msg.includes("PGRST100") || // PostgREST parsing error
+        msg.includes("PGRST106");
+        return { isPermanent, code, message: msg };
+      }
+      // ── Status Updates ──────────────────────────────────────────────────────────
+      markCompleted(id) {
+        if (!this.db) return;
+        try {
+          const row = this.db.prepare(`SELECT entity_type FROM outbox_operations WHERE id = ?`).get(id);
+          this.db.prepare(`
+                UPDATE outbox_operations
+                SET status = 'completed', last_error = NULL, updated_at = ?
+                WHERE id = ?
+            `).run(Date.now(), id);
+          this.invokeCallbacks(id, true, { success: true, id });
+          if (row?.entity_type) {
+            this.broadcastDataUpdated(row.entity_type);
+          }
+          this.broadcastOutboxStatus();
+        } catch {
+        }
+      }
+      broadcastDataUpdated(entityType) {
+        try {
+          import_electron6.BrowserWindow.getAllWindows().forEach((win) => {
+            if (!win.isDestroyed()) {
+              win.webContents.send("data-updated", entityType);
+            }
+          });
+        } catch {
+        }
+      }
+      markStatus(id, status, errorMsg) {
+        if (!this.db) return;
+        try {
+          this.db.prepare(`
+                UPDATE outbox_operations
+                SET status = ?, last_error = ?, updated_at = ?
+                WHERE id = ?
+            `).run(status, errorMsg, Date.now(), id);
+          this.broadcastOutboxStatus();
+        } catch {
+        }
+      }
+      markDeadLetter(id, errorMsg) {
+        if (!this.db) return;
+        try {
+          this.db.prepare(`
+                UPDATE outbox_operations
+                SET status = 'dead_letter', last_error = ?, updated_at = ?
+                WHERE id = ?
+            `).run(errorMsg, Date.now(), id);
+          console.error(`[DurableOutbox] Operation ${id} moved to DEAD_LETTER:`, errorMsg);
+          this.invokeCallbacks(id, false, new Error(errorMsg));
+          this.broadcastOutboxStatus();
+        } catch {
+        }
+      }
+      incrementRetry(id, currentRetries, maxRetries) {
+        if (!this.db) return;
+        const nextCount = currentRetries + 1;
+        try {
+          if (nextCount >= maxRetries) {
+            this.markDeadLetter(id, `Exceeded max retry threshold (${maxRetries} attempts)`);
+          } else {
+            this.db.prepare(`
+                    UPDATE outbox_operations
+                    SET retry_count = ?, updated_at = ?
+                    WHERE id = ?
+                `).run(nextCount, Date.now(), id);
+          }
+        } catch {
+        }
+      }
+      // ── Operator Diagnostics & Replay ───────────────────────────────────────────
+      getOutboxStats() {
+        if (!this.db) {
+          return {
+            totalPending: 0,
+            pendingLocal: 0,
+            bufferedSupabase: 0,
+            blockedDependencies: 0,
+            deadLetterCount: 0,
+            oldestPendingTime: null,
+            recentErrors: []
+          };
+        }
+        try {
+          const counts = this.db.prepare(`
+                SELECT 
+                    COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_cnt,
+                    COUNT(CASE WHEN status IN ('buffered_supabase', 'cleanup_pending') THEN 1 END) as buffered_cnt,
+                    COUNT(CASE WHEN status = 'blocked_dependency' THEN 1 END) as blocked_cnt,
+                    COUNT(CASE WHEN status = 'dead_letter' THEN 1 END) as dead_letter_cnt,
+                    MIN(CASE WHEN status IN ('pending', 'buffered_supabase', 'cleanup_pending', 'blocked_dependency') THEN created_at END) as oldest_pending
+                FROM outbox_operations
+            `).get();
+          const recentErrors = this.db.prepare(`
+                SELECT id, entity_type, last_error, updated_at
+                FROM outbox_operations
+                WHERE status = 'dead_letter' OR last_error IS NOT NULL
+                ORDER BY updated_at DESC
+                LIMIT 5
+            `).all().map((r2) => ({
+            id: r2.id,
+            entityType: r2.entity_type,
+            error: r2.last_error || "Error recorded",
+            time: r2.updated_at
+          }));
+          return {
+            totalPending: counts.pending_cnt || 0,
+            pendingLocal: counts.pending_cnt || 0,
+            bufferedSupabase: counts.buffered_cnt || 0,
+            blockedDependencies: counts.blocked_cnt || 0,
+            deadLetterCount: counts.dead_letter_cnt || 0,
+            oldestPendingTime: counts.oldest_pending || null,
+            recentErrors
+          };
+        } catch {
+          return {
+            totalPending: 0,
+            pendingLocal: 0,
+            bufferedSupabase: 0,
+            blockedDependencies: 0,
+            deadLetterCount: 0,
+            oldestPendingTime: null,
+            recentErrors: []
+          };
+        }
+      }
+      getDeadLetterOperations() {
+        if (!this.db) return [];
+        try {
+          const rows = this.db.prepare(`
+                SELECT * FROM outbox_operations
+                WHERE status = 'dead_letter'
+                ORDER BY updated_at DESC
+                LIMIT 50
+            `).all();
+          return rows.map((r2) => ({
+            id: r2.id,
+            entityType: r2.entity_type,
+            operation: r2.operation,
+            payload: JSON.parse(r2.payload_json || "{}"),
+            filter: r2.filter_json ? JSON.parse(r2.filter_json) : null,
+            primaryKeyCol: r2.primary_key_col || "id",
+            primaryKeyVal: r2.primary_key_val,
+            upsertConflict: r2.upsert_conflict || null,
+            dependencyOpId: r2.dependency_op_id,
+            metadata: r2.metadata_json ? JSON.parse(r2.metadata_json) : null,
+            target: r2.target,
+            status: r2.status,
+            retryCount: r2.retry_count,
+            maxRetries: r2.max_retries,
+            lastError: r2.last_error,
+            createdAt: r2.created_at,
+            updatedAt: r2.updated_at
+          }));
+        } catch {
+          return [];
+        }
+      }
+      replayDeadLetterOperation(id) {
+        if (!this.db) return false;
+        try {
+          const res = this.db.prepare(`
+                UPDATE outbox_operations
+                SET status = 'pending', retry_count = 0, last_error = NULL, updated_at = ?
+                WHERE id = ? AND status = 'dead_letter'
+            `).run(Date.now(), id);
+          this.broadcastOutboxStatus();
+          return res.changes > 0;
+        } catch {
+          return false;
+        }
+      }
+      replayAllDeadLetters() {
+        if (!this.db) return 0;
+        try {
+          const res = this.db.prepare(`
+                UPDATE outbox_operations
+                SET status = 'pending', retry_count = 0, last_error = NULL, updated_at = ?
+                WHERE status = 'dead_letter'
+            `).run(Date.now());
+          this.broadcastOutboxStatus();
+          return res.changes;
+        } catch {
+          return 0;
+        }
+      }
+      getStats() {
+        return this.getOutboxStats();
+      }
+      getDeadLetters() {
+        return this.getDeadLetterOperations();
+      }
+      replayDeadLetter(id) {
+        return this.replayDeadLetterOperation(id);
+      }
+      broadcastOutboxStatus() {
+        const stats = this.getOutboxStats();
+        try {
+          import_electron6.BrowserWindow.getAllWindows().forEach((win) => {
+            if (!win.isDestroyed()) {
+              win.webContents.send("outbox-status-changed", stats);
+            }
+          });
+        } catch {
+        }
+      }
+    };
+  }
+});
+
+// electron/services/media/DurableUploadService.ts
+var DurableUploadService_exports = {};
+__export(DurableUploadService_exports, {
+  DurableUploadService: () => DurableUploadService,
+  normalizeDurableUploadFieldName: () => normalizeDurableUploadFieldName
+});
+var import_better_sqlite32, import_electron7, import_fs8, import_path8, import_crypto7, normalizeDurableUploadFieldName, DurableUploadService;
+var init_DurableUploadService = __esm({
+  "electron/services/media/DurableUploadService.ts"() {
+    "use strict";
+    import_better_sqlite32 = __toESM(require("better-sqlite3"), 1);
+    import_electron7 = require("electron");
+    import_fs8 = __toESM(require("fs"), 1);
+    import_path8 = __toESM(require("path"), 1);
+    import_crypto7 = __toESM(require("crypto"), 1);
+    init_SupabaseQuotaManager();
+    init_supabase();
+    normalizeDurableUploadFieldName = (entityType, fieldName) => entityType === "make_orders" && fieldName === "stage_photo_url" ? "current_stage_photo" : fieldName;
+    DurableUploadService = class _DurableUploadService {
+      static instance = null;
+      db = null;
+      stagingDir;
+      nasClient = null;
+      supabaseClient = null;
+      workerTimer = null;
+      isWorking = false;
+      inFlightDispatches = /* @__PURE__ */ new Map();
+      pendingAssociations = /* @__PURE__ */ new Map();
+      constructor() {
+        const userData = import_electron7.app?.getPath ? import_electron7.app.getPath("userData") : import_path8.default.join(process.env.APPDATA || process.cwd(), "le-soft");
+        this.stagingDir = import_path8.default.join(userData, "upload_staging");
+        const dbPath = import_path8.default.join(userData, "lesoft_durable_uploads.db");
+        try {
+          import_fs8.default.mkdirSync(this.stagingDir, { recursive: true });
+          this.db = new import_better_sqlite32.default(dbPath);
+          this.db.pragma("journal_mode = WAL");
+          this.db.exec(`
+                CREATE TABLE IF NOT EXISTS durable_uploads (
+                    id TEXT PRIMARY KEY,
+                    local_path TEXT NOT NULL,
+                    file_name TEXT NOT NULL,
+                    mime_type TEXT NOT NULL,
+                    size_bytes INTEGER NOT NULL,
+                    sha256 TEXT NOT NULL,
+                    subfolder TEXT NOT NULL,
+                    entity_type TEXT,
+                    entity_id TEXT,
+                    field_name TEXT,
+                    status TEXT NOT NULL DEFAULT 'staged_local',
+                    remote_url_nas TEXT,
+                    remote_url_supabase TEXT,
+                    retry_count INTEGER DEFAULT 0,
+                    last_error TEXT,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_upload_status ON durable_uploads(status);
+                CREATE INDEX IF NOT EXISTS idx_upload_created ON durable_uploads(created_at);
+
+                CREATE TABLE IF NOT EXISTS pending_associations (
+                    identifier TEXT PRIMARY KEY,
+                    entity_type TEXT NOT NULL,
+                    entity_id TEXT NOT NULL,
+                    field_name TEXT NOT NULL,
+                    retry_count INTEGER DEFAULT 0,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_pending_assoc_created ON pending_associations(created_at);
+            `);
+          const columns = this.db.pragma("table_info(durable_uploads)");
+          if (Array.isArray(columns)) {
+            const colNames = new Set(columns.map((c) => c.name));
+            if (!colNames.has("entity_type")) {
+              this.db.exec(`ALTER TABLE durable_uploads ADD COLUMN entity_type TEXT;`);
+            }
+            if (!colNames.has("entity_id")) {
+              this.db.exec(`ALTER TABLE durable_uploads ADD COLUMN entity_id TEXT;`);
+            }
+            if (!colNames.has("field_name")) {
+              this.db.exec(`ALTER TABLE durable_uploads ADD COLUMN field_name TEXT;`);
+            }
+          }
+          this.reconcilePendingAssociations();
+          console.log("[DurableUpload] Initialized upload queue at:", dbPath);
+        } catch (err) {
+          console.error("[DurableUpload] Failed to initialize upload database:", err.message);
+        }
+      }
+      static getInstance() {
+        if (!_DurableUploadService.instance) {
+          _DurableUploadService.instance = new _DurableUploadService();
+        }
+        return _DurableUploadService.instance;
+      }
+      static resetInstanceForTesting() {
+        if (_DurableUploadService.instance) {
+          _DurableUploadService.instance.stopWorker();
+          try {
+            if (_DurableUploadService.instance.db) {
+              _DurableUploadService.instance.db.close();
+            }
+          } catch {
+          }
+          _DurableUploadService.instance = null;
+        }
+      }
+      registerClients(clients) {
+        this.nasClient = clients.nas;
+        this.supabaseClient = clients.supabase;
+      }
+      // ── Local File Staging API ───────────────────────────────────────────────────
+      /**
+       * Stages a file buffer or source path safely to local disk.
+       * Computes SHA-256 and records into SQLite with status 'staged_local'.
+       * By default triggers background dispatch unless autoDispatch is explicitly false.
+       */
+      async stageFile(source, fileName, mimeType, subfolder, meta3, options) {
+        if (!this.db) throw new Error("Upload database not initialized");
+        const uploadId = `upl_${Date.now()}_${import_crypto7.default.randomBytes(4).toString("hex")}`;
+        const sanitized = fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
+        const stagedFileName = `${uploadId}_${sanitized}`;
+        const targetPath = import_path8.default.join(this.stagingDir, stagedFileName);
+        let buffer;
+        if (typeof source === "string") {
+          buffer = import_fs8.default.readFileSync(source);
+        } else {
+          buffer = source;
+        }
+        let effectiveMeta = meta3;
+        if (!effectiveMeta?.entityId) {
+          let pending = this.pendingAssociations.get(uploadId) || this.pendingAssociations.get(sanitized) || this.pendingAssociations.get(fileName);
+          if (!pending && this.db) {
+            try {
+              const rowPending = this.db.prepare(`
+                        SELECT * FROM pending_associations
+                        WHERE identifier = ? OR identifier = ? OR identifier = ? OR identifier LIKE ?
+                    `).get(uploadId, sanitized, fileName, `%${uploadId}%`);
+              if (rowPending) {
+                pending = {
+                  entityType: rowPending.entity_type,
+                  entityId: rowPending.entity_id,
+                  fieldName: rowPending.field_name
+                };
+              }
+            } catch {
+            }
+          }
+          if (pending) {
+            effectiveMeta = pending;
+          }
+        }
+        import_fs8.default.writeFileSync(targetPath, buffer);
+        const hash2 = import_crypto7.default.createHash("sha256").update(buffer).digest("hex").toUpperCase();
+        const sizeBytes = buffer.length;
+        const now = Date.now();
+        this.db.prepare(`
+            INSERT INTO durable_uploads (
+                id, local_path, file_name, mime_type, size_bytes, sha256,
+                subfolder, entity_type, entity_id, field_name, status,
+                retry_count, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'staged_local', 0, ?, ?)
+        `).run(
+          uploadId,
+          targetPath,
+          sanitized,
+          mimeType,
+          sizeBytes,
+          hash2,
+          subfolder,
+          effectiveMeta?.entityType || null,
+          effectiveMeta?.entityId ? String(effectiveMeta.entityId) : null,
+          effectiveMeta?.fieldName || null,
+          now,
+          now
+        );
+        console.log(`[DurableUpload] Staged file "${sanitized}" (${(sizeBytes / 1024).toFixed(1)} KB, SHA256: ${hash2.slice(0, 10)}...) -> ID: ${uploadId}`);
+        const shouldDispatch = options?.autoDispatch ?? false;
+        if (shouldDispatch) {
+          this.dispatchUpload(uploadId).catch(() => {
+          });
+        }
+        return {
+          id: uploadId,
+          localPath: targetPath,
+          fileName: sanitized,
+          mimeType,
+          sizeBytes,
+          sha256: hash2,
+          subfolder,
+          entityType: effectiveMeta?.entityType || null,
+          entityId: effectiveMeta?.entityId ? String(effectiveMeta.entityId) : null,
+          fieldName: effectiveMeta?.fieldName || null,
+          status: "staged_local",
+          remoteUrlNas: null,
+          remoteUrlSupabase: null,
+          retryCount: 0,
+          lastError: null,
+          createdAt: now,
+          updatedAt: now
+        };
+      }
+      // ── Dispatch & Transfer Engine ──────────────────────────────────────────────
+      startWorker(intervalMs = 3e3) {
+        if (this.workerTimer) return;
+        this.workerTimer = setInterval(() => this.processNextBatch().catch(() => {
+        }), intervalMs);
+        console.log(`[DurableUpload] Background upload worker started (interval: ${intervalMs}ms).`);
+      }
+      stopWorker() {
+        if (this.workerTimer) {
+          clearInterval(this.workerTimer);
+          this.workerTimer = null;
+        }
+      }
+      async processNextBatch() {
+        if (!this.db || this.isWorking) return;
+        this.isWorking = true;
+        try {
+          this.reconcilePendingAssociations();
+          const rows = this.db.prepare(`
+                SELECT * FROM durable_uploads
+                WHERE status IN ('staged_local', 'buffered_supabase', 'awaiting_association')
+                ORDER BY created_at ASC
+                LIMIT 5
+            `).all();
+          for (const r2 of rows) {
+            await this.dispatchUpload(r2.id);
+          }
+        } catch (err) {
+          console.error("[DurableUpload] Worker batch exception:", err.message);
+        } finally {
+          this.isWorking = false;
+        }
+      }
+      /**
+       * Dispatches an upload with single-flight protection to ensure
+       * concurrent calls for the same upload ID await the exact same promise.
+       */
+      async dispatchUpload(uploadId) {
+        const existingFlight = this.inFlightDispatches.get(uploadId);
+        if (existingFlight) {
+          return await existingFlight;
+        }
+        const dispatchPromise = this.executeDispatchUpload(uploadId);
+        this.inFlightDispatches.set(uploadId, dispatchPromise);
+        try {
+          return await dispatchPromise;
+        } finally {
+          this.inFlightDispatches.delete(uploadId);
+        }
+      }
+      async executeDispatchUpload(uploadId) {
+        if (!this.db) return { success: false, status: "failed", error: "Upload database not initialized" };
+        const row = this.db.prepare(`SELECT * FROM durable_uploads WHERE id = ?`).get(uploadId);
+        if (!row || !import_fs8.default.existsSync(row.local_path)) {
+          return { success: false, status: "failed", error: "Upload record or local file not found" };
+        }
+        if (row.status === "synced_nas" || row.remote_url_nas && !row.remote_url_supabase) {
+          return {
+            success: true,
+            url: row.remote_url_nas,
+            activeUrl: row.remote_url_nas,
+            durableKey: row.remote_url_nas,
+            status: "synced_nas"
+          };
+        }
+        if (!row.entity_type || !row.entity_id || !row.field_name) {
+          let pending = this.pendingAssociations.get(uploadId) || this.pendingAssociations.get(row.file_name);
+          if (!pending && this.db) {
+            try {
+              const rowPending = this.db.prepare(`
+                        SELECT * FROM pending_associations
+                        WHERE identifier = ? OR identifier = ? OR identifier LIKE ?
+                    `).get(uploadId, row.file_name, `%${uploadId}%`);
+              if (rowPending) {
+                pending = {
+                  entityType: rowPending.entity_type,
+                  entityId: rowPending.entity_id,
+                  fieldName: rowPending.field_name
+                };
+              }
+            } catch {
+            }
+          }
+          if (pending && pending.entityType && pending.entityId && pending.fieldName) {
+            this.associateUploadWithEntity(uploadId, {
+              entityType: pending.entityType,
+              entityId: pending.entityId,
+              fieldName: pending.fieldName
+            });
+            const reloaded = this.db.prepare(`SELECT * FROM durable_uploads WHERE id = ?`).get(uploadId);
+            if (reloaded) {
+              Object.assign(row, reloaded);
+            }
+          }
+        }
+        const buffer = import_fs8.default.readFileSync(row.local_path);
+        const candidates = getNasStorageCandidates();
+        const cfHeaders = getCfAccessHeaders();
+        const cleanFileName = (row.file_name || "file").replace(/[^a-zA-Z0-9._-]/g, "_");
+        const finalStorageName = `${uploadId}_${cleanFileName}`;
+        const cloudPath = row.subfolder ? `${row.subfolder}/${finalStorageName}` : finalStorageName;
+        const cloudBucket = "make-order-files";
+        let cloudUrl = row.remote_url_supabase || null;
+        let lastError = null;
+        let activeSignedUrl = void 0;
+        if (cloudUrl) {
+          if (this.supabaseClient) {
+            try {
+              const { data: signedData } = await this.supabaseClient.storage.from(cloudBucket).createSignedUrl(cloudUrl, 3600);
+              activeSignedUrl = signedData?.signedUrl || void 0;
+            } catch {
+            }
+          }
+        } else if (this.supabaseClient) {
+          const quotaMgr = SupabaseQuotaManager.getInstance();
+          const canBuffer = await quotaMgr.reserveStorageQuota(uploadId, row.size_bytes);
+          if (!canBuffer) {
+            lastError = "Supabase Storage quota limit reached or reservation failed (2.2 GB storage / 3 GB ceiling). File held safely in local staging.";
+            const nextRetry = (row.retry_count || 0) + 1;
+            this.db.prepare(`
+                    UPDATE durable_uploads
+                    SET retry_count = ?, last_error = ?, updated_at = ?
+                    WHERE id = ?
+                `).run(nextRetry, lastError, Date.now(), uploadId);
+            this.broadcastUploadStatus();
+            return {
+              success: false,
+              status: "staged_local",
+              durableKey: cloudPath,
+              error: lastError
+            };
+          }
+          try {
+            const { error: sbErr } = await this.supabaseClient.storage.from(cloudBucket).upload(cloudPath, buffer, { contentType: row.mime_type, upsert: true });
+            if (!sbErr) {
+              try {
+                const { data: signedData } = await this.supabaseClient.storage.from(cloudBucket).createSignedUrl(cloudPath, 3600);
+                activeSignedUrl = signedData?.signedUrl || void 0;
+              } catch {
+              }
+              cloudUrl = cloudPath;
+              const committed = await quotaMgr.releaseStorageQuota(uploadId, row.size_bytes, "committed");
+              if (!committed) {
+                console.warn(`[DurableUpload] Storage quota commit rejected or ambiguous for upload ${uploadId}. Retaining local staging.`);
+                lastError = "Supabase quota commit transition failed or ambiguous; retained in local staging";
+                try {
+                  await this.supabaseClient.storage.from(cloudBucket).remove([cloudPath]);
+                } catch {
+                }
+                cloudUrl = null;
+              } else {
+                if (row.entity_type && row.entity_id && row.field_name) {
+                  await this.updateEntityRecord(
+                    row.entity_type,
+                    row.entity_id,
+                    row.field_name,
+                    cloudUrl,
+                    void 0,
+                    uploadId
+                  );
+                }
+                this.db.prepare(`
+                            UPDATE durable_uploads
+                            SET status = 'buffered_supabase', remote_url_supabase = ?, last_error = NULL, updated_at = ?
+                            WHERE id = ?
+                        `).run(cloudUrl, Date.now(), uploadId);
+                console.log(`[DurableUpload] Upload ${uploadId} confirmed in primary Supabase Storage (${(row.size_bytes / 1024).toFixed(1)} KB). Key: ${cloudUrl}`);
+              }
+            } else {
+              await quotaMgr.releaseStorageQuota(uploadId, 0, "released");
+              lastError = `Supabase storage error: ${sbErr.message}`;
+            }
+          } catch (sbEx) {
+            await quotaMgr.releaseStorageQuota(uploadId, 0, "released");
+            lastError = `Supabase storage exception: ${sbEx.message}`;
+          }
+        } else {
+          lastError = "Supabase Storage client is not configured or offline. File retained in local staging.";
+        }
+        if (!cloudUrl && !row.remote_url_nas) {
+          const nextRetry = (row.retry_count || 0) + 1;
+          this.db.prepare(`
+                UPDATE durable_uploads
+                SET retry_count = ?, last_error = ?, updated_at = ?
+                WHERE id = ?
+            `).run(nextRetry, lastError, Date.now(), uploadId);
+          this.broadcastUploadStatus();
+          return {
+            success: false,
+            status: "staged_local",
+            durableKey: cloudPath,
+            error: lastError || "Primary Supabase upload unconfirmed"
+          };
+        }
+        let nasSuccess = !!row.remote_url_nas;
+        let nasUrl = row.remote_url_nas || null;
+        if (!nasSuccess) {
+          const nasRes = await this.uploadToNasStorage(buffer, finalStorageName, row.mime_type, row.subfolder, row.sha256);
+          if (nasRes.success && nasRes.url) {
+            if (nasRes.sha256 && nasRes.sha256.toUpperCase() !== row.sha256.toUpperCase()) {
+              lastError = `Checksum mismatch: expected ${row.sha256}, got ${nasRes.sha256}`;
+              console.warn(`[DurableUpload] NAS replica checksum mismatch for ${uploadId}: ${lastError}`);
+            } else {
+              nasSuccess = true;
+              nasUrl = nasRes.url;
+            }
+          } else {
+            lastError = nasRes.error || "NAS replica storage failed";
+          }
+        }
+        if (nasSuccess && nasUrl) {
+          const hasOwner = !!(row.entity_type && row.entity_id && row.field_name);
+          if (row.remote_url_supabase && !hasOwner) {
+            const deferMsg = `Upload persisted to NAS (${nasUrl}) but awaiting owner association (${row.entity_type || "unlinked"}). Preserving cloud copy and quota until confirmed.`;
+            console.log(`[DurableUpload] ${deferMsg}`);
+            this.db.prepare(`
+                    UPDATE durable_uploads
+                    SET status = 'awaiting_association', remote_url_nas = ?, last_error = ?, updated_at = ?
+                    WHERE id = ?
+                `).run(nasUrl, deferMsg, Date.now(), uploadId);
+            this.broadcastUploadStatus();
+            return {
+              success: true,
+              url: nasUrl,
+              activeUrl: nasUrl,
+              durableKey: nasUrl,
+              status: "awaiting_association",
+              error: deferMsg
+            };
+          }
+          if (hasOwner) {
+            const entityUpdated = await this.updateEntityRecord(
+              row.entity_type,
+              row.entity_id,
+              row.field_name,
+              nasUrl,
+              row.remote_url_supabase || void 0,
+              uploadId
+            );
+            if (!entityUpdated) {
+              lastError = `Entity record update failed for ${row.entity_type} ${row.entity_id}. Staged copy preserved for retry.`;
+              this.db.prepare(`
+                        UPDATE durable_uploads
+                        SET remote_url_nas = ?, last_error = ?, updated_at = ?
+                        WHERE id = ?
+                    `).run(nasUrl, lastError, Date.now(), uploadId);
+              this.broadcastUploadStatus();
+              return {
+                success: false,
+                url: nasUrl,
+                activeUrl: nasUrl,
+                durableKey: nasUrl,
+                status: row.status,
+                error: lastError
+              };
+            }
+          }
+          if (row.remote_url_supabase) {
+            const pruned = await this.pruneCloudCopy(row.subfolder, row.remote_url_supabase, row.size_bytes, uploadId);
+            if (!pruned) {
+              lastError = "Authoritative NAS persistence confirmed, but Supabase cloud copy cleanup or quota prune failed. Retaining for cleanup retry.";
+              this.db.prepare(`
+                        UPDATE durable_uploads
+                        SET remote_url_nas = ?, last_error = ?, updated_at = ?
+                        WHERE id = ?
+                    `).run(nasUrl, lastError, Date.now(), uploadId);
+              this.broadcastUploadStatus();
+              return {
+                success: false,
+                url: nasUrl,
+                activeUrl: nasUrl,
+                durableKey: nasUrl,
+                status: row.status,
+                error: lastError
+              };
+            }
+          }
+          this.db.prepare(`
+                UPDATE durable_uploads
+                SET status = 'synced_nas', remote_url_nas = ?, remote_url_supabase = NULL, last_error = NULL, updated_at = ?
+                WHERE id = ?
+            `).run(nasUrl, Date.now(), uploadId);
+          console.log(`[DurableUpload] Upload ${uploadId} successfully synchronized to authoritative NAS Storage: ${nasUrl}`);
+          this.broadcastUploadStatus();
+          return {
+            success: true,
+            url: nasUrl,
+            activeUrl: nasUrl,
+            durableKey: nasUrl,
+            status: "synced_nas"
+          };
+        }
+        if (lastError) {
+          this.db.prepare(`
+                UPDATE durable_uploads
+                SET last_error = ?, updated_at = ?
+                WHERE id = ?
+            `).run(lastError, Date.now(), uploadId);
+        }
+        this.broadcastUploadStatus();
+        return {
+          success: true,
+          url: cloudUrl || nasUrl || void 0,
+          activeUrl: activeSignedUrl || cloudUrl || nasUrl || void 0,
+          durableKey: cloudUrl || `${row.subfolder}/${finalStorageName}`,
+          status: "buffered_supabase",
+          error: lastError || "Primary Supabase write confirmed; TrueNAS replication pending."
+        };
+      }
+      /**
+       * Associates a staged upload with an owning entity and field.
+       * Safe to call after an order or item has been created.
+       */
+      associateUploadWithEntity(identifier, meta3) {
+        if (!this.db || !identifier || !meta3.entityType || !meta3.entityId || !meta3.fieldName) return false;
+        try {
+          const normalizedMeta = {
+            ...meta3,
+            fieldName: normalizeDurableUploadFieldName(meta3.entityType, meta3.fieldName)
+          };
+          let uploadId = identifier;
+          const match = identifier.match(/(upl_[0-9]+_[0-9a-f]+)/i);
+          if (match) {
+            uploadId = match[1];
+          }
+          const res = this.db.prepare(`
+                UPDATE durable_uploads
+                SET entity_type = ?, entity_id = ?, field_name = ?, updated_at = ?
+                WHERE id = ? OR id = ? OR local_path LIKE ? OR remote_url_supabase LIKE ? OR remote_url_nas LIKE ?
+            `).run(normalizedMeta.entityType, String(normalizedMeta.entityId), normalizedMeta.fieldName, Date.now(), uploadId, identifier, `%${uploadId}%`, `%${uploadId}%`, `%${uploadId}%`);
+          const associated = res.changes > 0;
+          if (associated) {
+            try {
+              this.db.prepare(`
+                        DELETE FROM pending_associations
+                        WHERE identifier = ? OR identifier = ?
+                    `).run(uploadId, identifier);
+            } catch {
+            }
+            this.pendingAssociations.delete(uploadId);
+            this.pendingAssociations.delete(identifier);
+          } else {
+            console.warn(`[DurableUpload] associateUploadWithEntity found no matching upload for identifier "${identifier}". Queuing durable pending association.`);
+            try {
+              this.db.prepare(`
+                        INSERT INTO pending_associations (identifier, entity_type, entity_id, field_name, retry_count, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, 0, ?, ?)
+                        ON CONFLICT(identifier) DO UPDATE SET
+                            entity_type = excluded.entity_type,
+                            entity_id = excluded.entity_id,
+                            field_name = excluded.field_name,
+                            updated_at = excluded.updated_at
+                    `).run(identifier, normalizedMeta.entityType, String(normalizedMeta.entityId), normalizedMeta.fieldName, Date.now(), Date.now());
+            } catch (dbErr) {
+              console.warn("[DurableUpload] Failed to persist pending_association:", dbErr.message);
+            }
+            this.pendingAssociations.set(uploadId, normalizedMeta);
+            if (uploadId !== identifier) {
+              this.pendingAssociations.set(identifier, normalizedMeta);
+            }
+          }
+          return associated;
+        } catch (err) {
+          console.warn("[DurableUpload] Failed to associate upload with entity:", err.message);
+          return false;
+        }
+      }
+      /**
+       * Reconciles persisted pending associations against staged uploads.
+       * Called on startup and before processing pending batches.
+       */
+      reconcilePendingAssociations() {
+        if (!this.db) return;
+        try {
+          const pendingList = this.db.prepare(`SELECT * FROM pending_associations`).all();
+          for (const p of pendingList) {
+            let uploadId = p.identifier;
+            const match = p.identifier.match(/(upl_[0-9]+_[0-9a-f]+)/i);
+            if (match) {
+              uploadId = match[1];
+            }
+            const fieldName = normalizeDurableUploadFieldName(p.entity_type, p.field_name);
+            const res = this.db.prepare(`
+                    UPDATE durable_uploads
+                    SET entity_type = ?, entity_id = ?, field_name = ?, updated_at = ?
+                    WHERE (id = ? OR id = ? OR local_path LIKE ? OR remote_url_supabase LIKE ? OR remote_url_nas LIKE ?)
+                      AND (entity_type IS NULL OR entity_id IS NULL)
+                `).run(p.entity_type, String(p.entity_id), fieldName, Date.now(), uploadId, p.identifier, `%${uploadId}%`, `%${uploadId}%`, `%${uploadId}%`);
+            if (res.changes > 0) {
+              this.db.prepare(`DELETE FROM pending_associations WHERE identifier = ?`).run(p.identifier);
+              this.pendingAssociations.delete(p.identifier);
+              this.pendingAssociations.delete(uploadId);
+            }
+          }
+        } catch (err) {
+          console.warn("[DurableUpload] Reconciling pending associations error:", err.message);
+        }
+      }
+      getPendingAssociationsCount() {
+        if (!this.db) return this.pendingAssociations.size;
+        try {
+          const row = this.db.prepare(`SELECT COUNT(*) as cnt FROM pending_associations`).get();
+          return row?.cnt ?? this.pendingAssociations.size;
+        } catch {
+          return this.pendingAssociations.size;
+        }
+      }
+      async updateEntityRecord(entityType, entityId, fieldName, newUrl, oldRef, uploadId) {
+        if (!entityType || !entityId || !fieldName) {
+          console.warn(`[DurableUpload] Cannot update entity record: missing owner metadata (entityType: ${entityType}, entityId: ${entityId}, fieldName: ${fieldName})`);
+          return false;
+        }
+        const resolvedFieldName = normalizeDurableUploadFieldName(entityType, fieldName);
+        const client = this.nasClient || this.supabaseClient;
+        if (!client) {
+          console.warn(`[DurableUpload] Cannot update entity record: No active client`);
+          return false;
+        }
+        try {
+          const { data: existing, error: selectErr } = await client.from(entityType).select(`id, ${resolvedFieldName}`).eq("id", entityId).maybeSingle();
+          if (selectErr || !existing) {
+            console.warn(`[DurableUpload] Target record does not exist for ${entityType} ID ${entityId}:`, selectErr?.message || "Record not found");
+            return false;
+          }
+          if (resolvedFieldName === "pdf_urls" || resolvedFieldName === "invoice_attachment_urls") {
+            const list = Array.isArray(existing?.[resolvedFieldName]) ? existing[resolvedFieldName] : [];
+            const uploadPrefix = uploadId ? `${uploadId}_` : null;
+            let replaced = false;
+            const updatedList = list.map((item) => {
+              if (uploadPrefix && item.includes(uploadPrefix) || oldRef && item === oldRef) {
+                replaced = true;
+                return newUrl;
+              }
+              return item;
+            });
+            if (!replaced && !updatedList.includes(newUrl)) {
+              updatedList.push(newUrl);
+            }
+            const deduplicated = Array.from(new Set(updatedList));
+            const { data: updatedRows, error: updErr } = await client.from(entityType).update({ [resolvedFieldName]: deduplicated }).eq("id", entityId).select("id");
+            const rowsAffected = Array.isArray(updatedRows) ? updatedRows.length : updatedRows ? 1 : 0;
+            if (updErr || rowsAffected === 0) {
+              console.warn(`[DurableUpload] Could not update entity array for ${entityType} ID ${entityId} (affected ${rowsAffected} rows):`, updErr?.message);
+              return false;
+            }
+          } else {
+            const updatePayload = { [resolvedFieldName]: newUrl };
+            if (entityType === "make_order_items" && resolvedFieldName === "technical_drawing_url") {
+              try {
+                const { data: item } = await client.from("make_order_items").select("pdf_urls").eq("id", entityId).maybeSingle();
+                if (item && Array.isArray(item.pdf_urls)) {
+                  const uploadPrefix = uploadId ? `${uploadId}_` : null;
+                  let replaced = false;
+                  const updatedPdfs = item.pdf_urls.map((p) => {
+                    if (uploadPrefix && p.includes(uploadPrefix) || oldRef && p === oldRef) {
+                      replaced = true;
+                      return newUrl;
+                    }
+                    return p;
+                  });
+                  if (!replaced && !updatedPdfs.includes(newUrl)) {
+                    updatedPdfs.push(newUrl);
+                  }
+                  updatePayload.pdf_urls = Array.from(new Set(updatedPdfs));
+                }
+              } catch {
+              }
+            }
+            const { data: updatedRows, error: updErr } = await client.from(entityType).update(updatePayload).eq("id", entityId).select("id");
+            const rowsAffected = Array.isArray(updatedRows) ? updatedRows.length : updatedRows ? 1 : 0;
+            if (updErr || rowsAffected === 0) {
+              console.warn(`[DurableUpload] Could not update entity field for ${entityType} ID ${entityId} (affected ${rowsAffected} rows):`, updErr?.message);
+              return false;
+            }
+          }
+          return true;
+        } catch (e2) {
+          console.warn(`[DurableUpload] Exception updating entity record for ${entityType} ID ${entityId}:`, e2.message);
+          return false;
+        }
+      }
+      async pruneCloudCopy(subfolder, cloudUrl, sizeBytes, uploadId) {
+        if (!this.supabaseClient) return false;
+        if (!cloudUrl || typeof cloudUrl !== "string") return false;
+        try {
+          let objectKey = cloudUrl.trim();
+          if (/^https?:\/\//i.test(objectKey)) {
+            try {
+              const urlObj = new URL(objectKey);
+              const parts = urlObj.pathname.split("/make-order-files/");
+              if (parts.length > 1) {
+                objectKey = parts.slice(1).join("/make-order-files/");
+              } else {
+                objectKey = urlObj.pathname.replace(/^\/+/, "");
+              }
+              objectKey = decodeURIComponent(objectKey);
+            } catch (e2) {
+              console.warn(`[DurableUpload] Could not parse URL "${objectKey}":`, e2.message);
+              return false;
+            }
+          } else if (/^supabase:\/\/make-order-files\//i.test(objectKey)) {
+            objectKey = objectKey.replace(/^supabase:\/\/make-order-files\//i, "");
+          } else if (/^supabase:\/\//i.test(objectKey)) {
+            objectKey = objectKey.replace(/^supabase:\/\//i, "");
+          }
+          objectKey = objectKey.replace(/^\/+/, "");
+          const candidateKeys = /* @__PURE__ */ new Set();
+          candidateKeys.add(objectKey);
+          if (objectKey.startsWith("make-order-files/")) {
+            candidateKeys.add(objectKey.replace(/^make-order-files\//, ""));
+          } else {
+            candidateKeys.add(`make-order-files/${objectKey}`);
+          }
+          const keysToRemove = Array.from(candidateKeys).filter((k) => k.length > 0);
+          const { error: error51 } = await this.supabaseClient.storage.from("make-order-files").remove(keysToRemove);
+          if (error51) {
+            console.warn(`[DurableUpload] Failed to remove object from Supabase bucket: ${error51.message}`);
+            return false;
+          }
+          if (uploadId) {
+            const pruned = await SupabaseQuotaManager.getInstance().pruneConfirmedStorage(uploadId, sizeBytes);
+            if (!pruned) {
+              console.warn(`[DurableUpload] Storage quota prune RPC failed for ${uploadId}`);
+              return false;
+            }
+          } else {
+            SupabaseQuotaManager.getInstance().deductConfirmedPrunedStorage(sizeBytes);
+          }
+          console.log(`[DurableUpload] Safely pruned temporary cloud copy after NAS persistence: ${objectKey}`);
+          return true;
+        } catch (err) {
+          console.warn(`[DurableUpload] Exception during cloud copy pruning:`, err.message);
+          return false;
+        }
+      }
+      getPendingUploadStats() {
+        if (!this.db) return { stagedCount: 0, bufferedCount: 0, awaitingAssociationCount: 0, totalPendingBytes: 0 };
+        try {
+          const res = this.db.prepare(`
+                SELECT 
+                    COUNT(CASE WHEN status = 'staged_local' THEN 1 END) as staged_cnt,
+                    COUNT(CASE WHEN status = 'buffered_supabase' THEN 1 END) as buffered_cnt,
+                    COUNT(CASE WHEN status = 'awaiting_association' THEN 1 END) as awaiting_assoc_cnt,
+                    SUM(CASE WHEN status IN ('staged_local', 'buffered_supabase', 'awaiting_association') THEN size_bytes ELSE 0 END) as total_bytes
+                FROM durable_uploads
+            `).get();
+          return {
+            stagedCount: res.staged_cnt || 0,
+            bufferedCount: res.buffered_cnt || 0,
+            awaitingAssociationCount: res.awaiting_assoc_cnt || 0,
+            totalPendingBytes: res.total_bytes || 0
+          };
+        } catch {
+          return { stagedCount: 0, bufferedCount: 0, awaitingAssociationCount: 0, totalPendingBytes: 0 };
+        }
+      }
+      async verifyRemoteObject(url2, expectedSha256) {
+        const cfHeaders = getCfAccessHeaders();
+        const isTunnel = url2.startsWith("https://");
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 45e3);
+        try {
+          const resp = await fetch(url2, {
+            method: "GET",
+            headers: isTunnel ? cfHeaders : {},
+            signal: controller.signal
+          });
+          if (!resp.ok) {
+            return { verified: false, error: `Remote verification fetch failed: HTTP ${resp.status} ${resp.statusText}` };
+          }
+          const arrayBuffer = await resp.arrayBuffer();
+          const remoteBuf = Buffer.from(arrayBuffer);
+          const remoteHash = import_crypto7.default.createHash("sha256").update(remoteBuf).digest("hex").toUpperCase();
+          if (expectedSha256 && remoteHash !== expectedSha256.toUpperCase()) {
+            return {
+              verified: false,
+              sha256: remoteHash,
+              error: `Remote digest mismatch: expected ${expectedSha256}, got ${remoteHash}`
+            };
+          }
+          return { verified: true, sha256: remoteHash };
+        } catch (err) {
+          return { verified: false, error: err.message || "Remote read-back verification timeout" };
+        } finally {
+          clearTimeout(timeoutId);
+        }
+      }
+      /**
+       * Safely normalizes the remote storage URL returned by a TrueNAS storage service candidate.
+       * Prevents internal :8080 ports from breaking Tailscale/LAN access while preserving
+       * paths, query params, and candidate host alignment.
+       */
+      static normalizeNasStorageUrl(rawUrl, candidateBase) {
+        if (!rawUrl || typeof rawUrl !== "string") return rawUrl;
+        try {
+          const candUrl = new URL(candidateBase);
+          const parsed = new URL(rawUrl, candidateBase);
+          if (parsed.port === "8080") {
+            const lowerHost = parsed.hostname.toLowerCase();
+            const candHost = candUrl.hostname.toLowerCase();
+            if (lowerHost === "100.88.85.6" || lowerHost === "192.168.1.14" || lowerHost === candHost) {
+              parsed.port = candUrl.port || (candUrl.protocol === "https:" ? "443" : "80");
+              parsed.protocol = candUrl.protocol;
+              parsed.hostname = candUrl.hostname;
+            }
+          }
+          return parsed.toString();
+        } catch {
+          return rawUrl;
+        }
+      }
+      async uploadToNasStorage(buffer, fileName, mimeType, subfolder, expectedSha256) {
+        const candidates = getNasStorageCandidates();
+        const cfHeaders = getCfAccessHeaders();
+        let lastError = null;
+        const timeoutMs = Math.max(3e4, Math.min(3e5, Math.ceil(buffer.length / 2e5) * 1e3 + 3e4));
+        for (const candidateBase of candidates) {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+          try {
+            const formData = new FormData();
+            formData.append("file", new Blob([new Uint8Array(buffer)], { type: mimeType }), fileName);
+            const isTunnel = candidateBase.startsWith("https://");
+            const reqHeaders = {
+              "x-subfolder": subfolder,
+              ...isTunnel ? cfHeaders : {}
+            };
+            const response = await fetch(`${candidateBase.replace(/\/$/, "")}/upload`, {
+              method: "POST",
+              body: formData,
+              headers: reqHeaders,
+              signal: controller.signal
+            });
+            if (response.ok) {
+              const data2 = await response.json();
+              if (data2 && data2.success && (data2.file_url || data2.url || data2.urlPath)) {
+                const rawUrl = data2.file_url || data2.url || (data2.urlPath ? `/files/${String(data2.urlPath).replace(/^\/?files\/?/, "")}` : "");
+                const url2 = _DurableUploadService.normalizeNasStorageUrl(rawUrl, candidateBase);
+                const remoteReportedHash = data2.sha256 || data2.checksum || data2.digest;
+                if (remoteReportedHash) {
+                  const hashStr = String(remoteReportedHash).toUpperCase();
+                  if (expectedSha256 && hashStr !== expectedSha256.toUpperCase()) {
+                    lastError = `Remote digest mismatch: expected ${expectedSha256}, got ${hashStr}`;
+                    continue;
+                  }
+                  return { success: true, url: url2, sha256: hashStr };
+                }
+                const verifyRes = await this.verifyRemoteObject(url2, expectedSha256);
+                if (verifyRes.verified) {
+                  return { success: true, url: url2, sha256: verifyRes.sha256 };
+                } else {
+                  lastError = verifyRes.error || "Remote object read-back verification failed";
+                  continue;
+                }
+              } else {
+                lastError = data2?.error || "NAS upload reported unsuccessful status or missing valid URL";
+              }
+            } else {
+              lastError = `NAS storage HTTP ${response.status} ${response.statusText}`;
+            }
+          } catch (err) {
+            lastError = err.message || "NAS network timeout";
+          } finally {
+            clearTimeout(timeoutId);
+          }
+        }
+        return { success: false, error: lastError || "All NAS storage candidates failed" };
+      }
+      getStagedUploads() {
+        if (!this.db) return [];
+        try {
+          const rows = this.db.prepare(`
+                SELECT * FROM durable_uploads
+                ORDER BY created_at DESC
+                LIMIT 100
+            `).all();
+          return rows.map((r2) => ({
+            id: r2.id,
+            localPath: r2.local_path,
+            fileName: r2.file_name,
+            mimeType: r2.mime_type,
+            sizeBytes: r2.size_bytes,
+            sha256: r2.sha256,
+            subfolder: r2.subfolder,
+            entityType: r2.entity_type,
+            entityId: r2.entity_id,
+            fieldName: r2.field_name,
+            status: r2.status,
+            remoteUrlNas: r2.remote_url_nas,
+            remoteUrlSupabase: r2.remote_url_supabase,
+            retryCount: r2.retry_count,
+            lastError: r2.last_error,
+            createdAt: r2.created_at,
+            updatedAt: r2.updated_at
+          }));
+        } catch {
+          return [];
+        }
+      }
+      broadcastUploadStatus() {
+        const stats = this.getPendingUploadStats();
+        try {
+          import_electron7.BrowserWindow.getAllWindows().forEach((win) => {
+            if (!win.isDestroyed()) {
+              win.webContents.send("upload-status-changed", stats);
+            }
+          });
+        } catch {
+        }
+      }
+    };
+  }
+});
+
+// electron/services/health/ConsolidatedHealthEngine.ts
+var ConsolidatedHealthEngine_exports = {};
+__export(ConsolidatedHealthEngine_exports, {
+  ConsolidatedHealthEngine: () => ConsolidatedHealthEngine
+});
+var import_electron8, ConsolidatedHealthEngine;
+var init_ConsolidatedHealthEngine = __esm({
+  "electron/services/health/ConsolidatedHealthEngine.ts"() {
+    "use strict";
+    import_electron8 = require("electron");
+    init_supabase();
+    init_DurableOutboxService();
+    init_DurableUploadService();
+    ConsolidatedHealthEngine = class _ConsolidatedHealthEngine {
+      static instance = null;
+      nasClient = null;
+      supabaseClient = null;
+      currentState = "NORMAL_NAS_AUTHORITATIVE";
+      consecutiveNasDbFailures = 0;
+      consecutiveNasStorageFailures = 0;
+      FAILURE_THRESHOLD = 2;
+      // Require 2 consecutive failures to degrade
+      cooldownUntil = 0;
+      cooldownMs = 3e4;
+      isNasDbHealthy = true;
+      isNasStorageHealthy = true;
+      isSupabaseDbHealthy = true;
+      isSupabaseStorageHealthy = true;
+      activeNasDbUrl = null;
+      activeNasStorageUrl = null;
+      lastProbeTime = 0;
+      nasDbLatencyMs = 0;
+      nasStorageLatencyMs = 0;
+      isProbing = false;
+      isReconciling = false;
+      probeTimer = null;
+      constructor() {
+      }
+      static getInstance() {
+        if (!_ConsolidatedHealthEngine.instance) {
+          _ConsolidatedHealthEngine.instance = new _ConsolidatedHealthEngine();
+        }
+        return _ConsolidatedHealthEngine.instance;
+      }
+      registerClients(clients) {
+        this.nasClient = clients.nas;
+        this.supabaseClient = clients.supabase;
+      }
+      startMonitoring(intervalMs = 1e4) {
+        if (this.probeTimer) return;
+        this.probeTimer = setInterval(() => this.runHealthCycle().catch(() => {
+        }), intervalMs);
+        console.log(`[ConsolidatedHealth] Started health monitor (cycle: ${intervalMs}ms).`);
+        this.runHealthCycle().catch(() => {
+        });
+      }
+      stopMonitoring() {
+        if (this.probeTimer) {
+          clearInterval(this.probeTimer);
+          this.probeTimer = null;
+        }
+      }
+      getCurrentState() {
+        return this.currentState;
+      }
+      getProbeDetails() {
+        return {
+          isNasDbHealthy: this.isNasDbHealthy,
+          isNasStorageHealthy: this.isNasStorageHealthy,
+          isSupabaseDbHealthy: this.isSupabaseDbHealthy,
+          isSupabaseStorageHealthy: this.isSupabaseStorageHealthy,
+          activeNasDbUrl: this.activeNasDbUrl,
+          activeNasStorageUrl: this.activeNasStorageUrl,
+          lastProbeTime: this.lastProbeTime,
+          nasDbLatencyMs: this.nasDbLatencyMs,
+          nasStorageLatencyMs: this.nasStorageLatencyMs
+        };
+      }
+      // ── Independent Probes ───────────────────────────────────────────────────────
+      /**
+       * Executes independent probes across database and storage targets.
+       */
+      async runHealthCycle() {
+        if (this.isProbing) return this.currentState;
+        this.isProbing = true;
+        try {
+          const [nasDbRes, nasStorageRes, sbDbRes, sbStorageRes] = await Promise.all([
+            this.probeNasDatabase(),
+            this.probeNasStorage(),
+            this.probeSupabaseDatabase(),
+            this.probeSupabaseStorage()
+          ]);
+          this.isNasDbHealthy = nasDbRes.healthy;
+          this.nasDbLatencyMs = nasDbRes.latency;
+          this.activeNasDbUrl = nasDbRes.url;
+          this.isNasStorageHealthy = nasStorageRes.healthy;
+          this.nasStorageLatencyMs = nasStorageRes.latency;
+          this.activeNasStorageUrl = nasStorageRes.url;
+          this.isSupabaseDbHealthy = sbDbRes;
+          this.isSupabaseStorageHealthy = sbStorageRes;
+          this.lastProbeTime = Date.now();
+          if (this.isNasDbHealthy) {
+            this.consecutiveNasDbFailures = 0;
+          } else {
+            this.consecutiveNasDbFailures++;
+          }
+          if (this.isNasStorageHealthy) {
+            this.consecutiveNasStorageFailures = 0;
+          } else {
+            this.consecutiveNasStorageFailures++;
+          }
+          this.evaluateStateTransitions();
+          this.broadcastHealth();
+          return this.currentState;
+        } catch (err) {
+          console.error("[ConsolidatedHealth] Health cycle error:", err.message);
+          return this.currentState;
+        } finally {
+          this.isProbing = false;
+        }
+      }
+      /**
+       * Probes NAS database using a REAL lightweight query (not a root HEAD ping).
+       */
+      async probeNasDatabase() {
+        if (!this.nasClient) return { healthy: false, latency: 0, url: null };
+        const t0 = Date.now();
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3e3);
+        try {
+          const timeoutPromise = new Promise(
+            (_, reject) => setTimeout(() => reject(new Error("NAS DB query timeout (3000ms)")), 3e3)
+          );
+          const queryPromise = this.nasClient.from("make_products").select("id").abortSignal(controller.signal).limit(1);
+          const res = await Promise.race([queryPromise, timeoutPromise]);
+          const latency = Date.now() - t0;
+          if (res && !res.error) {
+            return { healthy: true, latency, url: "nas_database" };
+          }
+          return { healthy: false, latency, url: null };
+        } catch {
+          return { healthy: false, latency: Date.now() - t0, url: null };
+        } finally {
+          clearTimeout(timeoutId);
+        }
+      }
+      /**
+       * Probes NAS file storage non-destructively.
+       */
+      async probeNasStorage() {
+        const candidates = getNasStorageCandidates();
+        const cfHeaders = getCfAccessHeaders();
+        const t0 = Date.now();
+        for (const base of candidates) {
+          try {
+            const isTunnel = base.startsWith("https://");
+            const headers = isTunnel ? cfHeaders : {};
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 2500);
+            const res = await fetch(`${base.replace(/\/$/, "")}/health`, {
+              method: "GET",
+              headers,
+              signal: controller.signal
+            }).catch(() => null);
+            clearTimeout(timeoutId);
+            if (res && res.status === 200) {
+              return { healthy: true, latency: Date.now() - t0, url: base };
+            }
+          } catch {
+          }
+        }
+        return { healthy: false, latency: Date.now() - t0, url: null };
+      }
+      async probeSupabaseDatabase() {
+        if (!this.supabaseClient) return false;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3e3);
+        try {
+          const timeoutPromise = new Promise(
+            (_, reject) => setTimeout(() => reject(new Error("Supabase DB timeout")), 3e3)
+          );
+          const queryPromise = this.supabaseClient.from("companies").select("id").abortSignal(controller.signal).limit(1);
+          const res = await Promise.race([queryPromise, timeoutPromise]);
+          return !res.error;
+        } catch {
+          return false;
+        } finally {
+          clearTimeout(timeoutId);
+        }
+      }
+      async probeSupabaseStorage() {
+        if (!this.supabaseClient) return false;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3e3);
+        try {
+          const timeoutPromise = new Promise(
+            (_, reject) => setTimeout(() => reject(new Error("Supabase Storage timeout")), 3e3)
+          );
+          const listPromise = this.supabaseClient.storage.from("make-order-files").list("", { limit: 1 });
+          const res = await Promise.race([listPromise, timeoutPromise]);
+          return !res.error;
+        } catch {
+          return false;
+        } finally {
+          clearTimeout(timeoutId);
+        }
+      }
+      // ── State Machine Transition Logic ──────────────────────────────────────────
+      evaluateStateTransitions() {
+        const dbDegraded = this.consecutiveNasDbFailures >= this.FAILURE_THRESHOLD;
+        const storageDegraded = this.consecutiveNasStorageFailures >= this.FAILURE_THRESHOLD;
+        const isNasFullyUp = this.isNasDbHealthy && this.isNasStorageHealthy;
+        if (isNasFullyUp) {
+          if (this.currentState !== "NORMAL_NAS_AUTHORITATIVE") {
+            if (this.isReconciling) {
+              return;
+            }
+            console.log("[ConsolidatedHealth] TrueNAS services restored healthy. Transitioning to RECOVERING_SYNCHRONIZING.");
+            this.currentState = "RECOVERING_SYNCHRONIZING";
+            this.triggerRecoverySynchronization();
+          }
+          return;
+        }
+        if (dbDegraded && storageDegraded) {
+          if (!this.isSupabaseDbHealthy && !this.isSupabaseStorageHealthy) {
+            this.currentState = "FULL_OFFLINE_LOCAL";
+          } else {
+            this.currentState = "DEGRADED_DATABASE_FALLBACK";
+          }
+          return;
+        }
+        if (dbDegraded && !storageDegraded) {
+          this.currentState = "DEGRADED_DATABASE_FALLBACK";
+          return;
+        }
+        if (!dbDegraded && storageDegraded) {
+          this.currentState = "DEGRADED_STORAGE_BUFFER";
+          return;
+        }
+      }
+      async triggerRecoverySynchronization() {
+        if (this.isReconciling) return;
+        this.isReconciling = true;
+        try {
+          let hasMore = true;
+          let iterations = 0;
+          const maxIterations = 50;
+          while (hasMore && iterations < maxIterations) {
+            iterations++;
+            const drainedCount = await DurableOutboxService.getInstance().drainNextBatch(20);
+            await DurableUploadService.getInstance().processNextBatch();
+            const outboxStats = DurableOutboxService.getInstance().getOutboxStats();
+            const uploadStats = DurableUploadService.getInstance().getPendingUploadStats();
+            const pendingOutbox = outboxStats.bufferedSupabase + outboxStats.pendingLocal + outboxStats.blockedDependencies;
+            const pendingUploads = uploadStats.bufferedCount + uploadStats.stagedCount;
+            if (pendingOutbox === 0 && pendingUploads === 0) {
+              hasMore = false;
+            } else if (drainedCount === 0 && uploadStats.bufferedCount === 0 && uploadStats.stagedCount === 0) {
+              hasMore = false;
+            }
+          }
+          const finalOutboxStats = DurableOutboxService.getInstance().getOutboxStats();
+          const finalUploadStats = DurableUploadService.getInstance().getPendingUploadStats();
+          const hasPendingOutbox = finalOutboxStats.bufferedSupabase > 0 || finalOutboxStats.pendingLocal > 0 || finalOutboxStats.blockedDependencies > 0 || finalOutboxStats.deadLetterCount > 0;
+          const hasPendingUploads = finalUploadStats.bufferedCount > 0 || finalUploadStats.stagedCount > 0;
+          if (!hasPendingOutbox && !hasPendingUploads) {
+            this.currentState = "NORMAL_NAS_AUTHORITATIVE";
+            console.log("[ConsolidatedHealth] All pending records and buffered uploads reconciled to TrueNAS master. State: NORMAL_NAS_AUTHORITATIVE.");
+          } else {
+            console.warn(`[ConsolidatedHealth] Incomplete reconciliation (Outbox buffered: ${finalOutboxStats.bufferedSupabase}, pending: ${finalOutboxStats.pendingLocal}, blocked: ${finalOutboxStats.blockedDependencies}, dead_letter: ${finalOutboxStats.deadLetterCount}; Upload buffered: ${finalUploadStats.bufferedCount}, staged: ${finalUploadStats.stagedCount}). Remaining in RECOVERING_SYNCHRONIZING.`);
+          }
+        } catch (e2) {
+          console.warn("[ConsolidatedHealth] Recovery synchronization warning:", e2.message);
+        } finally {
+          this.isReconciling = false;
+        }
+      }
+      broadcastHealth() {
+        try {
+          import_electron8.BrowserWindow.getAllWindows().forEach((win) => {
+            if (!win.isDestroyed()) {
+              win.webContents.send("consolidated-health-changed", {
+                state: this.currentState,
+                details: this.getProbeDetails()
+              });
+            }
+          });
+        } catch {
+        }
+      }
+    };
+  }
+});
+
 // electron/supabase.ts
 var supabase_exports = {};
 __export(supabase_exports, {
@@ -24497,15 +27573,15 @@ __export(supabase_exports, {
   supabaseClient: () => supabaseClient
 });
 function getConfigPath() {
-  const defaultPath = import_path5.default.join(import_electron5.app?.getPath ? import_electron5.app.getPath("userData") : import_path5.default.join(process.env.APPDATA || process.cwd(), "le-soft"), "supabase-config.json");
-  if (import_fs5.default.existsSync(defaultPath)) return defaultPath;
+  const defaultPath = import_path9.default.join(import_electron9.app?.getPath ? import_electron9.app.getPath("userData") : import_path9.default.join(process.env.APPDATA || process.cwd(), "le-soft"), "supabase-config.json");
+  if (import_fs9.default.existsSync(defaultPath)) return defaultPath;
   const candidates = [
-    import_path5.default.join(process.env.APPDATA || "", "le-soft", "supabase-config.json"),
-    import_path5.default.join(process.env.APPDATA || "", "LE-SOFT", "supabase-config.json"),
-    import_path5.default.join(process.env.APPDATA || "", "supabase-config.json")
+    import_path9.default.join(process.env.APPDATA || "", "le-soft", "supabase-config.json"),
+    import_path9.default.join(process.env.APPDATA || "", "LE-SOFT", "supabase-config.json"),
+    import_path9.default.join(process.env.APPDATA || "", "supabase-config.json")
   ];
   for (const c of candidates) {
-    if (c && import_fs5.default.existsSync(c)) {
+    if (c && import_fs9.default.existsSync(c)) {
       return c;
     }
   }
@@ -24516,7 +27592,7 @@ function deriveCredentialKey() {
   if (!secret || typeof secret !== "string" || secret.trim().length === 0) {
     return null;
   }
-  return import_crypto5.default.pbkdf2Sync(
+  return import_crypto8.default.pbkdf2Sync(
     secret.trim(),
     CREDENTIAL_SALT,
     1e5,
@@ -24531,14 +27607,14 @@ function decryptBlob(encryptedBase64, key) {
   const iv = buf.subarray(0, 12);
   const tag = buf.subarray(12, 28);
   const ciphertext = buf.subarray(28);
-  const decipher = import_crypto5.default.createDecipheriv("aes-256-gcm", key, iv);
+  const decipher = import_crypto8.default.createDecipheriv("aes-256-gcm", key, iv);
   decipher.setAuthTag(tag);
   return decipher.update(ciphertext).toString("utf8") + decipher.final("utf8");
 }
 function loadConfig() {
   const configPath = getConfigPath();
   try {
-    if (!import_fs5.default.existsSync(configPath)) {
+    if (!import_fs9.default.existsSync(configPath)) {
       try {
         const lic = isLicensed();
         if (lic.valid) {
@@ -24547,7 +27623,7 @@ function loadConfig() {
       } catch (licErr) {
         console.warn("[SUPABASE] License check during config load:", licErr);
       }
-      if (!import_fs5.default.existsSync(configPath)) {
+      if (!import_fs9.default.existsSync(configPath)) {
         try {
           const key = deriveCredentialKey();
           if (key) {
@@ -24555,8 +27631,8 @@ function loadConfig() {
             const anonKey = decryptBlob(ENCRYPTED_ANON_KEY, key);
             if (url2.startsWith("https://") && anonKey.startsWith("eyJ")) {
               const autoCfg = { ...EMPTY_DEFAULTS, url: url2, anonKey };
-              import_fs5.default.mkdirSync(import_path5.default.dirname(configPath), { recursive: true });
-              import_fs5.default.writeFileSync(configPath, JSON.stringify(autoCfg, null, 2), { encoding: "utf-8", mode: 384 });
+              import_fs9.default.mkdirSync(import_path9.default.dirname(configPath), { recursive: true });
+              import_fs9.default.writeFileSync(configPath, JSON.stringify(autoCfg, null, 2), { encoding: "utf-8", mode: 384 });
               console.log("[SUPABASE] Auto-configured credentials from embedded encrypted store.");
               return autoCfg;
             }
@@ -24566,8 +27642,8 @@ function loadConfig() {
         }
       }
     }
-    if (import_fs5.default.existsSync(configPath)) {
-      const raw = import_fs5.default.readFileSync(configPath, "utf-8");
+    if (import_fs9.default.existsSync(configPath)) {
+      const raw = import_fs9.default.readFileSync(configPath, "utf-8");
       const parsed = JSON.parse(raw);
       const cfg = { ...EMPTY_DEFAULTS, ...parsed };
       let needsMigration = false;
@@ -24621,6 +27697,29 @@ function loadConfig() {
           }
         }
       }
+      if (cfg.nasJwtToken) {
+        if (cfg.nasJwtToken.startsWith("enc:v1:safeStorage:")) {
+          try {
+            cfg.nasJwtToken = decryptPrivilegedSecret(cfg.nasJwtToken);
+          } catch (err) {
+            console.error("[SUPABASE] Failed to decrypt NAS JWT token.");
+            cfg.nasJwtToken = "";
+          }
+        } else if (cfg.nasJwtToken.startsWith("enc:v1:fallback:")) {
+          console.error("[SUPABASE] Refusing NAS JWT token stored without OS-backed encryption.");
+          cfg.nasJwtToken = "";
+        } else if (isSafeStorageAvailable()) {
+          try {
+            parsed.nasJwtToken = encryptPrivilegedSecret(cfg.nasJwtToken);
+            needsMigration = true;
+          } catch {
+            cfg.nasJwtToken = "";
+          }
+        } else {
+          console.warn("[SUPABASE] Refusing to load a plaintext NAS JWT token without OS-backed encryption.");
+          cfg.nasJwtToken = "";
+        }
+      }
       if (cfg.cfAccessClientId) {
         if (cfg.cfAccessClientId.startsWith("enc:v1:")) {
           try {
@@ -24655,9 +27754,9 @@ function loadConfig() {
       }
       if (needsMigration) {
         try {
-          import_fs5.default.writeFileSync(configPath, JSON.stringify(parsed, null, 2), { encoding: "utf-8", mode: 384 });
+          import_fs9.default.writeFileSync(configPath, JSON.stringify(parsed, null, 2), { encoding: "utf-8", mode: 384 });
           try {
-            import_fs5.default.chmodSync(configPath, 384);
+            import_fs9.default.chmodSync(configPath, 384);
           } catch {
           }
           console.log("[SUPABASE] Migrated plaintext privileged credentials to encrypted safeStorage.");
@@ -24668,6 +27767,7 @@ function loadConfig() {
       if (!cfg.serviceRoleKey && EMPTY_DEFAULTS.serviceRoleKey) cfg.serviceRoleKey = EMPTY_DEFAULTS.serviceRoleKey;
       if (!cfg.cfAccessClientId && EMPTY_DEFAULTS.cfAccessClientId) cfg.cfAccessClientId = EMPTY_DEFAULTS.cfAccessClientId;
       if (!cfg.cfAccessClientSecret && EMPTY_DEFAULTS.cfAccessClientSecret) cfg.cfAccessClientSecret = EMPTY_DEFAULTS.cfAccessClientSecret;
+      if (!cfg.nasJwtToken && EMPTY_DEFAULTS.nasJwtToken) cfg.nasJwtToken = EMPTY_DEFAULTS.nasJwtToken;
       if (!cfg.nasTunnelUrl) cfg.nasTunnelUrl = EMPTY_DEFAULTS.nasTunnelUrl;
       if (!cfg.nasTunnelStorageUrl) cfg.nasTunnelStorageUrl = EMPTY_DEFAULTS.nasTunnelStorageUrl;
       if (cfg.nasLocalUrl === "http://100.88.85.6:3001") cfg.nasLocalUrl = "http://192.168.1.14:3001";
@@ -24681,8 +27781,8 @@ function loadConfig() {
 function hasSupabaseConfig() {
   try {
     const configPath = getConfigPath();
-    if (import_fs5.default.existsSync(configPath)) {
-      const cfg = JSON.parse(import_fs5.default.readFileSync(configPath, "utf-8"));
+    if (import_fs9.default.existsSync(configPath)) {
+      const cfg = JSON.parse(import_fs9.default.readFileSync(configPath, "utf-8"));
       return !!(cfg.url && cfg.anonKey);
     }
     try {
@@ -24711,16 +27811,21 @@ function saveSupabaseConfig(config2) {
       diskPayload.cfAccessClientSecret = encryptPrivilegedSecret(merged.cfAccessClientSecret);
     }
   }
+  if (merged.nasJwtToken && merged.nasJwtToken.trim()) {
+    if (!merged.nasJwtToken.startsWith("enc:v1:")) {
+      diskPayload.nasJwtToken = encryptPrivilegedSecret(merged.nasJwtToken);
+    }
+  }
   if (merged.cfAccessClientId && merged.cfAccessClientId.trim()) {
     if (!merged.cfAccessClientId.startsWith("enc:v1:")) {
       diskPayload.cfAccessClientId = encryptStandardSecret(merged.cfAccessClientId);
     }
   }
   const configPath = getConfigPath();
-  import_fs5.default.mkdirSync(import_path5.default.dirname(configPath), { recursive: true });
-  import_fs5.default.writeFileSync(configPath, JSON.stringify(diskPayload, null, 2), { encoding: "utf-8", mode: 384 });
+  import_fs9.default.mkdirSync(import_path9.default.dirname(configPath), { recursive: true });
+  import_fs9.default.writeFileSync(configPath, JSON.stringify(diskPayload, null, 2), { encoding: "utf-8", mode: 384 });
   try {
-    import_fs5.default.chmodSync(configPath, 384);
+    import_fs9.default.chmodSync(configPath, 384);
   } catch {
   }
   console.log("[SUPABASE] Config saved securely to", configPath);
@@ -24735,9 +27840,9 @@ function bootstrapPublicClientConfig() {
       console.error("[CONFIG] Public Supabase client configuration is invalid or missing.");
       return false;
     }
-    if (import_fs5.default.existsSync(configPath)) {
+    if (import_fs9.default.existsSync(configPath)) {
       try {
-        const existing = JSON.parse(import_fs5.default.readFileSync(configPath, "utf-8"));
+        const existing = JSON.parse(import_fs9.default.readFileSync(configPath, "utf-8"));
         if (existing.url && existing.anonKey) {
           console.log("[CONFIG] Existing valid Supabase configuration preserved.");
           reinitSupabaseClients();
@@ -24751,10 +27856,10 @@ function bootstrapPublicClientConfig() {
       url: url2,
       anonKey
     };
-    import_fs5.default.mkdirSync(import_path5.default.dirname(configPath), { recursive: true });
-    import_fs5.default.writeFileSync(configPath, JSON.stringify(newConfig, null, 2), { encoding: "utf-8", mode: 384 });
+    import_fs9.default.mkdirSync(import_path9.default.dirname(configPath), { recursive: true });
+    import_fs9.default.writeFileSync(configPath, JSON.stringify(newConfig, null, 2), { encoding: "utf-8", mode: 384 });
     try {
-      import_fs5.default.chmodSync(configPath, 384);
+      import_fs9.default.chmodSync(configPath, 384);
     } catch {
     }
     console.log("[CONFIG] Public Supabase client configuration bootstrapped to", configPath);
@@ -24894,7 +27999,7 @@ function recreateNasClient(url2) {
       }
       const nasDbKey = config2.nasAnonKey || config2.anonKey || PUBLIC_SUPABASE_ANON_KEY;
       headers.set("apikey", nasDbKey);
-      headers.set("Authorization", `Bearer ${nasDbKey}`);
+      headers.set("Authorization", `Bearer ${config2.nasJwtToken || nasDbKey}`);
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 6e3);
       if (init?.signal) {
@@ -24939,26 +28044,6 @@ function recreateNasClient(url2) {
         if (!isRead) {
           throw new Error(`[NAS:FETCH] Mutation operation (${method}) failed or timed out on NAS: ${errMsg}. Low-level replay rejected to protect database integrity.`);
         }
-        if (config2.url && config2.anonKey) {
-          try {
-            const cleanPath = relativePath.startsWith("/rest/v1/") ? relativePath : `/rest/v1${relativePath.startsWith("/") ? relativePath : "/" + relativePath}`;
-            const cloudUrl = new URL(cleanPath, config2.url).toString();
-            const cloudHeaders = new Headers(init?.headers);
-            cloudHeaders.set("apikey", config2.anonKey);
-            if (!cloudHeaders.has("Authorization")) {
-              cloudHeaders.set("Authorization", `Bearer ${config2.anonKey}`);
-            }
-            cloudHeaders.delete("CF-Access-Client-Id");
-            cloudHeaders.delete("CF-Access-Client-Secret");
-            console.warn(`[NAS:FETCH] NAS read failed (${errMsg}). Routing read to Supabase Cloud:`, cloudUrl);
-            return await fetch(cloudUrl, {
-              ...init,
-              headers: cloudHeaders
-            });
-          } catch (forwardErr) {
-            console.error("[NAS:FETCH] Supabase Cloud auto-forward failed:", forwardErr.message);
-          }
-        }
         throw err;
       }
     };
@@ -24969,7 +28054,7 @@ function recreateNasClient(url2) {
         autoRefreshToken: false,
         detectSessionInUrl: false
       },
-      accessToken: async () => nasKey,
+      accessToken: async () => config2.nasJwtToken || nasKey,
       global: {
         fetch: nasFetch,
         headers: {
@@ -24982,6 +28067,17 @@ function recreateNasClient(url2) {
       nas: nasClient,
       supabase: supabaseClient,
       supabaseAdmin
+    });
+    setImmediate(async () => {
+      try {
+        const { DurableOutboxService: DurableOutboxService2 } = await Promise.resolve().then(() => (init_DurableOutboxService(), DurableOutboxService_exports));
+        const { DurableUploadService: DurableUploadService2 } = await Promise.resolve().then(() => (init_DurableUploadService(), DurableUploadService_exports));
+        const { ConsolidatedHealthEngine: ConsolidatedHealthEngine2 } = await Promise.resolve().then(() => (init_ConsolidatedHealthEngine(), ConsolidatedHealthEngine_exports));
+        DurableOutboxService2.getInstance().registerClients({ nas: nasClient, supabase: supabaseClient });
+        DurableUploadService2.getInstance().registerClients({ nas: nasClient, supabase: supabaseClient });
+        ConsolidatedHealthEngine2.getInstance().registerClients({ nas: nasClient, supabase: supabaseClient });
+      } catch {
+      }
     });
   } catch (e2) {
     console.error("[SUPABASE] Failed to recreate nasClient:", e2.message);
@@ -25059,6 +28155,26 @@ function reinitSupabaseClients() {
       return online;
     }).catch(() => false);
     failoverEngine.startBackgroundMonitoring(getCandidates);
+    setImmediate(async () => {
+      try {
+        const { DurableOutboxService: DurableOutboxService2 } = await Promise.resolve().then(() => (init_DurableOutboxService(), DurableOutboxService_exports));
+        const { DurableUploadService: DurableUploadService2 } = await Promise.resolve().then(() => (init_DurableUploadService(), DurableUploadService_exports));
+        const { SupabaseQuotaManager: SupabaseQuotaManager2 } = await Promise.resolve().then(() => (init_SupabaseQuotaManager(), SupabaseQuotaManager_exports));
+        const { ConsolidatedHealthEngine: ConsolidatedHealthEngine2 } = await Promise.resolve().then(() => (init_ConsolidatedHealthEngine(), ConsolidatedHealthEngine_exports));
+        DurableOutboxService2.getInstance().registerClients({ nas: nasClient, supabase: supabaseClient });
+        DurableUploadService2.getInstance().registerClients({ nas: nasClient, supabase: supabaseClient });
+        SupabaseQuotaManager2.getInstance().registerClients({ supabase: supabaseAdmin || supabaseClient, reconciliation: supabaseAdmin });
+        ConsolidatedHealthEngine2.getInstance().registerClients({ nas: nasClient, supabase: supabaseClient });
+        if (process.env.NODE_ENV !== "test") {
+          DurableOutboxService2.getInstance().startWorker(1e3);
+          DurableUploadService2.getInstance().startWorker(3e3);
+          ConsolidatedHealthEngine2.getInstance().startMonitoring(1e4);
+          SupabaseQuotaManager2.getInstance().startBackgroundAudit(6e4);
+        }
+      } catch (err) {
+        console.warn("[SUPABASE] Resilience engine deferred registration warning:", err.message);
+      }
+    });
     if (config2.url && config2.anonKey) {
       console.log("[SUPABASE] Clients successfully re-initialized with FailoverEngine \u2192", config2.url);
     } else {
@@ -25077,15 +28193,15 @@ function getNasStorageCandidates() {
   ].filter(Boolean);
   return Array.from(new Set(candidates));
 }
-var import_electron5, import_path5, import_fs5, import_crypto5, CREDENTIAL_SALT, EMPTY_DEFAULTS, failoverEngine, dbReadyPromise, supabaseAdmin, nasClient, supabaseClient, authClient, isNasOnline, connectionState, activeNasUrl, supabase, supabase_default;
+var import_electron9, import_path9, import_fs9, import_crypto8, CREDENTIAL_SALT, EMPTY_DEFAULTS, failoverEngine, dbReadyPromise, supabaseAdmin, nasClient, supabaseClient, authClient, isNasOnline, connectionState, activeNasUrl, supabase, supabase_default;
 var init_supabase = __esm({
   "electron/supabase.ts"() {
     "use strict";
     init_dist4();
-    import_electron5 = require("electron");
-    import_path5 = __toESM(require("path"), 1);
-    import_fs5 = __toESM(require("fs"), 1);
-    import_crypto5 = __toESM(require("crypto"), 1);
+    import_electron9 = require("electron");
+    import_path9 = __toESM(require("path"), 1);
+    import_fs9 = __toESM(require("fs"), 1);
+    import_crypto8 = __toESM(require("crypto"), 1);
     init_DatabaseFailoverEngine();
     init_credentials();
     init_secure_storage();
@@ -25097,6 +28213,7 @@ var init_supabase = __esm({
       serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || "",
       nasUrl: process.env.NAS_URL || "http://100.88.85.6:3001",
       nasAnonKey: process.env.NAS_ANON_KEY || PUBLIC_SUPABASE_ANON_KEY || "",
+      nasJwtToken: process.env.NAS_JWT_TOKEN || "",
       nasStorageUrl: process.env.NAS_STORAGE_URL || "http://100.88.85.6:8081",
       nasLocalUrl: process.env.NAS_LOCAL_URL || "http://192.168.1.14:3001",
       nasLocalStorageUrl: process.env.NAS_LOCAL_STORAGE_URL || "http://192.168.1.14:8081",
@@ -25393,7 +28510,7 @@ var require_p_retry = __commonJS({
       return error51;
     };
     var isNetworkError = (errorMessage) => networkErrorMsgs.includes(errorMessage);
-    var pRetry2 = (input, options) => new Promise((resolve, reject) => {
+    var pRetry2 = (input, options) => new Promise((resolve2, reject) => {
       options = {
         onFailedAttempt: () => {
         },
@@ -25403,7 +28520,7 @@ var require_p_retry = __commonJS({
       const operation = retry.operation(options);
       operation.attempt(async (attemptNumber) => {
         try {
-          resolve(await input(attemptNumber));
+          resolve2(await input(attemptNumber));
         } catch (error51) {
           if (!(error51 instanceof Error)) {
             reject(new TypeError(`Non-error was thrown: "${error51}". You should only throw errors.`));
@@ -25937,8 +29054,8 @@ var require_retry3 = __commonJS({
       }
       const delay = getNextRetryDelay(config2);
       err.config.retryConfig.currentRetryAttempt += 1;
-      const backoff = config2.retryBackoff ? config2.retryBackoff(err, delay) : new Promise((resolve) => {
-        setTimeout(resolve, delay);
+      const backoff = config2.retryBackoff ? config2.retryBackoff(err, delay) : new Promise((resolve2) => {
+        setTimeout(resolve2, delay);
       });
       if (config2.onRetryAttempt) {
         await config2.onRetryAttempt(err);
@@ -26841,8 +29958,8 @@ var require_helpers2 = __commonJS({
     function req(url2, opts = {}) {
       const href = typeof url2 === "string" ? url2 : url2.href;
       const req2 = (href.startsWith("https:") ? https2 : http3).request(url2, opts);
-      const promise2 = new Promise((resolve, reject) => {
-        req2.once("response", resolve).once("error", reject).end();
+      const promise2 = new Promise((resolve2, reject) => {
+        req2.once("response", resolve2).once("error", reject).end();
       });
       req2.then = promise2.then.bind(promise2);
       return req2;
@@ -27019,7 +30136,7 @@ var require_parse_proxy_response = __commonJS({
     var debug_1 = __importDefault2(require_src());
     var debug = (0, debug_1.default)("https-proxy-agent:parse-proxy-response");
     function parseProxyResponse(socket) {
-      return new Promise((resolve, reject) => {
+      return new Promise((resolve2, reject) => {
         let buffersLength = 0;
         const buffers = [];
         function read() {
@@ -27085,7 +30202,7 @@ var require_parse_proxy_response = __commonJS({
           }
           debug("got proxy server response: %o %o", firstLine, headers);
           cleanup();
-          resolve({
+          resolve2({
             connect: {
               statusCode,
               statusText,
@@ -27327,7 +30444,7 @@ var require_ponyfill_es2018 = __commonJS({
         return new originalPromise(executor);
       }
       function promiseResolvedWith(value) {
-        return newPromise((resolve) => resolve(value));
+        return newPromise((resolve2) => resolve2(value));
       }
       function promiseRejectedWith(reason) {
         return originalPromiseReject(reason);
@@ -27497,8 +30614,8 @@ var require_ponyfill_es2018 = __commonJS({
         return new TypeError("Cannot " + name + " a stream using a released reader");
       }
       function defaultReaderClosedPromiseInitialize(reader) {
-        reader._closedPromise = newPromise((resolve, reject) => {
-          reader._closedPromise_resolve = resolve;
+        reader._closedPromise = newPromise((resolve2, reject) => {
+          reader._closedPromise_resolve = resolve2;
           reader._closedPromise_reject = reject;
         });
       }
@@ -27672,8 +30789,8 @@ var require_ponyfill_es2018 = __commonJS({
           }
           let resolvePromise;
           let rejectPromise;
-          const promise2 = newPromise((resolve, reject) => {
-            resolvePromise = resolve;
+          const promise2 = newPromise((resolve2, reject) => {
+            resolvePromise = resolve2;
             rejectPromise = reject;
           });
           const readRequest = {
@@ -27778,8 +30895,8 @@ var require_ponyfill_es2018 = __commonJS({
           const reader = this._reader;
           let resolvePromise;
           let rejectPromise;
-          const promise2 = newPromise((resolve, reject) => {
-            resolvePromise = resolve;
+          const promise2 = newPromise((resolve2, reject) => {
+            resolvePromise = resolve2;
             rejectPromise = reject;
           });
           const readRequest = {
@@ -28798,8 +31915,8 @@ var require_ponyfill_es2018 = __commonJS({
           }
           let resolvePromise;
           let rejectPromise;
-          const promise2 = newPromise((resolve, reject) => {
-            resolvePromise = resolve;
+          const promise2 = newPromise((resolve2, reject) => {
+            resolvePromise = resolve2;
             rejectPromise = reject;
           });
           const readIntoRequest = {
@@ -29111,10 +32228,10 @@ var require_ponyfill_es2018 = __commonJS({
           wasAlreadyErroring = true;
           reason = void 0;
         }
-        const promise2 = newPromise((resolve, reject) => {
+        const promise2 = newPromise((resolve2, reject) => {
           stream._pendingAbortRequest = {
             _promise: void 0,
-            _resolve: resolve,
+            _resolve: resolve2,
             _reject: reject,
             _reason: reason,
             _wasAlreadyErroring: wasAlreadyErroring
@@ -29131,9 +32248,9 @@ var require_ponyfill_es2018 = __commonJS({
         if (state === "closed" || state === "errored") {
           return promiseRejectedWith(new TypeError(`The stream (in ${state} state) is not in the writable state and cannot be closed`));
         }
-        const promise2 = newPromise((resolve, reject) => {
+        const promise2 = newPromise((resolve2, reject) => {
           const closeRequest = {
-            _resolve: resolve,
+            _resolve: resolve2,
             _reject: reject
           };
           stream._closeRequest = closeRequest;
@@ -29146,9 +32263,9 @@ var require_ponyfill_es2018 = __commonJS({
         return promise2;
       }
       function WritableStreamAddWriteRequest(stream) {
-        const promise2 = newPromise((resolve, reject) => {
+        const promise2 = newPromise((resolve2, reject) => {
           const writeRequest = {
-            _resolve: resolve,
+            _resolve: resolve2,
             _reject: reject
           };
           stream._writeRequests.push(writeRequest);
@@ -29764,8 +32881,8 @@ var require_ponyfill_es2018 = __commonJS({
         return new TypeError("Cannot " + name + " a stream using a released writer");
       }
       function defaultWriterClosedPromiseInitialize(writer) {
-        writer._closedPromise = newPromise((resolve, reject) => {
-          writer._closedPromise_resolve = resolve;
+        writer._closedPromise = newPromise((resolve2, reject) => {
+          writer._closedPromise_resolve = resolve2;
           writer._closedPromise_reject = reject;
           writer._closedPromiseState = "pending";
         });
@@ -29801,8 +32918,8 @@ var require_ponyfill_es2018 = __commonJS({
         writer._closedPromiseState = "resolved";
       }
       function defaultWriterReadyPromiseInitialize(writer) {
-        writer._readyPromise = newPromise((resolve, reject) => {
-          writer._readyPromise_resolve = resolve;
+        writer._readyPromise = newPromise((resolve2, reject) => {
+          writer._readyPromise_resolve = resolve2;
           writer._readyPromise_reject = reject;
         });
         writer._readyPromiseState = "pending";
@@ -29889,7 +33006,7 @@ var require_ponyfill_es2018 = __commonJS({
         source._disturbed = true;
         let shuttingDown = false;
         let currentWrite = promiseResolvedWith(void 0);
-        return newPromise((resolve, reject) => {
+        return newPromise((resolve2, reject) => {
           let abortAlgorithm;
           if (signal !== void 0) {
             abortAlgorithm = () => {
@@ -30034,7 +33151,7 @@ var require_ponyfill_es2018 = __commonJS({
             if (isError) {
               reject(error51);
             } else {
-              resolve(void 0);
+              resolve2(void 0);
             }
             return null;
           }
@@ -30315,8 +33432,8 @@ var require_ponyfill_es2018 = __commonJS({
         let branch1;
         let branch2;
         let resolveCancelPromise;
-        const cancelPromise = newPromise((resolve) => {
-          resolveCancelPromise = resolve;
+        const cancelPromise = newPromise((resolve2) => {
+          resolveCancelPromise = resolve2;
         });
         function pullAlgorithm() {
           if (reading) {
@@ -30407,8 +33524,8 @@ var require_ponyfill_es2018 = __commonJS({
         let branch1;
         let branch2;
         let resolveCancelPromise;
-        const cancelPromise = newPromise((resolve) => {
-          resolveCancelPromise = resolve;
+        const cancelPromise = newPromise((resolve2) => {
+          resolveCancelPromise = resolve2;
         });
         function forwardReaderError(thisReader) {
           uponRejection(thisReader._closedPromise, (r2) => {
@@ -31188,8 +34305,8 @@ var require_ponyfill_es2018 = __commonJS({
           const writableHighWaterMark = ExtractHighWaterMark(writableStrategy, 1);
           const writableSizeAlgorithm = ExtractSizeAlgorithm(writableStrategy);
           let startPromise_resolve;
-          const startPromise = newPromise((resolve) => {
-            startPromise_resolve = resolve;
+          const startPromise = newPromise((resolve2) => {
+            startPromise_resolve = resolve2;
           });
           InitializeTransformStream(this, startPromise, writableHighWaterMark, writableSizeAlgorithm, readableHighWaterMark, readableSizeAlgorithm);
           SetUpTransformStreamDefaultControllerFromTransformer(this, transformer);
@@ -31282,8 +34399,8 @@ var require_ponyfill_es2018 = __commonJS({
         if (stream._backpressureChangePromise !== void 0) {
           stream._backpressureChangePromise_resolve();
         }
-        stream._backpressureChangePromise = newPromise((resolve) => {
-          stream._backpressureChangePromise_resolve = resolve;
+        stream._backpressureChangePromise = newPromise((resolve2) => {
+          stream._backpressureChangePromise_resolve = resolve2;
         });
         stream._backpressure = backpressure;
       }
@@ -31451,8 +34568,8 @@ var require_ponyfill_es2018 = __commonJS({
           return controller._finishPromise;
         }
         const readable = stream._readable;
-        controller._finishPromise = newPromise((resolve, reject) => {
-          controller._finishPromise_resolve = resolve;
+        controller._finishPromise = newPromise((resolve2, reject) => {
+          controller._finishPromise_resolve = resolve2;
           controller._finishPromise_reject = reject;
         });
         const cancelPromise = controller._cancelAlgorithm(reason);
@@ -31478,8 +34595,8 @@ var require_ponyfill_es2018 = __commonJS({
           return controller._finishPromise;
         }
         const readable = stream._readable;
-        controller._finishPromise = newPromise((resolve, reject) => {
-          controller._finishPromise_resolve = resolve;
+        controller._finishPromise = newPromise((resolve2, reject) => {
+          controller._finishPromise_resolve = resolve2;
           controller._finishPromise_reject = reject;
         });
         const flushPromise = controller._flushAlgorithm();
@@ -31509,8 +34626,8 @@ var require_ponyfill_es2018 = __commonJS({
           return controller._finishPromise;
         }
         const writable = stream._writable;
-        controller._finishPromise = newPromise((resolve, reject) => {
-          controller._finishPromise_resolve = resolve;
+        controller._finishPromise = newPromise((resolve2, reject) => {
+          controller._finishPromise_resolve = resolve2;
           controller._finishPromise_reject = reject;
         });
         const cancelPromise = controller._cancelAlgorithm(reason);
@@ -32057,22 +35174,22 @@ var init_from = __esm({
     init_file();
     init_fetch_blob();
     ({ stat } = import_node_fs.promises);
-    blobFromSync = (path21, type) => fromBlob((0, import_node_fs.statSync)(path21), path21, type);
-    blobFrom = (path21, type) => stat(path21).then((stat3) => fromBlob(stat3, path21, type));
-    fileFrom = (path21, type) => stat(path21).then((stat3) => fromFile(stat3, path21, type));
-    fileFromSync = (path21, type) => fromFile((0, import_node_fs.statSync)(path21), path21, type);
-    fromBlob = (stat3, path21, type = "") => new fetch_blob_default([new BlobDataItem({
-      path: path21,
+    blobFromSync = (path25, type) => fromBlob((0, import_node_fs.statSync)(path25), path25, type);
+    blobFrom = (path25, type) => stat(path25).then((stat3) => fromBlob(stat3, path25, type));
+    fileFrom = (path25, type) => stat(path25).then((stat3) => fromFile(stat3, path25, type));
+    fileFromSync = (path25, type) => fromFile((0, import_node_fs.statSync)(path25), path25, type);
+    fromBlob = (stat3, path25, type = "") => new fetch_blob_default([new BlobDataItem({
+      path: path25,
       size: stat3.size,
       lastModified: stat3.mtimeMs,
       start: 0
     })], { type });
-    fromFile = (stat3, path21, type = "") => new file_default([new BlobDataItem({
-      path: path21,
+    fromFile = (stat3, path25, type = "") => new file_default([new BlobDataItem({
+      path: path25,
       size: stat3.size,
       lastModified: stat3.mtimeMs,
       start: 0
-    })], (0, import_node_path.basename)(path21), { type, lastModified: stat3.mtimeMs });
+    })], (0, import_node_path.basename)(path25), { type, lastModified: stat3.mtimeMs });
     BlobDataItem = class _BlobDataItem {
       #path;
       #start;
@@ -33456,7 +36573,7 @@ __export(src_exports, {
   isRedirect: () => isRedirect
 });
 async function fetch2(url2, options_) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve2, reject) => {
     const request = new Request(url2, options_);
     const { parsedURL, options } = getNodeRequestOptions(request);
     if (!supportedSchemas.has(parsedURL.protocol)) {
@@ -33465,7 +36582,7 @@ async function fetch2(url2, options_) {
     if (parsedURL.protocol === "data:") {
       const data2 = dist_default(request.url);
       const response2 = new Response2(data2, { headers: { "Content-Type": data2.typeFull } });
-      resolve(response2);
+      resolve2(response2);
       return;
     }
     const send = (parsedURL.protocol === "https:" ? import_node_https.default : import_node_http2.default).request;
@@ -33587,7 +36704,7 @@ async function fetch2(url2, options_) {
             if (responseReferrerPolicy) {
               requestOptions.referrerPolicy = responseReferrerPolicy;
             }
-            resolve(fetch2(new Request(locationURL, requestOptions)));
+            resolve2(fetch2(new Request(locationURL, requestOptions)));
             finalize2();
             return;
           }
@@ -33620,7 +36737,7 @@ async function fetch2(url2, options_) {
       const codings = headers.get("Content-Encoding");
       if (!request.compress || request.method === "HEAD" || codings === null || response_.statusCode === 204 || response_.statusCode === 304) {
         response = new Response2(body, responseOptions);
-        resolve(response);
+        resolve2(response);
         return;
       }
       const zlibOptions = {
@@ -33634,7 +36751,7 @@ async function fetch2(url2, options_) {
           }
         });
         response = new Response2(body, responseOptions);
-        resolve(response);
+        resolve2(response);
         return;
       }
       if (codings === "deflate" || codings === "x-deflate") {
@@ -33658,12 +36775,12 @@ async function fetch2(url2, options_) {
             });
           }
           response = new Response2(body, responseOptions);
-          resolve(response);
+          resolve2(response);
         });
         raw.once("end", () => {
           if (!response) {
             response = new Response2(body, responseOptions);
-            resolve(response);
+            resolve2(response);
           }
         });
         return;
@@ -33675,11 +36792,11 @@ async function fetch2(url2, options_) {
           }
         });
         response = new Response2(body, responseOptions);
-        resolve(response);
+        resolve2(response);
         return;
       }
       response = new Response2(body, responseOptions);
-      resolve(response);
+      resolve2(response);
     });
     writeToStream(request_, request).catch(reject);
   });
@@ -36917,22 +40034,22 @@ var require_crypto2 = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.NodeCrypto = void 0;
-    var crypto13 = require("crypto");
+    var crypto15 = require("crypto");
     var NodeCrypto = class {
       async sha256DigestBase64(str) {
-        return crypto13.createHash("sha256").update(str).digest("base64");
+        return crypto15.createHash("sha256").update(str).digest("base64");
       }
       randomBytesBase64(count) {
-        return crypto13.randomBytes(count).toString("base64");
+        return crypto15.randomBytes(count).toString("base64");
       }
       async verify(pubkey, data2, signature) {
-        const verifier = crypto13.createVerify("RSA-SHA256");
+        const verifier = crypto15.createVerify("RSA-SHA256");
         verifier.update(data2);
         verifier.end();
         return verifier.verify(pubkey, signature, "base64");
       }
       async sign(privateKey, data2) {
-        const signer = crypto13.createSign("RSA-SHA256");
+        const signer = crypto15.createSign("RSA-SHA256");
         signer.update(data2);
         signer.end();
         return signer.sign(privateKey, "base64");
@@ -36950,7 +40067,7 @@ var require_crypto2 = __commonJS({
        *   string in hexadecimal encoding.
        */
       async sha256DigestHex(str) {
-        return crypto13.createHash("sha256").update(str).digest("hex");
+        return crypto15.createHash("sha256").update(str).digest("hex");
       }
       /**
        * Computes the HMAC hash of a message using the provided crypto key and the
@@ -36962,7 +40079,7 @@ var require_crypto2 = __commonJS({
        */
       async signWithHmacSha256(key, msg) {
         const cryptoKey = typeof key === "string" ? key : toBuffer(key);
-        return toArrayBuffer(crypto13.createHmac("sha256", cryptoKey).update(msg).digest());
+        return toArrayBuffer(crypto15.createHmac("sha256", cryptoKey).update(msg).digest());
       }
     };
     exports2.NodeCrypto = NodeCrypto;
@@ -37251,9 +40368,9 @@ var require_util2 = __commonJS({
     exports2.removeUndefinedValuesInObject = removeUndefinedValuesInObject;
     exports2.isValidFile = isValidFile;
     exports2.getWellKnownCertificateConfigFileLocation = getWellKnownCertificateConfigFileLocation;
-    var fs21 = require("fs");
+    var fs25 = require("fs");
     var os6 = require("os");
-    var path21 = require("path");
+    var path25 = require("path");
     var WELL_KNOWN_CERTIFICATE_CONFIG_FILE = "certificate_config.json";
     var CLOUDSDK_CONFIG_DIRECTORY = "gcloud";
     function snakeToCamel(str) {
@@ -37339,15 +40456,15 @@ var require_util2 = __commonJS({
     }
     async function isValidFile(filePath) {
       try {
-        const stats = await fs21.promises.lstat(filePath);
+        const stats = await fs25.promises.lstat(filePath);
         return stats.isFile();
       } catch (e2) {
         return false;
       }
     }
     function getWellKnownCertificateConfigFileLocation() {
-      const configDir = process.env.CLOUDSDK_CONFIG || (_isWindows() ? path21.join(process.env.APPDATA || "", CLOUDSDK_CONFIG_DIRECTORY) : path21.join(process.env.HOME || "", ".config", CLOUDSDK_CONFIG_DIRECTORY));
-      return path21.join(configDir, WELL_KNOWN_CERTIFICATE_CONFIG_FILE);
+      const configDir = process.env.CLOUDSDK_CONFIG || (_isWindows() ? path25.join(process.env.APPDATA || "", CLOUDSDK_CONFIG_DIRECTORY) : path25.join(process.env.HOME || "", ".config", CLOUDSDK_CONFIG_DIRECTORY));
+      return path25.join(configDir, WELL_KNOWN_CERTIFICATE_CONFIG_FILE);
     }
     function _isWindows() {
       return os6.platform().startsWith("win");
@@ -37875,10 +40992,10 @@ var require_oauth2client = __commonJS({
        * https://github.com/googleapis/google-auth-library-nodejs/blob/main/samples/oauth2-codeVerifier.js
        */
       async generateCodeVerifierAsync() {
-        const crypto13 = (0, crypto_1.createCrypto)();
-        const randomString2 = crypto13.randomBytesBase64(96);
+        const crypto15 = (0, crypto_1.createCrypto)();
+        const randomString2 = crypto15.randomBytesBase64(96);
         const codeVerifier = randomString2.replace(/\+/g, "~").replace(/=/g, "_").replace(/\//g, "-");
-        const unencodedCodeChallenge = await crypto13.sha256DigestBase64(codeVerifier);
+        const unencodedCodeChallenge = await crypto15.sha256DigestBase64(codeVerifier);
         const codeChallenge = unencodedCodeChallenge.split("=")[0].replace(/\+/g, "-").replace(/\//g, "_");
         return { codeVerifier, codeChallenge };
       }
@@ -38319,7 +41436,7 @@ var require_oauth2client = __commonJS({
        * @return Returns a promise resolving to LoginTicket on verification.
        */
       async verifySignedJwtWithCertsAsync(jwt2, certs, requiredAudience, issuers, maxExpiry) {
-        const crypto13 = (0, crypto_1.createCrypto)();
+        const crypto15 = (0, crypto_1.createCrypto)();
         if (!maxExpiry) {
           maxExpiry = _OAuth2Client.DEFAULT_MAX_TOKEN_LIFETIME_SECS_;
         }
@@ -38332,7 +41449,7 @@ var require_oauth2client = __commonJS({
         let envelope;
         let payload;
         try {
-          envelope = JSON.parse(crypto13.decodeBase64StringUtf8(segments[0]));
+          envelope = JSON.parse(crypto15.decodeBase64StringUtf8(segments[0]));
         } catch (err) {
           if (err instanceof Error) {
             err.message = `Can't parse token envelope: ${segments[0]}': ${err.message}`;
@@ -38343,7 +41460,7 @@ var require_oauth2client = __commonJS({
           throw new Error("Can't parse token envelope: " + segments[0]);
         }
         try {
-          payload = JSON.parse(crypto13.decodeBase64StringUtf8(segments[1]));
+          payload = JSON.parse(crypto15.decodeBase64StringUtf8(segments[1]));
         } catch (err) {
           if (err instanceof Error) {
             err.message = `Can't parse token payload '${segments[0]}`;
@@ -38360,7 +41477,7 @@ var require_oauth2client = __commonJS({
         if (envelope.alg === "ES256") {
           signature = formatEcdsa.joseToDer(signature, "ES256").toString("base64");
         }
-        const verified = await crypto13.verify(cert, signed, signature);
+        const verified = await crypto15.verify(cert, signed, signature);
         if (!verified) {
           throw new Error("Invalid token signature: " + jwt2);
         }
@@ -38735,14 +41852,14 @@ var require_buffer_equal_constant_time = __commonJS({
 var require_jwa = __commonJS({
   "node_modules/jwa/index.js"(exports2, module2) {
     var Buffer4 = require_safe_buffer().Buffer;
-    var crypto13 = require("crypto");
+    var crypto15 = require("crypto");
     var formatEcdsa = require_ecdsa_sig_formatter();
     var util = require("util");
     var MSG_INVALID_ALGORITHM = '"%s" is not a valid algorithm.\n  Supported algorithms are:\n  "HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512" and "none".';
     var MSG_INVALID_SECRET = "secret must be a string or buffer";
     var MSG_INVALID_VERIFIER_KEY = "key must be a string or a buffer";
     var MSG_INVALID_SIGNER_KEY = "key must be a string, a buffer or an object";
-    var supportsKeyObjects = typeof crypto13.createPublicKey === "function";
+    var supportsKeyObjects = typeof crypto15.createPublicKey === "function";
     if (supportsKeyObjects) {
       MSG_INVALID_VERIFIER_KEY += " or a KeyObject";
       MSG_INVALID_SECRET += "or a KeyObject";
@@ -38832,17 +41949,17 @@ var require_jwa = __commonJS({
       return function sign(thing, secret) {
         checkIsSecretKey(secret);
         thing = normalizeInput(thing);
-        var hmac = crypto13.createHmac("sha" + bits, secret);
+        var hmac = crypto15.createHmac("sha" + bits, secret);
         var sig = (hmac.update(thing), hmac.digest("base64"));
         return fromBase64(sig);
       };
     }
     var bufferEqual;
-    var timingSafeEqual = "timingSafeEqual" in crypto13 ? function timingSafeEqual2(a, b) {
+    var timingSafeEqual = "timingSafeEqual" in crypto15 ? function timingSafeEqual2(a, b) {
       if (a.byteLength !== b.byteLength) {
         return false;
       }
-      return crypto13.timingSafeEqual(a, b);
+      return crypto15.timingSafeEqual(a, b);
     } : function timingSafeEqual2(a, b) {
       if (!bufferEqual) {
         bufferEqual = require_buffer_equal_constant_time();
@@ -38859,7 +41976,7 @@ var require_jwa = __commonJS({
       return function sign(thing, privateKey) {
         checkIsPrivateKey(privateKey);
         thing = normalizeInput(thing);
-        var signer = crypto13.createSign("RSA-SHA" + bits);
+        var signer = crypto15.createSign("RSA-SHA" + bits);
         var sig = (signer.update(thing), signer.sign(privateKey, "base64"));
         return fromBase64(sig);
       };
@@ -38869,7 +41986,7 @@ var require_jwa = __commonJS({
         checkIsPublicKey(publicKey);
         thing = normalizeInput(thing);
         signature = toBase64(signature);
-        var verifier = crypto13.createVerify("RSA-SHA" + bits);
+        var verifier = crypto15.createVerify("RSA-SHA" + bits);
         verifier.update(thing);
         return verifier.verify(publicKey, signature, "base64");
       };
@@ -38878,11 +41995,11 @@ var require_jwa = __commonJS({
       return function sign(thing, privateKey) {
         checkIsPrivateKey(privateKey);
         thing = normalizeInput(thing);
-        var signer = crypto13.createSign("RSA-SHA" + bits);
+        var signer = crypto15.createSign("RSA-SHA" + bits);
         var sig = (signer.update(thing), signer.sign({
           key: privateKey,
-          padding: crypto13.constants.RSA_PKCS1_PSS_PADDING,
-          saltLength: crypto13.constants.RSA_PSS_SALTLEN_DIGEST
+          padding: crypto15.constants.RSA_PKCS1_PSS_PADDING,
+          saltLength: crypto15.constants.RSA_PSS_SALTLEN_DIGEST
         }, "base64"));
         return fromBase64(sig);
       };
@@ -38892,12 +42009,12 @@ var require_jwa = __commonJS({
         checkIsPublicKey(publicKey);
         thing = normalizeInput(thing);
         signature = toBase64(signature);
-        var verifier = crypto13.createVerify("RSA-SHA" + bits);
+        var verifier = crypto15.createVerify("RSA-SHA" + bits);
         verifier.update(thing);
         return verifier.verify({
           key: publicKey,
-          padding: crypto13.constants.RSA_PKCS1_PSS_PADDING,
-          saltLength: crypto13.constants.RSA_PSS_SALTLEN_DIGEST
+          padding: crypto15.constants.RSA_PKCS1_PSS_PADDING,
+          saltLength: crypto15.constants.RSA_PSS_SALTLEN_DIGEST
         }, signature, "base64");
       };
     }
@@ -39293,11 +42410,11 @@ var require_getCredentials = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.getCredentials = getCredentials;
-    var path21 = require("path");
-    var fs21 = require("fs");
+    var path25 = require("path");
+    var fs25 = require("fs");
     var util_1 = require("util");
     var errorWithCode_1 = require_errorWithCode();
-    var readFile = fs21.readFile ? (0, util_1.promisify)(fs21.readFile) : async () => {
+    var readFile = fs25.readFile ? (0, util_1.promisify)(fs25.readFile) : async () => {
       throw new errorWithCode_1.ErrorWithCode("use key rather than keyFile.", "MISSING_CREDENTIALS");
     };
     var ExtensionFiles;
@@ -39365,7 +42482,7 @@ var require_getCredentials = __commonJS({
        * @returns An instance of a class that implements ICredentialsProvider.
        */
       static create(keyFilePath) {
-        const keyFileExtension = path21.extname(keyFilePath);
+        const keyFileExtension = path25.extname(keyFilePath);
         switch (keyFileExtension) {
           case ExtensionFiles.JSON:
             return new JsonCredentialsProvider(keyFilePath);
@@ -39752,7 +42869,7 @@ var require_jwtaccess = __commonJS({
         }
       }
       fromStreamAsync(inputStream) {
-        return new Promise((resolve, reject) => {
+        return new Promise((resolve2, reject) => {
           if (!inputStream) {
             reject(new Error("Must pass in a stream containing the service account auth settings."));
           }
@@ -39761,7 +42878,7 @@ var require_jwtaccess = __commonJS({
             try {
               const data2 = JSON.parse(s2);
               this.fromJSON(data2);
-              resolve();
+              resolve2();
             } catch (err) {
               reject(err);
             }
@@ -40000,7 +43117,7 @@ var require_jwtclient = __commonJS({
         }
       }
       fromStreamAsync(inputStream) {
-        return new Promise((resolve, reject) => {
+        return new Promise((resolve2, reject) => {
           if (!inputStream) {
             throw new Error("Must pass in a stream containing the service account auth settings.");
           }
@@ -40009,7 +43126,7 @@ var require_jwtclient = __commonJS({
             try {
               const data2 = JSON.parse(s2);
               this.fromJSON(data2);
-              resolve();
+              resolve2();
             } catch (e2) {
               reject(e2);
             }
@@ -40142,7 +43259,7 @@ var require_refreshclient = __commonJS({
         }
       }
       async fromStreamAsync(inputStream) {
-        return new Promise((resolve, reject) => {
+        return new Promise((resolve2, reject) => {
           if (!inputStream) {
             return reject(new Error("Must pass in a stream containing the user refresh token."));
           }
@@ -40151,7 +43268,7 @@ var require_refreshclient = __commonJS({
             try {
               const data2 = JSON.parse(s2);
               this.fromJSON(data2);
-              return resolve();
+              return resolve2();
             } catch (err) {
               return reject(err);
             }
@@ -40974,12 +44091,12 @@ var require_filesubjecttokensupplier = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.FileSubjectTokenSupplier = void 0;
     var util_1 = require("util");
-    var fs21 = require("fs");
-    var readFile = (0, util_1.promisify)(fs21.readFile ?? (() => {
+    var fs25 = require("fs");
+    var readFile = (0, util_1.promisify)(fs25.readFile ?? (() => {
     }));
-    var realpath = (0, util_1.promisify)(fs21.realpath ?? (() => {
+    var realpath = (0, util_1.promisify)(fs25.realpath ?? (() => {
     }));
-    var lstat = (0, util_1.promisify)(fs21.lstat ?? (() => {
+    var lstat = (0, util_1.promisify)(fs25.lstat ?? (() => {
     }));
     var FileSubjectTokenSupplier = class {
       filePath;
@@ -41097,7 +44214,7 @@ var require_certificatesubjecttokensupplier = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.CertificateSubjectTokenSupplier = exports2.InvalidConfigurationError = exports2.CertificateSourceUnavailableError = exports2.CERTIFICATE_CONFIGURATION_ENV_VARIABLE = void 0;
     var util_1 = require_util2();
-    var fs21 = require("fs");
+    var fs25 = require("fs");
     var crypto_1 = require("crypto");
     var https2 = require("https");
     exports2.CERTIFICATE_CONFIGURATION_ENV_VARIABLE = "GOOGLE_API_CERTIFICATE_CONFIG";
@@ -41191,7 +44308,7 @@ var require_certificatesubjecttokensupplier = __commonJS({
         const configPath = this.certificateConfigPath;
         let fileContents;
         try {
-          fileContents = await fs21.promises.readFile(configPath, "utf8");
+          fileContents = await fs25.promises.readFile(configPath, "utf8");
         } catch (err) {
           throw new CertificateSourceUnavailableError(`Failed to read certificate config file at: ${configPath}`);
         }
@@ -41216,14 +44333,14 @@ var require_certificatesubjecttokensupplier = __commonJS({
       async #getKeyAndCert(certPath, keyPath) {
         let cert, key;
         try {
-          cert = await fs21.promises.readFile(certPath);
+          cert = await fs25.promises.readFile(certPath);
           new crypto_1.X509Certificate(cert);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           throw new CertificateSourceUnavailableError(`Failed to read certificate file at ${certPath}: ${message}`);
         }
         try {
-          key = await fs21.promises.readFile(keyPath);
+          key = await fs25.promises.readFile(keyPath);
           (0, crypto_1.createPrivateKey)(key);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
@@ -41242,7 +44359,7 @@ var require_certificatesubjecttokensupplier = __commonJS({
           return JSON.stringify([leafCert.raw.toString("base64")]);
         }
         try {
-          const chainPems = await fs21.promises.readFile(this.trustChainPath, "utf8");
+          const chainPems = await fs25.promises.readFile(this.trustChainPath, "utf8");
           const pemBlocks = chainPems.match(/-----BEGIN CERTIFICATE-----[^-]+-----END CERTIFICATE-----/g) ?? [];
           const chainCerts = pemBlocks.map((pem, index2) => {
             try {
@@ -41473,14 +44590,14 @@ var require_awsrequestsigner = __commonJS({
       }
     };
     exports2.AwsRequestSigner = AwsRequestSigner;
-    async function sign(crypto13, key, msg) {
-      return await crypto13.signWithHmacSha256(key, msg);
+    async function sign(crypto15, key, msg) {
+      return await crypto15.signWithHmacSha256(key, msg);
     }
-    async function getSigningKey(crypto13, key, dateStamp, region, serviceName) {
-      const kDate = await sign(crypto13, `AWS4${key}`, dateStamp);
-      const kRegion = await sign(crypto13, kDate, region);
-      const kService = await sign(crypto13, kRegion, serviceName);
-      const kSigning = await sign(crypto13, kService, "aws4_request");
+    async function getSigningKey(crypto15, key, dateStamp, region, serviceName) {
+      const kDate = await sign(crypto15, `AWS4${key}`, dateStamp);
+      const kRegion = await sign(crypto15, kDate, region);
+      const kService = await sign(crypto15, kRegion, serviceName);
+      const kSigning = await sign(crypto15, kService, "aws4_request");
       return kSigning;
     }
     async function generateAuthenticationHeaderMap(options) {
@@ -41944,7 +45061,7 @@ var require_pluggable_auth_handler = __commonJS({
     exports2.PluggableAuthHandler = exports2.ExecutableError = void 0;
     var executable_response_1 = require_executable_response();
     var childProcess = require("child_process");
-    var fs21 = require("fs");
+    var fs25 = require("fs");
     var ExecutableError = class extends Error {
       /**
        * The exit code returned by the executable.
@@ -41984,7 +45101,7 @@ var require_pluggable_auth_handler = __commonJS({
        * @return A promise that resolves with the executable response.
        */
       retrieveResponseFromExecutable(envMap) {
-        return new Promise((resolve, reject) => {
+        return new Promise((resolve2, reject) => {
           const child = childProcess.spawn(this.commandComponents[0], this.commandComponents.slice(1), {
             env: { ...process.env, ...Object.fromEntries(envMap) }
           });
@@ -42006,7 +45123,7 @@ var require_pluggable_auth_handler = __commonJS({
               try {
                 const responseJson = JSON.parse(output);
                 const response = new executable_response_1.ExecutableResponse(responseJson);
-                return resolve(response);
+                return resolve2(response);
               } catch (error51) {
                 if (error51 instanceof executable_response_1.ExecutableResponseError) {
                   return reject(error51);
@@ -42029,14 +45146,14 @@ var require_pluggable_auth_handler = __commonJS({
         }
         let filePath;
         try {
-          filePath = await fs21.promises.realpath(this.outputFile);
+          filePath = await fs25.promises.realpath(this.outputFile);
         } catch {
           return void 0;
         }
-        if (!(await fs21.promises.lstat(filePath)).isFile()) {
+        if (!(await fs25.promises.lstat(filePath)).isFile()) {
           return void 0;
         }
-        const responseString = await fs21.promises.readFile(filePath, {
+        const responseString = await fs25.promises.readFile(filePath, {
           encoding: "utf8"
         });
         if (responseString === "") {
@@ -42446,8 +45563,8 @@ var require_gdchclient = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.GdchClient = exports2.GDCH_SERVICE_ACCOUNT_TYPE = void 0;
-    var crypto13 = require("crypto");
-    var fs21 = require("fs");
+    var crypto15 = require("crypto");
+    var fs25 = require("fs");
     var https2 = require("https");
     var oauth2client_1 = require_oauth2client();
     var DEFAULT_LIFETIME_IN_SECONDS = 3600;
@@ -42637,7 +45754,7 @@ var require_gdchclient = __commonJS({
         const encodedHeader = this.base64UrlEncode(JSON.stringify(header));
         const encodedPayload = this.base64UrlEncode(JSON.stringify(payload));
         const signingInput = `${encodedHeader}.${encodedPayload}`;
-        const signature = crypto13.sign("sha256", Buffer.from(signingInput), {
+        const signature = crypto15.sign("sha256", Buffer.from(signingInput), {
           key: this.privateKey,
           dsaEncoding: "ieee-p1363"
         });
@@ -42670,7 +45787,7 @@ var require_gdchclient = __commonJS({
         const currentPath = this.caCertPath;
         this.caAgentPromise = (async () => {
           try {
-            const ca = await fs21.promises.readFile(currentPath);
+            const ca = await fs25.promises.readFile(currentPath);
             return new https2.Agent({ ca });
           } catch (err) {
             if (this.cachedCaCertPath === currentPath) {
@@ -42730,11 +45847,11 @@ var require_googleauth = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.GoogleAuth = exports2.GoogleAuthExceptionMessages = void 0;
     var child_process_1 = require("child_process");
-    var fs21 = require("fs");
+    var fs25 = require("fs");
     var gaxios_1 = require_src2();
     var gcpMetadata = require_src4();
     var os6 = require("os");
-    var path21 = require("path");
+    var path25 = require("path");
     var crypto_1 = require_crypto3();
     var computeclient_1 = require_computeclient();
     var idtokenclient_1 = require_idtokenclient();
@@ -43021,12 +46138,12 @@ var require_googleauth = __commonJS({
         } else {
           const home = process.env["HOME"];
           if (home) {
-            location2 = path21.join(home, ".config");
+            location2 = path25.join(home, ".config");
           }
         }
         if (location2) {
-          location2 = path21.join(location2, "gcloud", "application_default_credentials.json");
-          if (!fs21.existsSync(location2)) {
+          location2 = path25.join(location2, "gcloud", "application_default_credentials.json");
+          if (!fs25.existsSync(location2)) {
             location2 = null;
           }
         }
@@ -43047,8 +46164,8 @@ var require_googleauth = __commonJS({
           throw new Error("The file path is invalid.");
         }
         try {
-          filePath = fs21.realpathSync(filePath);
-          if (!fs21.lstatSync(filePath).isFile()) {
+          filePath = fs25.realpathSync(filePath);
+          if (!fs25.lstatSync(filePath).isFile()) {
             throw new Error();
           }
         } catch (err) {
@@ -43057,7 +46174,7 @@ var require_googleauth = __commonJS({
           }
           throw err;
         }
-        const readStream = fs21.createReadStream(filePath);
+        const readStream = fs25.createReadStream(filePath);
         return this.fromStream(readStream, options);
       }
       /**
@@ -43196,7 +46313,7 @@ var require_googleauth = __commonJS({
         }
       }
       fromStreamAsync(inputStream, options) {
-        return new Promise((resolve, reject) => {
+        return new Promise((resolve2, reject) => {
           if (!inputStream) {
             throw new Error("Must pass in a stream containing the Google auth settings.");
           }
@@ -43206,7 +46323,7 @@ var require_googleauth = __commonJS({
               try {
                 const data2 = JSON.parse(chunks.join(""));
                 const r2 = this._cacheClientFromJSON(data2, options);
-                return resolve(r2);
+                return resolve2(r2);
               } catch (err) {
                 if (!this.keyFilename)
                   throw err;
@@ -43216,7 +46333,7 @@ var require_googleauth = __commonJS({
                 });
                 this.cachedCredential = client;
                 this.setGapicJWTValues(client);
-                return resolve(client);
+                return resolve2(client);
               }
             } catch (err) {
               return reject(err);
@@ -43252,17 +46369,17 @@ var require_googleauth = __commonJS({
        * Run the Google Cloud SDK command that prints the default project ID
        */
       async getDefaultServiceProjectId() {
-        return new Promise((resolve) => {
+        return new Promise((resolve2) => {
           (0, child_process_1.exec)("gcloud config config-helper --format json", (err, stdout) => {
             if (!err && stdout) {
               try {
                 const projectId = JSON.parse(stdout).configuration.properties.core.project;
-                resolve(projectId);
+                resolve2(projectId);
                 return;
               } catch (e2) {
               }
             }
-            resolve(null);
+            resolve2(null);
           });
         });
       }
@@ -43384,8 +46501,8 @@ var require_googleauth = __commonJS({
         if (this.jsonContent) {
           return this._cacheClientFromJSON(this.jsonContent, this.clientOptions);
         } else if (this.keyFilename) {
-          const filePath = path21.resolve(this.keyFilename);
-          const stream = fs21.createReadStream(filePath);
+          const filePath = path25.resolve(this.keyFilename);
+          const stream = fs25.createReadStream(filePath);
           return await this.fromStreamAsync(stream, this.clientOptions);
         } else if (this.apiKey) {
           const client = await this.fromAPIKey(this.apiKey, this.clientOptions);
@@ -43498,24 +46615,24 @@ var require_googleauth = __commonJS({
           const signed = await client.sign(data2);
           return signed.signedBlob;
         }
-        const crypto13 = (0, crypto_1.createCrypto)();
+        const crypto15 = (0, crypto_1.createCrypto)();
         if (client instanceof jwtclient_1.JWT && client.key) {
-          const sign = await crypto13.sign(client.key, data2);
+          const sign = await crypto15.sign(client.key, data2);
           return sign;
         }
         const creds = await this.getCredentials();
         if (!creds.client_email) {
           throw new Error("Cannot sign data without `client_email`.");
         }
-        return this.signBlob(crypto13, creds.client_email, data2, endpoint);
+        return this.signBlob(crypto15, creds.client_email, data2, endpoint);
       }
-      async signBlob(crypto13, emailOrUniqueId, data2, endpoint) {
+      async signBlob(crypto15, emailOrUniqueId, data2, endpoint) {
         const url2 = new URL(endpoint + `${emailOrUniqueId}:signBlob`);
         const res = await this.request({
           method: "POST",
           url: url2.href,
           data: {
-            payload: crypto13.encodeBase64StringUtf8(data2)
+            payload: crypto15.encodeBase64StringUtf8(data2)
           },
           retry: true,
           retryConfig: {
@@ -50924,14 +54041,14 @@ function __asyncValues2(o) {
   }, i2);
   function verb(n) {
     i2[n] = o[n] && function(v) {
-      return new Promise(function(resolve, reject) {
-        v = o[n](v), settle(resolve, reject, v.done, v.value);
+      return new Promise(function(resolve2, reject) {
+        v = o[n](v), settle(resolve2, reject, v.done, v.value);
       });
     };
   }
-  function settle(resolve, reject, d, v) {
+  function settle(resolve2, reject, d, v) {
     Promise.resolve(v).then(function(v2) {
-      resolve({ value: v2, done: d });
+      resolve2({ value: v2, done: d });
     }, reject);
   }
 }
@@ -58344,13 +61461,13 @@ function getApiKeyFromEnv() {
   }
   return envGoogleApiKey || envGeminiApiKey || void 0;
 }
-var import_p_retry, import_google_auth_library, import_fs15, fs16, import_promises, import_node_stream3, import_promises2, path$1, _defaultBaseGeminiUrl, _defaultBaseVertexUrl, BaseModule, Language, Outcome, FunctionResponseScheduling, Type, Environment, AuthType, HttpElementLocation, ApiSpec, PhishBlockThreshold, Behavior, DynamicRetrievalConfigMode, FunctionCallingConfigMode, ThinkingLevel, PersonGeneration, ProminentPeople, HarmCategory, HarmBlockMethod, HarmBlockThreshold, FinishReason, HarmProbability, HarmSeverity, UrlRetrievalStatus, BlockedReason, TrafficType, Modality, ModelStage, MediaResolution, TuningMode, AdapterSize, JobState, TuningJobState, AggregationMetric, PairwiseChoice, TuningTask, DocumentState, PartMediaResolutionLevel, ToolType, ResourceScope, ServiceTier, FeatureSelectionPreference, EmbeddingApiType, SafetyFilterLevel, ImagePromptLanguage, MaskReferenceMode, ControlReferenceType, SubjectReferenceType, EditMode, SegmentMode, VideoGenerationReferenceType, VideoGenerationMaskMode, VideoCompressionQuality, ImageResizeMode, TuningMethod, FileState, FileSource, TurnCompleteReason, MediaModality, VadSignalType, VoiceActivityType, StartSensitivity, EndSensitivity, ActivityHandling, TurnCoverage, Scale, MusicGenerationMode, LiveMusicPlaybackControl, HttpResponse, GenerateContentResponse, EmbedContentResponse, GenerateImagesResponse, EditImageResponse, UpscaleImageResponse, RecontextImageResponse, SegmentImageResponse, ListModelsResponse, DeleteModelResponse, CountTokensResponse, ComputeTokensResponse, GenerateVideosOperation, ListTuningJobsResponse, CancelTuningJobResponse, DeleteCachedContentResponse, ListCachedContentsResponse, ListDocumentsResponse, ListFileSearchStoresResponse, UploadToFileSearchStoreResumableResponse, ImportFileOperation, ListFilesResponse, CreateFileResponse, DeleteFileResponse, RegisterFilesResponse, ListBatchJobsResponse, LiveServerMessage, LiveMusicServerMessage, UploadToFileSearchStoreOperation, PagedItem, Pager, Batches, Caches, Chats, Chat, ApiError, Files, CONTENT_TYPE_HEADER, SERVER_TIMEOUT_HEADER, USER_AGENT_HEADER, GOOGLE_API_CLIENT_HEADER, SDK_VERSION, LIBRARY_LABEL, VERTEX_AI_API_DEFAULT_VERSION, GOOGLE_AI_API_DEFAULT_VERSION, MULTI_REGIONAL_LOCATIONS, DEFAULT_RETRY_ATTEMPTS, DEFAULT_RETRY_HTTP_STATUS_CODES, ApiClient, MCP_LABEL, hasMcpToolUsageFromMcpToTool, McpCallableTool, LiveMusic, LiveMusicSession, FUNCTION_RESPONSE_REQUIRES_ID, Live, defaultLiveSendClientContentParamerters, Session, DEFAULT_MAX_REMOTE_CALLS, Models, Operations, Tokens, Documents, FileSearchStores, uuid4Internal, uuid42, castToError, GeminiNextGenAPIClientError, APIError, APIUserAbortError, APIConnectionError, APIConnectionTimeoutError, BadRequestError, AuthenticationError, PermissionDeniedError, NotFoundError, ConflictError, UnprocessableEntityError, RateLimitError, InternalServerError, startsWithSchemeRegexp, isAbsoluteURL, isArrayInternal, isArray, isReadonlyArrayInternal, isReadonlyArray, validatePositiveInteger, safeJSON, sleep$1, FallbackEncoder, VERSION, checkFileSupport, isAsyncIterable, isBlobLike, isFileLike, isResponseLike, APIResource, EMPTY, createPathTagFunction, path16, BaseInteractions, Interactions, BaseWebhooks, Webhooks, encodeUTF8_, decodeUTF8_, LineDecoder, levelNumbers, parseLogLevel, noopLogger, cachedLoggers, formatRequestDetails, Stream3, SSEDecoder, APIPromise, brand_privateNullableHeaders, buildHeaders, readEnv, _a3, BaseGeminiNextGenAPIClient, GeminiNextGenAPIClient, GOOGLE_API_KEY_HEADER, REQUIRED_VERTEX_AI_SCOPE, NodeAuth, NodeDownloader, NodeWebSocketFactory, NodeWebSocket, Tunings, MAX_CHUNK_SIZE, MAX_RETRY_COUNT, INITIAL_RETRY_DELAY_MS, DELAY_MULTIPLIER, X_GOOG_UPLOAD_STATUS_HEADER_FIELD, NodeUploader, NodeFiles, LANGUAGE_LABEL_PREFIX, GoogleGenAI;
+var import_p_retry, import_google_auth_library, import_fs18, fs20, import_promises, import_node_stream3, import_promises2, path$1, _defaultBaseGeminiUrl, _defaultBaseVertexUrl, BaseModule, Language, Outcome, FunctionResponseScheduling, Type, Environment, AuthType, HttpElementLocation, ApiSpec, PhishBlockThreshold, Behavior, DynamicRetrievalConfigMode, FunctionCallingConfigMode, ThinkingLevel, PersonGeneration, ProminentPeople, HarmCategory, HarmBlockMethod, HarmBlockThreshold, FinishReason, HarmProbability, HarmSeverity, UrlRetrievalStatus, BlockedReason, TrafficType, Modality, ModelStage, MediaResolution, TuningMode, AdapterSize, JobState, TuningJobState, AggregationMetric, PairwiseChoice, TuningTask, DocumentState, PartMediaResolutionLevel, ToolType, ResourceScope, ServiceTier, FeatureSelectionPreference, EmbeddingApiType, SafetyFilterLevel, ImagePromptLanguage, MaskReferenceMode, ControlReferenceType, SubjectReferenceType, EditMode, SegmentMode, VideoGenerationReferenceType, VideoGenerationMaskMode, VideoCompressionQuality, ImageResizeMode, TuningMethod, FileState, FileSource, TurnCompleteReason, MediaModality, VadSignalType, VoiceActivityType, StartSensitivity, EndSensitivity, ActivityHandling, TurnCoverage, Scale, MusicGenerationMode, LiveMusicPlaybackControl, HttpResponse, GenerateContentResponse, EmbedContentResponse, GenerateImagesResponse, EditImageResponse, UpscaleImageResponse, RecontextImageResponse, SegmentImageResponse, ListModelsResponse, DeleteModelResponse, CountTokensResponse, ComputeTokensResponse, GenerateVideosOperation, ListTuningJobsResponse, CancelTuningJobResponse, DeleteCachedContentResponse, ListCachedContentsResponse, ListDocumentsResponse, ListFileSearchStoresResponse, UploadToFileSearchStoreResumableResponse, ImportFileOperation, ListFilesResponse, CreateFileResponse, DeleteFileResponse, RegisterFilesResponse, ListBatchJobsResponse, LiveServerMessage, LiveMusicServerMessage, UploadToFileSearchStoreOperation, PagedItem, Pager, Batches, Caches, Chats, Chat, ApiError, Files, CONTENT_TYPE_HEADER, SERVER_TIMEOUT_HEADER, USER_AGENT_HEADER, GOOGLE_API_CLIENT_HEADER, SDK_VERSION, LIBRARY_LABEL, VERTEX_AI_API_DEFAULT_VERSION, GOOGLE_AI_API_DEFAULT_VERSION, MULTI_REGIONAL_LOCATIONS, DEFAULT_RETRY_ATTEMPTS, DEFAULT_RETRY_HTTP_STATUS_CODES, ApiClient, MCP_LABEL, hasMcpToolUsageFromMcpToTool, McpCallableTool, LiveMusic, LiveMusicSession, FUNCTION_RESPONSE_REQUIRES_ID, Live, defaultLiveSendClientContentParamerters, Session, DEFAULT_MAX_REMOTE_CALLS, Models, Operations, Tokens, Documents, FileSearchStores, uuid4Internal, uuid42, castToError, GeminiNextGenAPIClientError, APIError, APIUserAbortError, APIConnectionError, APIConnectionTimeoutError, BadRequestError, AuthenticationError, PermissionDeniedError, NotFoundError, ConflictError, UnprocessableEntityError, RateLimitError, InternalServerError, startsWithSchemeRegexp, isAbsoluteURL, isArrayInternal, isArray, isReadonlyArrayInternal, isReadonlyArray, validatePositiveInteger, safeJSON, sleep$1, FallbackEncoder, VERSION, checkFileSupport, isAsyncIterable, isBlobLike, isFileLike, isResponseLike, APIResource, EMPTY, createPathTagFunction, path20, BaseInteractions, Interactions, BaseWebhooks, Webhooks, encodeUTF8_, decodeUTF8_, LineDecoder, levelNumbers, parseLogLevel, noopLogger, cachedLoggers, formatRequestDetails, Stream3, SSEDecoder, APIPromise, brand_privateNullableHeaders, buildHeaders, readEnv, _a3, BaseGeminiNextGenAPIClient, GeminiNextGenAPIClient, GOOGLE_API_KEY_HEADER, REQUIRED_VERTEX_AI_SCOPE, NodeAuth, NodeDownloader, NodeWebSocketFactory, NodeWebSocket, Tunings, MAX_CHUNK_SIZE, MAX_RETRY_COUNT, INITIAL_RETRY_DELAY_MS, DELAY_MULTIPLIER, X_GOOG_UPLOAD_STATUS_HEADER_FIELD, NodeUploader, NodeFiles, LANGUAGE_LABEL_PREFIX, GoogleGenAI;
 var init_node = __esm({
   "node_modules/@google/genai/dist/node/index.mjs"() {
     import_p_retry = __toESM(require_p_retry(), 1);
     import_google_auth_library = __toESM(require_src5(), 1);
-    import_fs15 = require("fs");
-    fs16 = __toESM(require("fs/promises"), 1);
+    import_fs18 = require("fs");
+    fs20 = __toESM(require("fs/promises"), 1);
     import_promises = require("fs/promises");
     import_node_stream3 = require("node:stream");
     import_promises2 = require("node:stream/promises");
@@ -59436,7 +62553,7 @@ var init_node = __esm({
           params
         );
         const urlParams = body["_url"];
-        const path21 = formatMap2("{model}:batchGenerateContent", urlParams);
+        const path25 = formatMap2("{model}:batchGenerateContent", urlParams);
         const batch = body["batch"];
         const inputConfig = batch["inputConfig"];
         const requestsWrapper = inputConfig["requests"];
@@ -59457,7 +62574,7 @@ var init_node = __esm({
         delete body["config"];
         delete body["_url"];
         delete body["_query"];
-        return { path: path21, body };
+        return { path: path25, body };
       }
       // Helper function to get the first GCS URI
       getGcsUri(src) {
@@ -59513,16 +62630,16 @@ var init_node = __esm({
       async createInternal(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = createBatchJobParametersToVertex(this.apiClient, params);
-          path21 = formatMap2("batchPredictionJobs", body["_url"]);
+          path25 = formatMap2("batchPredictionJobs", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -59537,12 +62654,12 @@ var init_node = __esm({
           });
         } else {
           const body = createBatchJobParametersToMldev(this.apiClient, params);
-          path21 = formatMap2("{model}:batchGenerateContent", body["_url"]);
+          path25 = formatMap2("{model}:batchGenerateContent", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -59567,18 +62684,18 @@ var init_node = __esm({
       async createEmbeddingsInternal(params) {
         var _a8, _b;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = createEmbeddingsBatchJobParametersToMldev(this.apiClient, params);
-          path21 = formatMap2("{model}:asyncBatchEmbedContent", body["_url"]);
+          path25 = formatMap2("{model}:asyncBatchEmbedContent", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -59607,16 +62724,16 @@ var init_node = __esm({
       async get(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = getBatchJobParametersToVertex(this.apiClient, params);
-          path21 = formatMap2("batchPredictionJobs/{name}", body["_url"]);
+          path25 = formatMap2("batchPredictionJobs/{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -59631,12 +62748,12 @@ var init_node = __esm({
           });
         } else {
           const body = getBatchJobParametersToMldev(this.apiClient, params);
-          path21 = formatMap2("batches/{name}", body["_url"]);
+          path25 = formatMap2("batches/{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -59664,16 +62781,16 @@ var init_node = __esm({
        */
       async cancel(params) {
         var _a8, _b, _c, _d;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = cancelBatchJobParametersToVertex(this.apiClient, params);
-          path21 = formatMap2("batchPredictionJobs/{name}:cancel", body["_url"]);
+          path25 = formatMap2("batchPredictionJobs/{name}:cancel", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           await this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -59682,12 +62799,12 @@ var init_node = __esm({
           });
         } else {
           const body = cancelBatchJobParametersToMldev(this.apiClient, params);
-          path21 = formatMap2("batches/{name}:cancel", body["_url"]);
+          path25 = formatMap2("batches/{name}:cancel", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           await this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -59699,16 +62816,16 @@ var init_node = __esm({
       async listInternal(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = listBatchJobsParametersToVertex(params);
-          path21 = formatMap2("batchPredictionJobs", body["_url"]);
+          path25 = formatMap2("batchPredictionJobs", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -59731,12 +62848,12 @@ var init_node = __esm({
           });
         } else {
           const body = listBatchJobsParametersToMldev(params);
-          path21 = formatMap2("batches", body["_url"]);
+          path25 = formatMap2("batches", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -59773,16 +62890,16 @@ var init_node = __esm({
       async delete(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = deleteBatchJobParametersToVertex(this.apiClient, params);
-          path21 = formatMap2("batchPredictionJobs/{name}", body["_url"]);
+          path25 = formatMap2("batchPredictionJobs/{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "DELETE",
@@ -59803,12 +62920,12 @@ var init_node = __esm({
           });
         } else {
           const body = deleteBatchJobParametersToMldev(this.apiClient, params);
-          path21 = formatMap2("batches/{name}", body["_url"]);
+          path25 = formatMap2("batches/{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "DELETE",
@@ -59867,16 +62984,16 @@ var init_node = __esm({
       async create(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = createCachedContentParametersToVertex(this.apiClient, params);
-          path21 = formatMap2("cachedContents", body["_url"]);
+          path25 = formatMap2("cachedContents", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -59890,12 +63007,12 @@ var init_node = __esm({
           });
         } else {
           const body = createCachedContentParametersToMldev(this.apiClient, params);
-          path21 = formatMap2("cachedContents", body["_url"]);
+          path25 = formatMap2("cachedContents", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -59923,16 +63040,16 @@ var init_node = __esm({
       async get(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = getCachedContentParametersToVertex(this.apiClient, params);
-          path21 = formatMap2("{name}", body["_url"]);
+          path25 = formatMap2("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -59946,12 +63063,12 @@ var init_node = __esm({
           });
         } else {
           const body = getCachedContentParametersToMldev(this.apiClient, params);
-          path21 = formatMap2("{name}", body["_url"]);
+          path25 = formatMap2("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -59979,16 +63096,16 @@ var init_node = __esm({
       async delete(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = deleteCachedContentParametersToVertex(this.apiClient, params);
-          path21 = formatMap2("{name}", body["_url"]);
+          path25 = formatMap2("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "DELETE",
@@ -60011,12 +63128,12 @@ var init_node = __esm({
           });
         } else {
           const body = deleteCachedContentParametersToMldev(this.apiClient, params);
-          path21 = formatMap2("{name}", body["_url"]);
+          path25 = formatMap2("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "DELETE",
@@ -60056,16 +63173,16 @@ var init_node = __esm({
       async update(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = updateCachedContentParametersToVertex(this.apiClient, params);
-          path21 = formatMap2("{name}", body["_url"]);
+          path25 = formatMap2("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "PATCH",
@@ -60079,12 +63196,12 @@ var init_node = __esm({
           });
         } else {
           const body = updateCachedContentParametersToMldev(this.apiClient, params);
-          path21 = formatMap2("{name}", body["_url"]);
+          path25 = formatMap2("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "PATCH",
@@ -60101,16 +63218,16 @@ var init_node = __esm({
       async listInternal(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = listCachedContentsParametersToVertex(params);
-          path21 = formatMap2("cachedContents", body["_url"]);
+          path25 = formatMap2("cachedContents", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -60133,12 +63250,12 @@ var init_node = __esm({
           });
         } else {
           const body = listCachedContentsParametersToMldev(params);
-          path21 = formatMap2("cachedContents", body["_url"]);
+          path25 = formatMap2("cachedContents", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -60469,18 +63586,18 @@ var init_node = __esm({
       async listInternal(params) {
         var _a8, _b;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = listFilesParametersToMldev(params);
-          path21 = formatMap2("files", body["_url"]);
+          path25 = formatMap2("files", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -60506,18 +63623,18 @@ var init_node = __esm({
       async createInternal(params) {
         var _a8, _b;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = createFileParametersToMldev(params);
-          path21 = formatMap2("upload/v1beta/files", body["_url"]);
+          path25 = formatMap2("upload/v1beta/files", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -60552,18 +63669,18 @@ var init_node = __esm({
       async get(params) {
         var _a8, _b;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = getFileParametersToMldev(params);
-          path21 = formatMap2("files/{file}", body["_url"]);
+          path25 = formatMap2("files/{file}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -60593,18 +63710,18 @@ var init_node = __esm({
       async delete(params) {
         var _a8, _b;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = deleteFileParametersToMldev(params);
-          path21 = formatMap2("files/{file}", body["_url"]);
+          path25 = formatMap2("files/{file}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "DELETE",
@@ -60630,18 +63747,18 @@ var init_node = __esm({
       async registerFilesInternal(params) {
         var _a8, _b;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = internalRegisterFilesParametersToMldev(params);
-          path21 = formatMap2("files:register", body["_url"]);
+          path25 = formatMap2("files:register", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -60801,13 +63918,13 @@ var init_node = __esm({
           throw new Error("HTTP options are not correctly set.");
         }
       }
-      constructUrl(path21, httpOptions, prependProjectLocation) {
+      constructUrl(path25, httpOptions, prependProjectLocation) {
         const urlElement = [this.getRequestUrlInternal(httpOptions)];
         if (prependProjectLocation) {
           urlElement.push(this.getBaseResourcePath());
         }
-        if (path21 !== "") {
-          urlElement.push(path21);
+        if (path25 !== "") {
+          urlElement.push(path25);
         }
         const url2 = new URL(`${urlElement.join("/")}`);
         return url2;
@@ -61092,8 +64209,8 @@ var init_node = __esm({
           file: fileToUpload
         };
         const fileName = this.getFileName(file2);
-        const path21 = formatMap2("upload/v1beta/files", body["_url"]);
-        const uploadUrl = await this.fetchUploadUrl(path21, fileToUpload.sizeBytes, fileToUpload.mimeType, fileName, body, config2 === null || config2 === void 0 ? void 0 : config2.httpOptions);
+        const path25 = formatMap2("upload/v1beta/files", body["_url"]);
+        const uploadUrl = await this.fetchUploadUrl(path25, fileToUpload.sizeBytes, fileToUpload.mimeType, fileName, body, config2 === null || config2 === void 0 ? void 0 : config2.httpOptions);
         return uploader.upload(file2, uploadUrl, this);
       }
       /**
@@ -61117,13 +64234,13 @@ var init_node = __esm({
         if (mimeType === void 0 || mimeType === "") {
           throw new Error("Can not determine mimeType. Please provide mimeType in the config.");
         }
-        const path21 = `upload/v1beta/${fileSearchStoreName}:uploadToFileSearchStore`;
+        const path25 = `upload/v1beta/${fileSearchStoreName}:uploadToFileSearchStore`;
         const fileName = this.getFileName(file2);
         const body = {};
         if (config2 != null) {
           uploadToFileSearchStoreConfigToMldev(config2, body);
         }
-        const uploadUrl = await this.fetchUploadUrl(path21, sizeBytes, mimeType, fileName, body, config2 === null || config2 === void 0 ? void 0 : config2.httpOptions);
+        const uploadUrl = await this.fetchUploadUrl(path25, sizeBytes, mimeType, fileName, body, config2 === null || config2 === void 0 ? void 0 : config2.httpOptions);
         return uploader.uploadToFileSearchStore(file2, uploadUrl, this);
       }
       /**
@@ -61136,7 +64253,7 @@ var init_node = __esm({
         const downloader = this.clientOptions.downloader;
         await downloader.download(params, this);
       }
-      async fetchUploadUrl(path21, sizeBytes, mimeType, fileName, body, configHttpOptions) {
+      async fetchUploadUrl(path25, sizeBytes, mimeType, fileName, body, configHttpOptions) {
         var _a8;
         let httpOptions = {};
         if (configHttpOptions) {
@@ -61149,7 +64266,7 @@ var init_node = __esm({
           };
         }
         const httpResponse = await this.request({
-          path: path21,
+          path: path25,
           body: JSON.stringify(body),
           httpMethod: "POST",
           httpOptions
@@ -61305,8 +64422,8 @@ var init_node = __esm({
         const url2 = `${websocketBaseUrl}/ws/google.ai.generativelanguage.${apiVersion}.GenerativeService.BidiGenerateMusic?key=${apiKey}`;
         let onopenResolve = () => {
         };
-        const onopenPromise = new Promise((resolve) => {
-          onopenResolve = resolve;
+        const onopenPromise = new Promise((resolve2) => {
+          onopenResolve = resolve2;
         });
         const callbacks = params.callbacks;
         const onopenAwaitedCallback = function() {
@@ -61512,8 +64629,8 @@ var init_node = __esm({
         }
         let onopenResolve = () => {
         };
-        const onopenPromise = new Promise((resolve) => {
-          onopenResolve = resolve;
+        const onopenPromise = new Promise((resolve2) => {
+          onopenResolve = resolve2;
         });
         const callbacks = params.callbacks;
         const onopenAwaitedCallback = function() {
@@ -62126,16 +65243,16 @@ var init_node = __esm({
       async generateContentInternal(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = generateContentParametersToVertex(this.apiClient, params);
-          path21 = formatMap2("{model}:generateContent", body["_url"]);
+          path25 = formatMap2("{model}:generateContent", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -62158,12 +65275,12 @@ var init_node = __esm({
           });
         } else {
           const body = generateContentParametersToMldev(this.apiClient, params);
-          path21 = formatMap2("{model}:generateContent", body["_url"]);
+          path25 = formatMap2("{model}:generateContent", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -62189,17 +65306,17 @@ var init_node = __esm({
       async generateContentStreamInternal(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = generateContentParametersToVertex(this.apiClient, params);
-          path21 = formatMap2("{model}:streamGenerateContent?alt=sse", body["_url"]);
+          path25 = formatMap2("{model}:streamGenerateContent?alt=sse", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           const apiClient = this.apiClient;
           response = apiClient.requestStream({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -62235,13 +65352,13 @@ var init_node = __esm({
           });
         } else {
           const body = generateContentParametersToMldev(this.apiClient, params);
-          path21 = formatMap2("{model}:streamGenerateContent?alt=sse", body["_url"]);
+          path25 = formatMap2("{model}:streamGenerateContent?alt=sse", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           const apiClient = this.apiClient;
           response = apiClient.requestStream({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -62301,17 +65418,17 @@ var init_node = __esm({
       async embedContentInternal(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = embedContentParametersPrivateToVertex(this.apiClient, params, params);
           const endpointUrl = tIsVertexEmbedContentModel(params.model) ? "{model}:embedContent" : "{model}:predict";
-          path21 = formatMap2(endpointUrl, body["_url"]);
+          path25 = formatMap2(endpointUrl, body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -62334,12 +65451,12 @@ var init_node = __esm({
           });
         } else {
           const body = embedContentParametersPrivateToMldev(this.apiClient, params);
-          path21 = formatMap2("{model}:batchEmbedContents", body["_url"]);
+          path25 = formatMap2("{model}:batchEmbedContents", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -62368,16 +65485,16 @@ var init_node = __esm({
       async generateImagesInternal(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = generateImagesParametersToVertex(this.apiClient, params);
-          path21 = formatMap2("{model}:predict", body["_url"]);
+          path25 = formatMap2("{model}:predict", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -62400,12 +65517,12 @@ var init_node = __esm({
           });
         } else {
           const body = generateImagesParametersToMldev(this.apiClient, params);
-          path21 = formatMap2("{model}:predict", body["_url"]);
+          path25 = formatMap2("{model}:predict", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -62434,16 +65551,16 @@ var init_node = __esm({
       async editImageInternal(params) {
         var _a8, _b;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = editImageParametersInternalToVertex(this.apiClient, params);
-          path21 = formatMap2("{model}:predict", body["_url"]);
+          path25 = formatMap2("{model}:predict", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -62474,16 +65591,16 @@ var init_node = __esm({
       async upscaleImageInternal(params) {
         var _a8, _b;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = upscaleImageAPIParametersInternalToVertex(this.apiClient, params);
-          path21 = formatMap2("{model}:predict", body["_url"]);
+          path25 = formatMap2("{model}:predict", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -62535,16 +65652,16 @@ var init_node = __esm({
       async recontextImage(params) {
         var _a8, _b;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = recontextImageParametersToVertex(this.apiClient, params);
-          path21 = formatMap2("{model}:predict", body["_url"]);
+          path25 = formatMap2("{model}:predict", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -62586,16 +65703,16 @@ var init_node = __esm({
       async segmentImage(params) {
         var _a8, _b;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = segmentImageParametersToVertex(this.apiClient, params);
-          path21 = formatMap2("{model}:predict", body["_url"]);
+          path25 = formatMap2("{model}:predict", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -62625,16 +65742,16 @@ var init_node = __esm({
       async get(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = getModelParametersToVertex(this.apiClient, params);
-          path21 = formatMap2("{name}", body["_url"]);
+          path25 = formatMap2("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -62649,12 +65766,12 @@ var init_node = __esm({
           });
         } else {
           const body = getModelParametersToMldev(this.apiClient, params);
-          path21 = formatMap2("{name}", body["_url"]);
+          path25 = formatMap2("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -62672,16 +65789,16 @@ var init_node = __esm({
       async listInternal(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = listModelsParametersToVertex(this.apiClient, params);
-          path21 = formatMap2("{models_url}", body["_url"]);
+          path25 = formatMap2("{models_url}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -62704,12 +65821,12 @@ var init_node = __esm({
           });
         } else {
           const body = listModelsParametersToMldev(this.apiClient, params);
-          path21 = formatMap2("{models_url}", body["_url"]);
+          path25 = formatMap2("{models_url}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -62752,16 +65869,16 @@ var init_node = __esm({
       async update(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = updateModelParametersToVertex(this.apiClient, params);
-          path21 = formatMap2("{model}", body["_url"]);
+          path25 = formatMap2("{model}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "PATCH",
@@ -62776,12 +65893,12 @@ var init_node = __esm({
           });
         } else {
           const body = updateModelParametersToMldev(this.apiClient, params);
-          path21 = formatMap2("{name}", body["_url"]);
+          path25 = formatMap2("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "PATCH",
@@ -62810,16 +65927,16 @@ var init_node = __esm({
       async delete(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = deleteModelParametersToVertex(this.apiClient, params);
-          path21 = formatMap2("{name}", body["_url"]);
+          path25 = formatMap2("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "DELETE",
@@ -62842,12 +65959,12 @@ var init_node = __esm({
           });
         } else {
           const body = deleteModelParametersToMldev(this.apiClient, params);
-          path21 = formatMap2("{name}", body["_url"]);
+          path25 = formatMap2("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "DELETE",
@@ -62889,16 +66006,16 @@ var init_node = __esm({
       async countTokens(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = countTokensParametersToVertex(this.apiClient, params);
-          path21 = formatMap2("{model}:countTokens", body["_url"]);
+          path25 = formatMap2("{model}:countTokens", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -62921,12 +66038,12 @@ var init_node = __esm({
           });
         } else {
           const body = countTokensParametersToMldev(this.apiClient, params);
-          path21 = formatMap2("{model}:countTokens", body["_url"]);
+          path25 = formatMap2("{model}:countTokens", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -62970,16 +66087,16 @@ var init_node = __esm({
       async computeTokens(params) {
         var _a8, _b;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = computeTokensParametersToVertex(this.apiClient, params);
-          path21 = formatMap2("{model}:computeTokens", body["_url"]);
+          path25 = formatMap2("{model}:computeTokens", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -63010,16 +66127,16 @@ var init_node = __esm({
       async generateVideosInternal(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = generateVideosParametersToVertex(this.apiClient, params);
-          path21 = formatMap2("{model}:predictLongRunning", body["_url"]);
+          path25 = formatMap2("{model}:predictLongRunning", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -63036,12 +66153,12 @@ var init_node = __esm({
           });
         } else {
           const body = generateVideosParametersToMldev(this.apiClient, params);
-          path21 = formatMap2("{model}:predictLongRunning", body["_url"]);
+          path25 = formatMap2("{model}:predictLongRunning", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -63143,16 +66260,16 @@ var init_node = __esm({
       async getVideosOperationInternal(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = getOperationParametersToVertex(params);
-          path21 = formatMap2("{operationName}", body["_url"]);
+          path25 = formatMap2("{operationName}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -63164,12 +66281,12 @@ var init_node = __esm({
           return response;
         } else {
           const body = getOperationParametersToMldev(params);
-          path21 = formatMap2("{operationName}", body["_url"]);
+          path25 = formatMap2("{operationName}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -63184,16 +66301,16 @@ var init_node = __esm({
       async fetchPredictVideosOperationInternal(params) {
         var _a8, _b;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = fetchPredictOperationParametersToVertex(params);
-          path21 = formatMap2("{resourceName}:fetchPredictOperation", body["_url"]);
+          path25 = formatMap2("{resourceName}:fetchPredictOperation", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -63299,20 +66416,20 @@ var init_node = __esm({
       async create(params) {
         var _a8, _b;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("The client.tokens.create method is only supported by the Gemini Developer API.");
         } else {
           const body = createAuthTokenParametersToMldev(this.apiClient, params);
-          path21 = formatMap2("auth_tokens", body["_url"]);
+          path25 = formatMap2("auth_tokens", body["_url"]);
           queryParams = body["_query"];
           delete body["config"];
           delete body["_url"];
           delete body["_query"];
           const transformedBody = convertBidiSetupToTokenSetup(body, params.config);
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(transformedBody),
             httpMethod: "POST",
@@ -63344,18 +66461,18 @@ var init_node = __esm({
       async get(params) {
         var _a8, _b;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = getDocumentParametersToMldev(params);
-          path21 = formatMap2("{name}", body["_url"]);
+          path25 = formatMap2("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -63376,18 +66493,18 @@ var init_node = __esm({
        */
       async delete(params) {
         var _a8, _b;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = deleteDocumentParametersToMldev(params);
-          path21 = formatMap2("{name}", body["_url"]);
+          path25 = formatMap2("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           await this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "DELETE",
@@ -63399,18 +66516,18 @@ var init_node = __esm({
       async listInternal(params) {
         var _a8, _b;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = listDocumentsParametersToMldev(params);
-          path21 = formatMap2("{parent}/documents", body["_url"]);
+          path25 = formatMap2("{parent}/documents", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -63527,18 +66644,18 @@ var init_node = __esm({
       async create(params) {
         var _a8, _b;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = createFileSearchStoreParametersToMldev(this.apiClient, params);
-          path21 = formatMap2("fileSearchStores", body["_url"]);
+          path25 = formatMap2("fileSearchStores", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -63561,18 +66678,18 @@ var init_node = __esm({
       async get(params) {
         var _a8, _b;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = getFileSearchStoreParametersToMldev(params);
-          path21 = formatMap2("{name}", body["_url"]);
+          path25 = formatMap2("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -63593,18 +66710,18 @@ var init_node = __esm({
        */
       async delete(params) {
         var _a8, _b;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = deleteFileSearchStoreParametersToMldev(params);
-          path21 = formatMap2("{name}", body["_url"]);
+          path25 = formatMap2("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           await this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "DELETE",
@@ -63616,18 +66733,18 @@ var init_node = __esm({
       async listInternal(params) {
         var _a8, _b;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = listFileSearchStoresParametersToMldev(params);
-          path21 = formatMap2("fileSearchStores", body["_url"]);
+          path25 = formatMap2("fileSearchStores", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -63647,18 +66764,18 @@ var init_node = __esm({
       async uploadToFileSearchStoreInternal(params) {
         var _a8, _b;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = uploadToFileSearchStoreParametersToMldev(params);
-          path21 = formatMap2("upload/v1beta/{file_search_store_name}:uploadToFileSearchStore", body["_url"]);
+          path25 = formatMap2("upload/v1beta/{file_search_store_name}:uploadToFileSearchStore", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -63686,18 +66803,18 @@ var init_node = __esm({
       async importFile(params) {
         var _a8, _b;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = importFileParametersToMldev(params);
-          path21 = formatMap2("{file_search_store_name}:importFile", body["_url"]);
+          path25 = formatMap2("{file_search_store_name}:importFile", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -63716,13 +66833,13 @@ var init_node = __esm({
       }
     };
     uuid4Internal = function() {
-      const { crypto: crypto13 } = globalThis;
-      if (crypto13 === null || crypto13 === void 0 ? void 0 : crypto13.randomUUID) {
-        uuid4Internal = crypto13.randomUUID.bind(crypto13);
-        return crypto13.randomUUID();
+      const { crypto: crypto15 } = globalThis;
+      if (crypto15 === null || crypto15 === void 0 ? void 0 : crypto15.randomUUID) {
+        uuid4Internal = crypto15.randomUUID.bind(crypto15);
+        return crypto15.randomUUID();
       }
       const u8 = new Uint8Array(1);
-      const randomByte = crypto13 ? () => crypto13.getRandomValues(u8)[0] : () => Math.random() * 255 & 255;
+      const randomByte = crypto15 ? () => crypto15.getRandomValues(u8)[0] : () => Math.random() * 255 & 255;
       return "10000000-1000-4000-8000-100000000000".replace(/[018]/g, (c) => (+c ^ randomByte() & 15 >> +c / 4).toString(16));
     };
     uuid42 = () => uuid4Internal();
@@ -63861,7 +66978,7 @@ var init_node = __esm({
         return void 0;
       }
     };
-    sleep$1 = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    sleep$1 = (ms) => new Promise((resolve2) => setTimeout(resolve2, ms));
     FallbackEncoder = ({ headers, body }) => {
       return {
         bodyHeaders: {
@@ -63890,12 +67007,12 @@ var init_node = __esm({
     };
     APIResource._key = [];
     EMPTY = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.create(null));
-    createPathTagFunction = (pathEncoder = encodeURIPath) => (function path21(statics, ...params) {
+    createPathTagFunction = (pathEncoder = encodeURIPath) => (function path25(statics, ...params) {
       if (statics.length === 1)
         return statics[0];
       let postPath = false;
       const invalidSegments = [];
-      const path22 = statics.reduce((previousValue, currentValue, index2) => {
+      const path26 = statics.reduce((previousValue, currentValue, index2) => {
         var _a8, _b, _c;
         if (/[?#]/.test(currentValue)) {
           postPath = true;
@@ -63913,7 +67030,7 @@ var init_node = __esm({
         }
         return previousValue + currentValue + (index2 === params.length ? "" : encoded);
       }, "");
-      const pathOnly = path22.split(/[?#]/, 1)[0];
+      const pathOnly = path26.split(/[?#]/, 1)[0];
       const invalidSegmentPattern = /(^|\/)(?:\.|%2e){1,2}(?=\/|$)/gi;
       let match;
       while ((match = invalidSegmentPattern.exec(pathOnly)) !== null) {
@@ -63937,12 +67054,12 @@ var init_node = __esm({
         }, "");
         throw new GeminiNextGenAPIClientError(`Path parameters result in path with invalid segments:
 ${invalidSegments.map((e2) => e2.error).join("\n")}
-${path22}
+${path26}
 ${underline}`);
       }
-      return path22;
+      return path26;
     });
-    path16 = /* @__PURE__ */ createPathTagFunction(encodeURIPath);
+    path20 = /* @__PURE__ */ createPathTagFunction(encodeURIPath);
     BaseInteractions = class extends APIResource {
       create(params, options) {
         var _a8;
@@ -63953,7 +67070,7 @@ ${underline}`);
         if ("agent" in body && "generation_config" in body) {
           throw new GeminiNextGenAPIClientError(`Invalid request: specified \`agent\` and \`generation_config\`. If specifying \`agent\`, use \`agent_config\`.`);
         }
-        return this._client.post(path16`/${api_version}/interactions`, Object.assign(Object.assign({ body }, options), { stream: (_a8 = params.stream) !== null && _a8 !== void 0 ? _a8 : false }));
+        return this._client.post(path20`/${api_version}/interactions`, Object.assign(Object.assign({ body }, options), { stream: (_a8 = params.stream) !== null && _a8 !== void 0 ? _a8 : false }));
       }
       /**
        * Deletes the interaction by id.
@@ -63967,7 +67084,7 @@ ${underline}`);
        */
       delete(id, params = {}, options) {
         const { api_version = this._client.apiVersion } = params !== null && params !== void 0 ? params : {};
-        return this._client.delete(path16`/${api_version}/interactions/${id}`, options);
+        return this._client.delete(path20`/${api_version}/interactions/${id}`, options);
       }
       /**
        * Cancels an interaction by id. This only applies to background interactions that
@@ -63982,12 +67099,12 @@ ${underline}`);
        */
       cancel(id, params = {}, options) {
         const { api_version = this._client.apiVersion } = params !== null && params !== void 0 ? params : {};
-        return this._client.post(path16`/${api_version}/interactions/${id}/cancel`, options);
+        return this._client.post(path20`/${api_version}/interactions/${id}/cancel`, options);
       }
       get(id, params = {}, options) {
         var _a8;
         const _b = params !== null && params !== void 0 ? params : {}, { api_version = this._client.apiVersion } = _b, query = __rest2(_b, ["api_version"]);
-        return this._client.get(path16`/${api_version}/interactions/${id}`, Object.assign(Object.assign({ query }, options), { stream: (_a8 = params === null || params === void 0 ? void 0 : params.stream) !== null && _a8 !== void 0 ? _a8 : false }));
+        return this._client.get(path20`/${api_version}/interactions/${id}`, Object.assign(Object.assign({ query }, options), { stream: (_a8 = params === null || params === void 0 ? void 0 : params.stream) !== null && _a8 !== void 0 ? _a8 : false }));
       }
     };
     BaseInteractions._key = Object.freeze(["interactions"]);
@@ -63999,49 +67116,49 @@ ${underline}`);
        */
       create(params, options) {
         const { api_version = this._client.apiVersion } = params, body = __rest2(params, ["api_version"]);
-        return this._client.post(path16`/${api_version}/webhooks`, Object.assign({ body }, options));
+        return this._client.post(path20`/${api_version}/webhooks`, Object.assign({ body }, options));
       }
       /**
        * Updates an existing Webhook.
        */
       update(id, params = {}, options) {
         const _a8 = params !== null && params !== void 0 ? params : {}, { api_version = this._client.apiVersion, update_mask } = _a8, body = __rest2(_a8, ["api_version", "update_mask"]);
-        return this._client.patch(path16`/${api_version}/webhooks/${id}`, Object.assign({ query: { update_mask }, body }, options));
+        return this._client.patch(path20`/${api_version}/webhooks/${id}`, Object.assign({ query: { update_mask }, body }, options));
       }
       /**
        * Lists all Webhooks.
        */
       list(params = {}, options) {
         const _a8 = params !== null && params !== void 0 ? params : {}, { api_version = this._client.apiVersion } = _a8, query = __rest2(_a8, ["api_version"]);
-        return this._client.get(path16`/${api_version}/webhooks`, Object.assign({ query }, options));
+        return this._client.get(path20`/${api_version}/webhooks`, Object.assign({ query }, options));
       }
       /**
        * Deletes a Webhook.
        */
       delete(id, params = {}, options) {
         const { api_version = this._client.apiVersion } = params !== null && params !== void 0 ? params : {};
-        return this._client.delete(path16`/${api_version}/webhooks/${id}`, options);
+        return this._client.delete(path20`/${api_version}/webhooks/${id}`, options);
       }
       /**
        * Gets a specific Webhook.
        */
       get(id, params = {}, options) {
         const { api_version = this._client.apiVersion } = params !== null && params !== void 0 ? params : {};
-        return this._client.get(path16`/${api_version}/webhooks/${id}`, options);
+        return this._client.get(path20`/${api_version}/webhooks/${id}`, options);
       }
       /**
        * Sends a ping event to a Webhook.
        */
       ping(id, params = void 0, options) {
         const { api_version = this._client.apiVersion, body } = params !== null && params !== void 0 ? params : {};
-        return this._client.post(path16`/${api_version}/webhooks/${id}:ping`, Object.assign({ body }, options));
+        return this._client.post(path20`/${api_version}/webhooks/${id}:ping`, Object.assign({ body }, options));
       }
       /**
        * Generates a new signing secret for a Webhook.
        */
       rotateSigningSecret(id, params = {}, options) {
         const _a8 = params !== null && params !== void 0 ? params : {}, { api_version = this._client.apiVersion } = _a8, body = __rest2(_a8, ["api_version"]);
-        return this._client.post(path16`/${api_version}/webhooks/${id}:rotateSigningSecret`, Object.assign({ body }, options));
+        return this._client.post(path20`/${api_version}/webhooks/${id}:rotateSigningSecret`, Object.assign({ body }, options));
       }
     };
     BaseWebhooks._key = Object.freeze(["webhooks"]);
@@ -64370,8 +67487,8 @@ ${underline}`);
     };
     APIPromise = class _APIPromise extends Promise {
       constructor(client, responsePromise, parseResponse = defaultParseResponse) {
-        super((resolve) => {
-          resolve(null);
+        super((resolve2) => {
+          resolve2(null);
         });
         this.responsePromise = responsePromise;
         this.parseResponse = parseResponse;
@@ -64549,9 +67666,9 @@ ${underline}`);
       makeStatusError(status, error51, message, headers) {
         return APIError.generate(status, error51, message, headers);
       }
-      buildURL(path21, query, defaultBaseURL) {
+      buildURL(path25, query, defaultBaseURL) {
         const baseURL = !this.baseURLOverridden() && defaultBaseURL || this.baseURL;
-        const url2 = isAbsoluteURL(path21) ? new URL(path21) : new URL(baseURL + (baseURL.endsWith("/") && path21.startsWith("/") ? path21.slice(1) : path21));
+        const url2 = isAbsoluteURL(path25) ? new URL(path25) : new URL(baseURL + (baseURL.endsWith("/") && path25.startsWith("/") ? path25.slice(1) : path25));
         const defaultQuery = this.defaultQuery();
         const pathQuery = Object.fromEntries(url2.searchParams);
         if (!isEmptyObj(defaultQuery) || !isEmptyObj(pathQuery)) {
@@ -64580,24 +67697,24 @@ ${underline}`);
        */
       async prepareRequest(request, { url: url2, options }) {
       }
-      get(path21, opts) {
-        return this.methodRequest("get", path21, opts);
+      get(path25, opts) {
+        return this.methodRequest("get", path25, opts);
       }
-      post(path21, opts) {
-        return this.methodRequest("post", path21, opts);
+      post(path25, opts) {
+        return this.methodRequest("post", path25, opts);
       }
-      patch(path21, opts) {
-        return this.methodRequest("patch", path21, opts);
+      patch(path25, opts) {
+        return this.methodRequest("patch", path25, opts);
       }
-      put(path21, opts) {
-        return this.methodRequest("put", path21, opts);
+      put(path25, opts) {
+        return this.methodRequest("put", path25, opts);
       }
-      delete(path21, opts) {
-        return this.methodRequest("delete", path21, opts);
+      delete(path25, opts) {
+        return this.methodRequest("delete", path25, opts);
       }
-      methodRequest(method, path21, opts) {
+      methodRequest(method, path25, opts) {
         return this.request(Promise.resolve(opts).then((opts2) => {
-          return Object.assign({ method, path: path21 }, opts2);
+          return Object.assign({ method, path: path25 }, opts2);
         }));
       }
       request(options, remainingRetries = null) {
@@ -64771,8 +67888,8 @@ ${underline}`);
       async buildRequest(inputOptions, { retryCount = 0 } = {}) {
         var _b, _c, _d;
         const options = Object.assign({}, inputOptions);
-        const { method, path: path21, query, defaultBaseURL } = options;
-        const url2 = this.buildURL(path21, query, defaultBaseURL);
+        const { method, path: path25, query, defaultBaseURL } = options;
+        const url2 = this.buildURL(path25, query, defaultBaseURL);
         if ("timeout" in options)
           validatePositiveInteger("timeout", options.timeout);
         options.timeout = (_b = options.timeout) !== null && _b !== void 0 ? _b : this.timeout;
@@ -64904,7 +68021,7 @@ ${underline}`);
         if (params.downloadPath) {
           const response = await downloadFile(params, apiClient);
           if (response instanceof HttpResponse) {
-            const writer = (0, import_fs15.createWriteStream)(params.downloadPath);
+            const writer = (0, import_fs18.createWriteStream)(params.downloadPath);
             const body = import_node_stream3.Readable.fromWeb(response.responseInternal.body);
             body.pipe(writer);
             await (0, import_promises2.finished)(writer);
@@ -64998,16 +68115,16 @@ ${underline}`);
       async getInternal(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = getTuningJobParametersToVertex(params);
-          path21 = formatMap2("{name}", body["_url"]);
+          path25 = formatMap2("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -65028,12 +68145,12 @@ ${underline}`);
           });
         } else {
           const body = getTuningJobParametersToMldev(params);
-          path21 = formatMap2("{name}", body["_url"]);
+          path25 = formatMap2("{name}", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -65057,16 +68174,16 @@ ${underline}`);
       async listInternal(params) {
         var _a8, _b;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = listTuningJobsParametersToVertex(params);
-          path21 = formatMap2("tuningJobs", body["_url"]);
+          path25 = formatMap2("tuningJobs", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "GET",
@@ -65105,16 +68222,16 @@ ${underline}`);
       async cancel(params) {
         var _a8, _b, _c, _d;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = cancelTuningJobParametersToVertex(params);
-          path21 = formatMap2("{name}:cancel", body["_url"]);
+          path25 = formatMap2("{name}:cancel", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -65137,12 +68254,12 @@ ${underline}`);
           });
         } else {
           const body = cancelTuningJobParametersToMldev(params);
-          path21 = formatMap2("{name}:cancel", body["_url"]);
+          path25 = formatMap2("{name}:cancel", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -65168,16 +68285,16 @@ ${underline}`);
       async tuneInternal(params) {
         var _a8, _b;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           const body = createTuningJobParametersPrivateToVertex(params, params);
-          path21 = formatMap2("tuningJobs", body["_url"]);
+          path25 = formatMap2("tuningJobs", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -65203,18 +68320,18 @@ ${underline}`);
       async tuneMldevInternal(params) {
         var _a8, _b;
         let response;
-        let path21 = "";
+        let path25 = "";
         let queryParams = {};
         if (this.apiClient.isVertexAI()) {
           throw new Error("This method is only supported by the Gemini Developer API.");
         } else {
           const body = createTuningJobParametersPrivateToMldev(params);
-          path21 = formatMap2("tunedModels", body["_url"]);
+          path25 = formatMap2("tunedModels", body["_url"]);
           queryParams = body["_query"];
           delete body["_url"];
           delete body["_query"];
           response = this.apiClient.request({
-            path: path21,
+            path: path25,
             queryParams,
             body: JSON.stringify(body),
             httpMethod: "POST",
@@ -65245,7 +68362,7 @@ ${underline}`);
       async stat(file2) {
         const fileStat = { size: 0, type: void 0 };
         if (typeof file2 === "string") {
-          const originalStat = await fs16.stat(file2);
+          const originalStat = await fs20.stat(file2);
           fileStat.size = originalStat.size;
           fileStat.type = this.inferMimeType(file2);
           return fileStat;
@@ -65393,7 +68510,7 @@ ${underline}`);
         let fileHandle;
         const fileName = path$1.basename(file2);
         try {
-          fileHandle = await fs16.open(file2, "r");
+          fileHandle = await fs20.open(file2, "r");
           if (!fileHandle) {
             throw new Error(`Failed to open file`);
           }
@@ -86156,14 +89273,14 @@ var require_util3 = __commonJS({
         }
         const port = url2.port != null ? url2.port : url2.protocol === "https:" ? 443 : 80;
         let origin = url2.origin != null ? url2.origin : `${url2.protocol || ""}//${url2.hostname || ""}:${port}`;
-        let path21 = url2.path != null ? url2.path : `${url2.pathname || ""}${url2.search || ""}`;
+        let path25 = url2.path != null ? url2.path : `${url2.pathname || ""}${url2.search || ""}`;
         if (origin[origin.length - 1] === "/") {
           origin = origin.slice(0, origin.length - 1);
         }
-        if (path21 && path21[0] !== "/") {
-          path21 = `/${path21}`;
+        if (path25 && path25[0] !== "/") {
+          path25 = `/${path25}`;
         }
-        return new URL(`${origin}${path21}`);
+        return new URL(`${origin}${path25}`);
       }
       if (!isHttpOrHttpsPrefixed(url2.origin || url2.protocol)) {
         throw new InvalidArgumentError("Invalid URL protocol: the URL must start with `http:` or `https:`.");
@@ -86984,9 +90101,9 @@ var require_diagnostics = __commonJS({
         "undici:client:sendHeaders",
         (evt) => {
           const {
-            request: { method, path: path21, origin }
+            request: { method, path: path25, origin }
           } = evt;
-          debugLog("sending request to %s %s%s", method, origin, path21);
+          debugLog("sending request to %s %s%s", method, origin, path25);
         }
       );
     }
@@ -87004,14 +90121,14 @@ var require_diagnostics = __commonJS({
         "undici:request:headers",
         (evt) => {
           const {
-            request: { method, path: path21, origin },
+            request: { method, path: path25, origin },
             response: { statusCode }
           } = evt;
           debugLog(
             "received response to %s %s%s - HTTP %d",
             method,
             origin,
-            path21,
+            path25,
             statusCode
           );
         }
@@ -87020,23 +90137,23 @@ var require_diagnostics = __commonJS({
         "undici:request:trailers",
         (evt) => {
           const {
-            request: { method, path: path21, origin }
+            request: { method, path: path25, origin }
           } = evt;
-          debugLog("trailers received from %s %s%s", method, origin, path21);
+          debugLog("trailers received from %s %s%s", method, origin, path25);
         }
       );
       diagnosticsChannel.subscribe(
         "undici:request:error",
         (evt) => {
           const {
-            request: { method, path: path21, origin },
+            request: { method, path: path25, origin },
             error: error51
           } = evt;
           debugLog(
             "request to %s %s%s errored - %s",
             method,
             origin,
-            path21,
+            path25,
             error51.message
           );
         }
@@ -87151,7 +90268,7 @@ var require_request = __commonJS({
     var kHandler = Symbol("handler");
     var Request2 = class {
       constructor(origin, {
-        path: path21,
+        path: path25,
         method,
         body,
         headers,
@@ -87168,11 +90285,11 @@ var require_request = __commonJS({
         maxRedirections,
         typeOfService
       }, handler) {
-        if (typeof path21 !== "string") {
+        if (typeof path25 !== "string") {
           throw new InvalidArgumentError("path must be a string");
-        } else if (path21[0] !== "/" && !(path21.startsWith("http://") || path21.startsWith("https://")) && method !== "CONNECT") {
+        } else if (path25[0] !== "/" && !(path25.startsWith("http://") || path25.startsWith("https://")) && method !== "CONNECT") {
           throw new InvalidArgumentError("path must be an absolute URL or start with a slash");
-        } else if (invalidPathRegex.test(path21)) {
+        } else if (invalidPathRegex.test(path25)) {
           throw new InvalidArgumentError("invalid request path");
         }
         if (typeof method !== "string") {
@@ -87247,7 +90364,7 @@ var require_request = __commonJS({
         this.completed = false;
         this.aborted = false;
         this.upgrade = upgrade || null;
-        this.path = query ? serializePathWithQuery(path21, query) : path21;
+        this.path = query ? serializePathWithQuery(path25, query) : path25;
         this.origin = origin;
         this.protocol = getProtocolFromUrlString(origin);
         this.idempotent = idempotent == null ? method === "HEAD" || method === "GET" : idempotent;
@@ -87751,9 +90868,9 @@ var require_dispatcher_base = __commonJS({
       }
       close(callback) {
         if (callback === void 0) {
-          return new Promise((resolve, reject) => {
+          return new Promise((resolve2, reject) => {
             this.close((err, data2) => {
-              return err ? reject(err) : resolve(data2);
+              return err ? reject(err) : resolve2(data2);
             });
           });
         }
@@ -87791,9 +90908,9 @@ var require_dispatcher_base = __commonJS({
           err = null;
         }
         if (callback === void 0) {
-          return new Promise((resolve, reject) => {
+          return new Promise((resolve2, reject) => {
             this.destroy(err, (err2, data2) => {
-              return err2 ? reject(err2) : resolve(data2);
+              return err2 ? reject(err2) : resolve2(data2);
             });
           });
         }
@@ -91290,8 +94407,8 @@ var require_promise = __commonJS({
     function createDeferredPromise() {
       let res;
       let rej;
-      const promise2 = new Promise((resolve, reject) => {
-        res = resolve;
+      const promise2 = new Promise((resolve2, reject) => {
+        res = resolve2;
         rej = reject;
       });
       return { promise: promise2, resolve: res, reject: rej };
@@ -92430,7 +95547,7 @@ var require_client_h1 = __commonJS({
       return method !== "GET" && method !== "HEAD" && method !== "OPTIONS" && method !== "TRACE" && method !== "CONNECT";
     }
     function writeH1(client, request) {
-      const { method, path: path21, host, upgrade, blocking, reset } = request;
+      const { method, path: path25, host, upgrade, blocking, reset } = request;
       let { body, headers, contentLength } = request;
       const expectsPayload = method === "PUT" || method === "POST" || method === "PATCH" || method === "QUERY" || method === "PROPFIND" || method === "PROPPATCH";
       if (util.isFormDataLike(body)) {
@@ -92508,7 +95625,7 @@ var require_client_h1 = __commonJS({
       if (socket.setTypeOfService) {
         socket.setTypeOfService(request.typeOfService);
       }
-      let header = `${method} ${path21} HTTP/1.1\r
+      let header = `${method} ${path25} HTTP/1.1\r
 `;
       if (typeof host === "string") {
         header += `host: ${host}\r
@@ -92695,12 +95812,12 @@ upgrade: ${upgrade}\r
           cb();
         }
       }
-      const waitForDrain = () => new Promise((resolve, reject) => {
+      const waitForDrain = () => new Promise((resolve2, reject) => {
         assert2(callback === null);
         if (socket[kError]) {
           reject(socket[kError]);
         } else {
-          callback = resolve;
+          callback = resolve2;
         }
       });
       socket.on("close", onDrain).on("drain", onDrain);
@@ -93161,7 +96278,7 @@ var require_client_h2 = __commonJS({
     function writeH2(client, request) {
       const requestTimeout = request.bodyTimeout ?? client[kBodyTimeout];
       const session2 = client[kHTTP2Session];
-      const { method, path: path21, host, upgrade, expectContinue, signal, protocol: protocol2, headers: reqHeaders } = request;
+      const { method, path: path25, host, upgrade, expectContinue, signal, protocol: protocol2, headers: reqHeaders } = request;
       let { body } = request;
       if (upgrade != null && upgrade !== "websocket") {
         util.errorRequest(client, request, new InvalidArgumentError(`Custom upgrade "${upgrade}" not supported over HTTP/2`));
@@ -93229,7 +96346,7 @@ var require_client_h2 = __commonJS({
           }
           headers[HTTP2_HEADER_METHOD] = "CONNECT";
           headers[HTTP2_HEADER_PROTOCOL] = "websocket";
-          headers[HTTP2_HEADER_PATH] = path21;
+          headers[HTTP2_HEADER_PATH] = path25;
           if (protocol2 === "ws:" || protocol2 === "wss:") {
             headers[HTTP2_HEADER_SCHEME] = protocol2 === "ws:" ? "http" : "https";
           } else {
@@ -93270,7 +96387,7 @@ var require_client_h2 = __commonJS({
         stream.setTimeout(requestTimeout);
         return true;
       }
-      headers[HTTP2_HEADER_PATH] = path21;
+      headers[HTTP2_HEADER_PATH] = path25;
       headers[HTTP2_HEADER_SCHEME] = protocol2 === "http:" ? "http" : "https";
       const expectsPayload = method === "PUT" || method === "POST" || method === "PATCH";
       if (body && typeof body.read === "function") {
@@ -93545,12 +96662,12 @@ var require_client_h2 = __commonJS({
           cb();
         }
       }
-      const waitForDrain = () => new Promise((resolve, reject) => {
+      const waitForDrain = () => new Promise((resolve2, reject) => {
         assert2(callback === null);
         if (socket[kError]) {
           reject(socket[kError]);
         } else {
-          callback = resolve;
+          callback = resolve2;
         }
       });
       h2stream.on("close", onDrain).on("drain", onDrain);
@@ -93866,16 +96983,16 @@ var require_client = __commonJS({
         return this[kNeedDrain] < 2;
       }
       [kClose]() {
-        return new Promise((resolve) => {
+        return new Promise((resolve2) => {
           if (this[kSize]) {
-            this[kClosedResolve] = resolve;
+            this[kClosedResolve] = resolve2;
           } else {
-            resolve(null);
+            resolve2(null);
           }
         });
       }
       [kDestroy](err) {
-        return new Promise((resolve) => {
+        return new Promise((resolve2) => {
           const requests = this[kQueue].splice(this[kPendingIdx]);
           for (let i2 = 0; i2 < requests.length; i2++) {
             const request = requests[i2];
@@ -93886,7 +97003,7 @@ var require_client = __commonJS({
               this[kClosedResolve]();
               this[kClosedResolve] = null;
             }
-            resolve(null);
+            resolve2(null);
           };
           if (this[kHTTPContext]) {
             this[kHTTPContext].destroy(err, callback);
@@ -94291,8 +97408,8 @@ var require_pool_base = __commonJS({
           }
           return Promise.all(closeAll);
         } else {
-          return new Promise((resolve) => {
-            this[kClosedResolve] = resolve;
+          return new Promise((resolve2) => {
+            this[kClosedResolve] = resolve2;
           });
         }
       }
@@ -95409,7 +98526,7 @@ var require_socks5_proxy_agent = __commonJS({
         const proxyHost = this[kProxyUrl].hostname;
         const proxyPort = parseInt(this[kProxyUrl].port) || 1080;
         debug("creating SOCKS5 connection to", proxyHost, proxyPort);
-        const socket = await new Promise((resolve, reject) => {
+        const socket = await new Promise((resolve2, reject) => {
           this[kConnector]({
             hostname: proxyHost,
             host: proxyHost,
@@ -95419,7 +98536,7 @@ var require_socks5_proxy_agent = __commonJS({
             if (err) {
               reject(err);
             } else {
-              resolve(socket2);
+              resolve2(socket2);
             }
           });
         });
@@ -95429,14 +98546,14 @@ var require_socks5_proxy_agent = __commonJS({
           socket.destroy();
         });
         await socks5Client.handshake();
-        await new Promise((resolve, reject) => {
+        await new Promise((resolve2, reject) => {
           const timeout = setTimeout(() => {
             reject(new Error("SOCKS5 authentication timeout"));
           }, 5e3);
           const onAuthenticated = () => {
             clearTimeout(timeout);
             socks5Client.removeListener("error", onError);
-            resolve();
+            resolve2();
           };
           const onError = (err) => {
             clearTimeout(timeout);
@@ -95445,14 +98562,14 @@ var require_socks5_proxy_agent = __commonJS({
           };
           if (socks5Client.state === STATES.AUTHENTICATED) {
             clearTimeout(timeout);
-            resolve();
+            resolve2();
           } else {
             socks5Client.once("authenticated", onAuthenticated);
             socks5Client.once("error", onError);
           }
         });
         await socks5Client.connect(targetHost, targetPort);
-        await new Promise((resolve, reject) => {
+        await new Promise((resolve2, reject) => {
           const timeout = setTimeout(() => {
             reject(new Error("SOCKS5 connection timeout"));
           }, 5e3);
@@ -95460,7 +98577,7 @@ var require_socks5_proxy_agent = __commonJS({
             debug("SOCKS5 tunnel established to", targetHost, targetPort, "via", info);
             clearTimeout(timeout);
             socks5Client.removeListener("error", onError);
-            resolve();
+            resolve2();
           };
           const onError = (err) => {
             clearTimeout(timeout);
@@ -95503,8 +98620,8 @@ var require_socks5_proxy_agent = __commonJS({
                       socket,
                       servername: this[kRequestTls]?.servername || targetHost
                     });
-                    await new Promise((resolve, reject) => {
-                      finalSocket.once("secureConnect", resolve);
+                    await new Promise((resolve2, reject) => {
+                      finalSocket.once("secureConnect", resolve2);
                       finalSocket.once("error", reject);
                     });
                   }
@@ -95613,10 +98730,10 @@ var require_proxy_agent = __commonJS({
         };
         const {
           origin,
-          path: path21 = "/",
+          path: path25 = "/",
           headers = {}
         } = opts;
-        opts.path = origin + path21;
+        opts.path = origin + path25;
         if (!("host" in headers) && !("Host" in headers)) {
           const { host } = new URL(origin);
           headers.host = host;
@@ -95775,18 +98892,18 @@ var require_proxy_agent = __commonJS({
         }
       }
       [kClose]() {
-        const promises = [this[kAgent].close()];
+        const promises2 = [this[kAgent].close()];
         if (this[kClient]) {
-          promises.push(this[kClient].close());
+          promises2.push(this[kClient].close());
         }
-        return Promise.all(promises);
+        return Promise.all(promises2);
       }
       [kDestroy]() {
-        const promises = [this[kAgent].destroy()];
+        const promises2 = [this[kAgent].destroy()];
         if (this[kClient]) {
-          promises.push(this[kClient].destroy());
+          promises2.push(this[kClient].destroy());
         }
-        return Promise.all(promises);
+        return Promise.all(promises2);
       }
     };
     function buildHeaders2(headers) {
@@ -96560,7 +99677,7 @@ var require_readable = __commonJS({
         if (this._readableState.closeEmitted) {
           return Promise.resolve(null);
         }
-        return new Promise((resolve, reject) => {
+        return new Promise((resolve2, reject) => {
           if (this[kContentLength] && this[kContentLength] > limit || this[kBytesRead] > limit) {
             this.destroy(new AbortError3());
           }
@@ -96574,11 +99691,11 @@ var require_readable = __commonJS({
               if (signal.aborted) {
                 reject(signal.reason ?? new AbortError3());
               } else {
-                resolve(null);
+                resolve2(null);
               }
             });
           } else {
-            this.on("close", resolve);
+            this.on("close", resolve2);
           }
           this.on("error", noop3).on("data", () => {
             if (this[kBytesRead] > limit) {
@@ -96606,7 +99723,7 @@ var require_readable = __commonJS({
     }
     function consume(stream, type) {
       assert2(!stream[kConsume]);
-      return new Promise((resolve, reject) => {
+      return new Promise((resolve2, reject) => {
         if (isUnusable(stream)) {
           const rState = stream._readableState;
           if (rState.destroyed && rState.closeEmitted === false) {
@@ -96621,7 +99738,7 @@ var require_readable = __commonJS({
             stream[kConsume] = {
               type,
               stream,
-              resolve,
+              resolve: resolve2,
               reject,
               length: 0,
               body: []
@@ -96695,18 +99812,18 @@ var require_readable = __commonJS({
       return buffer;
     }
     function consumeEnd(consume2, encoding) {
-      const { type, body, resolve, stream, length } = consume2;
+      const { type, body, resolve: resolve2, stream, length } = consume2;
       try {
         if (type === "text") {
-          resolve(chunksDecode(body, length, encoding));
+          resolve2(chunksDecode(body, length, encoding));
         } else if (type === "json") {
-          resolve(JSON.parse(chunksDecode(body, length, encoding)));
+          resolve2(JSON.parse(chunksDecode(body, length, encoding)));
         } else if (type === "arrayBuffer") {
-          resolve(chunksConcat(body, length).buffer);
+          resolve2(chunksConcat(body, length).buffer);
         } else if (type === "blob") {
-          resolve(new Blob(body, { type: stream[kContentType] }));
+          resolve2(new Blob(body, { type: stream[kContentType] }));
         } else if (type === "bytes") {
-          resolve(chunksConcat(body, length));
+          resolve2(chunksConcat(body, length));
         }
         consumeFinish(consume2);
       } catch (err) {
@@ -96896,9 +100013,9 @@ var require_api_request = __commonJS({
     };
     function request(opts, callback) {
       if (callback === void 0) {
-        return new Promise((resolve, reject) => {
+        return new Promise((resolve2, reject) => {
           request.call(this, opts, (err, data2) => {
-            return err ? reject(err) : resolve(data2);
+            return err ? reject(err) : resolve2(data2);
           });
         });
       }
@@ -97110,9 +100227,9 @@ var require_api_stream = __commonJS({
     };
     function stream(opts, factory, callback) {
       if (callback === void 0) {
-        return new Promise((resolve, reject) => {
+        return new Promise((resolve2, reject) => {
           stream.call(this, opts, factory, (err, data2) => {
-            return err ? reject(err) : resolve(data2);
+            return err ? reject(err) : resolve2(data2);
           });
         });
       }
@@ -97400,9 +100517,9 @@ var require_api_upgrade = __commonJS({
     };
     function upgrade(opts, callback) {
       if (callback === void 0) {
-        return new Promise((resolve, reject) => {
+        return new Promise((resolve2, reject) => {
           upgrade.call(this, opts, (err, data2) => {
-            return err ? reject(err) : resolve(data2);
+            return err ? reject(err) : resolve2(data2);
           });
         });
       }
@@ -97495,9 +100612,9 @@ var require_api_connect = __commonJS({
     };
     function connect(opts, callback) {
       if (callback === void 0) {
-        return new Promise((resolve, reject) => {
+        return new Promise((resolve2, reject) => {
           connect.call(this, opts, (err, data2) => {
-            return err ? reject(err) : resolve(data2);
+            return err ? reject(err) : resolve2(data2);
           });
         });
       }
@@ -97699,20 +100816,20 @@ var require_mock_utils = __commonJS({
       }
       return normalizedQp;
     }
-    function safeUrl(path21) {
-      if (typeof path21 !== "string") {
-        return path21;
+    function safeUrl(path25) {
+      if (typeof path25 !== "string") {
+        return path25;
       }
-      const pathSegments = path21.split("?", 3);
+      const pathSegments = path25.split("?", 3);
       if (pathSegments.length !== 2) {
-        return path21;
+        return path25;
       }
       const qp = new URLSearchParams(pathSegments.pop());
       qp.sort();
       return [...pathSegments, qp.toString()].join("?");
     }
-    function matchKey(mockDispatch2, { path: path21, method, body, headers }) {
-      const pathMatch = matchValue(mockDispatch2.path, path21);
+    function matchKey(mockDispatch2, { path: path25, method, body, headers }) {
+      const pathMatch = matchValue(mockDispatch2.path, path25);
       const methodMatch = matchValue(mockDispatch2.method, method);
       const bodyMatch = typeof mockDispatch2.body !== "undefined" ? matchValue(mockDispatch2.body, body) : true;
       const headersMatch = matchHeaders(mockDispatch2, headers);
@@ -97737,8 +100854,8 @@ var require_mock_utils = __commonJS({
       const basePath = key.query ? serializePathWithQuery(key.path, key.query) : key.path;
       const resolvedPath = typeof basePath === "string" ? safeUrl(basePath) : basePath;
       const resolvedPathWithoutTrailingSlash = removeTrailingSlash(resolvedPath);
-      let matchedMockDispatches = mockDispatches.filter(({ consumed }) => !consumed).filter(({ path: path21, ignoreTrailingSlash }) => {
-        return ignoreTrailingSlash ? matchValue(removeTrailingSlash(safeUrl(path21)), resolvedPathWithoutTrailingSlash) : matchValue(safeUrl(path21), resolvedPath);
+      let matchedMockDispatches = mockDispatches.filter(({ consumed }) => !consumed).filter(({ path: path25, ignoreTrailingSlash }) => {
+        return ignoreTrailingSlash ? matchValue(removeTrailingSlash(safeUrl(path25)), resolvedPathWithoutTrailingSlash) : matchValue(safeUrl(path25), resolvedPath);
       });
       if (matchedMockDispatches.length === 0) {
         throw new MockNotMatchedError(`Mock dispatch not matched for path '${resolvedPath}'`);
@@ -97777,19 +100894,19 @@ var require_mock_utils = __commonJS({
         mockDispatches.splice(index2, 1);
       }
     }
-    function removeTrailingSlash(path21) {
-      while (path21.endsWith("/")) {
-        path21 = path21.slice(0, -1);
+    function removeTrailingSlash(path25) {
+      while (path25.endsWith("/")) {
+        path25 = path25.slice(0, -1);
       }
-      if (path21.length === 0) {
-        path21 = "/";
+      if (path25.length === 0) {
+        path25 = "/";
       }
-      return path21;
+      return path25;
     }
     function buildKey(opts) {
-      const { path: path21, method, body, headers, query } = opts;
+      const { path: path25, method, body, headers, query } = opts;
       return {
-        path: path21,
+        path: path25,
         method,
         body,
         headers,
@@ -98479,10 +101596,10 @@ var require_pending_interceptors_formatter = __commonJS({
       }
       format(pendingInterceptors) {
         const withPrettyHeaders = pendingInterceptors.map(
-          ({ method, path: path21, data: { statusCode }, persist, times, timesInvoked, origin }) => ({
+          ({ method, path: path25, data: { statusCode }, persist, times, timesInvoked, origin }) => ({
             Method: method,
             Origin: origin,
-            Path: path21,
+            Path: path25,
             "Status code": statusCode,
             Persistent: persist ? PERSISTENT : NOT_PERSISTENT,
             Invocations: timesInvoked,
@@ -98564,9 +101681,9 @@ var require_mock_agent = __commonJS({
         const acceptNonStandardSearchParameters = this[kMockAgentAcceptsNonStandardSearchParameters];
         const dispatchOpts = { ...opts };
         if (acceptNonStandardSearchParameters && dispatchOpts.path) {
-          const [path21, searchParams] = dispatchOpts.path.split("?");
+          const [path25, searchParams] = dispatchOpts.path.split("?");
           const normalizedSearchParams = normalizeSearchParams(searchParams, acceptNonStandardSearchParameters);
-          dispatchOpts.path = `${path21}?${normalizedSearchParams}`;
+          dispatchOpts.path = `${path25}?${normalizedSearchParams}`;
         }
         return this[kAgent].dispatch(dispatchOpts, handler);
       }
@@ -98694,8 +101811,8 @@ var require_snapshot_utils = __commonJS({
         match: new Set(matchHeaders.map((header) => caseSensitive ? header : header.toLowerCase()))
       };
     }
-    var crypto13 = runtimeFeatures.has("crypto") ? require("node:crypto") : null;
-    var hashId = crypto13?.hash ? (value) => crypto13.hash("sha256", value, "base64url") : (value) => Buffer.from(value).toString("base64url");
+    var crypto15 = runtimeFeatures.has("crypto") ? require("node:crypto") : null;
+    var hashId = crypto15?.hash ? (value) => crypto15.hash("sha256", value, "base64url") : (value) => Buffer.from(value).toString("base64url");
     function isUndiciHeaders(headers) {
       return Array.isArray(headers) && (headers.length & 1) === 0;
     }
@@ -98771,7 +101888,7 @@ var require_snapshot_recorder = __commonJS({
   "node_modules/undici/lib/mock/snapshot-recorder.js"(exports2, module2) {
     "use strict";
     var { writeFile: writeFile2, readFile, mkdir } = require("node:fs/promises");
-    var { dirname, resolve } = require("node:path");
+    var { dirname, resolve: resolve2 } = require("node:path");
     var { setTimeout: setTimeout2, clearTimeout: clearTimeout2 } = require("node:timers");
     var { InvalidArgumentError, UndiciError } = require_errors2();
     var { hashId, isUrlExcludedFactory, normalizeHeaders: normalizeHeaders2, createHeaderFilters } = require_snapshot_utils();
@@ -98967,12 +102084,12 @@ var require_snapshot_recorder = __commonJS({
        * @return {Promise<void>} - Resolves when snapshots are loaded
        */
       async loadSnapshots(filePath) {
-        const path21 = filePath || this.#snapshotPath;
-        if (!path21) {
+        const path25 = filePath || this.#snapshotPath;
+        if (!path25) {
           throw new InvalidArgumentError("Snapshot path is required");
         }
         try {
-          const data2 = await readFile(resolve(path21), "utf8");
+          const data2 = await readFile(resolve2(path25), "utf8");
           const parsed = JSON.parse(data2);
           if (Array.isArray(parsed)) {
             this.#snapshots.clear();
@@ -98986,7 +102103,7 @@ var require_snapshot_recorder = __commonJS({
           if (error51.code === "ENOENT") {
             this.#snapshots.clear();
           } else {
-            throw new UndiciError(`Failed to load snapshots from ${path21}`, { cause: error51 });
+            throw new UndiciError(`Failed to load snapshots from ${path25}`, { cause: error51 });
           }
         }
       }
@@ -98997,11 +102114,11 @@ var require_snapshot_recorder = __commonJS({
        * @returns {Promise<void>} - Resolves when snapshots are saved
        */
       async saveSnapshots(filePath) {
-        const path21 = filePath || this.#snapshotPath;
-        if (!path21) {
+        const path25 = filePath || this.#snapshotPath;
+        if (!path25) {
           throw new InvalidArgumentError("Snapshot path is required");
         }
-        const resolvedPath = resolve(path21);
+        const resolvedPath = resolve2(path25);
         await mkdir(dirname(resolvedPath), { recursive: true });
         const data2 = Array.from(this.#snapshots.entries()).map(([hash2, snapshot]) => ({
           hash: hash2,
@@ -99633,15 +102750,15 @@ var require_redirect_handler = __commonJS({
           return;
         }
         const { origin, pathname, search: search2 } = util.parseURL(new URL(this.location, this.opts.origin && new URL(this.opts.path, this.opts.origin)));
-        const path21 = search2 ? `${pathname}${search2}` : pathname;
-        const redirectUrlString = `${origin}${path21}`;
+        const path25 = search2 ? `${pathname}${search2}` : pathname;
+        const redirectUrlString = `${origin}${path25}`;
         for (const historyUrl of this.history) {
           if (historyUrl.toString() === redirectUrlString) {
             throw new InvalidArgumentError(`Redirect loop detected. Cannot redirect to ${origin}. This typically happens when using a Client or Pool with cross-origin redirects. Use an Agent for cross-origin redirects.`);
           }
         }
         this.opts.headers = cleanRequestHeaders(this.opts.headers, statusCode === 303, this.opts.origin !== origin);
-        this.opts.path = path21;
+        this.opts.path = path25;
         this.opts.origin = origin;
         this.opts.query = null;
       }
@@ -101410,10 +104527,10 @@ var require_cache_handler = __commonJS({
       }
       return locationUrl.pathname + locationUrl.search;
     }
-    function deleteCachedUri(store2, cacheKey, path21) {
+    function deleteCachedUri(store2, cacheKey, path25) {
       deleteCachedValue(store2, {
         ...cacheKey,
-        path: path21
+        path: path25
       });
       for (let i2 = 0; i2 < util.safeHTTPMethods.length; i2++) {
         const method = util.safeHTTPMethods[i2];
@@ -101421,7 +104538,7 @@ var require_cache_handler = __commonJS({
           deleteCachedValue(store2, {
             ...cacheKey,
             method,
-            path: path21
+            path: path25
           });
         }
       }
@@ -101432,9 +104549,9 @@ var require_cache_handler = __commonJS({
       }
       const values = Array.isArray(headerValue) ? headerValue : [headerValue];
       for (let i2 = 0; i2 < values.length; i2++) {
-        const path21 = getSameOriginPath(cacheKey, values[i2]);
-        if (path21 !== void 0) {
-          deleteCachedUri(store2, cacheKey, path21);
+        const path25 = getSameOriginPath(cacheKey, values[i2]);
+        if (path25 !== void 0) {
+          deleteCachedUri(store2, cacheKey, path25);
         }
       }
     }
@@ -105224,10 +108341,10 @@ var require_subresource_integrity = __commonJS({
     var assert2 = require("node:assert");
     var { runtimeFeatures } = require_runtime_features();
     var validSRIHashAlgorithmTokenSet = /* @__PURE__ */ new Map([["sha256", 0], ["sha384", 1], ["sha512", 2]]);
-    var crypto13;
+    var crypto15;
     if (runtimeFeatures.has("crypto")) {
-      crypto13 = require("node:crypto");
-      const cryptoHashes = crypto13.getHashes();
+      crypto15 = require("node:crypto");
+      const cryptoHashes = crypto15.getHashes();
       if (cryptoHashes.length === 0) {
         validSRIHashAlgorithmTokenSet.clear();
       }
@@ -105317,7 +108434,7 @@ var require_subresource_integrity = __commonJS({
       return result;
     }
     var applyAlgorithmToBytes = (algorithm, bytes) => {
-      return crypto13.hash(algorithm, bytes, "base64");
+      return crypto15.hash(algorithm, bytes, "base64");
     };
     function caseSensitiveMatch(actualValue, expectedValue) {
       let actualValueLength = actualValue.length;
@@ -106312,11 +109429,11 @@ var require_fetch2 = __commonJS({
       function dispatch({ body }) {
         const url2 = requestCurrentURL(request);
         const agent = fetchParams.controller.dispatcher;
-        const path21 = url2.pathname + url2.search;
+        const path25 = url2.pathname + url2.search;
         const hasTrailingQuestionMark = url2.search.length === 0 && url2.href[url2.href.length - url2.hash.length - 1] === "?";
-        return new Promise((resolve, reject) => agent.dispatch(
+        return new Promise((resolve2, reject) => agent.dispatch(
           {
-            path: hasTrailingQuestionMark ? `${path21}?` : path21,
+            path: hasTrailingQuestionMark ? `${path25}?` : path25,
             origin: url2.origin,
             method: request.method,
             body: agent.isMockActive ? request.body && (request.body.source || request.body.stream) : body,
@@ -106402,7 +109519,7 @@ var require_fetch2 = __commonJS({
                 }
               }
               const onError = this.onError.bind(this);
-              resolve({
+              resolve2({
                 status,
                 statusText,
                 headersList,
@@ -106455,7 +109572,7 @@ var require_fetch2 = __commonJS({
                   headersList.append(headerName, String(value), true);
                 }
               }
-              resolve({
+              resolve2({
                 status,
                 statusText: STATUS_CODES[status],
                 headersList,
@@ -106479,7 +109596,7 @@ var require_fetch2 = __commonJS({
                   headersList.append(nameStr, value.toString("latin1"), true);
                 }
               }
-              resolve({
+              resolve2({
                 status,
                 statusText: STATUS_CODES[status],
                 headersList,
@@ -107263,9 +110380,9 @@ var require_util6 = __commonJS({
         }
       }
     }
-    function validateCookiePath(path21) {
-      for (let i2 = 0; i2 < path21.length; ++i2) {
-        const code = path21.charCodeAt(i2);
+    function validateCookiePath(path25) {
+      for (let i2 = 0; i2 < path25.length; ++i2) {
+        const code = path25.charCodeAt(i2);
         if (code < 32 || // exclude CTLs (0-31)
         code > 126 || // exclude DEL and non-ascii
         code === 59) {
@@ -108300,7 +111417,7 @@ var require_connection = __commonJS({
     var { WebsocketFrameSend } = require_frame();
     var assert2 = require("node:assert");
     var { runtimeFeatures } = require_runtime_features();
-    var crypto13 = runtimeFeatures.has("crypto") ? require("node:crypto") : null;
+    var crypto15 = runtimeFeatures.has("crypto") ? require("node:crypto") : null;
     var warningEmitted = false;
     function establishWebSocketConnection(url2, protocols, client, handler, options) {
       const requestURL = url2;
@@ -108320,7 +111437,7 @@ var require_connection = __commonJS({
         const headersList = getHeadersList(new Headers3(options.headers));
         request.headersList = headersList;
       }
-      const keyValue = crypto13.randomBytes(16).toString("base64");
+      const keyValue = crypto15.randomBytes(16).toString("base64");
       request.headersList.append("sec-websocket-key", keyValue, true);
       request.headersList.append("sec-websocket-version", "13", true);
       for (const protocol2 of protocols) {
@@ -108360,7 +111477,7 @@ var require_connection = __commonJS({
             return;
           }
           const secWSAccept = response.headersList.get("Sec-WebSocket-Accept");
-          const digest = crypto13.hash("sha1", keyValue + uid, "base64");
+          const digest = crypto15.hash("sha1", keyValue + uid, "base64");
           if (secWSAccept !== digest) {
             failWebsocketConnection(handler, 1002, "Incorrect hash received in Sec-WebSocket-Accept header.");
             return;
@@ -110502,11 +113619,11 @@ var require_undici = __commonJS({
           if (typeof opts.path !== "string") {
             throw new InvalidArgumentError("invalid opts.path");
           }
-          let path21 = opts.path;
+          let path25 = opts.path;
           if (!opts.path.startsWith("/")) {
-            path21 = `/${path21}`;
+            path25 = `/${path25}`;
           }
-          url2 = new URL(util.parseOrigin(url2).origin + path21);
+          url2 = new URL(util.parseOrigin(url2).origin + path25);
         } else {
           if (!opts) {
             opts = typeof url2 === "object" ? url2 : {};
@@ -110976,9 +114093,9 @@ __export(ai_agent_exports, {
 });
 function getGeminiToken() {
   try {
-    const cfgPath = import_path16.default.join(import_electron18.app.getPath("userData"), "supabase-config.json");
-    if (import_fs16.default.existsSync(cfgPath)) {
-      const cfg = JSON.parse(import_fs16.default.readFileSync(cfgPath, "utf-8"));
+    const cfgPath = import_path19.default.join(import_electron22.app.getPath("userData"), "supabase-config.json");
+    if (import_fs19.default.existsSync(cfgPath)) {
+      const cfg = JSON.parse(import_fs19.default.readFileSync(cfgPath, "utf-8"));
       if (!cfg.geminiKey) return null;
       return cfg.geminiKey.startsWith("enc:v1:") ? decryptStandardSecret(cfg.geminiKey) : cfg.geminiKey;
     }
@@ -111070,15 +114187,15 @@ ${competitorText}
     throw new Error(`AI Analysis Failed: ${error51.message}`);
   }
 }
-var import_fs16, import_path16, import_electron18;
+var import_fs19, import_path19, import_electron22;
 var init_ai_agent = __esm({
   "electron/ai-agent.ts"() {
     "use strict";
     init_node();
     init_esm11();
-    import_fs16 = __toESM(require("fs"), 1);
-    import_path16 = __toESM(require("path"), 1);
-    import_electron18 = require("electron");
+    import_fs19 = __toESM(require("fs"), 1);
+    import_path19 = __toESM(require("path"), 1);
+    import_electron22 = require("electron");
     init_secure_storage();
   }
 });
@@ -111088,14 +114205,14 @@ var MediaProtocolService_exports = {};
 __export(MediaProtocolService_exports, {
   MediaProtocolService: () => MediaProtocolService
 });
-var import_electron19, import_fs17, import_path17, import_crypto11, import_url, MIME_MAP, MediaProtocolService;
+var import_electron23, import_fs20, import_path20, import_crypto13, import_url, MIME_MAP, MediaProtocolService;
 var init_MediaProtocolService = __esm({
   "electron/services/media/MediaProtocolService.ts"() {
     "use strict";
-    import_electron19 = require("electron");
-    import_fs17 = __toESM(require("fs"), 1);
-    import_path17 = __toESM(require("path"), 1);
-    import_crypto11 = __toESM(require("crypto"), 1);
+    import_electron23 = require("electron");
+    import_fs20 = __toESM(require("fs"), 1);
+    import_path20 = __toESM(require("path"), 1);
+    import_crypto13 = __toESM(require("crypto"), 1);
     import_url = require("url");
     init_supabase();
     MIME_MAP = {
@@ -111118,10 +114235,10 @@ var init_MediaProtocolService = __esm({
       cacheDir;
       isInitialized = false;
       constructor() {
-        const userData = import_electron19.app?.getPath ? import_electron19.app.getPath("userData") : import_path17.default.join(process.env.APPDATA || process.cwd(), "le-soft");
-        this.cacheDir = import_path17.default.join(userData, "image-cache");
+        const userData = import_electron23.app?.getPath ? import_electron23.app.getPath("userData") : import_path20.default.join(process.env.APPDATA || process.cwd(), "le-soft");
+        this.cacheDir = import_path20.default.join(userData, "image-cache");
         try {
-          import_fs17.default.mkdirSync(this.cacheDir, { recursive: true });
+          import_fs20.default.mkdirSync(this.cacheDir, { recursive: true });
         } catch {
         }
       }
@@ -111136,7 +114253,7 @@ var init_MediaProtocolService = __esm({
        */
       static registerSchemeAsPrivileged() {
         try {
-          import_electron19.protocol.registerSchemesAsPrivileged([
+          import_electron23.protocol.registerSchemesAsPrivileged([
             {
               scheme: "app-media",
               privileges: {
@@ -111159,7 +114276,7 @@ var init_MediaProtocolService = __esm({
       initialize() {
         if (this.isInitialized) return;
         this.isInitialized = true;
-        import_electron19.protocol.handle("app-media", async (request) => {
+        import_electron23.protocol.handle("app-media", async (request) => {
           const urlStr = request.url;
           try {
             const urlObj = new URL(urlStr);
@@ -111186,19 +114303,19 @@ var init_MediaProtocolService = __esm({
           if (/^\/[a-zA-Z]:/.test(cleanPath)) {
             cleanPath = cleanPath.slice(1);
           }
-          cleanPath = import_path17.default.normalize(cleanPath);
+          cleanPath = import_path20.default.normalize(cleanPath);
         }
-        if (!import_fs17.default.existsSync(cleanPath)) {
+        if (!import_fs20.default.existsSync(cleanPath)) {
           return new Response("File Not Found", { status: 404 });
         }
-        const stat3 = import_fs17.default.statSync(cleanPath);
+        const stat3 = import_fs20.default.statSync(cleanPath);
         if (stat3.isDirectory()) {
           return new Response("Cannot serve directory", { status: 403 });
         }
-        const ext = import_path17.default.extname(cleanPath).toLowerCase();
+        const ext = import_path20.default.extname(cleanPath).toLowerCase();
         const mimeType = MIME_MAP[ext] || "application/octet-stream";
         const fileUrl = (0, import_url.pathToFileURL)(cleanPath).toString();
-        const response = await import_electron19.net.fetch(fileUrl);
+        const response = await import_electron23.net.fetch(fileUrl);
         const newHeaders = new Headers(response.headers);
         newHeaders.set("Content-Type", mimeType);
         newHeaders.set("Cache-Control", "max-age=86400");
@@ -111234,17 +114351,17 @@ var init_MediaProtocolService = __esm({
           return new Response("Invalid remote URL", { status: 400 });
         }
         const cleanSubPath = isNas ? decodeURIComponent(rawPath).replace(/^\//, "") : "";
-        const ext = import_path17.default.extname(isNas ? cleanSubPath : new URL(targetUrl).pathname).toLowerCase() || ".webp";
+        const ext = import_path20.default.extname(isNas ? cleanSubPath : new URL(targetUrl).pathname).toLowerCase() || ".webp";
         const cacheKey = isNas ? `nas:${cleanSubPath}` : targetUrl;
-        const cacheHash = import_crypto11.default.createHash("sha256").update(cacheKey).digest("hex").slice(0, 32);
-        const cacheFile = import_path17.default.join(this.cacheDir, `${cacheHash}${ext}`);
-        if (import_fs17.default.existsSync(cacheFile)) {
+        const cacheHash = import_crypto13.default.createHash("sha256").update(cacheKey).digest("hex").slice(0, 32);
+        const cacheFile = import_path20.default.join(this.cacheDir, `${cacheHash}${ext}`);
+        if (import_fs20.default.existsSync(cacheFile)) {
           try {
-            const stat3 = import_fs17.default.statSync(cacheFile);
+            const stat3 = import_fs20.default.statSync(cacheFile);
             if (stat3.size > 0) {
               const mimeType = MIME_MAP[ext] || "image/webp";
               const fileUrl = (0, import_url.pathToFileURL)(cacheFile).toString();
-              const cachedResponse = await import_electron19.net.fetch(fileUrl);
+              const cachedResponse = await import_electron23.net.fetch(fileUrl);
               const headers = new Headers(cachedResponse.headers);
               headers.set("Content-Type", mimeType);
               headers.set("X-Cache-Status", "HIT");
@@ -111270,7 +114387,7 @@ var init_MediaProtocolService = __esm({
               const timeoutId = setTimeout(() => controller.abort(), 2500);
               let res;
               try {
-                res = await import_electron19.net.fetch(candidateUrl, {
+                res = await import_electron23.net.fetch(candidateUrl, {
                   headers: fetchHeaders,
                   signal: controller.signal
                 });
@@ -111287,7 +114404,7 @@ var init_MediaProtocolService = __esm({
               clearTimeout(timeoutId);
               if (res.ok && res.status === 200) {
                 const buffer = Buffer.from(await res.arrayBuffer());
-                import_fs17.default.promises.writeFile(cacheFile, buffer).catch((err) => {
+                import_fs20.default.promises.writeFile(cacheFile, buffer).catch((err) => {
                   console.warn("[MediaProtocol] Failed to cache image:", err.message);
                 });
                 const mimeType = res.headers.get("content-type") || MIME_MAP[ext] || "image/webp";
@@ -111309,13 +114426,13 @@ var init_MediaProtocolService = __esm({
           return new Response(`NAS storage error: ${lastErrorMsg}`, { status: lastStatus });
         } else {
           try {
-            const res = await import_electron19.net.fetch(targetUrl);
+            const res = await import_electron23.net.fetch(targetUrl);
             if (!res.ok) {
               console.warn(`[MediaProtocol] ${urlObj.href} \u2192 resolved: remote_http \u2192 response: ${res.status} \u2192 cache: MISS`);
               return new Response(`Remote error: HTTP ${res.status}`, { status: res.status });
             }
             const buffer = Buffer.from(await res.arrayBuffer());
-            import_fs17.default.promises.writeFile(cacheFile, buffer).catch(() => {
+            import_fs20.default.promises.writeFile(cacheFile, buffer).catch(() => {
             });
             const mimeType = res.headers.get("content-type") || MIME_MAP[ext] || "image/webp";
             const headers = new Headers();
@@ -111362,16 +114479,16 @@ var init_MediaProtocolService = __esm({
             } else if (u.hostname === "nas") {
               const cleanSub = decodeURIComponent(u.pathname).replace(/^\//, "");
               const cacheKey = `nas:${cleanSub}`;
-              const ext = import_path17.default.extname(cleanSub).toLowerCase() || ".webp";
-              const cacheHash = import_crypto11.default.createHash("sha256").update(cacheKey).digest("hex").slice(0, 32);
-              const cacheFile = import_path17.default.join(this.cacheDir, `${cacheHash}${ext}`);
-              if (import_fs17.default.existsSync(cacheFile) && import_fs17.default.statSync(cacheFile).size > 0) {
+              const ext = import_path20.default.extname(cleanSub).toLowerCase() || ".webp";
+              const cacheHash = import_crypto13.default.createHash("sha256").update(cacheKey).digest("hex").slice(0, 32);
+              const cacheFile = import_path20.default.join(this.cacheDir, `${cacheHash}${ext}`);
+              if (import_fs20.default.existsSync(cacheFile) && import_fs20.default.statSync(cacheFile).size > 0) {
                 return {
                   sourceType: "nas_storage",
                   normalizedSource: `https://storage.lenas.me/${cleanSub}`,
                   exists: true,
                   httpStatus: 200,
-                  fileSize: import_fs17.default.statSync(cacheFile).size,
+                  fileSize: import_fs20.default.statSync(cacheFile).size,
                   loadDurationMs: Date.now() - t0
                 };
               }
@@ -111382,7 +114499,7 @@ var init_MediaProtocolService = __esm({
                 const candidateUrl = `${base.replace(/\/$/, "")}/${encodedSub}`;
                 try {
                   const isTunnel = candidateUrl.includes("storage.lenas.me");
-                  const res = await import_electron19.net.fetch(candidateUrl, {
+                  const res = await import_electron23.net.fetch(candidateUrl, {
                     method: "HEAD",
                     headers: isTunnel ? { ...cfHeaders } : {}
                   });
@@ -111410,6 +114527,11 @@ var init_MediaProtocolService = __esm({
           }
         }
         if (/^https?:\/\//i.test(trimmed)) {
+          if (trimmed.includes(":8080")) {
+            const subPath = trimmed.replace(/^https?:\/\/[^\/]+:(?:8080|8081)\/?/i, "");
+            const cleanSub = decodeURIComponent(subPath).replace(/^\//, "");
+            return this.diagnoseImage(`app-media://nas/${encodeURI(cleanSub)}`);
+          }
           const isNas = trimmed.includes("storage.lenas.me") || trimmed.includes(":8081");
           const isSupabase = trimmed.includes(".supabase.co/storage");
           const sourceType = isNas ? "nas_storage" : isSupabase ? "supabase_storage" : "remote_http";
@@ -111421,7 +114543,7 @@ var init_MediaProtocolService = __esm({
           }
           try {
             const cfHeaders = isNas && typeof getCfAccessHeaders === "function" ? getCfAccessHeaders() : {};
-            const res = await import_electron19.net.fetch(trimmed, { method: "HEAD", headers: cfHeaders });
+            const res = await import_electron23.net.fetch(trimmed, { method: "HEAD", headers: cfHeaders });
             const duration3 = Date.now() - t0;
             return {
               sourceType,
@@ -111448,14 +114570,14 @@ var init_MediaProtocolService = __esm({
         if (process.platform === "win32" && /^\/[a-zA-Z]:/.test(localPath)) {
           localPath = localPath.slice(1);
         }
-        localPath = import_path17.default.normalize(localPath);
+        localPath = import_path20.default.normalize(localPath);
         const sanitizedPath = localPath.replace(/Users\\[^\\]+/i, "Users\\[USER]");
-        const exists = import_fs17.default.existsSync(localPath);
+        const exists = import_fs20.default.existsSync(localPath);
         let fileSize;
         let failureReason;
         if (exists) {
           try {
-            fileSize = import_fs17.default.statSync(localPath).size;
+            fileSize = import_fs20.default.statSync(localPath).size;
           } catch (e2) {
             failureReason = "stat_failed: " + e2.message;
           }
@@ -111476,9 +114598,9 @@ var init_MediaProtocolService = __esm({
 });
 
 // electron/main.ts
-var import_electron21 = require("electron");
-var import_fs19 = __toESM(require("fs"), 1);
-var import_path19 = __toESM(require("path"), 1);
+var import_electron25 = require("electron");
+var import_fs22 = __toESM(require("fs"), 1);
+var import_path22 = __toESM(require("path"), 1);
 var import_electron_updater2 = require("electron-updater");
 
 // electron/database.ts
@@ -111494,14 +114616,14 @@ var initDB = async () => {
 };
 
 // electron/offline-db.ts
-var import_better_sqlite3 = __toESM(require("better-sqlite3"), 1);
-var import_path6 = __toESM(require("path"), 1);
-var import_electron6 = require("electron");
+var import_better_sqlite33 = __toESM(require("better-sqlite3"), 1);
+var import_path10 = __toESM(require("path"), 1);
+var import_electron10 = require("electron");
 var db = null;
 async function initOfflineDB() {
   if (db) return;
-  const dbPath = import_path6.default.join(import_electron6.app.getPath("userData"), "lesoft_offline.db");
-  db = new import_better_sqlite3.default(dbPath);
+  const dbPath = import_path10.default.join(import_electron10.app.getPath("userData"), "lesoft_offline.db");
+  db = new import_better_sqlite33.default(dbPath);
   db.pragma("journal_mode = WAL");
   db.exec(`
         CREATE TABLE IF NOT EXISTS table_cache (
@@ -111549,61 +114671,23 @@ async function loadTableCache(tableName) {
   }
   return [];
 }
-async function enqueueOfflineWrite(op) {
-  if (!db) return;
-  try {
-    const stmt = db.prepare(`
-            INSERT INTO sync_queue (id, table_name, operation, payload_json, created_at, retry_count)
-            VALUES (?, ?, ?, ?, ?, 0)
-        `);
-    stmt.run(op.id, op.table, op.operation, JSON.stringify(op.payload), Date.now());
-    console.log(`[OfflineDB] Enqueued offline write: ${op.operation} on ${op.table}`);
-  } catch (e2) {
-    console.error(`[OfflineDB] Failed to enqueue offline write:`, e2.message);
-  }
-}
-async function getPendingWrites() {
-  if (!db) return [];
-  try {
-    const rows = db.prepare(`SELECT * FROM sync_queue ORDER BY created_at ASC`).all();
-    return rows.map((r2) => ({
-      id: r2.id,
-      table: r2.table_name,
-      operation: r2.operation,
-      payload: JSON.parse(r2.payload_json),
-      created_at: r2.created_at,
-      retry_count: r2.retry_count
-    }));
-  } catch (e2) {
-    console.error(`[OfflineDB] Failed to get pending writes:`, e2.message);
-    return [];
-  }
-}
-async function removePendingWrite(id) {
-  if (!db) return;
-  db.prepare(`DELETE FROM sync_queue WHERE id = ?`).run(id);
-}
-async function incrementRetryCount(id) {
-  if (!db) return;
-  db.prepare(`UPDATE sync_queue SET retry_count = retry_count + 1 WHERE id = ?`).run(id);
-}
 
 // electron/device-monitor.ts
-var import_electron7 = require("electron");
+var import_electron11 = require("electron");
 var import_electron_updater = require("electron-updater");
 var import_os3 = __toESM(require("os"), 1);
-var import_path7 = __toESM(require("path"), 1);
-var import_fs6 = __toESM(require("fs"), 1);
-var import_crypto6 = require("crypto");
+var import_path11 = __toESM(require("path"), 1);
+var import_fs10 = __toESM(require("fs"), 1);
+var import_crypto9 = require("crypto");
 init_supabase();
 function getMachineId2() {
-  const idFile = import_path7.default.join(import_electron7.app.getPath("userData"), ".device-id");
-  if (import_fs6.default.existsSync(idFile)) {
-    return import_fs6.default.readFileSync(idFile, "utf-8").trim();
+  const idFile = import_path11.default.join(import_electron11.app.getPath("userData"), ".device-id");
+  if (import_fs10.default.existsSync(idFile)) {
+    return import_fs10.default.readFileSync(idFile, "utf-8").trim();
   }
   const raw = `${import_os3.default.hostname()}-${import_os3.default.platform()}-${import_os3.default.userInfo().username}`;
-  const id = (0, import_crypto6.createHash)("sha256").update(raw).digest("hex").substring(0, 32);
-  import_fs6.default.writeFileSync(idFile, id, "utf-8");
+  const id = (0, import_crypto9.createHash)("sha256").update(raw).digest("hex").substring(0, 32);
+  import_fs10.default.writeFileSync(idFile, id, "utf-8");
   return id;
 }
 var DEVICE_ID = getMachineId2();
@@ -111622,7 +114706,7 @@ function getLocalIP() {
 }
 async function registerDevice(username) {
   const { version: version4 } = JSON.parse(
-    import_fs6.default.readFileSync(import_path7.default.join(import_electron7.app.getAppPath(), "package.json"), "utf-8")
+    import_fs10.default.readFileSync(import_path11.default.join(import_electron11.app.getAppPath(), "package.json"), "utf-8")
   );
   const payload = {
     device_id: DEVICE_ID,
@@ -111674,311 +114758,29 @@ function startBroadcastListener() {
 }
 
 // electron/ipc-handlers.ts
-var import_electron20 = require("electron");
-var import_path18 = __toESM(require("path"), 1);
-var import_fs18 = __toESM(require("fs"), 1);
+var import_electron24 = require("electron");
+var import_path21 = __toESM(require("path"), 1);
+var import_fs21 = __toESM(require("fs"), 1);
 var import_os5 = __toESM(require("os"), 1);
-var import_crypto12 = __toESM(require("crypto"), 1);
+var import_crypto14 = __toESM(require("crypto"), 1);
 var import_bcryptjs2 = __toESM(require("bcryptjs"), 1);
 init_supabase();
+init_DurableOutboxService();
+init_DurableUploadService();
+init_SupabaseQuotaManager();
+init_ConsolidatedHealthEngine();
 var import_promise = __toESM(require("mysql2/promise"), 1);
 init_license_manager();
-
-// electron/field-encryption.ts
-var import_crypto7 = __toESM(require("crypto"), 1);
-var import_fs7 = __toESM(require("fs"), 1);
-var import_path8 = __toESM(require("path"), 1);
-init_secure_storage();
-var CIPHER_GCM2 = "aes-256-gcm";
-var V3_PREFIX = "e3:";
-var V1_PREFIX = "e1:";
-var V2_CBC_PREFIX = "e2:";
-var SALT_LEN = 16;
-var IV_LEN = 12;
-var TAG_LEN = 16;
-var HKDF_INFO = Buffer.from("lesoft-field-encryption-v3", "utf-8");
-var MASTER_SEED_FILE = ".field-master-seed.key";
-var LEGACY_SALT = import_crypto7.default.createHash("sha256").update("lesoft-e2e-salt-v1").digest();
-var _masterKey = null;
-var _legacyE1Key = null;
-function getLicenseKey() {
-  try {
-    const cfgPath = import_path8.default.join(getUserDataPath(), "supabase-config.json");
-    if (import_fs7.default.existsSync(cfgPath)) {
-      const raw = import_fs7.default.readFileSync(cfgPath, "utf-8");
-      const cfg = JSON.parse(raw);
-      const key = cfg.serviceRoleKey || cfg.anonKey;
-      if (key && typeof key === "string") {
-        return key.startsWith("enc:v1:") ? decryptStandardSecret(key) : key;
-      }
-    }
-  } catch {
-  }
-  return "";
-}
-function getOrCreateMachineMasterSeed() {
-  const keyPath = import_path8.default.join(getUserDataPath(), MASTER_SEED_FILE);
-  if (import_fs7.default.existsSync(keyPath)) {
-    try {
-      const fileContent = import_fs7.default.readFileSync(keyPath, "utf-8");
-      const decryptedHex = decryptStandardSecret(fileContent);
-      const seedBuf = Buffer.from(decryptedHex, "hex");
-      if (seedBuf.length === 32) {
-        return seedBuf;
-      }
-    } catch (err) {
-      console.warn("[FieldEncryption] Error reading protected master seed, generating new one:", err);
-    }
-  }
-  const newSeed = import_crypto7.default.randomBytes(32);
-  try {
-    const encryptedEnvelope = encryptStandardSecret(newSeed.toString("hex"));
-    import_fs7.default.writeFileSync(keyPath, encryptedEnvelope, { encoding: "utf-8", mode: 384 });
-    try {
-      import_fs7.default.chmodSync(keyPath, 384);
-    } catch {
-    }
-  } catch (err) {
-    console.error("[FieldEncryption] Failed to persist protected master seed:", err);
-  }
-  return newSeed;
-}
-function initEncryptionKey() {
-  const licenseKey = getLicenseKey();
-  const machineSeed = getOrCreateMachineMasterSeed();
-  const legacyIkm = licenseKey || "default-lesoft-key";
-  _legacyE1Key = import_crypto7.default.createHmac("sha256", LEGACY_SALT).update(legacyIkm).digest();
-  const ikm = Buffer.concat([
-    machineSeed,
-    Buffer.from(licenseKey || "lesoft-v3-root", "utf-8")
-  ]);
-  const masterSalt = import_crypto7.default.createHash("sha256").update(machineSeed).digest();
-  _masterKey = import_crypto7.default.hkdfSync("sha256", ikm, masterSalt, Buffer.from("lesoft-field-master-v3", "utf-8"), 32);
-  console.log("[Encryption] Master field encryption key initialized.");
-}
-function getMasterKey() {
-  if (!_masterKey) initEncryptionKey();
-  return _masterKey;
-}
-function getLegacyE1Key() {
-  if (!_legacyE1Key) initEncryptionKey();
-  return _legacyE1Key;
-}
-function clearEncryptionKey() {
-  _masterKey = null;
-  _legacyE1Key = null;
-  console.log("[Encryption] Keys cleared from memory.");
-}
-function encryptField(text3) {
-  if (!text3) return text3 || "";
-  const masterKey = getMasterKey();
-  try {
-    const salt = import_crypto7.default.randomBytes(SALT_LEN);
-    const iv = import_crypto7.default.randomBytes(IV_LEN);
-    const recordKey = import_crypto7.default.hkdfSync("sha256", masterKey, salt, HKDF_INFO, 32);
-    const cipher = import_crypto7.default.createCipheriv(CIPHER_GCM2, recordKey, iv);
-    const ciphertextBuf = Buffer.concat([
-      cipher.update(text3, "utf8"),
-      cipher.final()
-    ]);
-    const tag = cipher.getAuthTag();
-    const combined = Buffer.concat([salt, iv, tag, ciphertextBuf]);
-    return `${V3_PREFIX}${combined.toString("base64")}`;
-  } catch (e2) {
-    console.error("[Encrypt] V3 GCM encryption failed:", e2);
-    throw e2;
-  }
-}
-function decryptField(encryptedText) {
-  if (!encryptedText || typeof encryptedText !== "string") {
-    return encryptedText || "";
-  }
-  if (encryptedText.startsWith(V3_PREFIX)) {
-    try {
-      const masterKey = getMasterKey();
-      const combined = Buffer.from(encryptedText.slice(V3_PREFIX.length), "base64");
-      if (combined.length < SALT_LEN + IV_LEN + TAG_LEN) {
-        console.warn("[Decrypt e3] Payload length too short.");
-        return encryptedText;
-      }
-      const salt = combined.subarray(0, SALT_LEN);
-      const iv = combined.subarray(SALT_LEN, SALT_LEN + IV_LEN);
-      const tag = combined.subarray(SALT_LEN + IV_LEN, SALT_LEN + IV_LEN + TAG_LEN);
-      const ciphertext = combined.subarray(SALT_LEN + IV_LEN + TAG_LEN);
-      const recordKey = import_crypto7.default.hkdfSync("sha256", masterKey, salt, HKDF_INFO, 32);
-      const decipher = import_crypto7.default.createDecipheriv(CIPHER_GCM2, recordKey, iv);
-      decipher.setAuthTag(tag);
-      return decipher.update(ciphertext).toString("utf8") + decipher.final("utf8");
-    } catch (err) {
-      console.warn("[Decrypt e3] GCM authentication verification failed (tampered ciphertext or invalid key).");
-      return encryptedText;
-    }
-  }
-  if (encryptedText.startsWith(V1_PREFIX)) {
-    try {
-      const legacyKey = getLegacyE1Key();
-      const combined = Buffer.from(encryptedText.slice(V1_PREFIX.length), "base64");
-      if (combined.length < IV_LEN + TAG_LEN) {
-        console.warn("[Decrypt e1] Payload length too short.");
-        return encryptedText;
-      }
-      const iv = combined.subarray(0, IV_LEN);
-      const tag = combined.subarray(IV_LEN, IV_LEN + TAG_LEN);
-      const ciphertext = combined.subarray(IV_LEN + TAG_LEN);
-      const decipher = import_crypto7.default.createDecipheriv(CIPHER_GCM2, legacyKey, iv);
-      decipher.setAuthTag(tag);
-      return decipher.update(ciphertext).toString("utf8") + decipher.final("utf8");
-    } catch {
-      console.warn("[Decrypt e1] GCM auth failed \u2014 key mismatch or tampered data.");
-      return encryptedText;
-    }
-  }
-  if (encryptedText.startsWith(V2_CBC_PREFIX)) {
-    try {
-      const legacyKey = getLegacyE1Key();
-      const parts = encryptedText.split(":");
-      if (parts.length !== 3) return encryptedText;
-      const iv = Buffer.from(parts[1], "hex");
-      const decipher = import_crypto7.default.createDecipheriv("aes-256-cbc", legacyKey, iv);
-      let decrypted = decipher.update(parts[2], "hex", "utf8");
-      decrypted += decipher.final("utf8");
-      return decrypted;
-    } catch (e2) {
-      console.error("[Decrypt e2] CBC decryption failed:", e2.message);
-      return encryptedText;
-    }
-  }
-  return encryptedText;
-}
-var SKIP_KEYS = /* @__PURE__ */ new Set([
-  "id",
-  "auth_id",
-  "user_id",
-  "employee_id",
-  "customer_id",
-  "bill_id",
-  "group_id",
-  "order_id",
-  "sender_id",
-  "receiver_id",
-  "product_id",
-  "created_at",
-  "updated_at",
-  "last_active",
-  "date",
-  "check_in",
-  "check_out",
-  "from_date",
-  "to_date",
-  "month",
-  "delivery_date",
-  "paid_at",
-  "invoice_date",
-  "is_active",
-  "email_confirm",
-  "is_read",
-  "is_online",
-  "is_visible",
-  "password_hash",
-  // already hashed
-  "permissions",
-  // JSONB
-  "le_local_id",
-  // mysql sync key
-  // Linkages and Search keys (PlainText for indexability and reliability)
-  "username",
-  "full_name",
-  "role",
-  "invoice_number",
-  "sku",
-  "name",
-  "phone",
-  "email",
-  "product_name",
-  "customer_name",
-  "platform",
-  "status",
-  "type",
-  "device_type",
-  "employee_code",
-  "crm_state"
-]);
-function encryptObject(obj) {
-  if (!obj || typeof obj !== "object") return obj;
-  const result = {};
-  for (const [k, v] of Object.entries(obj)) {
-    if (v === null || v === void 0 || SKIP_KEYS.has(k)) {
-      result[k] = v;
-    } else if (typeof v === "string" && v.length > 0) {
-      result[k] = encryptField(v);
-    } else if (typeof v === "number") {
-      result[k] = v;
-    } else if (typeof v === "boolean") {
-      result[k] = v;
-    } else if (typeof v === "object") {
-      result[k] = encryptField(JSON.stringify(v));
-    } else {
-      result[k] = v;
-    }
-  }
-  return result;
-}
-function decryptObject(obj) {
-  if (!obj || typeof obj !== "object") return obj;
-  const result = {};
-  for (const [k, v] of Object.entries(obj)) {
-    if (typeof v === "string" && (v.startsWith(V3_PREFIX) || v.startsWith(V1_PREFIX) || v.startsWith(V2_CBC_PREFIX))) {
-      const plain = decryptField(v);
-      if (plain.startsWith("{") || plain.startsWith("[")) {
-        try {
-          result[k] = JSON.parse(plain);
-        } catch {
-          result[k] = plain;
-        }
-      } else if (!isNaN(Number(plain)) && plain.trim() !== "") {
-        result[k] = Number(plain);
-      } else {
-        result[k] = plain;
-      }
-    } else {
-      result[k] = v;
-    }
-  }
-  return result;
-}
-function decryptRows(rows) {
-  if (!rows || !Array.isArray(rows)) return [];
-  return rows.map(decryptObject);
-}
-async function decryptRowsAsync(rows, chunkSize = 200) {
-  if (!rows || !Array.isArray(rows)) return [];
-  const result = [];
-  for (let i2 = 0; i2 < rows.length; i2 += chunkSize) {
-    const chunk = rows.slice(i2, i2 + chunkSize);
-    result.push(...chunk.map(decryptObject));
-    await new Promise((resolve) => setImmediate(resolve));
-  }
-  return result;
-}
-async function encryptRowsAsync(rows, chunkSize = 200) {
-  if (!rows || !Array.isArray(rows)) return [];
-  const result = [];
-  for (let i2 = 0; i2 < rows.length; i2 += chunkSize) {
-    const chunk = rows.slice(i2, i2 + chunkSize);
-    result.push(...chunk.map(encryptObject));
-    await new Promise((resolve) => setImmediate(resolve));
-  }
-  return result;
-}
+init_field_encryption();
 
 // electron/write-queue.ts
-var import_electron8 = require("electron");
+var import_electron12 = require("electron");
 init_supabase();
+init_field_encryption();
+init_DurableOutboxService();
+init_SupabaseQuotaManager();
 var queue = [];
-var MAX_QUEUE_SIZE = 2e3;
-var MAX_RETRIES = 4;
 var DRAIN_INTERVAL_MS = 300;
-var FLUSH_TIMEOUT_MS = 15e3;
 var drainTimer = null;
 var isFlushing = false;
 var _seq = 0;
@@ -111986,9 +114788,10 @@ function nextId() {
   return `q-${Date.now()}-${++_seq}`;
 }
 function broadcastStatus() {
-  const pending = queue.length;
+  const stats = DurableOutboxService.getInstance().getOutboxStats();
+  const pending = stats.totalPending;
   try {
-    import_electron8.BrowserWindow.getAllWindows().forEach((win) => {
+    import_electron12.BrowserWindow.getAllWindows().forEach((win) => {
       if (!win.isDestroyed()) {
         win.webContents.send("write-queue-status", { pending });
       }
@@ -111997,180 +114800,78 @@ function broadcastStatus() {
   }
 }
 function enqueue(entry) {
-  if (queue.length >= MAX_QUEUE_SIZE) {
-    console.warn("[WriteQueue] Queue full! Dropping oldest entry.");
-    queue.shift();
-  }
-  const id = nextId();
+  const id = entry.id || nextId();
   const newEntry = { ...entry, id, retries: 0, enqueuedAt: Date.now() };
-  queue.push(newEntry);
-  enqueueOfflineWrite({
-    id: newEntry.id,
-    table: newEntry.table,
-    operation: newEntry.operation,
-    payload: newEntry.data || newEntry.filter || {}
-  }).catch(() => {
-  });
+  try {
+    DurableOutboxService.getInstance().enqueueSingle({
+      id: newEntry.id,
+      entityType: newEntry.table,
+      operation: newEntry.operation === "custom" ? "insert" : newEntry.operation,
+      payload: newEntry.data || {},
+      filter: newEntry.filter,
+      upsertConflict: newEntry.upsertConflict,
+      primaryKeyCol: newEntry.upsertConflict || "id",
+      dependencyOpId: newEntry.dependencyOpId,
+      metadata: newEntry.metadata
+    });
+  } catch (err) {
+    console.error("[WriteQueue] Failed durable outbox enqueue! Surfacing failure:", err.message);
+    entry.onError?.(err);
+    throw new Error(`[WriteQueue] Failed durable outbox persistence for ${entry.table}: ${err.message}`);
+  }
+  if (newEntry.onSuccess || newEntry.onError) {
+    DurableOutboxService.getInstance().registerCallbacks(newEntry.id, {
+      onSuccess: newEntry.onSuccess,
+      onError: newEntry.onError
+    });
+  }
   broadcastStatus();
   return id;
 }
-async function executeWriteOnClient(client, entry, encData) {
-  const { table, operation, filter: filter4, upsertConflict, data: data2 } = entry;
-  if (operation === "insert") {
-    if (table === "bills") {
-      const res2 = await client.from(table).upsert(encData, { onConflict: "invoice_number" });
-      return res2.error;
-    }
-    const res = await client.from(table).insert(encData);
-    return res.error;
-  } else if (operation === "upsert") {
-    const res = await client.from(table).upsert(
-      encData,
-      upsertConflict ? { onConflict: upsertConflict } : void 0
-    );
-    return res.error;
-  } else if (operation === "update" && filter4) {
-    let q = client.from(table).update(encData);
-    for (const f3 of filter4) q = q.eq(f3.column, f3.value);
-    const res = await q;
-    return res.error;
-  } else if (operation === "delete" && filter4) {
-    let q = client.from(table).delete();
-    for (const f3 of filter4) q = q.eq(f3.column, f3.value);
-    const res = await q;
-    return res.error;
-  } else if (operation === "custom" && table === "bill_shipping") {
-    const d = data2;
-    const { data: b } = await client.from("bills").select("id").eq("invoice_number", d.invoice_number).maybeSingle();
-    const realBillId = b?.id || d.bill_id;
-    const { data: sh, error: shErr } = await client.from("bill_shipping").upsert({
-      bill_id: realBillId,
-      ship_to_name: d.ship_to_name,
-      ship_to_address: d.ship_to_address,
-      ship_to_phone: d.ship_to_phone || "",
-      ship_from_name: d.ship_from_name || "",
-      ship_from_address: d.ship_from_address || "",
-      shipping_charge: d.shipping_charge || 0,
-      updated_by: d.updated_by,
-      status: "pending_payment"
-    }, { onConflict: "bill_id" }).select("id").single();
-    if (shErr) return shErr;
-    if (sh) {
-      await client.from("shipping_status_log").insert({
-        shipment_id: sh.id,
-        bill_id: realBillId,
-        status: "pending_payment",
-        note: "Shipping order created",
-        updated_by: d.updated_by,
-        updated_by_role: d.user_role || "cashier"
-      });
-      await client.from("system_audit_log").insert({
-        module: "Shipping",
-        action: "SHIPPING_CREATED",
-        entity_type: "bill",
-        entity_id: String(realBillId),
-        description: `Shipping added. Destination: ${d.ship_to_address}`,
-        new_value: JSON.stringify(d),
-        performed_by: d.updated_by
-      });
-    }
-    return null;
-  }
-  return null;
-}
-async function processEntry(entry) {
-  try {
-    const { table, data: data2 } = entry;
-    const encData = Array.isArray(data2) ? await encryptRowsAsync(data2, 100) : data2 ? encryptObject(data2) : void 0;
-    const { nas, supabase: sb, active } = getDbClients();
-    const targets = [];
-    if (nas) targets.push({ name: "NAS", client: nas });
-    if (sb) targets.push({ name: "Supabase", client: sb });
-    if (targets.length === 0) {
-      throw new Error("No database clients initialized");
-    }
-    let primaryFailed = false;
-    let primaryError = null;
-    await Promise.all(targets.map(async ({ name, client }) => {
-      try {
-        const error51 = await executeWriteOnClient(client, entry, encData);
-        if (error51) {
-          console.error(`[WriteQueue] Write to ${name} failed:`, error51.message);
-          if (client === active) {
-            primaryFailed = true;
-            primaryError = error51;
-          }
-        }
-      } catch (ex) {
-        console.error(`[WriteQueue] Exception during write to ${name}:`, ex.message);
-        if (client === active) {
-          primaryFailed = true;
-          primaryError = ex;
-        }
+function enqueueGraph(entries) {
+  if (!entries || entries.length === 0) return [];
+  const mappedEntries = entries.map((entry) => {
+    const id = entry.id || nextId();
+    return {
+      id,
+      entry,
+      outboxOp: {
+        id,
+        entityType: entry.table,
+        operation: entry.operation === "custom" ? "insert" : entry.operation,
+        payload: entry.data || {},
+        filter: entry.filter,
+        upsertConflict: entry.upsertConflict,
+        primaryKeyCol: entry.upsertConflict || "id",
+        dependencyOpId: entry.dependencyOpId,
+        metadata: entry.metadata
       }
-    }));
-    if (primaryFailed) {
-      throw primaryError || new Error("Primary database write failed");
-    }
-    await removePendingWrite(entry.id).catch(() => {
-    });
-    entry.onSuccess?.({ success: true });
-    try {
-      import_electron8.BrowserWindow.getAllWindows().forEach((win) => {
-        if (!win.isDestroyed()) {
-          win.webContents.send("data-updated", entry.table);
-        }
-      });
-    } catch {
-    }
-  } catch (err) {
-    entry.retries++;
-    await incrementRetryCount(entry.id).catch(() => {
-    });
-    if (entry.retries < MAX_RETRIES) {
-      const delay = Math.min(1e3 * Math.pow(2, entry.retries - 1), 8e3);
-      console.warn(`[WriteQueue] Retry ${entry.retries}/${MAX_RETRIES} for ${entry.table} in ${delay}ms`);
-      setTimeout(() => queue.push(entry), delay);
-    } else {
-      console.error(`[WriteQueue] Permanently failed after ${MAX_RETRIES} retries:`, entry.table, err.message);
-      entry.onError?.(err);
-    }
-  }
-}
-async function drain() {
-  if (queue.length === 0) return;
-  const batch = queue.splice(0, 10);
-  broadcastStatus();
-  await Promise.allSettled(batch.map(processEntry));
-}
-async function startQueue() {
-  if (drainTimer) return;
+    };
+  });
   try {
-    const pending = await getPendingWrites();
-    for (const p of pending) {
-      if (!queue.find((q) => q.id === p.id)) {
-        queue.push({
-          id: p.id,
-          table: p.table,
-          operation: p.operation,
-          data: p.operation === "insert" || p.operation === "upsert" ? p.payload : void 0,
-          filter: p.operation === "update" || p.operation === "delete" ? p.payload : void 0,
-          retries: p.retry_count || 0,
-          enqueuedAt: p.created_at || Date.now()
+    const generatedIds = DurableOutboxService.getInstance().enqueueBatch(mappedEntries.map((m2) => m2.outboxOp));
+    mappedEntries.forEach((m2) => {
+      if (m2.entry.onSuccess || m2.entry.onError) {
+        DurableOutboxService.getInstance().registerCallbacks(m2.id, {
+          onSuccess: m2.entry.onSuccess,
+          onError: m2.entry.onError
         });
       }
-    }
-    if (pending.length > 0) {
-      console.log(`[WriteQueue] Restored ${pending.length} pending offline writes from SQLite.`);
-      broadcastStatus();
-    }
-  } catch (e2) {
-    console.error("[WriteQueue] Failed to load pending offline writes:", e2.message);
+    });
+    broadcastStatus();
+    return generatedIds;
+  } catch (err) {
+    console.error("[WriteQueue] Failed atomic enqueueGraph transaction:", err.message);
+    throw new Error(`[WriteQueue] Failed atomic enqueueGraph persistence: ${err.message}`);
   }
-  drainTimer = setInterval(drain, DRAIN_INTERVAL_MS);
-  console.log("[WriteQueue] Started. Draining every", DRAIN_INTERVAL_MS, "ms.");
+}
+async function startQueue() {
+  DurableOutboxService.getInstance().startWorker(DRAIN_INTERVAL_MS);
+  console.log("[WriteQueue] Started via authoritative DurableOutboxService. Draining every", DRAIN_INTERVAL_MS, "ms.");
+  broadcastStatus();
 }
 function stopQueue() {
+  DurableOutboxService.getInstance().stopWorker();
   if (drainTimer) {
     clearInterval(drainTimer);
     drainTimer = null;
@@ -112180,17 +114881,9 @@ async function flush() {
   if (isFlushing) return;
   isFlushing = true;
   stopQueue();
-  console.log(`[WriteQueue] Flushing ${queue.length} pending writes before quit...`);
-  const deadline = Date.now() + FLUSH_TIMEOUT_MS;
-  while (queue.length > 0 && Date.now() < deadline) {
-    const batch = queue.splice(0, 20);
-    await Promise.allSettled(batch.map(processEntry));
-  }
-  if (queue.length > 0) {
-    console.warn(`[WriteQueue] Flushed with ${queue.length} writes still pending (timeout).`);
-  } else {
-    console.log("[WriteQueue] All writes flushed successfully.");
-  }
+  console.log("[WriteQueue] Flushing pending durable writes before quit...");
+  await DurableOutboxService.getInstance().drainNextBatch(100);
+  console.log("[WriteQueue] All durable writes flushed successfully.");
 }
 function getQueueStats() {
   return {
@@ -112200,13 +114893,14 @@ function getQueueStats() {
 }
 
 // electron/cache-manager.ts
-var import_electron9 = require("electron");
+var import_electron13 = require("electron");
 init_supabase();
+init_field_encryption();
 var store = /* @__PURE__ */ new Map();
 var DEFAULT_TTL = 10 * 60 * 1e3;
 function broadcastProgress(step, progress, total) {
   try {
-    import_electron9.BrowserWindow.getAllWindows().forEach((win) => {
+    import_electron13.BrowserWindow.getAllWindows().forEach((win) => {
       if (!win.isDestroyed()) {
         win.webContents.send("cache-load-progress", { step, progress, total });
       }
@@ -112350,34 +115044,34 @@ function getCacheStats() {
 }
 
 // electron/session-vault.ts
-var import_crypto8 = __toESM(require("crypto"), 1);
-var import_fs9 = __toESM(require("fs"), 1);
-var import_path10 = __toESM(require("path"), 1);
+var import_crypto10 = __toESM(require("crypto"), 1);
+var import_fs12 = __toESM(require("fs"), 1);
+var import_path13 = __toESM(require("path"), 1);
 var import_os4 = __toESM(require("os"), 1);
-var import_electron11 = require("electron");
+var import_electron15 = require("electron");
 var import_bcryptjs = __toESM(require("bcryptjs"), 1);
 
 // electron/lockout.ts
-var import_electron10 = require("electron");
-var import_fs8 = __toESM(require("fs"), 1);
-var import_path9 = __toESM(require("path"), 1);
+var import_electron14 = require("electron");
+var import_fs11 = __toESM(require("fs"), 1);
+var import_path12 = __toESM(require("path"), 1);
 function getLockFilePath() {
-  return import_path9.default.join(import_electron10.app.getPath("userData"), ".system-lock");
+  return import_path12.default.join(import_electron14.app.getPath("userData"), ".system-lock");
 }
 function triggerSystemLockout(reason) {
   const lockFilePath = getLockFilePath();
-  const logPath = import_path9.default.join(import_electron10.app.getPath("userData"), "app.log");
+  const logPath = import_path12.default.join(import_electron14.app.getPath("userData"), "app.log");
   try {
-    import_fs8.default.writeFileSync(lockFilePath, JSON.stringify({
+    import_fs11.default.writeFileSync(lockFilePath, JSON.stringify({
       timestamp: (/* @__PURE__ */ new Date()).toISOString(),
       reason
     }, null, 2), "utf-8");
-    import_fs8.default.appendFileSync(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] SECURITY LOCKOUT: ${reason}
+    import_fs11.default.appendFileSync(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] SECURITY LOCKOUT: ${reason}
 `);
   } catch {
   }
   console.error(`[SECURITY] SYSTEM LOCKOUT TRIGGERED: ${reason}`);
-  import_electron10.BrowserWindow.getAllWindows().forEach((win) => {
+  import_electron14.BrowserWindow.getAllWindows().forEach((win) => {
     if (!win.isDestroyed()) {
       win.loadURL(`data:text/html,
                 <html>
@@ -112468,22 +115162,22 @@ var LEGACY_IV_LEN = 12;
 var LEGACY_TAG_LEN = 16;
 var LEGACY_VAULT_PASS = "LE-SOFT-VAULT-2026-LeadingEdge-Encrypted";
 function vaultPath() {
-  const dir = import_path10.default.join(getUserDataPath(), ".le_vault");
-  if (!import_fs9.default.existsSync(dir)) import_fs9.default.mkdirSync(dir, { recursive: true, mode: 448 });
-  return import_path10.default.join(dir, ".vault.ledat");
+  const dir = import_path13.default.join(getUserDataPath(), ".le_vault");
+  if (!import_fs12.default.existsSync(dir)) import_fs12.default.mkdirSync(dir, { recursive: true, mode: 448 });
+  return import_path13.default.join(dir, ".vault.ledat");
 }
 function getLegacyMachineSalt() {
   let userData = "";
   try {
-    userData = import_electron11.app?.getPath ? import_electron11.app.getPath("userData") : getUserDataPath();
+    userData = import_electron15.app?.getPath ? import_electron15.app.getPath("userData") : getUserDataPath();
   } catch {
     userData = getUserDataPath();
   }
   const raw = `${import_os4.default.hostname()}::${userData}::leadingedge2026`;
-  return import_crypto8.default.createHash("sha256").update(raw).digest();
+  return import_crypto10.default.createHash("sha256").update(raw).digest();
 }
 function _deriveLegacyKey() {
-  return import_crypto8.default.pbkdf2Sync(LEGACY_VAULT_PASS, getLegacyMachineSalt(), LEGACY_ITER, LEGACY_KEY_LEN, LEGACY_HASH);
+  return import_crypto10.default.pbkdf2Sync(LEGACY_VAULT_PASS, getLegacyMachineSalt(), LEGACY_ITER, LEGACY_KEY_LEN, LEGACY_HASH);
 }
 function decryptLegacyVault(fileBuffer) {
   if (fileBuffer.length < LEGACY_IV_LEN + LEGACY_TAG_LEN) {
@@ -112493,7 +115187,7 @@ function decryptLegacyVault(fileBuffer) {
   const tag = fileBuffer.subarray(LEGACY_IV_LEN, LEGACY_IV_LEN + LEGACY_TAG_LEN);
   const ciphertext = fileBuffer.subarray(LEGACY_IV_LEN + LEGACY_TAG_LEN);
   const key = _deriveLegacyKey();
-  const decipher = import_crypto8.default.createDecipheriv(LEGACY_ALG, key, iv);
+  const decipher = import_crypto10.default.createDecipheriv(LEGACY_ALG, key, iv);
   decipher.setAuthTag(tag);
   const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
   return JSON.parse(decrypted.toString("utf8"));
@@ -112517,9 +115211,9 @@ async function saveSession(user) {
       saved_at: (/* @__PURE__ */ new Date()).toISOString()
     }, null, 2);
     const vPath = vaultPath();
-    import_fs9.default.writeFileSync(vPath, v2Record, { encoding: "utf-8", mode: 384 });
+    import_fs12.default.writeFileSync(vPath, v2Record, { encoding: "utf-8", mode: 384 });
     try {
-      import_fs9.default.chmodSync(vPath, 384);
+      import_fs12.default.chmodSync(vPath, 384);
     } catch {
     }
     console.log("[VAULT] Session saved securely for:", user.username || "(anonymous)");
@@ -112530,11 +115224,11 @@ async function saveSession(user) {
 async function loadSession(credentials) {
   try {
     const filePath = vaultPath();
-    if (!import_fs9.default.existsSync(filePath)) {
+    if (!import_fs12.default.existsSync(filePath)) {
       console.log("[VAULT] No vault file found.");
       return null;
     }
-    const rawContent = import_fs9.default.readFileSync(filePath);
+    const rawContent = import_fs12.default.readFileSync(filePath);
     let payload = null;
     let requiresMigration = false;
     const contentStr = rawContent.toString("utf-8");
@@ -112546,7 +115240,7 @@ async function loadSession(credentials) {
         const migrationCheck = migrateSecretToSafeStorage(parsed.ciphertext);
         if (migrationCheck.migrated) {
           parsed.ciphertext = migrationCheck.result;
-          import_fs9.default.writeFileSync(filePath, JSON.stringify(parsed, null, 2), { encoding: "utf-8", mode: 384 });
+          import_fs12.default.writeFileSync(filePath, JSON.stringify(parsed, null, 2), { encoding: "utf-8", mode: 384 });
           console.log("[VAULT] Automatically migrated vault secret to safeStorage.");
         }
       } catch (v2Err) {
@@ -112608,7 +115302,7 @@ async function loadSession(credentials) {
 function clearSession() {
   try {
     const p = vaultPath();
-    if (import_fs9.default.existsSync(p)) import_fs9.default.unlinkSync(p);
+    if (import_fs12.default.existsSync(p)) import_fs12.default.unlinkSync(p);
     console.log("[VAULT] Session cleared.");
   } catch {
   }
@@ -112618,21 +115312,21 @@ function clearSession() {
 init_secure_storage();
 
 // electron/local-cache.ts
-var import_better_sqlite32 = __toESM(require("better-sqlite3"), 1);
-var import_path11 = __toESM(require("path"), 1);
-var import_fs10 = __toESM(require("fs"), 1);
-var import_electron12 = require("electron");
+var import_better_sqlite34 = __toESM(require("better-sqlite3"), 1);
+var import_path14 = __toESM(require("path"), 1);
+var import_fs13 = __toESM(require("fs"), 1);
+var import_electron16 = require("electron");
 var LocalEntityCache = class {
   static db = null;
   static initDb() {
     if (this.db) return;
     try {
-      const userDataPath = import_electron12.app.getPath("userData");
-      if (!import_fs10.default.existsSync(userDataPath)) {
-        import_fs10.default.mkdirSync(userDataPath, { recursive: true });
+      const userDataPath = import_electron16.app.getPath("userData");
+      if (!import_fs13.default.existsSync(userDataPath)) {
+        import_fs13.default.mkdirSync(userDataPath, { recursive: true });
       }
-      const dbPath = import_path11.default.join(userDataPath, "lesoft_offline.db");
-      this.db = new import_better_sqlite32.default(dbPath);
+      const dbPath = import_path14.default.join(userDataPath, "lesoft_offline.db");
+      this.db = new import_better_sqlite34.default(dbPath);
       this.db.exec(`
                 CREATE TABLE IF NOT EXISTS local_entity_cache (
                     entity_type TEXT PRIMARY KEY,
@@ -112692,6 +115386,7 @@ var SessionManager = class {
   static setSession(user) {
     activeUserSession = {
       userId: user.id,
+      id: user.id,
       username: user.username,
       fullName: user.full_name || user.username,
       role: user.role || "operator",
@@ -112724,13 +115419,18 @@ var SessionManager = class {
 };
 
 // electron/ipc/handlers/make.ts
-var import_electron14 = require("electron");
+var import_electron18 = require("electron");
+var path16 = __toESM(require("path"), 1);
+var fs15 = __toESM(require("fs"), 1);
 init_supabase();
 
 // electron/services/make/MakeOrderService.ts
 init_supabase();
 
 // electron/services/make/MakePricingService.ts
+function round2(num) {
+  return Math.round((num + Number.EPSILON) * 100) / 100;
+}
 var MakePricingService = class {
   /**
    * Validates an individual item's cost and sale prices.
@@ -112745,18 +115445,110 @@ var MakePricingService = class {
     if (salePrice < costPrice) {
       return { isValid: false, costPrice, salePrice, error: "Sale price cannot be less than cost price without managerial override" };
     }
-    return { isValid: true, costPrice, salePrice, margin: salePrice - costPrice };
+    return { isValid: true, costPrice, salePrice, margin: round2(salePrice - costPrice) };
   }
   /**
-   * Authoritatively recalculates and validates item prices and order totals.
+   * Validates catalog product pricing, discount limits, and calculates lowest permitted sale price.
    */
-  static calculateAndValidateTotals(items) {
+  static validateCatalogProductPricing(product) {
+    const rawCost = product.cost_price !== void 0 && product.cost_price !== null && product.cost_price !== "" ? Number(product.cost_price) : 0;
+    const rawSale = product.sale_price !== void 0 && product.sale_price !== null && product.sale_price !== "" ? Number(product.sale_price) : 0;
+    const rawDiscountType = product.max_discount_type === "amount" ? "amount" : "percent";
+    const rawDiscountVal = product.max_discount_value !== void 0 && product.max_discount_value !== null && product.max_discount_value !== "" ? Number(product.max_discount_value) : 0;
+    if (isNaN(rawCost) || rawCost < 0) {
+      return {
+        isValid: false,
+        error: "Cost price cannot be negative.",
+        costPrice: 0,
+        salePrice: rawSale,
+        maxDiscountType: rawDiscountType,
+        maxDiscountValue: 0,
+        lowestPermittedSalePrice: rawSale,
+        maxDiscountAmount: 0
+      };
+    }
+    if (isNaN(rawSale) || rawSale < 0) {
+      return {
+        isValid: false,
+        error: "Sale price cannot be negative.",
+        costPrice: rawCost,
+        salePrice: 0,
+        maxDiscountType: rawDiscountType,
+        maxDiscountValue: 0,
+        lowestPermittedSalePrice: 0,
+        maxDiscountAmount: 0
+      };
+    }
+    if (isNaN(rawDiscountVal) || rawDiscountVal < 0) {
+      return {
+        isValid: false,
+        error: "Maximum discount value cannot be negative.",
+        costPrice: rawCost,
+        salePrice: rawSale,
+        maxDiscountType: rawDiscountType,
+        maxDiscountValue: 0,
+        lowestPermittedSalePrice: rawSale,
+        maxDiscountAmount: 0
+      };
+    }
+    let maxDiscountAmount = 0;
+    let lowestPermittedSalePrice = rawSale;
+    if (rawDiscountType === "percent") {
+      if (rawDiscountVal > 100) {
+        return {
+          isValid: false,
+          error: "Maximum discount percentage cannot exceed 100%.",
+          costPrice: rawCost,
+          salePrice: rawSale,
+          maxDiscountType: rawDiscountType,
+          maxDiscountValue: rawDiscountVal,
+          lowestPermittedSalePrice: rawSale,
+          maxDiscountAmount: 0
+        };
+      }
+      maxDiscountAmount = round2(rawSale * (rawDiscountVal / 100));
+      lowestPermittedSalePrice = Math.max(0, round2(rawSale - maxDiscountAmount));
+    } else {
+      if (rawDiscountVal > rawSale) {
+        return {
+          isValid: false,
+          error: `Fixed maximum discount (\u09F3${rawDiscountVal.toLocaleString()}) cannot exceed the sale price (\u09F3${rawSale.toLocaleString()}).`,
+          costPrice: rawCost,
+          salePrice: rawSale,
+          maxDiscountType: rawDiscountType,
+          maxDiscountValue: rawDiscountVal,
+          lowestPermittedSalePrice: rawSale,
+          maxDiscountAmount: 0
+        };
+      }
+      maxDiscountAmount = round2(rawDiscountVal);
+      lowestPermittedSalePrice = Math.max(0, round2(rawSale - maxDiscountAmount));
+    }
+    return {
+      isValid: true,
+      costPrice: round2(rawCost),
+      salePrice: round2(rawSale),
+      maxDiscountType: rawDiscountType,
+      maxDiscountValue: round2(rawDiscountVal),
+      lowestPermittedSalePrice,
+      maxDiscountAmount
+    };
+  }
+  /**
+   * Authoritatively recalculates and validates item prices, order discount, and totals.
+   */
+  static calculateAndValidateTotals(items, discountInput) {
     if (!Array.isArray(items) || items.length === 0) {
       return {
         isValid: false,
         error: "Order must contain at least one item.",
+        subtotal: null,
+        discountType: null,
+        discountValue: 0,
+        discountAmount: 0,
         totalCostPrice: 0,
         totalSalePrice: null,
+        finalPrice: null,
         marginAmount: null,
         totalMargin: null,
         isLossMaking: false,
@@ -112764,17 +115556,24 @@ var MakePricingService = class {
       };
     }
     let totalCost = 0;
-    let totalSale = 0;
+    let subtotal = 0;
     let hasAnySalePrice = false;
     const processedItems = [];
+    let totalAllowedDiscountAmount = 0;
+    let hasAnyConfiguredDiscountLimit = false;
     for (const item of items) {
       const qty = Number(item.quantity);
       if (isNaN(qty) || qty <= 0) {
         return {
           isValid: false,
           error: `Invalid quantity (${item.quantity}) for item: ${item.product_name || "Unnamed item"}. Quantity must be greater than 0.`,
+          subtotal: null,
+          discountType: null,
+          discountValue: 0,
+          discountAmount: 0,
           totalCostPrice: 0,
           totalSalePrice: null,
+          finalPrice: null,
           marginAmount: null,
           totalMargin: null,
           isLossMaking: false,
@@ -112786,8 +115585,13 @@ var MakePricingService = class {
         return {
           isValid: false,
           error: `Cost price for item "${item.product_name}" cannot be negative (${rawCost}).`,
+          subtotal: null,
+          discountType: null,
+          discountValue: 0,
+          discountAmount: 0,
           totalCostPrice: 0,
           totalSalePrice: null,
+          finalPrice: null,
           marginAmount: null,
           totalMargin: null,
           isLossMaking: false,
@@ -112802,8 +115606,13 @@ var MakePricingService = class {
           return {
             isValid: false,
             error: `Sale price for item "${item.product_name}" cannot be negative (${rawSale}).`,
+            subtotal: null,
+            discountType: null,
+            discountValue: 0,
+            discountAmount: 0,
             totalCostPrice: 0,
             totalSalePrice: null,
+            finalPrice: null,
             marginAmount: null,
             totalMargin: null,
             isLossMaking: false,
@@ -112811,32 +115620,359 @@ var MakePricingService = class {
           };
         }
         hasAnySalePrice = true;
-        if (totalSale !== null) {
-          totalSale += rawSale * qty;
+        if (subtotal !== null) {
+          subtotal += rawSale * qty;
         }
       }
       const itemCostTotal = rawCost * qty;
       const itemSaleTotal = rawSale !== null ? rawSale * qty : null;
       totalCost += itemCostTotal;
+      let itemDiscType = null;
+      let itemDiscVal = 0;
+      let itemDiscAmount = 0;
+      let itemFinalPrice = itemSaleTotal;
+      const isCatalogProduct = Boolean(item.product_id) || item.max_discount_percent !== void 0 || item.max_discount_amount !== void 0 || item.max_discount_type !== void 0 || Boolean(item.product_code);
+      const hasProduct = isCatalogProduct;
+      const isCustomOrNonCatalog = item.is_custom === true || !isCatalogProduct;
+      const rawItemDiscVal = item.discount_value !== void 0 && item.discount_value !== null && item.discount_value !== "" ? Number(item.discount_value) : 0;
+      const rawItemDiscAmt = item.discount_amount !== void 0 && item.discount_amount !== null && item.discount_amount !== "" ? Number(item.discount_amount) : 0;
+      if (isCustomOrNonCatalog && (rawItemDiscVal > 0 || rawItemDiscAmt > 0)) {
+        return {
+          isValid: false,
+          error: `Discounts are not permitted on custom or non-catalog item "${item.product_name}".`,
+          subtotal: null,
+          discountType: null,
+          discountValue: 0,
+          discountAmount: 0,
+          totalCostPrice: 0,
+          totalSalePrice: null,
+          finalPrice: null,
+          marginAmount: null,
+          totalMargin: null,
+          isLossMaking: false,
+          items: []
+        };
+      }
+      if (hasProduct && rawSale !== null && item.discount_value !== void 0 && item.discount_value !== null && item.discount_value !== "") {
+        const parsedItemDisc = Number(item.discount_value);
+        if (isNaN(parsedItemDisc) || parsedItemDisc < 0) {
+          return {
+            isValid: false,
+            error: `Discount value for item "${item.product_name}" cannot be negative (${item.discount_value}).`,
+            subtotal: null,
+            discountType: null,
+            discountValue: 0,
+            discountAmount: 0,
+            totalCostPrice: 0,
+            totalSalePrice: null,
+            finalPrice: null,
+            marginAmount: null,
+            totalMargin: null,
+            isLossMaking: false,
+            items: []
+          };
+        }
+        itemDiscType = item.discount_type === "amount" ? "amount" : "percent";
+        itemDiscVal = round2(parsedItemDisc);
+        const maxLimitType = item.max_discount_type || (item.max_discount_amount !== void 0 && item.max_discount_amount !== null && item.max_discount_amount !== "" ? "amount" : "percent");
+        const maxLimitValRaw = item.max_discount_value !== void 0 && item.max_discount_value !== null && item.max_discount_value !== "" ? item.max_discount_value : maxLimitType === "amount" ? item.max_discount_amount : item.max_discount_percent;
+        const hasConfiguredLimit = maxLimitValRaw !== void 0 && maxLimitValRaw !== null && maxLimitValRaw !== "";
+        if (hasConfiguredLimit) {
+          const maxLimitVal = Number(maxLimitValRaw);
+          if (maxLimitType === "amount") {
+            if (itemDiscType === "amount") {
+              if (itemDiscVal > maxLimitVal + 1e-3) {
+                return {
+                  isValid: false,
+                  error: `Discount amount (\u09F3${itemDiscVal}) for item "${item.product_name}" exceeds the maximum permitted discount limit of \u09F3${maxLimitVal}.`,
+                  subtotal: null,
+                  discountType: null,
+                  discountValue: 0,
+                  discountAmount: 0,
+                  totalCostPrice: 0,
+                  totalSalePrice: null,
+                  finalPrice: null,
+                  marginAmount: null,
+                  totalMargin: null,
+                  isLossMaking: false,
+                  items: []
+                };
+              }
+            } else {
+              const maxPct = rawSale > 0 ? round2(maxLimitVal / rawSale * 100) : 0;
+              if (itemDiscVal > maxPct + 1e-3) {
+                return {
+                  isValid: false,
+                  error: `Discount (${itemDiscVal}%) for item "${item.product_name}" exceeds the maximum permitted discount limit of ${maxPct}% (\u09F3${maxLimitVal}).`,
+                  subtotal: null,
+                  discountType: null,
+                  discountValue: 0,
+                  discountAmount: 0,
+                  totalCostPrice: 0,
+                  totalSalePrice: null,
+                  finalPrice: null,
+                  marginAmount: null,
+                  totalMargin: null,
+                  isLossMaking: false,
+                  items: []
+                };
+              }
+            }
+          } else {
+            const maxPct = Math.min(100, Math.max(0, maxLimitVal));
+            if (itemDiscType === "percent") {
+              if (itemDiscVal > maxPct + 1e-3) {
+                return {
+                  isValid: false,
+                  error: `Discount (${itemDiscVal}%) for item "${item.product_name}" exceeds the maximum permitted discount limit of ${maxPct}%.`,
+                  subtotal: null,
+                  discountType: null,
+                  discountValue: 0,
+                  discountAmount: 0,
+                  totalCostPrice: 0,
+                  totalSalePrice: null,
+                  finalPrice: null,
+                  marginAmount: null,
+                  totalMargin: null,
+                  isLossMaking: false,
+                  items: []
+                };
+              }
+            } else {
+              const maxAmt = round2(rawSale * (maxPct / 100));
+              if (itemDiscVal > maxAmt + 1e-3) {
+                return {
+                  isValid: false,
+                  error: `Discount amount (\u09F3${itemDiscVal}) for item "${item.product_name}" exceeds the maximum permitted discount limit of \u09F3${maxAmt} (${maxPct}%).`,
+                  subtotal: null,
+                  discountType: null,
+                  discountValue: 0,
+                  discountAmount: 0,
+                  totalCostPrice: 0,
+                  totalSalePrice: null,
+                  finalPrice: null,
+                  marginAmount: null,
+                  totalMargin: null,
+                  isLossMaking: false,
+                  items: []
+                };
+              }
+            }
+          }
+        } else {
+          if (itemDiscType === "percent" && itemDiscVal > 100) {
+            return {
+              isValid: false,
+              error: `Discount percentage cannot exceed 100% for item "${item.product_name}".`,
+              subtotal: null,
+              discountType: null,
+              discountValue: 0,
+              discountAmount: 0,
+              totalCostPrice: 0,
+              totalSalePrice: null,
+              finalPrice: null,
+              marginAmount: null,
+              totalMargin: null,
+              isLossMaking: false,
+              items: []
+            };
+          }
+          if (itemDiscType === "amount" && itemDiscVal > rawSale) {
+            return {
+              isValid: false,
+              error: `Discount amount (\u09F3${itemDiscVal}) cannot exceed the unit sale price (\u09F3${rawSale}) for item "${item.product_name}".`,
+              subtotal: null,
+              discountType: null,
+              discountValue: 0,
+              discountAmount: 0,
+              totalCostPrice: 0,
+              totalSalePrice: null,
+              finalPrice: null,
+              marginAmount: null,
+              totalMargin: null,
+              isLossMaking: false,
+              items: []
+            };
+          }
+        }
+        if (itemDiscType === "percent") {
+          itemDiscAmount = round2(rawSale * (itemDiscVal / 100) * qty);
+        } else {
+          itemDiscAmount = round2(itemDiscVal * qty);
+        }
+        itemFinalPrice = Math.max(0, round2(rawSale * qty - itemDiscAmount));
+      }
+      if (rawSale !== null && hasProduct) {
+        const itemSub = rawSale * qty;
+        const aggLimitType = item.max_discount_type || (item.max_discount_amount !== void 0 && item.max_discount_amount !== null && item.max_discount_amount !== "" ? "amount" : "percent");
+        const aggLimitRaw = item.max_discount_value !== void 0 && item.max_discount_value !== null && item.max_discount_value !== "" ? item.max_discount_value : aggLimitType === "amount" ? item.max_discount_amount : item.max_discount_percent;
+        const hasItemLimit = aggLimitRaw !== void 0 && aggLimitRaw !== null && aggLimitRaw !== "";
+        if (hasItemLimit) {
+          hasAnyConfiguredDiscountLimit = true;
+          const maxVal = Number(aggLimitRaw);
+          if (aggLimitType === "amount") {
+            totalAllowedDiscountAmount += Math.min(itemSub, maxVal * qty);
+          } else {
+            const pct = Math.min(100, Math.max(0, maxVal));
+            totalAllowedDiscountAmount += itemSub * (pct / 100);
+          }
+        } else {
+          totalAllowedDiscountAmount += itemSub;
+        }
+      }
       processedItems.push({
         product_name: item.product_name,
         quantity: qty,
         cost_price: rawCost,
         sale_price: rawSale,
+        discount_type: itemDiscType,
+        discount_value: itemDiscVal,
+        discount_amount: itemDiscAmount,
+        final_item_price: itemFinalPrice,
         total_cost: itemCostTotal,
         total_sale: itemSaleTotal
       });
     }
-    const finalSalePrice = hasAnySalePrice ? totalSale : null;
-    const isLossMaking = finalSalePrice !== null && finalSalePrice < totalCost;
-    const marginAmount = finalSalePrice !== null ? finalSalePrice - totalCost : null;
+    const undiscountedSubtotal = hasAnySalePrice ? round2(subtotal || 0) : null;
+    totalAllowedDiscountAmount = round2(totalAllowedDiscountAmount);
+    const totalAllowedDiscountPercent = undiscountedSubtotal && undiscountedSubtotal > 0 ? round2(totalAllowedDiscountAmount / undiscountedSubtotal * 100) : 0;
+    const totalLineDiscountAmount = round2(processedItems.reduce((acc, it) => acc + (it.discount_amount || 0), 0));
+    let discType = null;
+    let discValue = 0;
+    let orderDiscountAmount = 0;
+    if (discountInput && discountInput.discount_value !== void 0 && discountInput.discount_value !== null && discountInput.discount_value !== "") {
+      const parsedVal = Number(discountInput.discount_value);
+      if (isNaN(parsedVal) || parsedVal < 0) {
+        return {
+          isValid: false,
+          error: `Discount value cannot be negative (${discountInput.discount_value}).`,
+          subtotal: undiscountedSubtotal,
+          discountType: null,
+          discountValue: 0,
+          discountAmount: 0,
+          totalCostPrice: round2(totalCost),
+          totalSalePrice: undiscountedSubtotal,
+          finalPrice: undiscountedSubtotal,
+          marginAmount: null,
+          totalMargin: null,
+          isLossMaking: false,
+          items: processedItems
+        };
+      }
+      discType = discountInput.discount_type === "amount" ? "amount" : "percent";
+      discValue = round2(parsedVal);
+      if (undiscountedSubtotal === null && discValue > 0) {
+        return {
+          isValid: false,
+          error: "Cannot apply discount when items do not have defined sale prices.",
+          subtotal: null,
+          discountType: discType,
+          discountValue: discValue,
+          discountAmount: 0,
+          totalCostPrice: round2(totalCost),
+          totalSalePrice: null,
+          finalPrice: null,
+          marginAmount: null,
+          totalMargin: null,
+          isLossMaking: false,
+          items: processedItems
+        };
+      }
+      if (discType === "percent") {
+        if (discValue > 100) {
+          return {
+            isValid: false,
+            error: "Discount percentage cannot exceed 100%.",
+            subtotal: undiscountedSubtotal,
+            discountType: discType,
+            discountValue: discValue,
+            discountAmount: 0,
+            totalCostPrice: round2(totalCost),
+            totalSalePrice: undiscountedSubtotal,
+            finalPrice: undiscountedSubtotal,
+            marginAmount: null,
+            totalMargin: null,
+            isLossMaking: false,
+            items: processedItems
+          };
+        }
+        if (hasAnyConfiguredDiscountLimit && discValue > totalAllowedDiscountPercent + 1e-3) {
+          return {
+            isValid: false,
+            error: `Discount (${discValue}%) exceeds the maximum permitted discount limit of ${totalAllowedDiscountPercent}%.`,
+            subtotal: undiscountedSubtotal,
+            discountType: discType,
+            discountValue: discValue,
+            discountAmount: 0,
+            totalCostPrice: round2(totalCost),
+            totalSalePrice: undiscountedSubtotal,
+            finalPrice: undiscountedSubtotal,
+            marginAmount: null,
+            totalMargin: null,
+            isLossMaking: false,
+            maxAllowedDiscountAmount: totalAllowedDiscountAmount,
+            maxAllowedDiscountPercent: totalAllowedDiscountPercent,
+            items: processedItems
+          };
+        }
+        orderDiscountAmount = undiscountedSubtotal !== null ? round2(undiscountedSubtotal * (discValue / 100)) : 0;
+      } else {
+        if (undiscountedSubtotal !== null && discValue > undiscountedSubtotal) {
+          return {
+            isValid: false,
+            error: `Discount amount (\u09F3${discValue.toLocaleString()}) cannot exceed the order subtotal (\u09F3${undiscountedSubtotal.toLocaleString()}).`,
+            subtotal: undiscountedSubtotal,
+            discountType: discType,
+            discountValue: discValue,
+            discountAmount: 0,
+            totalCostPrice: round2(totalCost),
+            totalSalePrice: undiscountedSubtotal,
+            finalPrice: undiscountedSubtotal,
+            marginAmount: null,
+            totalMargin: null,
+            isLossMaking: false,
+            items: processedItems
+          };
+        }
+        if (hasAnyConfiguredDiscountLimit && discValue > totalAllowedDiscountAmount + 1e-3) {
+          return {
+            isValid: false,
+            error: `Discount amount (\u09F3${discValue.toLocaleString()}) exceeds the maximum permitted discount limit of \u09F3${totalAllowedDiscountAmount.toLocaleString()}.`,
+            subtotal: undiscountedSubtotal,
+            discountType: discType,
+            discountValue: discValue,
+            discountAmount: 0,
+            totalCostPrice: round2(totalCost),
+            totalSalePrice: undiscountedSubtotal,
+            finalPrice: undiscountedSubtotal,
+            marginAmount: null,
+            totalMargin: null,
+            isLossMaking: false,
+            maxAllowedDiscountAmount: totalAllowedDiscountAmount,
+            maxAllowedDiscountPercent: totalAllowedDiscountPercent,
+            items: processedItems
+          };
+        }
+        orderDiscountAmount = round2(discValue);
+      }
+    }
+    const finalSalePrice = undiscountedSubtotal !== null ? Math.max(0, round2(undiscountedSubtotal - orderDiscountAmount)) : null;
+    const isLossMaking = finalSalePrice !== null && finalSalePrice < round2(totalCost);
+    const marginAmount = finalSalePrice !== null ? round2(finalSalePrice - totalCost) : null;
     return {
       isValid: true,
-      totalCostPrice: Math.round(totalCost * 100) / 100,
-      totalSalePrice: finalSalePrice !== null ? Math.round(finalSalePrice * 100) / 100 : null,
-      marginAmount: marginAmount !== null ? Math.round(marginAmount * 100) / 100 : null,
-      totalMargin: marginAmount !== null ? Math.round(marginAmount * 100) / 100 : null,
+      subtotal: undiscountedSubtotal,
+      discountType: discType,
+      discountValue: discValue,
+      discountAmount: orderDiscountAmount > 0 ? orderDiscountAmount : totalLineDiscountAmount,
+      totalCostPrice: round2(totalCost),
+      totalSalePrice: finalSalePrice,
+      finalPrice: finalSalePrice,
+      marginAmount,
+      totalMargin: marginAmount,
       isLossMaking,
+      maxAllowedDiscountAmount: hasAnyConfiguredDiscountLimit ? totalAllowedDiscountAmount : void 0,
+      maxAllowedDiscountPercent: hasAnyConfiguredDiscountLimit ? totalAllowedDiscountPercent : void 0,
       items: processedItems
     };
   }
@@ -112871,6 +116007,196 @@ var MakePricingService = class {
       return { allowed: true, requiresOverride: true };
     }
     return { allowed: true };
+  }
+  /**
+   * Calculates the amount due given an order total and money received.
+   * Enforces non-negative results and 2 decimal places precision.
+   */
+  static calculateAmountDue(orderTotal, moneyReceived) {
+    const total = round2(Math.max(0, Number(orderTotal || 0)));
+    const received = round2(Math.max(0, Number(moneyReceived || 0)));
+    return round2(Math.max(0, total - received));
+  }
+  /**
+   * Authoritatively calculates payment status, amount due, and production hold.
+   * Enforces currency rounding, decimal precision, and payment constraints.
+   */
+  static calculatePaymentStatus(finalPrice, rawMoneyReceived) {
+    const orderTotal = round2(Math.max(0, Number(finalPrice || 0)));
+    if (rawMoneyReceived === void 0 || rawMoneyReceived === null || rawMoneyReceived === "") {
+      return {
+        isValid: true,
+        finalPrice: orderTotal,
+        moneyReceived: 0,
+        amountDue: orderTotal,
+        paymentStatus: orderTotal === 0 ? "paid" : "unpaid",
+        productionHold: orderTotal > 0,
+        holdReason: orderTotal > 0 ? `Outstanding balance of \u09F3${orderTotal.toLocaleString()} due.` : null
+      };
+    }
+    if (typeof rawMoneyReceived === "string") {
+      const trimmed = rawMoneyReceived.trim();
+      if (trimmed.startsWith("-")) {
+        return {
+          isValid: false,
+          error: "Money received cannot be negative.",
+          finalPrice: orderTotal,
+          moneyReceived: 0,
+          amountDue: orderTotal,
+          paymentStatus: "unpaid",
+          productionHold: orderTotal > 0,
+          holdReason: orderTotal > 0 ? `Outstanding balance of \u09F3${orderTotal.toLocaleString()} due.` : null
+        };
+      }
+      const parsed = Number(trimmed);
+      if (isNaN(parsed) || !/^\d+(\.\d+)?$/.test(trimmed)) {
+        return {
+          isValid: false,
+          error: "Money received must be a valid non-negative number.",
+          finalPrice: orderTotal,
+          moneyReceived: 0,
+          amountDue: orderTotal,
+          paymentStatus: "unpaid",
+          productionHold: orderTotal > 0,
+          holdReason: orderTotal > 0 ? `Outstanding balance of \u09F3${orderTotal.toLocaleString()} due.` : null
+        };
+      }
+      if (trimmed.includes(".")) {
+        const decPart = trimmed.split(".")[1];
+        if (decPart && decPart.length > 2) {
+          return {
+            isValid: false,
+            error: "Money received cannot have more than 2 decimal places.",
+            finalPrice: orderTotal,
+            moneyReceived: 0,
+            amountDue: orderTotal,
+            paymentStatus: "unpaid",
+            productionHold: orderTotal > 0,
+            holdReason: orderTotal > 0 ? `Outstanding balance of \u09F3${orderTotal.toLocaleString()} due.` : null
+          };
+        }
+      }
+    } else if (typeof rawMoneyReceived === "number") {
+      if (isNaN(rawMoneyReceived) || rawMoneyReceived < 0) {
+        return {
+          isValid: false,
+          error: rawMoneyReceived < 0 ? "Money received cannot be negative." : "Money received must be a valid non-negative number.",
+          finalPrice: orderTotal,
+          moneyReceived: 0,
+          amountDue: orderTotal,
+          paymentStatus: "unpaid",
+          productionHold: orderTotal > 0,
+          holdReason: orderTotal > 0 ? `Outstanding balance of \u09F3${orderTotal.toLocaleString()} due.` : null
+        };
+      }
+      const strVal = rawMoneyReceived.toString();
+      if (strVal.includes(".")) {
+        const decPart = strVal.split(".")[1];
+        if (decPart && decPart.length > 2 && Math.abs(round2(rawMoneyReceived) - rawMoneyReceived) > 1e-6) {
+          return {
+            isValid: false,
+            error: "Money received cannot have more than 2 decimal places.",
+            finalPrice: orderTotal,
+            moneyReceived: 0,
+            amountDue: orderTotal,
+            paymentStatus: "unpaid",
+            productionHold: orderTotal > 0,
+            holdReason: orderTotal > 0 ? `Outstanding balance of \u09F3${orderTotal.toLocaleString()} due.` : null
+          };
+        }
+      }
+    }
+    const received = Number(rawMoneyReceived);
+    const roundedReceived = round2(received);
+    if (roundedReceived > orderTotal) {
+      return {
+        isValid: false,
+        error: `Money received (\u09F3${roundedReceived.toLocaleString()}) cannot exceed the order total (\u09F3${orderTotal.toLocaleString()}).`,
+        finalPrice: orderTotal,
+        moneyReceived: roundedReceived,
+        amountDue: 0,
+        paymentStatus: "paid",
+        productionHold: false,
+        holdReason: null
+      };
+    }
+    const amountDue = round2(Math.max(0, orderTotal - roundedReceived));
+    let paymentStatus = "unpaid";
+    if (amountDue === 0 && (orderTotal > 0 ? roundedReceived >= orderTotal : true)) {
+      paymentStatus = "paid";
+    } else if (roundedReceived > 0 && amountDue > 0) {
+      paymentStatus = "partial";
+    } else {
+      paymentStatus = "unpaid";
+    }
+    const productionHold = amountDue > 0;
+    const holdReason = productionHold ? `Outstanding balance of \u09F3${amountDue.toLocaleString()} due.` : null;
+    return {
+      isValid: true,
+      finalPrice: orderTotal,
+      moneyReceived: roundedReceived,
+      amountDue,
+      paymentStatus,
+      productionHold,
+      holdReason
+    };
+  }
+  /**
+   * Authoritatively validates and sanitizes line pricing based on the actor's user role:
+   * - Designer / Admin: Can enter cost price and sale price for any line.
+   * - Salesman:
+   *   - Cannot set or view cost price (strictly scrubbed to 0).
+   *   - Catalog products: Sale price is locked to catalog sale price; line discount is allowed up to product limit.
+   *   - Non-catalog products: Can enter sale price; cannot edit cost price.
+   * - Factory Manager: Strictly prohibited from placing orders or entering prices.
+   */
+  static validateRolePricingPermissions(items, userRole, catalogProductsMap) {
+    const normRole = (userRole || "").toLowerCase();
+    const isFactoryManager = normRole === "factory_manager" || normRole === "factory manager" || normRole === "factory";
+    if (isFactoryManager) {
+      return {
+        isValid: false,
+        error: "Factory Managers are strictly restricted from placing orders or modifying order pricing.",
+        sanitizedItems: []
+      };
+    }
+    const isSalesperson = normRole === "salesperson" || normRole === "salesman" || normRole === "sales";
+    const sanitizedItems = [];
+    for (const it of items) {
+      const isCatalog = Boolean(it.product_id && (catalogProductsMap ? catalogProductsMap[Number(it.product_id)] : true));
+      const catalogProd = it.product_id && catalogProductsMap ? catalogProductsMap[Number(it.product_id)] : null;
+      if (isSalesperson) {
+        const sanitizedCost = 0;
+        let sanitizedSale = it.item_sale_price;
+        if (isCatalog && catalogProd) {
+          sanitizedSale = catalogProd.sale_price;
+        } else if (!isCatalog) {
+          if (sanitizedSale === void 0 || sanitizedSale === null || sanitizedSale === "") {
+            sanitizedSale = null;
+          } else if (Number(sanitizedSale) < 0) {
+            return {
+              isValid: false,
+              error: `Sale price for non-catalog item "${it.product_name}" cannot be negative.`,
+              sanitizedItems: []
+            };
+          }
+        }
+        sanitizedItems.push({
+          ...it,
+          item_cost_price: sanitizedCost,
+          item_sale_price: sanitizedSale,
+          max_discount_type: it.max_discount_type || catalogProd?.max_discount_type || null,
+          max_discount_value: it.max_discount_value !== void 0 && it.max_discount_value !== null ? it.max_discount_value : catalogProd?.max_discount_value ?? null
+        });
+      } else {
+        sanitizedItems.push({
+          ...it,
+          max_discount_type: it.max_discount_type || catalogProd?.max_discount_type || null,
+          max_discount_value: it.max_discount_value !== void 0 && it.max_discount_value !== null ? it.max_discount_value : catalogProd?.max_discount_value ?? null
+        });
+      }
+    }
+    return { isValid: true, sanitizedItems };
   }
 };
 
@@ -112983,6 +116309,7 @@ var MakeVersionService = class {
 
 // electron/services/make/MakeSearchService.ts
 init_supabase();
+init_field_encryption();
 var MakeSearchService = class {
   /**
    * Normalizes a search string by trimming, lowercasing, and normalizing spaces.
@@ -113030,7 +116357,7 @@ var MakeSearchService = class {
       let baseQuery = supabase.from("make_products").select(`
                 *,
                 specifications:make_product_specifications(*),
-                sizes:make_product_sizes(*),
+                sizes:make_product_sizes!make_product_sizes_product_id_fkey(*),
                 colors:make_product_colors(*),
                 images:make_product_images(*)
             `).order("product_name", { ascending: true }).limit(limit);
@@ -113045,7 +116372,7 @@ var MakeSearchService = class {
         let q2 = supabase.from("make_products").select(`
                     *,
                     specifications:make_product_specifications(*),
-                    sizes:make_product_sizes(*),
+                    sizes:make_product_sizes!make_product_sizes_product_id_fkey(*),
                     colors:make_product_colors(*)
                 `).order("product_name", { ascending: true }).limit(limit);
         if (activeOnly) q2 = q2.eq("is_active", true);
@@ -113091,7 +116418,7 @@ var MakeSearchService = class {
         const fullQuery = supabase.from("make_products").select(`
                     *,
                     specifications:make_product_specifications(*),
-                    sizes:make_product_sizes(*),
+                    sizes:make_product_sizes!make_product_sizes_product_id_fkey(*),
                     colors:make_product_colors(*),
                     images:make_product_images(*)
                 `);
@@ -113100,7 +116427,7 @@ var MakeSearchService = class {
           const fallback = await supabase.from("make_products").select(`
                         *,
                         specifications:make_product_specifications(*),
-                        sizes:make_product_sizes(*),
+                        sizes:make_product_sizes!make_product_sizes_product_id_fkey(*),
                         colors:make_product_colors(*)
                     `);
           if (fallback.data) fallback.data.forEach((p) => {
@@ -113402,7 +116729,7 @@ var MakeSearchService = class {
     const strippedQuery = this.stripPunctuation(rawQuery);
     const limit = params.limit || 200;
     if (!normQuery) {
-      let q = supabase.from("make_orders").select("*, salesman:users(full_name), bill:bills(invoice_number)").order("created_at", { ascending: false });
+      let q = supabase.from("make_orders").select("*, salesman:users!make_orders_salesman_id_fkey(full_name), bill:bills!make_orders_bill_id_fkey(invoice_number)").order("created_at", { ascending: false });
       if (params.status && params.status !== "All") {
         q = q.eq("status", params.status);
       }
@@ -113421,7 +116748,7 @@ var MakeSearchService = class {
       } catch (err) {
         console.warn("[MakeSearchService.searchOrders] Default query error:", err.message);
       }
-      const { data: baseData2 } = await supabase.from("make_orders").select("*, salesman:users(full_name)").order("created_at", { ascending: false });
+      const { data: baseData2 } = await supabase.from("make_orders").select("*, salesman:users!make_orders_salesman_id_fkey(full_name)").order("created_at", { ascending: false });
       return decryptRows(baseData2 || []).map((o) => ({
         ...o,
         salesman_name: o.salesman?.full_name || "Unassigned",
@@ -113474,7 +116801,7 @@ var MakeSearchService = class {
       return [];
     }
     try {
-      let q = supabase.from("make_orders").select("*, salesman:users(full_name), bill:bills(invoice_number)").in("id", idList).order("created_at", { ascending: false });
+      let q = supabase.from("make_orders").select("*, salesman:users!make_orders_salesman_id_fkey(full_name), bill:bills!make_orders_bill_id_fkey(invoice_number)").in("id", idList).order("created_at", { ascending: false });
       if (params.status && params.status !== "All") {
         q = q.eq("status", params.status);
       }
@@ -113492,7 +116819,7 @@ var MakeSearchService = class {
     } catch (err) {
       console.warn("[MakeSearchService.searchOrders] Joined fetch error, falling back:", err.message);
     }
-    let baseQ = supabase.from("make_orders").select("*, salesman:users(full_name)").in("id", idList).order("created_at", { ascending: false });
+    let baseQ = supabase.from("make_orders").select("*, salesman:users!make_orders_salesman_id_fkey(full_name)").in("id", idList).order("created_at", { ascending: false });
     if (params.status && params.status !== "All") {
       baseQ = baseQ.eq("status", params.status);
     }
@@ -113510,7 +116837,8 @@ var MakeSearchService = class {
 };
 
 // electron/services/make/MakeOrderService.ts
-var MakeOrderService = class {
+init_DurableUploadService();
+var MakeOrderService = class _MakeOrderService {
   /**
    * Generates a canonical, human-readable order number: MAKE-YYYY-XXXXXX
    */
@@ -113556,6 +116884,37 @@ var MakeOrderService = class {
       cleaned = "0" + cleaned.substring(3);
     }
     return cleaned;
+  }
+  /**
+   * Normalizes attachment references to durable keys (e.g. make-order-files/...) or confirmed TrueNAS URLs.
+   * Strips ephemeral signed tokens so order records remain permanently valid.
+   */
+  static normalizeAttachmentReference(rawRef) {
+    if (!rawRef || typeof rawRef !== "string") return "";
+    const trimmed = rawRef.trim();
+    if (!trimmed) return "";
+    const sbMatch = trimmed.match(/(?:supabase\.co|\/storage\/v1)\/object\/(?:sign|public)\/make-order-files\/([^?#]+)/i);
+    if (sbMatch) {
+      const rawKey = decodeURIComponent(sbMatch[1]).replace(/^\/+/, "");
+      return `make-order-files/${rawKey}`;
+    }
+    if (/^supabase:\/\/make-order-files\//i.test(trimmed)) {
+      const rawKey = trimmed.replace(/^supabase:\/\/make-order-files\//i, "").split("?")[0].replace(/^\/+/, "");
+      return `make-order-files/${rawKey}`;
+    }
+    if (/^make-order-files\//i.test(trimmed)) {
+      return trimmed.split("?")[0];
+    }
+    if (/^https?:\/\/(storage\.lenas\.me|100\.88\.85\.6|192\.168\.1\.14)/i.test(trimmed)) {
+      return trimmed;
+    }
+    if (/^https?:\/\//i.test(trimmed)) {
+      if (trimmed.includes("token=")) {
+        return trimmed.split("?")[0];
+      }
+      return trimmed;
+    }
+    return trimmed;
   }
   /**
    * Intelligent multi-entity whole-catalog product search with relevance scoring & ranking.
@@ -113624,9 +116983,65 @@ var MakeOrderService = class {
         return { success: false, error: "Invalid customer phone number format or dummy placeholder. Provide a valid phone number or leave empty." };
       }
     }
-    const pricing = MakePricingService.calculateAndValidateTotals(input.items);
+    const productIds = (input.items || []).map((it) => it.product_id).filter(Boolean);
+    let productsMap = {};
+    if (productIds.length > 0) {
+      try {
+        const { data: dbProds } = await supabase.from("make_products").select("id, cost_price, sale_price, max_discount_type, max_discount_value").in("id", productIds);
+        if (dbProds && dbProds.length > 0) {
+          productsMap = Object.fromEntries(dbProds.map((p) => [p.id, p]));
+        }
+      } catch (err) {
+        console.warn("[MakeOrderService] Could not prefetch product discount rules:", err);
+      }
+    }
+    const enrichedItems = input.items.map((it) => {
+      const dbProd = it.product_id ? productsMap[it.product_id] : null;
+      return {
+        ...it,
+        max_discount_type: it.max_discount_type || dbProd?.max_discount_type || null,
+        max_discount_value: it.max_discount_value !== void 0 && it.max_discount_value !== null && it.max_discount_value !== "" ? it.max_discount_value : dbProd?.max_discount_value ?? null
+      };
+    });
+    const rolePricing = MakePricingService.validateRolePricingPermissions(
+      enrichedItems,
+      actorSession.role,
+      productsMap
+    );
+    if (!rolePricing.isValid) {
+      return { success: false, error: rolePricing.error };
+    }
+    const pricing = MakePricingService.calculateAndValidateTotals(rolePricing.sanitizedItems, {
+      discount_type: input.discount_type,
+      discount_value: input.discount_value
+    });
     if (!pricing.isValid) {
       return { success: false, error: pricing.error };
+    }
+    const rawReceived = input.money_received !== void 0 ? input.money_received : input.moneyReceived;
+    const normRole = (actorSession.role || "").toLowerCase().trim();
+    const isInitialPaymentAllowed = [
+      "furniture_designer",
+      "furniture designer",
+      "designer",
+      "make_designer",
+      "salesperson",
+      "salesman",
+      "sales",
+      "admin",
+      "superadmin",
+      "manager"
+    ].includes(normRole);
+    const hasNonZeroPayment = rawReceived !== void 0 && rawReceived !== null && rawReceived !== "" && Number(rawReceived) > 0;
+    if (!isInitialPaymentAllowed && hasNonZeroPayment) {
+      return {
+        success: false,
+        error: "Forbidden: You do not have permission to enter initial payments."
+      };
+    }
+    const payment = MakePricingService.calculatePaymentStatus(pricing.finalPrice, rawReceived);
+    if (!payment.isValid) {
+      return { success: false, error: payment.error };
     }
     let resolvedCustId = null;
     if (input.customer_id || input.customer_phone || input.customer_name) {
@@ -113641,11 +117056,32 @@ var MakeOrderService = class {
         resolvedCustId = resolved.id;
       }
     }
+    const isAdminUser = ["admin", "superadmin", "manager"].includes((actorSession.role || "").toLowerCase().trim());
+    let effectiveSalesmanId = null;
+    if (isAdminUser) {
+      effectiveSalesmanId = input.salesman_id !== void 0 ? input.salesman_id ? Number(input.salesman_id) : null : actorSession.userId || null;
+    } else {
+      effectiveSalesmanId = actorSession.userId || (input.salesman_id ? Number(input.salesman_id) : null);
+    }
     const orderNumber = await this.generateUniqueOrderNumber();
     const totalQty = input.items.reduce((sum, item) => sum + (Number(item.quantity) || 1), 0);
-    const initialStatus = input.salesman_id ? "Pending Approval" : "Placed";
-    const isApproved = !input.salesman_id;
+    const initialStatus = effectiveSalesmanId ? "Pending Approval" : "Placed";
+    const isApproved = !effectiveSalesmanId;
     const initialApprovalStatus = isApproved ? "sales_approved" : "awaiting_designer";
+    const customDetails = {
+      subtotal: pricing.subtotal,
+      discount_type: pricing.discountType,
+      discount_value: pricing.discountValue,
+      discount_amount: pricing.discountAmount,
+      final_price: pricing.finalPrice,
+      money_received: payment.moneyReceived,
+      amount_due: payment.amountDue,
+      payment_status: payment.paymentStatus,
+      production_hold: payment.productionHold,
+      hold_reason: payment.holdReason,
+      admin_approval_status: "none",
+      items: pricing.items
+    };
     const orderHeaderPayload = {
       order_number: orderNumber,
       furniture_name: input.furniture_name.trim(),
@@ -113657,9 +117093,9 @@ var MakeOrderService = class {
       delivery_date: input.delivery_date || input.target_delivery_date || null,
       target_delivery_date: input.target_delivery_date || input.delivery_date || null,
       requested_delivery_date: input.requested_delivery_date || null,
-      salesman_id: input.salesman_id || null,
+      salesman_id: effectiveSalesmanId,
       customer_id: resolvedCustId,
-      invoice_attachment_urls: Array.isArray(input.invoice_attachment_urls) && input.invoice_attachment_urls.length > 0 ? input.invoice_attachment_urls : Array.isArray(input.invoice_attachments) ? input.invoice_attachments : [],
+      invoice_attachment_urls: (Array.isArray(input.invoice_attachment_urls) && input.invoice_attachment_urls.length > 0 ? input.invoice_attachment_urls : Array.isArray(input.invoice_attachments) ? input.invoice_attachments : []).map((u) => typeof u === "string" ? _MakeOrderService.normalizeAttachmentReference(u) : u).filter(Boolean),
       is_approved: isApproved,
       customer_name: input.customer_name?.trim() || null,
       customer_phone: input.customer_phone?.trim() || null,
@@ -113668,8 +117104,20 @@ var MakeOrderService = class {
       location_landmark: input.location_landmark?.trim() || null,
       receiver_name: input.receiver_name?.trim() || null,
       receiver_phone: input.receiver_phone?.trim() || null,
+      created_by: actorSession.fullName || actorSession.username || null,
       cost_price: pricing.totalCostPrice,
       sale_price: pricing.totalSalePrice,
+      discount_type: pricing.discountType,
+      discount_value: pricing.discountValue,
+      discount_amount: pricing.discountAmount,
+      final_price: pricing.finalPrice,
+      money_received: payment.moneyReceived,
+      amount_due: payment.amountDue,
+      payment_status: payment.paymentStatus,
+      production_hold: payment.productionHold,
+      hold_reason: payment.holdReason,
+      admin_approval_status: "none",
+      custom_details: customDetails,
       approval_status: initialApprovalStatus,
       current_version: 1,
       created_at: (/* @__PURE__ */ new Date()).toISOString()
@@ -113678,37 +117126,74 @@ var MakeOrderService = class {
       orderHeaderPayload.reference_bill_no = input.reference_bill_no.trim();
     }
     let { data: createdOrder, error: orderErr } = await supabase.from("make_orders").insert(orderHeaderPayload).select("id, order_number").single();
-    if (orderErr && orderErr.message && orderErr.message.includes("reference_bill_no")) {
-      const fallbackPayload = { ...orderHeaderPayload };
-      delete fallbackPayload.reference_bill_no;
-      const retryRes = await supabase.from("make_orders").insert(fallbackPayload).select("id, order_number").single();
-      createdOrder = retryRes.data;
-      orderErr = retryRes.error;
+    if (orderErr && orderErr.message) {
+      const errMessage = orderErr.message;
+      const optionalCols = [
+        "discount_type",
+        "discount_value",
+        "discount_amount",
+        "final_price",
+        "reference_bill_no",
+        "money_received",
+        "amount_due",
+        "payment_status",
+        "production_hold",
+        "hold_reason",
+        "admin_approval_status",
+        "created_by"
+      ];
+      const hasOptionalMissing = optionalCols.some((c) => errMessage.includes(c));
+      if (hasOptionalMissing) {
+        console.warn("[MakeOrderService] Detected missing optional column on make_orders, retrying with fallback payload...");
+        const fallbackPayload = { ...orderHeaderPayload };
+        for (const c of optionalCols) {
+          if (errMessage.includes(c)) {
+            delete fallbackPayload[c];
+          }
+        }
+        const retryRes = await supabase.from("make_orders").insert(fallbackPayload).select("id, order_number").single();
+        createdOrder = retryRes.data;
+        orderErr = retryRes.error;
+      }
     }
     if (orderErr || !createdOrder) {
       return { success: false, error: `Failed to create order header: ${orderErr?.message || "Database error"}` };
     }
     const orderId = createdOrder.id;
-    const itemsPayload = input.items.map((item) => ({
-      order_id: orderId,
-      product_id: item.product_id || null,
-      spec_id: item.spec_id || null,
-      size_id: item.size_id || null,
-      color_id: item.color_id || null,
-      product_name: item.product_name.trim(),
-      spec_name: item.spec_name || null,
-      spec_details: item.spec_details || null,
-      size_label: item.size_id ? item.dimensions_text || item.size_label || null : item.size_label || null,
-      dimensions_text: item.dimensions_text || null,
-      custom_size: item.custom_size || (item.is_customized ? item.dimensions_text : null) || null,
-      custom_dimensions: item.custom_dimensions || (item.is_customized ? item.custom_size || item.dimensions_text : null) || null,
-      color_name: item.color_name || item.custom_color || null,
-      quantity: Number(item.quantity) || 1,
-      item_cost_price: item.item_cost_price !== void 0 && item.item_cost_price !== null && item.item_cost_price !== "" ? Math.max(0, Number(item.item_cost_price)) : 0,
-      item_sale_price: item.item_sale_price !== void 0 && item.item_sale_price !== null && item.item_sale_price !== "" ? Math.max(0, Number(item.item_sale_price)) : null,
-      is_customized: !!(item.is_customized || item.is_custom),
-      designer_notes: item.designer_notes || item.custom_notes || null
-    }));
+    const itemsPayload = input.items.map((item) => {
+      const rawTechDrawing = item.technical_drawing_url || item.drawing_url || null;
+      const normTechDrawing = rawTechDrawing ? _MakeOrderService.normalizeAttachmentReference(rawTechDrawing) : null;
+      const rawPdfs = item.pdf_urls || item.drawings || [];
+      const normPdfs = Array.isArray(rawPdfs) ? rawPdfs.map((p) => typeof p === "string" ? _MakeOrderService.normalizeAttachmentReference(p) : p).filter(Boolean) : normTechDrawing ? [normTechDrawing] : [];
+      return {
+        order_id: orderId,
+        product_id: item.product_id || null,
+        spec_id: item.spec_id || null,
+        size_id: item.size_id || null,
+        color_id: item.color_id || null,
+        product_name: item.product_name.trim(),
+        spec_name: item.spec_name || null,
+        spec_details: item.spec_details || null,
+        size_label: item.size_id ? item.dimensions_text || item.size_label || null : item.size_label || null,
+        dimensions_text: item.dimensions_text || null,
+        custom_size: item.custom_size || (item.is_customized ? item.dimensions_text : null) || null,
+        custom_dimensions: item.custom_dimensions || (item.is_customized ? item.custom_size || item.dimensions_text : null) || null,
+        color_name: item.color_name || item.custom_color || null,
+        quantity: Number(item.quantity) || 1,
+        technical_drawing_url: normTechDrawing,
+        pdf_urls: normPdfs,
+        item_cost_price: item.item_cost_price !== void 0 && item.item_cost_price !== null && item.item_cost_price !== "" ? Math.max(0, Number(item.item_cost_price)) : 0,
+        item_sale_price: item.item_sale_price !== void 0 && item.item_sale_price !== null && item.item_sale_price !== "" ? Math.max(0, Number(item.item_sale_price)) : null,
+        discount_type: item.discount_type || null,
+        discount_value: item.discount_value !== void 0 && item.discount_value !== null && item.discount_value !== "" ? Number(item.discount_value) : null,
+        discount_amount: item.discount_amount !== void 0 && item.discount_amount !== null && item.discount_amount !== "" ? Number(item.discount_amount) : 0,
+        final_item_price: item.final_item_price !== void 0 && item.final_item_price !== null && item.final_item_price !== "" ? Number(item.final_item_price) : null,
+        is_customized: !!(item.is_customized || item.is_custom),
+        max_discount_type: item.max_discount_type || null,
+        max_discount_value: item.max_discount_value !== void 0 && item.max_discount_value !== null && item.max_discount_value !== "" ? Number(item.max_discount_value) : null,
+        designer_notes: item.designer_notes || item.custom_notes || null
+      };
+    });
     let { data: insertedItems, error: itemsErr } = await supabase.from("make_order_items").insert(itemsPayload).select("id, product_name");
     if (itemsErr && (itemsErr.code === "42703" || itemsErr.message && /column.*does not exist/i.test(itemsErr.message))) {
       console.warn("[MakeOrderService] Detected missing column on make_order_items insert:", itemsErr.message, "Retrying with schema-compatible payload...");
@@ -113722,6 +117207,12 @@ var MakeOrderService = class {
           delete sanitized.designer_notes;
           delete sanitized.technical_drawing_url;
           delete sanitized.pdf_urls;
+          delete sanitized.max_discount_type;
+          delete sanitized.max_discount_value;
+          delete sanitized.discount_type;
+          delete sanitized.discount_value;
+          delete sanitized.discount_amount;
+          delete sanitized.final_item_price;
         }
         return sanitized;
       });
@@ -113734,11 +117225,44 @@ var MakeOrderService = class {
       await supabase.from("make_orders").delete().eq("id", orderId);
       return { success: false, error: `Order creation rolled back due to item insertion error: ${itemsErr.message}` };
     }
+    if (payment.moneyReceived > 0) {
+      try {
+        const initRef = input.reference_bill_no || "INITIAL_PAYMENT";
+        const { data: existingInit } = await supabase.from("make_order_payments").select("id, amount").eq("order_id", orderId).eq("reference", initRef).maybeSingle();
+        if (!existingInit) {
+          const { error: payErr } = await supabase.from("make_order_payments").insert({
+            order_id: orderId,
+            amount: payment.moneyReceived,
+            payment_method: "CASH",
+            reference: initRef,
+            notes: "Initial payment recorded at order placement",
+            received_by: actorSession.fullName || actorSession.username || "System"
+          });
+          if (payErr) {
+            const tableMissing = payErr.code === "42P01" || /relation.*does not exist/i.test(payErr.message);
+            if (!tableMissing) {
+              console.error("[MakeOrderService] Could not insert initial payment record into make_order_payments:", payErr.message);
+              await supabase.from("make_order_items").delete().eq("order_id", orderId);
+              await supabase.from("make_orders").delete().eq("id", orderId);
+              return { success: false, error: `Failed to persist initial payment in payment ledger: ${payErr.message}` };
+            }
+          }
+        }
+      } catch (payErr) {
+        console.error("[MakeOrderService] Exception persisting initial payment record into make_order_payments:", payErr);
+        await supabase.from("make_order_items").delete().eq("order_id", orderId);
+        await supabase.from("make_orders").delete().eq("id", orderId);
+        return { success: false, error: `Failed to persist initial payment: ${payErr?.message || "Database error"}` };
+      }
+    }
     const collectedItemNotes = input.items.map((it, idx) => {
       const note = it.designer_notes || it.custom_notes;
       return note ? `Item #${idx + 1} (${it.product_name}): ${note}` : null;
     }).filter(Boolean);
-    const baseTimelineNote = input.salesman_id ? "Order created, awaiting salesperson approval" : "Order placed and approved";
+    let baseTimelineNote = input.salesman_id ? "Order created, awaiting salesperson approval" : "Order placed and approved";
+    if (payment.productionHold) {
+      baseTimelineNote += ` [PRODUCTION HOLD: Outstanding balance of \u09F3${payment.amountDue.toLocaleString()} due]`;
+    }
     const finalTimelineNote = collectedItemNotes.length > 0 ? `${baseTimelineNote} [Item Notes: ${collectedItemNotes.join("; ")}]` : baseTimelineNote;
     await supabase.from("make_order_updates").insert({
       order_id: orderId,
@@ -113761,11 +117285,83 @@ var MakeOrderService = class {
         console.warn("[MakeOrderService] Notification error (non-fatal):", notifErr);
       }
     }
+    if (payment.productionHold) {
+      try {
+        const { data: adminUsers } = await supabase.from("users").select("id").in("role", ["admin", "superadmin"]).eq("is_active", 1);
+        if (adminUsers && adminUsers.length > 0) {
+          for (const adm of adminUsers) {
+            await supabase.from("notifications").insert({
+              title: "Order on Production Hold (Payment Due)",
+              message: `Order ${orderNumber} ("${input.furniture_name}") placed with outstanding balance of \u09F3${payment.amountDue.toLocaleString()}. Production is on hold.`,
+              recipient_id: adm.id,
+              sender_id: actorSession.userId,
+              action_path: "/make/track",
+              action_label: "Review Order Hold",
+              metadata: { type: "make_order_hold", order_id: orderId, amount_due: payment.amountDue }
+            });
+          }
+        }
+      } catch (holdNotifErr) {
+        console.warn("[MakeOrderService] Hold notification error (non-fatal):", holdNotifErr);
+      }
+    }
+    const failedAssociations = [];
+    try {
+      const durableUpload = DurableUploadService.getInstance();
+      const invAttachments = orderHeaderPayload.invoice_attachment_urls;
+      if (Array.isArray(invAttachments)) {
+        for (const att of invAttachments) {
+          if (typeof att === "string") {
+            const meta3 = {
+              entityType: "make_orders",
+              entityId: orderId,
+              fieldName: "invoice_attachment_urls"
+            };
+            const associated = durableUpload.associateUploadWithEntity(att, meta3);
+            if (!associated && (att.includes("upl_") || att.includes("make-order-files/"))) {
+              console.warn(`[MakeOrderService] Failed to associate invoice attachment "${att}" with order ${orderId}. Stored in pending retry queue.`);
+              failedAssociations.push({ ref: att, meta: meta3 });
+            }
+          }
+        }
+      }
+      if (Array.isArray(insertedItems)) {
+        for (let idx = 0; idx < insertedItems.length; idx++) {
+          const itemRecord = insertedItems[idx];
+          const rawItem = input.items[idx];
+          if (!itemRecord?.id || !rawItem) continue;
+          const drawings = rawItem.pdf_urls || rawItem.drawings || [rawItem.technical_drawing_url].filter(Boolean);
+          if (Array.isArray(drawings)) {
+            for (const d of drawings) {
+              const dRef = typeof d === "string" ? d : d?.url;
+              if (dRef) {
+                const meta3 = {
+                  entityType: "make_order_items",
+                  entityId: itemRecord.id,
+                  fieldName: "technical_drawing_url"
+                };
+                const associated = durableUpload.associateUploadWithEntity(dRef, meta3);
+                if (!associated && (dRef.includes("upl_") || dRef.includes("make-order-files/"))) {
+                  console.warn(`[MakeOrderService] Failed to associate drawing "${dRef}" with item ${itemRecord.id}. Stored in pending retry queue.`);
+                  failedAssociations.push({ ref: dRef, meta: meta3 });
+                }
+              }
+            }
+          }
+        }
+      }
+      if (failedAssociations.length > 0) {
+        console.warn(`[MakeOrderService] Order ${orderNumber} created with ${failedAssociations.length} unassociated staged upload(s). Retained in durable queue for reconciliation.`);
+      }
+    } catch (assocErr) {
+      console.warn("[MakeOrderService] Pre-staged upload association warning (non-fatal):", assocErr.message);
+    }
     return {
       success: true,
       id: orderId,
       order_number: orderNumber,
-      items: insertedItems || []
+      items: insertedItems || [],
+      unassociatedUploads: failedAssociations.length > 0 ? failedAssociations : void 0
     };
   }
   /**
@@ -113786,6 +117382,15 @@ var MakeOrderService = class {
     if (!pricingValidation.allowed) {
       return { success: false, error: pricingValidation.error };
     }
+    const dueAmount = Number(order.amount_due || 0);
+    const isAdminActor = ["admin", "superadmin", "manager"].includes((actorSession.role || "").toLowerCase().trim());
+    const hasAdminApproval = order.admin_approval_status === "approved";
+    if ((dueAmount > 0 || order.production_hold) && !isAdminActor && !hasAdminApproval) {
+      return {
+        success: false,
+        error: `Cannot start processing order with outstanding balance (\u09F3${dueAmount.toLocaleString()}). Submit a Request for Admin Review.`
+      };
+    }
     const actorName = actorSession.fullName || actorSession.username;
     const actorRole = actorSession.role;
     const versionResult = await MakeVersionService.createSnapshot({
@@ -113798,7 +117403,7 @@ var MakeOrderService = class {
     if (!versionResult.success) {
       return { success: false, error: `Failed to create version snapshot: ${versionResult.error}` };
     }
-    await MakeVersionService.recordApprovalAudit({
+    const approvalAudit = await MakeVersionService.recordApprovalAudit({
       orderId,
       versionNumber: 1,
       action: "approved",
@@ -113806,6 +117411,9 @@ var MakeOrderService = class {
       userRole: actorRole,
       notesOrReason: notes || override?.overrideReason || "Order approved and placed into factory queue"
     });
+    if (!approvalAudit.success) {
+      return { success: false, error: `Failed to record approval audit: ${approvalAudit.error || "unknown database error"}` };
+    }
     const { error: updErr } = await supabase.from("make_orders").update({
       status: "Placed",
       approval_status: "sales_approved",
@@ -113851,11 +117459,13 @@ var MakeOrderService = class {
   static async saveDesignerSpecsAndPricing(params) {
     const { orderId, costPrice, salePrice, items, actorSession, modificationReason } = params;
     const { data: current, error: fetchErr } = await supabase.from("make_orders").select("*").eq("id", orderId).maybeSingle();
-    if (fetchErr || !current) return { success: false, error: "Order not found" };
+    if (fetchErr) return { success: false, error: `Failed to load order: ${fetchErr.message}` };
+    if (!current) return { success: false, error: "Order not found" };
     let calcCostPrice = 0;
     let calcSalePrice = 0;
     let hasItemCost = false;
     let hasItemSale = false;
+    const itemUpdates = [];
     if (Array.isArray(items) && items.length > 0) {
       for (const item of items) {
         const itemQty = Math.max(1, Number(item.quantity) || 1);
@@ -113868,19 +117478,7 @@ var MakeOrderService = class {
           calcSalePrice += parsedSale * itemQty;
           hasItemSale = true;
         }
-        if (item.id) {
-          await supabase.from("make_order_items").update({
-            quantity: itemQty,
-            item_cost_price: itemCost,
-            item_sale_price: hasSale ? Number(item.item_sale_price) : null,
-            spec_name: item.spec_name || "",
-            size_label: item.size_label || "",
-            color_name: item.color_name || "",
-            salesperson_note: item.salesperson_note || null,
-            designer_notes: item.designer_notes || null,
-            technical_drawing_url: item.technical_drawing_url || null
-          }).eq("id", item.id);
-        }
+        if (item.id) itemUpdates.push({ item, itemQty, itemCost, hasSale });
       }
     }
     const finalCostPrice = hasItemCost ? calcCostPrice : Number(costPrice) || 0;
@@ -113888,19 +117486,34 @@ var MakeOrderService = class {
     if (finalCostPrice <= 0) {
       return { success: false, error: "Cost price must be greater than 0." };
     }
+    if (itemUpdates.length > 0) {
+      const itemIds = itemUpdates.map(({ item }) => String(item.id));
+      const { data: ownedItems, error: ownedItemsErr } = await supabase.from("make_order_items").select("id").eq("order_id", orderId).in("id", itemIds);
+      if (ownedItemsErr) {
+        return { success: false, error: `Failed to validate order items: ${ownedItemsErr.message}` };
+      }
+      const ownedIds = new Set((ownedItems || []).map((row) => String(row.id)));
+      const missingId = itemIds.find((id) => !ownedIds.has(id));
+      if (missingId) {
+        return { success: false, error: `Order item ${missingId} is no longer part of this order. Refresh Track Orders and try again.` };
+      }
+    }
     const isReModification = current.approved_version !== null && (current.approval_status === "sales_approved" || current.status === "Placed");
     const nextVersion = isReModification ? (current.current_version || 1) + 1 : current.current_version || 1;
     const actorName = actorSession.fullName || actorSession.username;
     const actorRole = actorSession.role;
     if (isReModification) {
-      await MakeVersionService.createSnapshot({
+      const snapshotResult = await MakeVersionService.createSnapshot({
         orderId,
         versionNumber: current.current_version || 1,
         changeReason: modificationReason || "Designer modified product specifications/pricing after approval",
         actorName,
         actorRole
       });
-      await supabase.from("make_order_alteration_log").insert({
+      if (!snapshotResult.success) {
+        return { success: false, error: `Could not save the prior order version: ${snapshotResult.error || "snapshot failed"}` };
+      }
+      const { error: auditErr } = await supabase.from("make_order_alteration_log").insert({
         order_id: orderId,
         altered_by: actorName,
         user_role: actorRole,
@@ -113909,6 +117522,26 @@ var MakeOrderService = class {
         new_value: `v${nextVersion}: Cost \u09F3${finalCostPrice}, Sale \u09F3${finalSalePrice || 0}`,
         reason: modificationReason || "Designer adjusted individual product specifications/pricing"
       });
+      if (auditErr) return { success: false, error: `Could not record order modification audit: ${auditErr.message}` };
+    }
+    for (const { item, itemQty, itemCost, hasSale } of itemUpdates) {
+      const { data: updatedItem, error: itemUpdateErr } = await supabase.from("make_order_items").update({
+        quantity: itemQty,
+        item_cost_price: itemCost,
+        item_sale_price: hasSale ? Number(item.item_sale_price) : null,
+        spec_name: item.spec_name ?? "",
+        size_label: item.size_label ?? "",
+        color_name: item.color_name ?? "",
+        salesperson_note: item.salesperson_note || null,
+        designer_notes: item.designer_notes || null,
+        technical_drawing_url: item.technical_drawing_url || null
+      }).eq("id", item.id).eq("order_id", orderId).select("id").maybeSingle();
+      if (itemUpdateErr) {
+        return { success: false, error: `Failed to save order item ${item.id}: ${itemUpdateErr.message}` };
+      }
+      if (!updatedItem) {
+        return { success: false, error: `Order item ${item.id} was not updated. Refresh Track Orders and try again.` };
+      }
     }
     const { error: updErr } = await supabase.from("make_orders").update({
       cost_price: finalCostPrice,
@@ -113921,12 +117554,13 @@ var MakeOrderService = class {
       updated_at: (/* @__PURE__ */ new Date()).toISOString()
     }).eq("id", orderId);
     if (updErr) return { success: false, error: updErr.message };
-    await supabase.from("make_order_updates").insert({
+    const { error: timelineErr } = await supabase.from("make_order_updates").insert({
       order_id: orderId,
       status: isReModification ? "Modification Pending Approval" : "Awaiting Salesperson Approval",
       note: `Cost price set to \u09F3${finalCostPrice.toLocaleString()}${finalSalePrice ? ` | Sale price: \u09F3${finalSalePrice.toLocaleString()}` : ""}${isReModification ? ` (v${nextVersion} requires re-approval)` : ""}`,
       updated_by: `${actorName} (${actorRole})`
     });
+    if (timelineErr) console.error("[MakeOrderService] Failed to add designer pricing timeline entry:", timelineErr);
     if (current.salesman_id) {
       try {
         await supabase.from("notifications").insert({
@@ -114181,8 +117815,11 @@ var MakeOrderService = class {
       filteredOrderChanges.cost_price = totalCost;
       filteredOrderChanges.total_sale_price = totalSale;
       filteredOrderChanges.sale_price = totalSale;
-      filteredOrderChanges.total_amount = totalSale;
       filteredOrderChanges.remaining_balance = Math.max(0, totalSale - Number(current.advance_amount || 0));
+      const historicalMoneyReceived = Number(current.money_received || 0);
+      filteredOrderChanges.money_received = historicalMoneyReceived;
+      filteredOrderChanges.amount_due = Math.max(0, Math.round((totalSale - historicalMoneyReceived + Number.EPSILON) * 100) / 100);
+      filteredOrderChanges.payment_status = filteredOrderChanges.amount_due <= 0 ? "paid" : historicalMoneyReceived > 0 ? "partial" : "unpaid";
       if (allItems.length === 1 && allItems[0].product_name) {
         filteredOrderChanges.furniture_name = allItems[0].product_name;
       }
@@ -114309,10 +117946,324 @@ var MakeOrderService = class {
       return { success: false, error: err.message || "Transaction error during order deletion" };
     }
   }
+  /**
+   * Request administrator approval to proceed with production despite an unpaid balance / production hold.
+   */
+  static async requestProductionApproval(orderId, notes, actorSession) {
+    const { data: order, error: fetchErr } = await supabase.from("make_orders").select("id, order_number, furniture_name, amount_due, production_hold, admin_approval_status").eq("id", orderId).maybeSingle();
+    if (fetchErr) return { success: false, error: `Failed to load order: ${fetchErr.message}` };
+    if (!order) return { success: false, error: "Order not found." };
+    const role = (actorSession.role || "").toLowerCase().trim();
+    if (!["salesperson", "salesman", "sales", "admin", "superadmin", "manager"].includes(role)) {
+      return { success: false, error: "Only Sales or Admin can request production release for an order with a due balance." };
+    }
+    const due = Number(order.amount_due || 0);
+    if (due <= 0) return { success: false, error: "This order has no outstanding payment due." };
+    if (order.admin_approval_status === "approved") {
+      return { success: false, error: "Admin has already approved this order for production." };
+    }
+    const requester = actorSession.fullName || actorSession.username || "Staff";
+    const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+    const { error: updErr } = await supabase.from("make_orders").update({
+      admin_approval_status: "pending",
+      admin_approval_requested_by: requester,
+      admin_approval_requested_at: nowIso,
+      admin_approval_notes: notes || null,
+      updated_at: nowIso
+    }).eq("id", orderId);
+    if (updErr) {
+      return { success: false, error: `Failed to update approval status: ${updErr.message}` };
+    }
+    const noteText = `Production release approval requested from Admin${notes ? ": " + notes : ""}`;
+    const { error: timelineErr } = await supabase.from("make_order_updates").insert({
+      order_id: orderId,
+      status: "Pending Admin Approval",
+      note: noteText,
+      updated_by: requester
+    });
+    if (timelineErr) console.error("[MakeOrderService] Failed to add production approval request to timeline:", timelineErr);
+    try {
+      const { data: adminUsers } = await supabase.from("users").select("id").in("role", ["admin", "superadmin"]).eq("is_active", 1);
+      if (adminUsers && adminUsers.length > 0) {
+        const balMsg = order.amount_due ? `\u09F3${Number(order.amount_due).toLocaleString()}` : "unpaid balance";
+        for (const adm of adminUsers) {
+          await supabase.from("notifications").insert({
+            title: "Production Approval Requested",
+            message: `${requester} requested production approval for Order ${order.order_number} ("${order.furniture_name}") with ${balMsg} due.${notes ? " Note: " + notes : ""}`,
+            recipient_id: adm.id,
+            sender_id: actorSession.userId,
+            action_path: "/make/track",
+            action_label: "Review Approval Request",
+            metadata: { type: "make_production_approval_requested", order_id: orderId }
+          });
+        }
+      }
+    } catch (notifErr) {
+      console.warn("[MakeOrderService] Error sending approval request notifications:", notifErr);
+    }
+    return { success: true, message: "Production approval request submitted to Administrators." };
+  }
+  /**
+   * Authoritatively decide (approve or reject) production release on a held order.
+   * Strictly restricted to Administrators and Superadmins.
+   */
+  static async decideProductionApproval(orderId, decision, notes, actorSession) {
+    const role = (actorSession.role || "").toLowerCase();
+    const isAdmin = role === "admin" || role === "superadmin";
+    if (!isAdmin) {
+      return { success: false, error: "Forbidden: Only Administrators can decide production approval." };
+    }
+    const { data: order, error: fetchErr } = await supabase.from("make_orders").select("id, order_number, furniture_name, amount_due, production_hold, admin_approval_status, created_by").eq("id", orderId).maybeSingle();
+    if (fetchErr) return { success: false, error: `Failed to load order: ${fetchErr.message}` };
+    if (!order) return { success: false, error: "Order not found." };
+    const approver = actorSession.fullName || actorSession.username || "Admin";
+    const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+    const isApproved = decision === "approved";
+    const updatePayload = {
+      admin_approval_status: decision,
+      admin_approval_decision_by: approver,
+      admin_approval_decision_at: nowIso,
+      admin_approval_notes: notes || null,
+      // If approved, release the production hold override; if rejected, keep production hold active
+      production_hold: !isApproved,
+      updated_at: nowIso
+    };
+    const { error: updErr } = await supabase.from("make_orders").update(updatePayload).eq("id", orderId);
+    if (updErr) {
+      return { success: false, error: `Failed to record approval decision: ${updErr.message}` };
+    }
+    const actionText = isApproved ? "APPROVED" : "REJECTED";
+    const noteText = `Production release ${actionText} by ${approver}${notes ? ": " + notes : ""}${isApproved ? " (Production hold override active)" : ""}`;
+    await supabase.from("make_order_updates").insert({
+      order_id: orderId,
+      status: isApproved ? "Approved for Production" : "Hold Confirmed",
+      note: noteText,
+      updated_by: approver
+    });
+    if (order.created_by) {
+      try {
+        await supabase.from("notifications").insert({
+          title: `Production Approval ${actionText}`,
+          message: `Production release for Order ${order.order_number} ("${order.furniture_name}") was ${actionText.toLowerCase()} by ${approver}.${notes ? " Note: " + notes : ""}`,
+          recipient_id: order.created_by,
+          sender_id: actorSession.userId,
+          action_path: "/make/track",
+          action_label: "View Order",
+          metadata: { type: "make_production_approval_decision", order_id: orderId, decision }
+        });
+      } catch (notifErr) {
+        console.warn("[MakeOrderService] Error notifying creator:", notifErr);
+      }
+    }
+    return {
+      success: true,
+      decision,
+      message: `Production approval successfully ${decision}.`
+    };
+  }
+  /**
+   * Authoritatively record an order payment, update amount due, and evaluate production hold.
+   */
+  static async recordOrderPayment(params) {
+    const { orderId, amount, paymentMethod, reference, notes, actorSession } = params;
+    if (typeof amount !== "number" || isNaN(amount) || amount <= 0) {
+      return { success: false, error: "Payment amount must be a positive number." };
+    }
+    const { data: order, error: fetchErr } = await supabase.from("make_orders").select("id, order_number, furniture_name, status, final_price, sale_price, money_received, amount_due, payment_status, production_hold, admin_approval_status").eq("id", orderId).maybeSingle();
+    if (fetchErr || !order) {
+      return { success: false, error: "Order not found." };
+    }
+    const totalOrderPrice = order.final_price !== null && order.final_price !== void 0 ? Number(order.final_price) : Number(order.sale_price || 0);
+    const currentReceived = Number(order.money_received || 0);
+    const newReceived = Math.round((currentReceived + amount + Number.EPSILON) * 100) / 100;
+    if (totalOrderPrice > 0 && newReceived > totalOrderPrice + 0.01) {
+      return {
+        success: false,
+        error: `Total payments (\u09F3${newReceived.toLocaleString()}) cannot exceed the order price (\u09F3${totalOrderPrice.toLocaleString()}).`
+      };
+    }
+    const newAmountDue = Math.max(0, Math.round((totalOrderPrice - newReceived + Number.EPSILON) * 100) / 100);
+    const newPaymentStatus = newAmountDue <= 0 ? "paid" : newReceived > 0 ? "partial" : "unpaid";
+    const newProductionHold = newAmountDue > 0 && order.admin_approval_status !== "approved";
+    const receiver = actorSession.fullName || actorSession.username || "Staff";
+    const { data: paymentRow, error: payErr } = await supabase.from("make_order_payments").insert({
+      order_id: orderId,
+      amount,
+      payment_method: paymentMethod || "CASH",
+      reference: reference || null,
+      notes: notes || null,
+      received_by: receiver
+    }).select("id").single();
+    if (payErr) {
+      return { success: false, error: `Payment was not recorded in the payment ledger: ${payErr.message}` };
+    }
+    const { error: updErr } = await supabase.from("make_orders").update({
+      money_received: newReceived,
+      amount_due: newAmountDue,
+      payment_status: newPaymentStatus,
+      production_hold: newProductionHold,
+      hold_reason: newProductionHold ? `Outstanding balance of \u09F3${newAmountDue.toLocaleString()} due` : null,
+      updated_at: (/* @__PURE__ */ new Date()).toISOString()
+    }).eq("id", orderId);
+    if (updErr) {
+      if (paymentRow?.id) {
+        const { error: rollbackErr } = await supabase.from("make_order_payments").delete().eq("id", paymentRow.id);
+        if (rollbackErr) console.error("[MakeOrderService] Failed to remove payment ledger row after order update failure:", rollbackErr);
+      }
+      return { success: false, error: `Failed to update order financial status: ${updErr.message}` };
+    }
+    const timelineMsg = `Payment of \u09F3${amount.toLocaleString()} received (${paymentMethod || "CASH"}${reference ? ", Ref: " + reference : ""}). Remaining balance: \u09F3${newAmountDue.toLocaleString()}${newProductionHold ? " [HOLD ACTIVE]" : " [HOLD RELEASED]"}`;
+    const { error: timelineErr } = await supabase.from("make_order_updates").insert({
+      order_id: orderId,
+      status: newProductionHold ? "Production Hold" : order.status || "Payment Received",
+      note: timelineMsg,
+      updated_by: receiver
+    });
+    if (timelineErr) console.error("[MakeOrderService] Failed to add payment timeline entry:", timelineErr);
+    return {
+      success: true,
+      moneyReceived: newReceived,
+      amountDue: newAmountDue,
+      paymentStatus: newPaymentStatus,
+      productionHold: newProductionHold
+    };
+  }
+  /**
+   * Remove a line item during the designer's initial review, before the
+   * salesperson approves the order. This avoids altering issued invoices,
+   * approved versions, or an order with received payments.
+   */
+  static async removeOrderItem(params) {
+    const { orderId, itemId, actorSession } = params;
+    const role = (actorSession.role || "").toLowerCase().trim();
+    const isDesigner = ["furniture_designer", "furniture designer", "designer", "make_designer"].includes(role);
+    const isAdmin = ["admin", "superadmin", "manager"].includes(role);
+    if (!isDesigner && !isAdmin) return { success: false, error: "Only Furniture Designers or Administrators can remove an order item." };
+    const { data: order, error: orderErr } = await supabase.from("make_orders").select("id, order_number, furniture_name, status, approval_status, bill_id, bill_item_id, money_received, custom_details").eq("id", orderId).maybeSingle();
+    if (orderErr) return { success: false, error: `Failed to load order: ${orderErr.message}` };
+    if (!order) return { success: false, error: "Order not found." };
+    if (order.approval_status !== "awaiting_designer") {
+      return { success: false, error: "Items can only be removed during the initial designer review, before Sales approval. Use the order alteration workflow for later changes." };
+    }
+    if (order.bill_id || order.bill_item_id) return { success: false, error: "This order is linked to a bill and its items cannot be removed here." };
+    if (Number(order.money_received || 0) > 0) return { success: false, error: "This order has received payment. Reconcile the payment before removing an item." };
+    const { data: items, error: itemsErr } = await supabase.from("make_order_items").select("*").eq("order_id", orderId).order("id", { ascending: true });
+    if (itemsErr) return { success: false, error: `Failed to load order items: ${itemsErr.message}` };
+    const allItems = items || [];
+    const target = allItems.find((item) => String(item.id) === String(itemId));
+    if (!target) return { success: false, error: "The selected item is no longer part of this order. Refresh Track Orders." };
+    if (allItems.length <= 1) return { success: false, error: "An order must keep at least one product. Cancel the entire order if it should not proceed." };
+    const actorName = actorSession.fullName || actorSession.username || "User";
+    const remaining = allItems.filter((item) => String(item.id) !== String(itemId));
+    const { error: auditErr } = await supabase.from("make_order_alteration_log").insert({
+      order_id: orderId,
+      order_number: order.order_number || "",
+      altered_by: actorName,
+      user_role: role,
+      action_type: "product_removed_during_designer_review",
+      field_name: "make_order_items",
+      old_value: `${target.product_name} (Qty: ${target.quantity})`,
+      new_value: "Removed during designer review",
+      reason: "Designer review before Sales approval",
+      altered_at: (/* @__PURE__ */ new Date()).toISOString()
+    });
+    if (auditErr) return { success: false, error: `Could not record the item removal audit: ${auditErr.message}` };
+    const { data: deleted, error: deleteErr } = await supabase.from("make_order_items").delete().eq("id", itemId).eq("order_id", orderId).select("id").maybeSingle();
+    if (deleteErr) return { success: false, error: `Failed to remove order item: ${deleteErr.message}` };
+    if (!deleted) return { success: false, error: "The item was not removed. Refresh Track Orders and try again." };
+    const totalQuantity = remaining.reduce((sum, item) => sum + (Number(item.quantity) || 1), 0);
+    const updatedDetails = order.custom_details && typeof order.custom_details === "object" ? { ...order.custom_details, items: remaining } : order.custom_details;
+    const { error: updateErr } = await supabase.from("make_orders").update({
+      quantity: totalQuantity,
+      furniture_name: remaining.length === 1 ? remaining[0].product_name : order.furniture_name,
+      custom_details: updatedDetails,
+      updated_at: (/* @__PURE__ */ new Date()).toISOString()
+    }).eq("id", orderId);
+    if (updateErr) return { success: false, error: `Item was removed, but order summary could not be refreshed: ${updateErr.message}. Contact an administrator before approval.` };
+    const { error: timelineErr } = await supabase.from("make_order_updates").insert({
+      order_id: orderId,
+      status: order.status,
+      note: `Furniture Designer removed ${target.product_name} (Qty: ${target.quantity}) during initial review.`,
+      updated_by: `${actorName} (${role})`
+    });
+    if (timelineErr) console.error("[MakeOrderService] Failed to add item removal timeline entry:", timelineErr);
+    return { success: true };
+  }
+  static async updateDesignerOrderItemQuantity(params) {
+    const { orderId, itemId, quantity, actorSession } = params;
+    const role = (actorSession.role || "").toLowerCase().trim();
+    if (!["furniture_designer", "furniture designer", "designer", "make_designer", "admin", "superadmin", "manager"].includes(role)) {
+      return { success: false, error: "Only Furniture Designers or Administrators can change item quantities during initial review." };
+    }
+    if (!Number.isInteger(quantity) || quantity < 1) return { success: false, error: "Quantity must be a positive whole number." };
+    const { data: order, error: orderErr } = await supabase.from("make_orders").select("id, order_number, status, approval_status, bill_id, bill_item_id, money_received, custom_details").eq("id", orderId).maybeSingle();
+    if (orderErr) return { success: false, error: `Failed to load order: ${orderErr.message}` };
+    if (!order) return { success: false, error: "Order not found." };
+    if (order.approval_status !== "awaiting_designer") return { success: false, error: "Item quantities can only be changed during initial designer review, before Sales approval." };
+    if (order.bill_id || order.bill_item_id) return { success: false, error: "This order is linked to a bill and its items cannot be changed here." };
+    if (Number(order.money_received || 0) > 0) return { success: false, error: "This order has received payment. Reconcile the payment before changing item quantities." };
+    const { data: items, error: itemsErr } = await supabase.from("make_order_items").select("*").eq("order_id", orderId).order("id", { ascending: true });
+    if (itemsErr) return { success: false, error: `Failed to load order items: ${itemsErr.message}` };
+    const allItems = items || [];
+    const target = allItems.find((item) => String(item.id) === String(itemId));
+    if (!target) return { success: false, error: "The selected item is no longer part of this order. Refresh Track Orders." };
+    const oldQuantity = Number(target.quantity) || 1;
+    if (oldQuantity === quantity) return { success: true };
+    const actorName = actorSession.fullName || actorSession.username || "User";
+    const { error: auditErr } = await supabase.from("make_order_alteration_log").insert({
+      order_id: orderId,
+      order_number: order.order_number || "",
+      altered_by: actorName,
+      user_role: role,
+      action_type: "quantity_change_during_designer_review",
+      field_name: `quantity (item #${itemId})`,
+      old_value: String(oldQuantity),
+      new_value: String(quantity),
+      reason: "Designer review before Sales approval",
+      altered_at: (/* @__PURE__ */ new Date()).toISOString()
+    });
+    if (auditErr) return { success: false, error: `Could not record the quantity-change audit: ${auditErr.message}` };
+    const { data: changedItem, error: itemErr } = await supabase.from("make_order_items").update({ quantity }).eq("id", itemId).eq("order_id", orderId).select("id").maybeSingle();
+    if (itemErr) return { success: false, error: `Failed to update item quantity: ${itemErr.message}` };
+    if (!changedItem) return { success: false, error: "The item was not updated. Refresh Track Orders and try again." };
+    const updatedItems = allItems.map((item) => String(item.id) === String(itemId) ? { ...item, quantity } : item);
+    const totalQuantity = updatedItems.reduce((sum, item) => sum + (Number(item.quantity) || 1), 0);
+    const updatedDetails = order.custom_details && typeof order.custom_details === "object" ? { ...order.custom_details, items: updatedItems } : order.custom_details;
+    const { error: orderUpdateErr } = await supabase.from("make_orders").update({
+      quantity: totalQuantity,
+      custom_details: updatedDetails,
+      updated_at: (/* @__PURE__ */ new Date()).toISOString()
+    }).eq("id", orderId);
+    if (orderUpdateErr) return { success: false, error: `Item quantity changed, but the order summary could not be refreshed: ${orderUpdateErr.message}. Contact an administrator before approval.` };
+    const { error: timelineErr } = await supabase.from("make_order_updates").insert({
+      order_id: orderId,
+      status: order.status,
+      note: `${target.product_name} quantity changed from ${oldQuantity} to ${quantity} during designer review.`,
+      updated_by: `${actorName} (${role})`
+    });
+    if (timelineErr) console.error("[MakeOrderService] Failed to add item quantity timeline entry:", timelineErr);
+    return { success: true };
+  }
+  /**
+   * Retrieve payment ledger history for an order.
+   */
+  static async getOrderPayments(orderId) {
+    try {
+      const { data: data2, error: error51 } = await supabase.from("make_order_payments").select("*").eq("order_id", orderId).order("created_at", { ascending: false });
+      if (error51) {
+        console.warn("[MakeOrderService] getOrderPayments error:", error51.message);
+        return { success: false, payments: [], error: error51.message };
+      }
+      return { success: true, payments: data2 || [] };
+    } catch (err) {
+      return { success: false, payments: [], error: err.message || "Failed to load payment history." };
+    }
+  }
 };
 
 // electron/services/make/MakeProductionService.ts
 init_supabase();
+init_DurableOutboxService();
 var CANONICAL_PRODUCTION_STAGES = [
   "Work in process",
   "Production On Going",
@@ -114350,7 +118301,22 @@ var LEGACY_STAGE_INDEX_MAP = {
   "Packaging & QC": 4,
   "Dispatch": 6
 };
-var MakeProductionService = class {
+var MakeProductionService = class _MakeProductionService {
+  static supportsCurrentStagePhoto = null;
+  static setSupportsCurrentStagePhoto(supported) {
+    _MakeProductionService.supportsCurrentStagePhoto = supported;
+  }
+  static getSupportsCurrentStagePhoto() {
+    return _MakeProductionService.supportsCurrentStagePhoto;
+  }
+  static isMissingColumnError(err, colName) {
+    if (!err) return false;
+    const msg = String(err.message || "").toLowerCase();
+    const details = String(err.details || "").toLowerCase();
+    const code = String(err.code || "");
+    const target = colName.toLowerCase();
+    return code === "PGRST204" || code === "42703" || msg.includes(target) || details.includes(target) || msg.includes(`could not find the '${target}' column`) || msg.includes(`column make_orders.${target} does not exist`) || details.includes(`column ${target} does not exist`);
+  }
   /**
    * Resolves the canonical stage index (0-5) for any stage string (canonical or legacy).
    * Returns -1 if the stage string is not recognized.
@@ -114370,9 +118336,17 @@ var MakeProductionService = class {
   /**
    * Authoritatively validates whether an order can advance from its current status to targetStage.
    */
-  static validateTransition(currentStatus, targetStage) {
+  static validateTransition(currentStatus, targetStage, options) {
     const curIdx = this.getStageIndex(currentStatus);
     const targetIdx = this.getStageIndex(targetStage);
+    if (options?.productionHold && options.adminApprovalStatus !== "approved") {
+      return {
+        allowed: false,
+        error: "Order is on Production Hold due to outstanding balance. Administrator approval is required before factory production can proceed.",
+        currentStageIndex: curIdx,
+        targetStageIndex: targetIdx
+      };
+    }
     if (targetIdx === -1) {
       return {
         allowed: false,
@@ -114413,14 +118387,86 @@ var MakeProductionService = class {
   }
   /**
    * Executes the stage transition in the database and dispatches notifications.
+   * Aliased as addProductionUpdate for foreign-key validation and production workflow consumers.
    */
+  static async addProductionUpdate(params) {
+    return this.advanceOrderStage(params);
+  }
   static async advanceOrderStage(params) {
     const { orderId, targetStage, note, photoUrl, actorName, actorRole, actorUserId } = params;
-    const { data: order, error: fetchErr } = await supabase.from("make_orders").select("*").eq("id", orderId).maybeSingle();
-    if (fetchErr || !order) {
-      return { success: false, stage: targetStage, photo_url: null, error: "Order not found" };
+    let order = null;
+    const { data: remoteOrder, error: fetchErr } = await supabase.from("make_orders").select("*").eq("id", orderId).maybeSingle();
+    if (remoteOrder) {
+      order = remoteOrder;
+    } else {
+      const outbox = DurableOutboxService.getInstance();
+      const pendingParent = outbox.findPendingOrderOperation(orderId);
+      if (pendingParent) {
+        const roleLabel2 = actorRole || "Factory Manager";
+        const formattedActor2 = `${actorName} (${roleLabel2})`;
+        const finalPhotoUrl2 = photoUrl || pendingParent.payload?.current_stage_photo || null;
+        const deferredUpdateRow = {
+          order_id: orderId,
+          status: targetStage,
+          stage: targetStage,
+          note: note || "",
+          photo_url: finalPhotoUrl2,
+          photo_urls: finalPhotoUrl2 ? [finalPhotoUrl2] : [],
+          updated_by: formattedActor2
+        };
+        const deferredOrderUpdates = {
+          status: targetStage,
+          current_stage: targetStage,
+          updated_at: (/* @__PURE__ */ new Date()).toISOString(),
+          factory_manager_name: actorName,
+          factory_manager_id: actorUserId || null
+        };
+        if (finalPhotoUrl2 && _MakeProductionService.supportsCurrentStagePhoto !== false) {
+          deferredOrderUpdates.current_stage_photo = finalPhotoUrl2;
+        }
+        const childUpdateOpId = outbox.enqueueSingle({
+          entityType: "make_order_updates",
+          operation: "insert",
+          payload: deferredUpdateRow,
+          dependencyOpId: pendingParent.id,
+          target: "supabase"
+        });
+        outbox.enqueueSingle({
+          entityType: "make_orders",
+          operation: "update",
+          payload: deferredOrderUpdates,
+          filter: [{ column: "id", value: orderId }],
+          dependencyOpId: childUpdateOpId,
+          target: "supabase"
+        });
+        console.warn(`[MakeProductionService] Parent order ${orderId} is pending in durable outbox. Deferred stage update "${targetStage}" with dependency op ${pendingParent.id}.`);
+        return {
+          success: true,
+          stage: targetStage,
+          photo_url: finalPhotoUrl2,
+          error: void 0
+        };
+      }
+      return {
+        success: false,
+        stage: targetStage,
+        photo_url: null,
+        error: `Parent order "${orderId}" does not exist in database or pending outbox.`
+      };
     }
-    const validation = this.validateTransition(order.status, targetStage);
+    if (order.production_hold && order.admin_approval_status !== "approved") {
+      const dueMsg = order.amount_due ? ` (Outstanding balance: \u09F3${Number(order.amount_due).toLocaleString()})` : "";
+      return {
+        success: false,
+        stage: targetStage,
+        photo_url: null,
+        error: `Cannot advance production stage: Order is on Production Hold${dueMsg}. Administrator approval is required to proceed.`
+      };
+    }
+    const validation = this.validateTransition(order.status, targetStage, {
+      productionHold: order.production_hold,
+      adminApprovalStatus: order.admin_approval_status
+    });
     if (!validation.allowed) {
       return { success: false, stage: targetStage, photo_url: null, error: validation.error };
     }
@@ -114437,7 +118483,16 @@ var MakeProductionService = class {
     }
     const roleLabel = actorRole || "Factory Manager";
     const formattedActor = `${actorName} (${roleLabel})`;
-    const finalPhotoUrl = photoUrl || order.current_stage_photo || null;
+    let finalPhotoUrl = photoUrl || order.current_stage_photo || null;
+    if (!finalPhotoUrl) {
+      try {
+        const { data: latestUpdate } = await supabase.from("make_order_updates").select("photo_url").eq("order_id", orderId).not("photo_url", "is", null).order("created_at", { ascending: false }).limit(1).maybeSingle();
+        if (latestUpdate?.photo_url) {
+          finalPhotoUrl = latestUpdate.photo_url;
+        }
+      } catch {
+      }
+    }
     const updateRow = {
       order_id: orderId,
       status: targetStage,
@@ -114450,22 +118505,43 @@ var MakeProductionService = class {
     const { error: insErr } = await supabase.from("make_order_updates").insert(updateRow);
     if (insErr) {
       console.error("[MakeProductionService] Failed to insert update:", insErr);
+      return {
+        success: false,
+        stage: targetStage,
+        photo_url: finalPhotoUrl,
+        error: `Failed to insert production update: ${insErr.message}`
+      };
     }
-    const orderUpdates = {
+    const baseOrderUpdates = {
       status: targetStage,
       current_stage: targetStage,
       updated_at: (/* @__PURE__ */ new Date()).toISOString()
     };
-    if (finalPhotoUrl) {
+    if (actorUserId) {
+      baseOrderUpdates.factory_manager_id = actorUserId;
+    }
+    baseOrderUpdates.factory_manager_name = actorName;
+    const orderUpdates = { ...baseOrderUpdates };
+    if (finalPhotoUrl && _MakeProductionService.supportsCurrentStagePhoto !== false) {
       orderUpdates.current_stage_photo = finalPhotoUrl;
     }
-    if (actorUserId) {
-      orderUpdates.factory_manager_id = actorUserId;
+    let { error: updErr } = await supabase.from("make_orders").update(orderUpdates).eq("id", orderId);
+    if (updErr && orderUpdates.current_stage_photo && _MakeProductionService.isMissingColumnError(updErr, "current_stage_photo")) {
+      console.warn(`[MakeProductionService] 'current_stage_photo' not found on make_orders schema. Retrying update without optional column while preserving photo in make_order_updates.`);
+      _MakeProductionService.supportsCurrentStagePhoto = false;
+      delete orderUpdates.current_stage_photo;
+      const retryResult = await supabase.from("make_orders").update(orderUpdates).eq("id", orderId);
+      updErr = retryResult.error;
+    } else if (!updErr && orderUpdates.current_stage_photo) {
+      _MakeProductionService.supportsCurrentStagePhoto = true;
     }
-    orderUpdates.factory_manager_name = actorName;
-    const { error: updErr } = await supabase.from("make_orders").update(orderUpdates).eq("id", orderId);
     if (updErr) {
-      return { success: false, stage: targetStage, photo_url: finalPhotoUrl, error: updErr.message };
+      return {
+        success: false,
+        stage: targetStage,
+        photo_url: finalPhotoUrl,
+        error: `Failed to update order record: ${updErr.message}`
+      };
     }
     try {
       const furnitureTitle = order.furniture_name || `Order #${orderId}`;
@@ -114503,11 +118579,13 @@ var MakeProductionService = class {
 };
 
 // electron/services/make/MakeCadService.ts
-var import_electron13 = require("electron");
-var import_fs11 = __toESM(require("fs"), 1);
-var import_path12 = __toESM(require("path"), 1);
-var import_crypto9 = __toESM(require("crypto"), 1);
+var import_electron17 = require("electron");
+var import_fs14 = __toESM(require("fs"), 1);
+var import_path15 = __toESM(require("path"), 1);
+var import_crypto11 = __toESM(require("crypto"), 1);
 init_supabase();
+init_SupabaseQuotaManager();
+init_DurableUploadService();
 var ALLOWED_CAD_EXTENSIONS = /* @__PURE__ */ new Set([
   "pdf",
   "dwg",
@@ -114522,20 +118600,41 @@ var ALLOWED_CAD_EXTENSIONS = /* @__PURE__ */ new Set([
   "png",
   "jpg",
   "jpeg",
-  "webp"
+  "webp",
+  "gif",
+  "bmp",
+  "tiff",
+  "tif",
+  "avif",
+  "heic",
+  "heif"
 ]);
 var ALLOWED_PHOTO_EXTENSIONS = /* @__PURE__ */ new Set([
   "png",
   "jpg",
   "jpeg",
-  "webp"
+  "webp",
+  "gif",
+  "bmp",
+  "tiff",
+  "tif",
+  "avif",
+  "heic",
+  "heif"
 ]);
 var ALLOWED_INVOICE_EXTENSIONS = /* @__PURE__ */ new Set([
   "png",
   "jpg",
   "jpeg",
   "webp",
-  "pdf"
+  "pdf",
+  "gif",
+  "bmp",
+  "tiff",
+  "tif",
+  "avif",
+  "heic",
+  "heif"
 ]);
 var MAX_CAD_FILE_SIZE = 50 * 1024 * 1024;
 var MAX_PHOTO_FILE_SIZE = 15 * 1024 * 1024;
@@ -114546,9 +118645,9 @@ var MakeCadService = class {
    */
   static getNasStorageUrl() {
     try {
-      const configPath = import_path12.default.join(import_electron13.app?.getPath ? import_electron13.app.getPath("userData") : process.cwd(), "supabase-config.json");
-      if (import_fs11.default.existsSync(configPath)) {
-        const cfg = JSON.parse(import_fs11.default.readFileSync(configPath, "utf-8"));
+      const configPath = import_path15.default.join(import_electron17.app?.getPath ? import_electron17.app.getPath("userData") : process.cwd(), "supabase-config.json");
+      if (import_fs14.default.existsSync(configPath)) {
+        const cfg = JSON.parse(import_fs14.default.readFileSync(configPath, "utf-8"));
         if (cfg.storageUrl) return cfg.storageUrl;
         if (cfg.nasStorageUrl) return cfg.nasStorageUrl;
       }
@@ -114572,6 +118671,10 @@ var MakeCadService = class {
     }
     if (buffer.length >= 4 && buffer[0] === 127 && buffer[1] === 69 && buffer[2] === 76 && buffer[3] === 70) {
       return { isValid: false, detectedMime: "application/x-executable", error: "Executable binaries are strictly forbidden." };
+    }
+    const headerStr = buffer.toString("utf8", 0, Math.min(buffer.length, 512)).toLowerCase();
+    if (headerStr.includes("<script") || headerStr.includes("javascript:") || headerStr.startsWith("#!/")) {
+      return { isValid: false, detectedMime: "text/plain", error: "Executable scripts and active HTML content are strictly forbidden." };
     }
     const ext = extension2.toLowerCase();
     if (ext === "pdf") {
@@ -114602,6 +118705,39 @@ var MakeCadService = class {
       }
       return { isValid: true, detectedMime: "image/webp" };
     }
+    if (ext === "gif") {
+      const isGif = buffer.length >= 6 && buffer.toString("ascii", 0, 4) === "GIF8";
+      if (!isGif) {
+        return { isValid: false, detectedMime: "application/octet-stream", error: "Corrupted or invalid GIF image file." };
+      }
+      return { isValid: true, detectedMime: "image/gif" };
+    }
+    if (ext === "bmp") {
+      const isBmp = buffer.length >= 2 && buffer[0] === 66 && buffer[1] === 77;
+      if (!isBmp) {
+        return { isValid: false, detectedMime: "application/octet-stream", error: "Corrupted or invalid BMP image file." };
+      }
+      return { isValid: true, detectedMime: "image/bmp" };
+    }
+    if (ext === "tiff" || ext === "tif") {
+      const isTiffLE = buffer.length >= 4 && buffer[0] === 73 && buffer[1] === 73 && buffer[2] === 42 && buffer[3] === 0;
+      const isTiffBE = buffer.length >= 4 && buffer[0] === 77 && buffer[1] === 77 && buffer[2] === 0 && buffer[3] === 42;
+      if (!isTiffLE && !isTiffBE) {
+        return { isValid: false, detectedMime: "application/octet-stream", error: "Corrupted or invalid TIFF image file." };
+      }
+      return { isValid: true, detectedMime: "image/tiff" };
+    }
+    if (ext === "avif" || ext === "heic" || ext === "heif") {
+      const hasFtyp = buffer.length >= 12 && buffer.toString("ascii", 4, 8) === "ftyp";
+      if (hasFtyp) {
+        const brand = buffer.toString("ascii", 8, 12).toLowerCase();
+        if (brand.includes("avif") || brand.includes("avis")) {
+          return { isValid: true, detectedMime: "image/avif" };
+        }
+        return { isValid: true, detectedMime: "image/heic" };
+      }
+      return { isValid: true, detectedMime: ext === "avif" ? "image/avif" : "image/heic" };
+    }
     if (ext === "dwg") {
       const isDwg = buffer.length >= 4 && buffer[0] === 65 && buffer[1] === 67 && buffer[2] === 49 && buffer[3] === 48;
       return { isValid: true, detectedMime: isDwg ? "application/acad" : "application/octet-stream" };
@@ -114619,20 +118755,22 @@ var MakeCadService = class {
    * Guarantees that the file path comes exclusively from an authorized user OS selection.
    */
   static async pickAndValidateFile(type, targetWindow) {
-    const win = targetWindow || import_electron13.BrowserWindow.getFocusedWindow() || import_electron13.BrowserWindow.getAllWindows()[0];
+    const win = targetWindow || import_electron17.BrowserWindow.getFocusedWindow() || import_electron17.BrowserWindow.getAllWindows()[0];
     if (!win) {
       return { canceled: true, error: "No active window found" };
     }
+    const commonImgExts = ["png", "jpg", "jpeg", "webp", "gif", "bmp", "tiff", "tif", "avif", "heic", "heif"];
+    const cadExts = ["pdf", "dwg", "dxf", "step", "stp", "iges", "igs", "skp", "stl", "obj", ...commonImgExts];
     const filters2 = type === "invoice_attachment" ? [
-      { name: "Invoices & Documents", extensions: ["png", "jpg", "jpeg", "webp", "pdf"] },
+      { name: "Invoices & Documents", extensions: ["pdf", ...commonImgExts] },
       { name: "PDF Documents", extensions: ["pdf"] },
-      { name: "Images", extensions: ["png", "jpg", "jpeg", "webp"] }
-    ] : type === "photo" ? [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp"] }] : [
-      { name: "Drawings & CAD Files", extensions: ["pdf", "png", "jpg", "jpeg", "webp", "dwg", "dxf", "step", "stp", "iges", "igs", "skp", "stl", "obj"] },
+      { name: "Images", extensions: commonImgExts }
+    ] : type === "photo" ? [{ name: "Images", extensions: commonImgExts }] : [
+      { name: "Drawings & CAD Files", extensions: cadExts },
       { name: "All Supported Files", extensions: ["*"] }
     ];
     const title = type === "invoice_attachment" ? "Select Invoice Attachment / Document" : type === "photo" ? "Select Stage Completion Photo" : "Select Technical Drawing / CAD Blueprint";
-    const result = await import_electron13.dialog.showOpenDialog(win, {
+    const result = await import_electron17.dialog.showOpenDialog(win, {
       title,
       properties: ["openFile"],
       filters: filters2
@@ -114647,7 +118785,7 @@ var MakeCadService = class {
    * Validates file metadata without requiring physical disk presence.
    */
   static validateFileMetadata(fileName, fileSize, type) {
-    const ext = import_path12.default.extname(fileName).replace(".", "").toLowerCase();
+    const ext = import_path15.default.extname(fileName).replace(".", "").toLowerCase();
     const allowedSet = type === "photo" ? ALLOWED_PHOTO_EXTENSIONS : type === "invoice_attachment" ? ALLOWED_INVOICE_EXTENSIONS : ALLOWED_CAD_EXTENSIONS;
     if (!allowedSet.has(ext)) {
       return { isValid: false, error: `Invalid file type ".${ext}". Allowed: ${Array.from(allowedSet).join(", ")}` };
@@ -114663,8 +118801,8 @@ var MakeCadService = class {
    * Sanitizes a base filename preserving Unicode characters and spaces while stripping illegal filesystem chars.
    */
   static sanitizeFileName(rawFileName) {
-    const extWithDot = import_path12.default.extname(rawFileName).toLowerCase();
-    const baseWithoutExt = import_path12.default.basename(rawFileName, extWithDot);
+    const extWithDot = import_path15.default.extname(rawFileName).toLowerCase();
+    const baseWithoutExt = import_path15.default.basename(rawFileName, extWithDot);
     const cleaned = baseWithoutExt.replace(/[\/\\:*?"<>|\x00-\x1F\x7F]/g, "_").trim() || "attachment";
     return `${cleaned}${extWithDot}`;
   }
@@ -114672,26 +118810,26 @@ var MakeCadService = class {
    * Validates an approved local file by reading its buffer and checking limits.
    */
   static validateLocalFile(filePath, type) {
-    if (!import_fs11.default.existsSync(filePath)) {
+    if (!import_fs14.default.existsSync(filePath)) {
       return { canceled: true, error: "Selected file does not exist on disk." };
     }
-    const stats = import_fs11.default.statSync(filePath);
+    const stats = import_fs14.default.statSync(filePath);
     const maxSize = type === "photo" || type === "invoice_attachment" ? MAX_INVOICE_FILE_SIZE : MAX_CAD_FILE_SIZE;
     if (stats.size > maxSize) {
       const maxMb = maxSize / (1024 * 1024);
       return { canceled: true, error: `File size (${(stats.size / (1024 * 1024)).toFixed(1)} MB) exceeds the maximum allowed limit of ${maxMb} MB.` };
     }
-    const ext = import_path12.default.extname(filePath).replace(".", "").toLowerCase();
+    const ext = import_path15.default.extname(filePath).replace(".", "").toLowerCase();
     const allowedSet = type === "photo" ? ALLOWED_PHOTO_EXTENSIONS : type === "invoice_attachment" ? ALLOWED_INVOICE_EXTENSIONS : ALLOWED_CAD_EXTENSIONS;
     if (!allowedSet.has(ext)) {
       return { canceled: true, error: `File extension ".${ext}" is not supported.` };
     }
-    const buffer = import_fs11.default.readFileSync(filePath);
+    const buffer = import_fs14.default.readFileSync(filePath);
     const magicCheck = this.validateBufferMagicBytes(buffer, ext);
     if (!magicCheck.isValid) {
       return { canceled: true, error: magicCheck.error || "File failed security validation." };
     }
-    const sanitizedBase = this.sanitizeFileName(import_path12.default.basename(filePath));
+    const sanitizedBase = this.sanitizeFileName(import_path15.default.basename(filePath));
     return {
       isValid: true,
       mimeType: magicCheck.detectedMime,
@@ -114710,7 +118848,7 @@ var MakeCadService = class {
       const maxMb = maxSize / (1024 * 1024);
       return { isValid: false, error: `File size (${(buffer.length / (1024 * 1024)).toFixed(1)} MB) exceeds the maximum allowed limit of ${maxMb} MB.` };
     }
-    const ext = import_path12.default.extname(fileName).replace(".", "").toLowerCase();
+    const ext = import_path15.default.extname(fileName).replace(".", "").toLowerCase();
     const allowedSet = type === "photo" ? ALLOWED_PHOTO_EXTENSIONS : type === "invoice_attachment" ? ALLOWED_INVOICE_EXTENSIONS : ALLOWED_CAD_EXTENSIONS;
     if (!allowedSet.has(ext)) {
       return { isValid: false, error: `File extension ".${ext}" is not supported.` };
@@ -114729,16 +118867,78 @@ var MakeCadService = class {
     };
   }
   /**
-   * Uploads a validated file buffer to TrueNAS Storage or Supabase Storage bucket.
+   * Uploads a validated file buffer using DurableUploadService with TrueNAS primary
+   * and quota-managed Supabase Storage fallback, or direct pipeline if durable queue is unavailable.
    */
-  static async uploadValidatedBuffer(buffer, fileName, mimeType, subfolder) {
+  static async uploadValidatedBuffer(buffer, fileName, mimeType, subfolder, meta3) {
+    try {
+      const durableUpload = DurableUploadService.getInstance();
+      const staged = await durableUpload.stageFile(
+        buffer,
+        fileName,
+        mimeType,
+        subfolder,
+        meta3,
+        { autoDispatch: false }
+      );
+      const result = await durableUpload.dispatchUpload(staged.id);
+      const durableKey = `${subfolder}/${staged.id}_${staged.fileName}`;
+      if (result.status === "synced_nas") {
+        const confirmedUrl = result.activeUrl || result.url;
+        return {
+          success: true,
+          status: "synced_nas",
+          storagePath: durableKey,
+          publicUrl: confirmedUrl,
+          durableKey: confirmedUrl || durableKey,
+          isPendingUpload: false,
+          uploadId: staged.id
+        };
+      }
+      if (result.status === "buffered_supabase") {
+        return {
+          success: true,
+          status: "buffered_supabase",
+          storagePath: durableKey,
+          publicUrl: result.activeUrl,
+          durableKey: result.durableKey || durableKey,
+          isPendingUpload: true,
+          uploadId: staged.id
+        };
+      }
+      if (result.status === "staged_local" || result.status === "awaiting_association") {
+        return {
+          success: !result.error,
+          status: result.status,
+          storagePath: staged.localPath,
+          publicUrl: void 0,
+          durableKey,
+          isPendingUpload: true,
+          uploadId: staged.id,
+          error: result.error
+        };
+      }
+      return {
+        success: false,
+        status: "failed",
+        storagePath: "",
+        isPendingUpload: false,
+        uploadId: staged.id,
+        error: result.error || "Failed to dispatch durable upload"
+      };
+    } catch (durableErr) {
+      console.warn("[MakeCadService] DurableUploadService exception, falling back to direct pipeline:", durableErr.message);
+    }
     const timestamp = Date.now();
-    const randomToken = import_crypto9.default.randomBytes(4).toString("hex");
+    const randomToken = import_crypto11.default.randomBytes(4).toString("hex");
     const sanitized = this.sanitizeFileName(fileName);
     const storageFileName = `${timestamp}_${randomToken}_${sanitized}`;
     const storagePath = `${subfolder}/${storageFileName}`;
     const nasStorageUrl = this.getNasStorageUrl();
     if (nasStorageUrl) {
+      const timeoutMs = Math.max(3e4, Math.min(3e5, Math.ceil(buffer.length / 2e5) * 1e3 + 3e4));
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
       try {
         const formData = new FormData();
         formData.append("file", new Blob([new Uint8Array(buffer)], { type: mimeType }), storageFileName);
@@ -114749,38 +118949,84 @@ var MakeCadService = class {
           headers: {
             "x-subfolder": subfolder,
             ...cfHeaders
-          }
+          },
+          signal: controller.signal
         });
-        const data2 = await response.json();
-        if (data2.success && (data2.file_url || data2.url)) {
-          const rawUrl = data2.file_url || data2.url;
-          return {
-            success: true,
-            storagePath: `${subfolder}/${storageFileName}`,
-            publicUrl: encodeURI(rawUrl)
-          };
+        if (response.ok || response.status === void 0) {
+          const data2 = await response.json();
+          if (data2 && data2.success && (data2.file_url || data2.url)) {
+            const rawUrl = encodeURI(data2.file_url || data2.url);
+            return {
+              success: true,
+              status: "synced_nas",
+              storagePath,
+              publicUrl: rawUrl,
+              durableKey: rawUrl,
+              isPendingUpload: false
+            };
+          }
         }
-        return {
-          success: true,
-          storagePath: `${subfolder}/${storageFileName}`,
-          publicUrl: encodeURI(`https://storage.lenas.me/files/${subfolder}/${storageFileName}`)
-        };
       } catch (nasErr) {
         console.warn("[MakeCadService] NAS upload failed, attempting Supabase fallback:", nasErr.message);
+      } finally {
+        clearTimeout(timeoutId);
       }
+    }
+    const quotaMgr = SupabaseQuotaManager.getInstance();
+    if (!quotaMgr.canAcceptStorageUpload(buffer.length)) {
+      return {
+        success: false,
+        status: "failed",
+        storagePath: "",
+        isPendingUpload: false,
+        error: "Supabase Storage quota limit reached (2.2 GB / 3 GB ceiling)."
+      };
+    }
+    const canBuffer = await quotaMgr.reserveStorageQuota(storageFileName, buffer.length);
+    if (!canBuffer) {
+      return {
+        success: false,
+        status: "failed",
+        storagePath: "",
+        isPendingUpload: false,
+        error: "Supabase Storage quota reservation rejected."
+      };
     }
     const { error: sbErr } = await supabase.storage.from("make-order-files").upload(storagePath, buffer, { contentType: mimeType, upsert: false });
     if (sbErr) {
-      return { success: false, error: sbErr.message };
+      await quotaMgr.releaseStorageQuota(storageFileName, 0, "released");
+      return {
+        success: false,
+        status: "failed",
+        storagePath: "",
+        isPendingUpload: false,
+        error: sbErr.message
+      };
     }
-    const { data: publicData } = supabase.storage.from("make-order-files").getPublicUrl(storagePath);
+    await quotaMgr.releaseStorageQuota(storageFileName, buffer.length, "committed");
+    let signedUrl = void 0;
+    try {
+      const storageBucket = supabase.storage.from("make-order-files");
+      if (typeof storageBucket.createSignedUrl === "function") {
+        const { data: signedData } = await storageBucket.createSignedUrl(storagePath, 3600);
+        signedUrl = signedData?.signedUrl;
+      }
+    } catch {
+    }
     return {
       success: true,
+      status: "buffered_supabase",
       storagePath,
-      publicUrl: publicData?.publicUrl || storagePath
+      durableKey: storagePath,
+      publicUrl: signedUrl,
+      isPendingUpload: true
     };
   }
 };
+
+// electron/ipc/handlers/make.ts
+init_DurableUploadService();
+init_field_encryption();
 
 // node_modules/zod/v4/classic/external.js
 var external_exports = {};
@@ -115548,15 +119794,15 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path21) {
-  if (!path21)
+function getElementAtPath(obj, path25) {
+  if (!path25)
     return obj;
-  return path21.reduce((acc, key) => acc?.[key], obj);
+  return path25.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
-  const promises = keys.map((key) => promisesObj[key]);
-  return Promise.all(promises).then((results) => {
+  const promises2 = keys.map((key) => promisesObj[key]);
+  return Promise.all(promises2).then((results) => {
     const resolvedObj = {};
     for (let i2 = 0; i2 < keys.length; i2++) {
       resolvedObj[keys[i2]] = results[i2];
@@ -115960,11 +120206,11 @@ function explicitlyAborted(x2, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path21, issues) {
+function prefixIssues(path25, issues) {
   return issues.map((iss) => {
     var _a8;
     (_a8 = iss).path ?? (_a8.path = []);
-    iss.path.unshift(path21);
+    iss.path.unshift(path25);
     return iss;
   });
 }
@@ -116111,16 +120357,16 @@ function flattenError(error51, mapper = (issue2) => issue2.message) {
 }
 function formatError(error51, mapper = (issue2) => issue2.message) {
   const fieldErrors = { _errors: [] };
-  const processError = (error52, path21 = []) => {
+  const processError = (error52, path25 = []) => {
     for (const issue2 of error52.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path21, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path25, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path21, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path25, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path21, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path25, ...issue2.path]);
       } else {
-        const fullpath = [...path21, ...issue2.path];
+        const fullpath = [...path25, ...issue2.path];
         if (fullpath.length === 0) {
           fieldErrors._errors.push(mapper(issue2));
         } else {
@@ -116147,17 +120393,17 @@ function formatError(error51, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error51, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error52, path21 = []) => {
+  const processError = (error52, path25 = []) => {
     var _a8, _b;
     for (const issue2 of error52.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path21, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path25, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path21, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path25, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path21, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path25, ...issue2.path]);
       } else {
-        const fullpath = [...path21, ...issue2.path];
+        const fullpath = [...path25, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -116189,8 +120435,8 @@ function treeifyError(error51, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path21 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path21) {
+  const path25 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path25) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -128882,13 +133128,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path21 = ref.slice(1).split("/").filter(Boolean);
-  if (path21.length === 0) {
+  const path25 = ref.slice(1).split("/").filter(Boolean);
+  if (path25.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path21[0] === defsKey) {
-    const key = path21[1];
+  if (path25[0] === defsKey) {
+    const key = path25[1];
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -129310,9 +133556,26 @@ var MakeOrderItemInputSchema = external_exports.object({
   quantity: external_exports.number().positive("Quantity must be greater than zero").default(1),
   item_cost_price: external_exports.union([external_exports.number().nonnegative(), external_exports.string(), external_exports.null()]).optional(),
   item_sale_price: external_exports.union([external_exports.number().nonnegative(), external_exports.string(), external_exports.null()]).optional(),
+  discount_type: external_exports.enum(["percent", "amount"]).nullable().optional(),
+  discount_value: external_exports.union([external_exports.number().nonnegative(), external_exports.string(), external_exports.null()]).optional(),
+  discount_amount: external_exports.union([external_exports.number().nonnegative(), external_exports.string(), external_exports.null()]).optional(),
+  final_item_price: external_exports.union([external_exports.number().nonnegative(), external_exports.string(), external_exports.null()]).optional(),
+  max_discount_type: external_exports.enum(["percent", "amount"]).nullable().optional(),
+  max_discount_value: external_exports.union([external_exports.number().nonnegative(), external_exports.string(), external_exports.null()]).optional(),
   is_customized: external_exports.boolean().default(false),
   custom_dimensions: external_exports.string().nullable().optional(),
   designer_notes: external_exports.string().nullable().optional()
+}).refine((item) => {
+  const hasProduct = Boolean(item.product_id) || Boolean(item.max_discount_type) || item.max_discount_value !== void 0 && item.max_discount_value !== null;
+  const discountVal = Number(item.discount_value || 0);
+  const discountAmt = Number(item.discount_amount || 0);
+  if (!hasProduct && (discountVal > 0 || discountAmt > 0)) {
+    return false;
+  }
+  return true;
+}, {
+  message: "Discounts are not permitted on custom or non-catalog items",
+  path: ["discount_value"]
 });
 var CreateMakeOrderSchema = external_exports.object({
   furniture_name: external_exports.string().min(1, "Order furniture title is required").max(255),
@@ -129323,7 +133586,7 @@ var CreateMakeOrderSchema = external_exports.object({
   requested_delivery_date: external_exports.string().nullable().optional(),
   salesman_id: external_exports.number().int().positive().nullable().optional(),
   customer_id: external_exports.union([external_exports.string(), external_exports.number()]).nullable().optional(),
-  customer_name: external_exports.string({ required_error: "Customer name is required" }).min(1, "Customer name is required").max(255),
+  customer_name: external_exports.string().min(1, "Customer name is required").max(255),
   customer_phone: external_exports.string().max(50).nullable().optional().refine((val2) => {
     if (!val2 || val2.trim() === "") return true;
     const cleaned = val2.trim();
@@ -129341,8 +133604,20 @@ var CreateMakeOrderSchema = external_exports.object({
   special_instructions: external_exports.string().nullable().optional(),
   cost_price: external_exports.union([external_exports.number().nonnegative(), external_exports.string(), external_exports.null()]).optional(),
   sale_price: external_exports.union([external_exports.number().nonnegative(), external_exports.string(), external_exports.null()]).optional(),
+  discount_type: external_exports.enum(["percent", "amount"]).nullable().optional(),
+  discount_value: external_exports.union([external_exports.number().nonnegative(), external_exports.string(), external_exports.null()]).optional(),
+  discount_amount: external_exports.union([external_exports.number().nonnegative(), external_exports.string(), external_exports.null()]).optional(),
+  final_price: external_exports.union([external_exports.number().nonnegative(), external_exports.string(), external_exports.null()]).optional(),
+  money_received: external_exports.union([external_exports.number().nonnegative(), external_exports.string(), external_exports.null()]).optional(),
+  moneyReceived: external_exports.union([external_exports.number().nonnegative(), external_exports.string(), external_exports.null()]).optional(),
+  amount_due: external_exports.union([external_exports.number(), external_exports.string(), external_exports.null()]).optional(),
+  payment_status: external_exports.string().optional(),
+  production_hold: external_exports.boolean().optional(),
+  hold_reason: external_exports.string().nullable().optional(),
+  admin_approval_status: external_exports.string().optional(),
   reference_bill_no: external_exports.string().nullable().optional(),
   invoice_attachments: external_exports.array(external_exports.string()).optional(),
+  invoice_attachment_urls: external_exports.array(external_exports.string()).optional(),
   items: external_exports.array(MakeOrderItemInputSchema).min(1, "At least one product item must be included in the order.")
 });
 var ApproveMakeOrderSchema = external_exports.object({
@@ -129364,9 +133639,11 @@ var DesignerSaveSpecsAndPricingSchema = external_exports.object({
     quantity: external_exports.number().positive(),
     item_cost_price: external_exports.union([external_exports.number().nonnegative(), external_exports.string()]).optional(),
     item_sale_price: external_exports.union([external_exports.number().nonnegative(), external_exports.string(), external_exports.null()]).optional(),
-    spec_name: external_exports.string().optional(),
-    size_label: external_exports.string().optional(),
-    color_name: external_exports.string().optional(),
+    // Existing/legacy order rows may legitimately have no catalog attribute.
+    // Track Orders sends those database nulls back when saving designer pricing.
+    spec_name: external_exports.string().nullable().optional(),
+    size_label: external_exports.string().nullable().optional(),
+    color_name: external_exports.string().nullable().optional(),
     salesperson_note: external_exports.string().nullable().optional(),
     designer_notes: external_exports.string().nullable().optional(),
     technical_drawing_url: external_exports.string().nullable().optional()
@@ -129409,7 +133686,7 @@ var AlterMakeOrderItemSchema = external_exports.object({
 });
 var AlterMakeOrderSchema = external_exports.object({
   orderId: external_exports.union([external_exports.string().min(1), external_exports.number()]),
-  changes: external_exports.record(external_exports.any()).optional().default({}),
+  changes: external_exports.record(external_exports.string(), external_exports.any()).optional().default({}),
   itemChanges: external_exports.array(AlterMakeOrderItemSchema).optional(),
   items: external_exports.array(AlterMakeOrderItemSchema).optional(),
   reason: external_exports.string().optional(),
@@ -129430,6 +133707,14 @@ var CatalogProductSchema = external_exports.object({
   categoryIds: external_exports.array(external_exports.union([external_exports.number(), external_exports.string()])).optional(),
   main_image: external_exports.string().nullable().optional(),
   is_active: external_exports.boolean().default(true),
+  cost_price: external_exports.union([external_exports.number().nonnegative(), external_exports.string(), external_exports.null()]).optional(),
+  sale_price: external_exports.union([external_exports.number().nonnegative(), external_exports.string(), external_exports.null()]).optional(),
+  max_discount_type: external_exports.enum(["percent", "amount"]).nullable().optional(),
+  max_discount_value: external_exports.union([external_exports.number().nonnegative(), external_exports.string(), external_exports.null()]).optional(),
+  size_id: external_exports.union([external_exports.number().int().positive(), external_exports.string(), external_exports.null()]).optional(),
+  sizeId: external_exports.union([external_exports.number().int().positive(), external_exports.string(), external_exports.null()]).optional(),
+  blueprint_url: external_exports.string().nullable().optional(),
+  blueprintUrl: external_exports.string().nullable().optional(),
   specIds: external_exports.array(external_exports.union([external_exports.number(), external_exports.string()])).optional(),
   sizeIds: external_exports.array(external_exports.union([external_exports.number(), external_exports.string()])).optional(),
   colorIds: external_exports.array(external_exports.union([external_exports.number(), external_exports.string()])).optional()
@@ -129531,8 +133816,690 @@ var SearchCatalogProductsSchema = external_exports.object({
   category: external_exports.string().optional(),
   activeOnly: external_exports.boolean().optional().default(true)
 });
+function hasUnsafePathSequence(str) {
+  if (!str || typeof str !== "string") return false;
+  if (str.includes("\0") || str.includes("%00") || str.includes("\\0")) return true;
+  if (str.includes("../") || str.includes("..\\") || str.includes("/..") || str.includes("\\..") || str === "..") {
+    return true;
+  }
+  if (/%2e%2e|%2e\.|\.%2e|\.\.%2f|\.\.%5c|%2f\.\.|%5c\.\./i.test(str)) {
+    return true;
+  }
+  let currentStr = str;
+  for (let depth = 0; depth < 2; depth++) {
+    try {
+      const decoded = decodeURIComponent(currentStr);
+      if (decoded === currentStr) break;
+      currentStr = decoded;
+      if (currentStr.includes("../") || currentStr.includes("..\\") || currentStr.includes("/..") || currentStr.includes("\\..") || currentStr === "..") {
+        return true;
+      }
+      const segments = currentStr.split(/[/\\]/);
+      for (const seg of segments) {
+        if (seg.trim() === "..") return true;
+      }
+    } catch {
+      if (/%2e/i.test(currentStr)) return true;
+      break;
+    }
+  }
+  return false;
+}
+function hasUnsupportedStorageScheme(str) {
+  if (!str || typeof str !== "string") return false;
+  const lower2 = str.trim().toLowerCase();
+  const dangerousSchemes = ["javascript:", "file:", "data:", "ftp:", "vbscript:", "blob:", "php:"];
+  for (const scheme of dangerousSchemes) {
+    if (lower2.startsWith(scheme)) return true;
+  }
+  return false;
+}
+var DeleteOrderPdfSchema = external_exports.object({
+  orderId: external_exports.union([
+    external_exports.number().int().positive("Order ID must be a positive integer"),
+    external_exports.string().regex(/^\d+$/, "Order ID must be a numeric integer").transform(Number)
+  ]),
+  storagePath: external_exports.string().trim().min(1, "storagePath cannot be empty")
+}).refine((data2) => !hasUnsafePathSequence(data2.storagePath), {
+  message: "Invalid storagePath: Directory traversal or null bytes detected"
+}).refine((data2) => !hasUnsupportedStorageScheme(data2.storagePath), {
+  message: "Invalid storagePath: Unsupported storage reference scheme"
+});
+var DeleteItemPdfSchema = external_exports.object({
+  itemId: external_exports.union([
+    external_exports.number().int().positive("Item ID must be a positive integer"),
+    external_exports.string().regex(/^\d+$/, "Item ID must be a numeric integer").transform(Number)
+  ]),
+  orderId: external_exports.union([
+    external_exports.number().int().positive("Order ID must be a positive integer"),
+    external_exports.string().regex(/^\d+$/, "Order ID must be a numeric integer").transform(Number)
+  ]).optional(),
+  storagePath: external_exports.string().trim().min(1, "storagePath cannot be empty")
+}).refine((data2) => !hasUnsafePathSequence(data2.storagePath), {
+  message: "Invalid storagePath: Directory traversal or null bytes detected"
+}).refine((data2) => !hasUnsupportedStorageScheme(data2.storagePath), {
+  message: "Invalid storagePath: Unsupported storage reference scheme"
+});
+var RequestProductionApprovalSchema = external_exports.object({
+  orderId: external_exports.union([
+    external_exports.number().int().positive("Order ID must be a positive integer"),
+    external_exports.string().regex(/^\d+$/, "Order ID must be a numeric integer").transform(Number)
+  ]).optional(),
+  order_id: external_exports.union([
+    external_exports.number().int().positive("Order ID must be a positive integer"),
+    external_exports.string().regex(/^\d+$/, "Order ID must be a numeric integer").transform(Number)
+  ]).optional(),
+  notes: external_exports.string().optional()
+}).transform((val2) => ({
+  orderId: val2.orderId || val2.order_id || 0,
+  order_id: val2.orderId || val2.order_id || 0,
+  notes: val2.notes
+})).refine((val2) => val2.orderId > 0, { message: "Valid orderId is required" });
+var DecideProductionApprovalSchema = external_exports.object({
+  orderId: external_exports.union([
+    external_exports.number().int().positive("Order ID must be a positive integer"),
+    external_exports.string().regex(/^\d+$/, "Order ID must be a numeric integer").transform(Number)
+  ]).optional(),
+  order_id: external_exports.union([
+    external_exports.number().int().positive("Order ID must be a positive integer"),
+    external_exports.string().regex(/^\d+$/, "Order ID must be a numeric integer").transform(Number)
+  ]).optional(),
+  decision: external_exports.enum(["approved", "rejected"]),
+  notes: external_exports.string().optional()
+}).transform((val2) => ({
+  orderId: val2.orderId || val2.order_id || 0,
+  order_id: val2.orderId || val2.order_id || 0,
+  decision: val2.decision,
+  notes: val2.notes
+})).refine((val2) => val2.orderId > 0, { message: "Valid orderId is required" });
+var RecordOrderPaymentSchema = external_exports.object({
+  orderId: external_exports.union([
+    external_exports.number().int().positive("Order ID must be a positive integer"),
+    external_exports.string().regex(/^\d+$/, "Order ID must be a numeric integer").transform(Number)
+  ]).optional(),
+  order_id: external_exports.union([
+    external_exports.number().int().positive("Order ID must be a positive integer"),
+    external_exports.string().regex(/^\d+$/, "Order ID must be a numeric integer").transform(Number)
+  ]).optional(),
+  amount: external_exports.union([
+    external_exports.number().positive("Payment amount must be greater than zero"),
+    external_exports.string().regex(/^\d+(\.\d+)?$/).transform(Number)
+  ]),
+  paymentMethod: external_exports.string().optional(),
+  payment_method: external_exports.string().optional(),
+  reference: external_exports.string().optional(),
+  notes: external_exports.string().optional()
+}).transform((val2) => ({
+  orderId: val2.orderId || val2.order_id || 0,
+  order_id: val2.orderId || val2.order_id || 0,
+  amount: val2.amount,
+  paymentMethod: val2.paymentMethod || val2.payment_method || "CASH",
+  payment_method: val2.paymentMethod || val2.payment_method || "CASH",
+  reference: val2.reference,
+  notes: val2.notes
+})).refine((val2) => val2.orderId > 0, { message: "Valid orderId is required" });
 
 // electron/ipc/handlers/make.ts
+function isApprovedNasHost(hostname3, port) {
+  if (!hostname3 || typeof hostname3 !== "string") return false;
+  const lowerHost = hostname3.toLowerCase();
+  const runtimeCandidates = typeof getNasStorageCandidates === "function" ? getNasStorageCandidates() : ["http://100.88.85.6:8081", "https://storage.lenas.me"];
+  const approvedHosts = /* @__PURE__ */ new Set(["storage.lenas.me", "100.88.85.6", "192.168.1.14"]);
+  for (const c of runtimeCandidates) {
+    try {
+      const u = new URL(c);
+      approvedHosts.add(u.hostname.toLowerCase());
+    } catch {
+    }
+  }
+  if (!approvedHosts.has(lowerHost)) {
+    return false;
+  }
+  if (port !== void 0) {
+    return isApprovedNasPort(hostname3, port);
+  }
+  return true;
+}
+function isApprovedNasPort(hostname3, port) {
+  const lowerHost = (hostname3 || "").toLowerCase();
+  const runtimeCandidates = typeof getNasStorageCandidates === "function" ? getNasStorageCandidates() : ["http://100.88.85.6:8081", "https://storage.lenas.me"];
+  if (lowerHost === "storage.lenas.me") {
+    return !port || port === "443";
+  }
+  if (lowerHost === "100.88.85.6" || lowerHost === "192.168.1.14") {
+    if (!port || port === "8080" || port === "8081") return true;
+    for (const c of runtimeCandidates) {
+      try {
+        const u = new URL(c);
+        const candPort = u.port || (u.protocol === "https:" ? "443" : "80");
+        if (u.hostname.toLowerCase() === lowerHost && candPort === port) return true;
+      } catch {
+      }
+    }
+    return false;
+  }
+  const matchingCandidates = runtimeCandidates.map((c) => {
+    try {
+      return new URL(c);
+    } catch {
+      return null;
+    }
+  }).filter((u) => u !== null && u.hostname.toLowerCase() === lowerHost);
+  if (matchingCandidates.length > 0) {
+    return matchingCandidates.some((cand) => {
+      const candPort = cand.port || (cand.protocol === "https:" ? "443" : "80");
+      const reqPort = port || (cand.protocol === "https:" ? "443" : "80");
+      return candPort === reqPort;
+    });
+  }
+  return false;
+}
+function hasPathTraversal(str) {
+  if (!str || typeof str !== "string") return false;
+  if (str.includes("../") || str.includes("..\\") || str.includes("/..") || str.includes("\\..") || str === "..") {
+    return true;
+  }
+  if (/%2e%2e|%2e\.|\.%2e|\.\.%2f|\.\.%5c|%2f\.\.|%5c\.\./i.test(str)) {
+    return true;
+  }
+  let currentStr = str;
+  for (let depth = 0; depth < 2; depth++) {
+    try {
+      const decoded = decodeURIComponent(currentStr);
+      if (decoded === currentStr) break;
+      currentStr = decoded;
+      if (currentStr.includes("../") || currentStr.includes("..\\") || currentStr.includes("/..") || currentStr.includes("\\..") || currentStr === "..") {
+        return true;
+      }
+      const segments = currentStr.split(/[/\\]/);
+      for (const seg of segments) {
+        if (seg.trim() === "..") {
+          return true;
+        }
+      }
+    } catch {
+      if (/%2e/i.test(currentStr)) {
+        return true;
+      }
+      break;
+    }
+  }
+  return false;
+}
+function isApprovedCloudflareTunnelUrl(urlStr) {
+  if (!urlStr || typeof urlStr !== "string") return false;
+  try {
+    const u = new URL(urlStr);
+    if (u.protocol.toLowerCase() !== "https:") return false;
+    if (u.hostname.toLowerCase() !== "storage.lenas.me") return false;
+    const effectivePort = u.port || "443";
+    if (effectivePort !== "443") return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+function validateAndNormalizeDownloadUrl(rawUrl) {
+  if (!rawUrl || typeof rawUrl !== "string") {
+    return { isValid: false, error: "URL must be a non-empty string", candidates: [] };
+  }
+  const trimmed = rawUrl.trim();
+  if (hasPathTraversal(trimmed)) {
+    return { isValid: false, error: "Path traversal is not permitted in URL path", candidates: [] };
+  }
+  const candidateBases = typeof getNasStorageCandidates === "function" ? getNasStorageCandidates() : ["http://100.88.85.6:8081", "https://storage.lenas.me"];
+  if (/^app-media:\/\/nas\//i.test(trimmed)) {
+    const sub = trimmed.replace(/^app-media:\/\/nas\/?/i, "");
+    const cleanSub2 = decodeURIComponent(sub).replace(/^\/+/, "");
+    if (hasPathTraversal(cleanSub2)) {
+      return { isValid: false, error: "Path traversal is not permitted in URL path", candidates: [] };
+    }
+    const candidates2 = candidateBases.map((b) => `${b.replace(/\/$/, "")}/${encodeURI(cleanSub2)}`);
+    return { isValid: true, subPath: cleanSub2, candidates: candidates2 };
+  }
+  if (!/^https?:\/\//i.test(trimmed)) {
+    const proto = trimmed.split(":")[0] || "unknown";
+    return { isValid: false, error: `Unsupported protocol "${proto}:". Only HTTP, HTTPS, and app-media are permitted.`, candidates: [] };
+  }
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(trimmed);
+  } catch {
+    return { isValid: false, error: "Malformed URL", candidates: [] };
+  }
+  if (!isApprovedNasHost(parsedUrl.hostname)) {
+    return { isValid: false, error: `Host "${parsedUrl.hostname}" is not an approved NAS storage endpoint.`, candidates: [] };
+  }
+  if (!isApprovedNasPort(parsedUrl.hostname, parsedUrl.port)) {
+    return { isValid: false, error: `Unapproved port: ${parsedUrl.port}`, candidates: [] };
+  }
+  const lowerHost = parsedUrl.hostname.toLowerCase();
+  if (lowerHost === "storage.lenas.me") {
+    if (parsedUrl.protocol !== "https:") {
+      return { isValid: false, error: "storage.lenas.me is only permitted over HTTPS", candidates: [] };
+    }
+    if (parsedUrl.port && parsedUrl.port !== "443") {
+      return { isValid: false, error: `Unapproved port: ${parsedUrl.port}`, candidates: [] };
+    }
+  } else if (lowerHost === "100.88.85.6" || lowerHost === "192.168.1.14") {
+    if (parsedUrl.protocol !== "http:") {
+      return { isValid: false, error: `Host "${parsedUrl.hostname}" is only permitted over HTTP`, candidates: [] };
+    }
+    if (parsedUrl.port && parsedUrl.port !== "8080" && parsedUrl.port !== "8081") {
+      return { isValid: false, error: `Unapproved port: ${parsedUrl.port}`, candidates: [] };
+    }
+  } else {
+    const matchingCandidates = candidateBases.map((c) => {
+      try {
+        return new URL(c);
+      } catch {
+        return null;
+      }
+    }).filter((u) => u !== null && u.hostname.toLowerCase() === lowerHost);
+    const effectivePort = parsedUrl.port || (parsedUrl.protocol === "https:" ? "443" : "80");
+    const matches = matchingCandidates.some((cand) => {
+      const candPort = cand.port || (cand.protocol === "https:" ? "443" : "80");
+      return cand.protocol.toLowerCase() === parsedUrl.protocol.toLowerCase() && candPort === effectivePort;
+    });
+    if (!matches) {
+      return { isValid: false, error: `Unapproved endpoint: ${parsedUrl.protocol}//${parsedUrl.host}`, candidates: [] };
+    }
+  }
+  const cleanSub = decodeURIComponent(parsedUrl.pathname).replace(/^\/+/, "");
+  if (hasPathTraversal(cleanSub)) {
+    return { isValid: false, error: "Path traversal is not permitted in URL path", candidates: [] };
+  }
+  const candidates = candidateBases.map((b) => `${b.replace(/\/$/, "")}/${encodeURI(cleanSub)}`);
+  return { isValid: true, subPath: cleanSub, candidates };
+}
+function sanitizeDownloadDestination(rawFileName, tempDir) {
+  const input = typeof rawFileName === "string" && rawFileName.trim() ? rawFileName.trim() : "document.pdf";
+  const forwardSlashed = input.replace(/\\/g, "/");
+  const base = path16.basename(forwardSlashed);
+  const cleaned = base.replace(/[\/\\:*?"<>|\x00-\x1F\x7F]/g, "_").replace(/^\.+/, "").trim() || "document.pdf";
+  const uniqueId = `${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+  const finalFileName = `${uniqueId}_${cleaned}`;
+  const targetPath = path16.resolve(tempDir, finalFileName);
+  const normalizedTemp = path16.resolve(tempDir);
+  if (!targetPath.startsWith(normalizedTemp + path16.sep)) {
+    throw new Error("Path traversal detected");
+  }
+  return { targetPath, fileName: finalFileName };
+}
+function validateAndNormalizeRedirect(redirectUrlStr, currentUrlStr) {
+  if (!redirectUrlStr || typeof redirectUrlStr !== "string") {
+    throw new Error("Redirect URL must be a non-empty string");
+  }
+  if (hasPathTraversal(redirectUrlStr)) {
+    throw new Error("Path traversal is not permitted in redirect URL");
+  }
+  let currentParsed;
+  let redirectParsed;
+  try {
+    currentParsed = new URL(currentUrlStr);
+    redirectParsed = new URL(redirectUrlStr, currentUrlStr);
+  } catch {
+    throw new Error("Malformed redirect URL");
+  }
+  if (redirectParsed.protocol !== "http:" && redirectParsed.protocol !== "https:") {
+    throw new Error(`Unsupported redirect protocol "${redirectParsed.protocol}". Only HTTP and HTTPS are permitted.`);
+  }
+  if (currentParsed.protocol === "https:" && redirectParsed.protocol === "http:") {
+    throw new Error("HTTPS-to-HTTP downgrade redirect is forbidden");
+  }
+  if (hasPathTraversal(redirectParsed.pathname) || hasPathTraversal(decodeURIComponent(redirectParsed.pathname))) {
+    throw new Error("Path traversal is not permitted in redirect URL");
+  }
+  const lowerHost = redirectParsed.hostname.toLowerCase();
+  if (redirectParsed.port === "8080") {
+    if (lowerHost === "100.88.85.6" || lowerHost === "192.168.1.14") {
+      redirectParsed.port = "8081";
+    } else {
+      throw new Error(`Unapproved port 8080 on host "${redirectParsed.hostname}"`);
+    }
+  }
+  const runtimeCandidates = typeof getNasStorageCandidates === "function" ? getNasStorageCandidates() : ["http://100.88.85.6:8081", "https://storage.lenas.me"];
+  const effectivePort = redirectParsed.port || (redirectParsed.protocol === "https:" ? "443" : "80");
+  if (lowerHost === "storage.lenas.me") {
+    if (redirectParsed.protocol !== "https:") {
+      throw new Error("storage.lenas.me is only permitted over HTTPS");
+    }
+    if (effectivePort !== "443") {
+      throw new Error(`Unapproved port "${redirectParsed.port}" for storage.lenas.me`);
+    }
+    return redirectParsed.href;
+  }
+  if (lowerHost === "100.88.85.6" || lowerHost === "192.168.1.14") {
+    if (redirectParsed.protocol !== "http:") {
+      const hasHttpsCandidate = runtimeCandidates.some((c) => {
+        try {
+          const u = new URL(c);
+          return u.hostname.toLowerCase() === lowerHost && u.protocol === "https:";
+        } catch {
+          return false;
+        }
+      });
+      if (!hasHttpsCandidate) {
+        throw new Error(`Host "${lowerHost}" is only permitted over HTTP`);
+      }
+    }
+    if (effectivePort !== "8081") {
+      throw new Error(`Unapproved port "${redirectParsed.port || effectivePort}" for ${lowerHost}`);
+    }
+    return redirectParsed.href;
+  }
+  const matchingCandidates = runtimeCandidates.map((c) => {
+    try {
+      return new URL(c);
+    } catch {
+      return null;
+    }
+  }).filter((u) => u !== null && u.hostname.toLowerCase() === lowerHost);
+  if (matchingCandidates.length === 0) {
+    throw new Error(`Redirect to unapproved host "${redirectParsed.hostname}" was blocked`);
+  }
+  const matchesCandidate = matchingCandidates.some((cand) => {
+    const candEffectivePort = cand.port || (cand.protocol === "https:" ? "443" : "80");
+    return cand.protocol.toLowerCase() === redirectParsed.protocol.toLowerCase() && candEffectivePort === effectivePort;
+  });
+  if (!matchesCandidate) {
+    throw new Error(`Unapproved endpoint (protocol/port) "${redirectParsed.protocol}//${redirectParsed.host}" for candidate host "${redirectParsed.hostname}"`);
+  }
+  return redirectParsed.href;
+}
+async function readResponseBodyWithSignal(res, signal, timeoutMs) {
+  if (signal.aborted) {
+    throw new Error(`Download timed out after ${timeoutMs}ms`);
+  }
+  return new Promise((resolve2, reject) => {
+    let settled = false;
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      reject(new Error(`Download timed out after ${timeoutMs}ms`));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    res.arrayBuffer().then(
+      (buf) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        resolve2(buf);
+      },
+      (err) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        reject(err);
+      }
+    );
+  });
+}
+async function downloadPdfFromNas(url2, fileName, tempDir, timeoutMs = 6e3) {
+  let targetPath;
+  try {
+    const dest = sanitizeDownloadDestination(fileName, tempDir);
+    targetPath = dest.targetPath;
+  } catch (err) {
+    return { success: false, error: err.message || "Invalid filename" };
+  }
+  const canonicalSupabase = extractCanonicalSupabaseKey(url2);
+  const isSupabaseUrl = url2.includes(".supabase.co/") || url2.startsWith("make-order-files/") || url2.startsWith("supabase://") || !!canonicalSupabase;
+  if (isSupabaseUrl) {
+    try {
+      let fetchUrl = url2;
+      if (!url2.startsWith("http://") && !url2.startsWith("https://")) {
+        const resolved = await resolveAttachmentUrl(canonicalSupabase ? canonicalSupabase.objectPath : url2);
+        if (!resolved.url) {
+          return { success: false, error: "Could not resolve attachment for download" };
+        }
+        fetchUrl = resolved.url;
+      }
+      const electron2 = await import("electron").catch(() => null);
+      const fetchFn2 = electron2?.net?.fetch || globalThis.fetch;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(new Error(`Download timed out after ${timeoutMs}ms`)), timeoutMs);
+      try {
+        const resp = await fetchFn2(fetchUrl, { signal: controller.signal });
+        if (!resp.ok) {
+          return { success: false, error: `Supabase download failed: HTTP ${resp.status}` };
+        }
+        const arrayBuf = await resp.arrayBuffer();
+        fs15.writeFileSync(targetPath, Buffer.from(arrayBuf));
+        return { success: true, path: targetPath };
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    } catch (err) {
+      return { success: false, error: err.message || "Failed to download attachment from cloud buffer" };
+    }
+  }
+  const validation = validateAndNormalizeDownloadUrl(url2);
+  if (!validation.isValid) {
+    return { success: false, error: validation.error || "Invalid download URL" };
+  }
+  const { candidates } = validation;
+  const cfHeaders = typeof getCfAccessHeaders === "function" ? getCfAccessHeaders() : {};
+  let lastError = "No candidates available";
+  const cleanupTemp = () => {
+    try {
+      if (fs15.existsSync(targetPath)) {
+        fs15.unlinkSync(targetPath);
+      }
+    } catch {
+    }
+  };
+  const electron = await import("electron").catch(() => null);
+  const fetchFn = electron?.net?.fetch || globalThis.fetch;
+  for (const candidateUrl of candidates) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => {
+      controller.abort(new Error(`Download timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+    try {
+      let currentUrl = candidateUrl;
+      let redirectCount = 0;
+      const maxRedirects = 3;
+      let res = null;
+      while (redirectCount <= maxRedirects) {
+        const isExactTunnel = isApprovedCloudflareTunnelUrl(currentUrl);
+        const headers = isExactTunnel ? { ...cfHeaders } : {};
+        res = await fetchFn(currentUrl, {
+          headers,
+          signal: controller.signal,
+          redirect: "manual"
+        });
+        if (res.status >= 300 && res.status < 400 && res.headers.has("location")) {
+          const rawLocation = res.headers.get("location");
+          if (hasPathTraversal(rawLocation)) {
+            throw new Error("Path traversal is not permitted in redirect URL");
+          }
+          let resolvedRedirect;
+          try {
+            resolvedRedirect = new URL(rawLocation, currentUrl).href;
+          } catch {
+            throw new Error("Malformed redirect URL");
+          }
+          const normalizedRedirect = validateAndNormalizeRedirect(resolvedRedirect, currentUrl);
+          currentUrl = normalizedRedirect;
+          redirectCount++;
+          continue;
+        }
+        break;
+      }
+      if (!res || !res.ok || res.status !== 200) {
+        lastError = `Candidate ${currentUrl} returned HTTP ${res?.status || "no response"}`;
+        continue;
+      }
+      const arrayBuf = await readResponseBodyWithSignal(res, controller.signal, timeoutMs);
+      if (!arrayBuf || arrayBuf.byteLength === 0) {
+        throw new Error("Downloaded file is empty (0 bytes)");
+      }
+      await fs15.promises.writeFile(targetPath, Buffer.from(arrayBuf));
+      const stat3 = await fs15.promises.stat(targetPath);
+      if (stat3.size === 0) {
+        throw new Error("Written file is empty");
+      }
+      return { success: true, path: targetPath };
+    } catch (err) {
+      cleanupTemp();
+      if (err.message && (err.message.includes("Redirect to unapproved host") || err.message.includes("downgrade redirect is forbidden") || err.message.includes("only permitted over HTTPS") || err.message.includes("Unapproved port") || err.message.includes("Unapproved endpoint") || err.message.includes("Path traversal"))) {
+        return { success: false, error: err.message };
+      }
+      if (err.name === "AbortError" || controller.signal.aborted || err.message && err.message.includes("timed out")) {
+        lastError = `Download timed out after ${timeoutMs}ms`;
+      } else {
+        lastError = err.message || "Fetch failed";
+      }
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+  cleanupTemp();
+  return { success: false, error: `Failed to download file from NAS: ${lastError}` };
+}
+function isTrustedNasUrl(rawUrl) {
+  if (!rawUrl || typeof rawUrl !== "string") return false;
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+    if (hasPathTraversal(parsed.pathname) || hasPathTraversal(decodeURIComponent(parsed.pathname))) return false;
+    const lowerHost = parsed.hostname.toLowerCase();
+    if (lowerHost === "storage.lenas.me") {
+      const port = parsed.port || "443";
+      return parsed.protocol === "https:" && port === "443";
+    }
+    if (lowerHost === "100.88.85.6" || lowerHost === "192.168.1.14") {
+      const port = parsed.port || "80";
+      return parsed.protocol === "http:" && (port === "8080" || port === "8081" || port === "80");
+    }
+    return isApprovedNasHost(parsed.hostname, parsed.port);
+  } catch {
+    return false;
+  }
+}
+function extractCanonicalSupabaseKey(ref) {
+  if (!ref || typeof ref !== "string") return null;
+  const trimmed = ref.trim();
+  if (!trimmed) return null;
+  if (trimmed.includes("..") || trimmed.includes("\0") || trimmed.includes("%00")) return null;
+  let subPath = "";
+  if (trimmed.includes("/storage/v1/object/sign/make-order-files/")) {
+    subPath = decodeURIComponent(trimmed.split("/storage/v1/object/sign/make-order-files/")[1] || "").split("?")[0];
+  } else if (trimmed.includes("/storage/v1/object/public/make-order-files/")) {
+    subPath = decodeURIComponent(trimmed.split("/storage/v1/object/public/make-order-files/")[1] || "").split("?")[0];
+  } else if (trimmed.startsWith("supabase://make-order-files/")) {
+    subPath = trimmed.replace(/^supabase:\/\/make-order-files\//, "").split("?")[0];
+  } else if (trimmed.startsWith("make-order-files/")) {
+    subPath = trimmed.replace(/^make-order-files\//, "").split("?")[0];
+  } else if (trimmed.startsWith("/make-order-files/")) {
+    subPath = trimmed.replace(/^\/make-order-files\//, "").split("?")[0];
+  } else if (!trimmed.includes("://") && !/^[a-zA-Z]:[\\/]/.test(trimmed)) {
+    subPath = trimmed.split("?")[0];
+  } else {
+    return null;
+  }
+  subPath = subPath.replace(/^\/+/, "").trim();
+  if (!subPath || subPath.includes("..") || subPath.includes("\0")) return null;
+  return {
+    fullKey: `make-order-files/${subPath}`,
+    objectPath: subPath
+  };
+}
+async function resolveAttachmentUrl(p) {
+  if (!p || typeof p !== "string") return { path: "", name: "attachment", url: "" };
+  const name = p.split("/").pop()?.replace(/^\d+_/, "")?.split("?")[0] || "document";
+  if (p.startsWith("file://") || /^[a-zA-Z]:[\\/]/.test(p)) {
+    return { path: p, name, url: "", isPending: true };
+  }
+  if (isTrustedNasUrl(p)) {
+    return { path: p, name, url: p, isPending: false };
+  }
+  const canonical = extractCanonicalSupabaseKey(p);
+  if (canonical) {
+    const storagePath = canonical.objectPath;
+    try {
+      const { data: data2, error: error51 } = await supabase.storage.from("make-order-files").createSignedUrl(storagePath, 3600);
+      if (!error51 && data2?.signedUrl) {
+        return { path: p, name, url: data2.signedUrl, isPending: true };
+      }
+    } catch (sErr) {
+      console.warn("[resolveAttachmentUrl] Signed URL creation failed:", sErr.message);
+    }
+  }
+  if (isTrustedNasUrl(p)) {
+    return { path: p, name, url: p, isPending: false };
+  }
+  const isPending = p.includes("upl_") || p.includes("make-order-files/");
+  return { path: p, name, url: "", isPending: isPending || void 0 };
+}
+function canModifyMakeOrder(session2, order) {
+  if (!session2) return false;
+  const role = (session2.role || "").toLowerCase().trim();
+  const isAdmin = role === "admin" || role === "superadmin" || role === "manager";
+  const isDesigner = role === "furniture_designer" || role === "furniture designer" || role === "designer" || role === "make_designer";
+  const hasModifyPerm = !!(session2.permissions && (session2.permissions["make_edit"] || session2.permissions["write_make"] || session2.permissions["make_admin"] || session2.permissions["delete_make_order"] || session2.permissions["make_delete"] || session2.permissions["alter_make_order"] || session2.permissions["manage_orders"]));
+  if (!isAdmin && !isDesigner && !hasModifyPerm) {
+    return false;
+  }
+  if (order && order.status) {
+    const postProductionStages = [
+      "production on going",
+      "production",
+      "finishing",
+      "packaging",
+      "ready to ship",
+      "delivered",
+      "welding",
+      "painting",
+      "ready for dispatch"
+    ];
+    const statusNorm = order.status.trim().toLowerCase();
+    if (postProductionStages.includes(statusNorm) && !isAdmin) {
+      return false;
+    }
+  }
+  return true;
+}
+function isAllowedAttachmentReference(ref) {
+  if (!ref || typeof ref !== "string") return false;
+  const trimmed = ref.trim();
+  if (trimmed.length === 0) return false;
+  if (hasPathTraversal(trimmed) || trimmed.includes("\0") || trimmed.includes("%00")) return false;
+  if (hasUnsupportedStorageScheme(trimmed)) return false;
+  if (/^https?:\/\//i.test(trimmed)) {
+    if (isTrustedNasUrl(trimmed)) return true;
+    if (extractCanonicalSupabaseKey(trimmed) !== null) return true;
+    return false;
+  }
+  if (/^app-media:\/\/nas\//i.test(trimmed)) return true;
+  if (!trimmed.includes("://") && !/^[a-zA-Z]:[\\/]/.test(trimmed)) {
+    return true;
+  }
+  return false;
+}
+function isMatchingAttachment(recordedRef, requestedRef) {
+  if (!recordedRef || !requestedRef) return false;
+  const recTrim = recordedRef.trim();
+  const reqTrim = requestedRef.trim();
+  if (recTrim === reqTrim) return true;
+  const canRec = extractCanonicalSupabaseKey(recTrim);
+  const canReq = extractCanonicalSupabaseKey(reqTrim);
+  if (canRec && canReq && canRec.objectPath === canReq.objectPath) {
+    return true;
+  }
+  if (isTrustedNasUrl(recTrim) && isTrustedNasUrl(reqTrim)) {
+    try {
+      const u1 = new URL(recTrim);
+      const u2 = new URL(reqTrim);
+      const p1 = decodeURIComponent(u1.pathname).replace(/^\/+/, "");
+      const p2 = decodeURIComponent(u2.pathname).replace(/^\/+/, "");
+      if (p1 === p2) return true;
+    } catch {
+    }
+  }
+  return false;
+}
 function registerMakeHandlers() {
   function requireSession() {
     const session2 = SessionManager.getSession();
@@ -129554,9 +134521,62 @@ function registerMakeHandlers() {
     if (role === "admin" || role === "superadmin" || role === "manager") return true;
     return !!(session2.permissions && session2.permissions["manage_global_product_attributes"]);
   }
+  function canViewBlueprintSession(session2) {
+    const role = (session2.role || "").toLowerCase();
+    if (role === "admin" || role === "superadmin" || role === "manager") return true;
+    if (session2.permissions && session2.permissions["view_product_blueprint"] !== void 0) {
+      return !!session2.permissions["view_product_blueprint"];
+    }
+    if (role === "furniture_designer" || role === "furniture designer" || role === "designer" || role === "make_designer") return true;
+    return false;
+  }
+  function canViewCostPriceSession(session2) {
+    const role = (session2.role || "").toLowerCase();
+    if (role === "admin" || role === "superadmin" || role === "manager") return true;
+    if (["salesperson", "salesman", "sales", "factory_manager", "factory manager", "factory"].includes(role)) return true;
+    if (["furniture_designer", "furniture designer", "designer", "make_designer"].includes(role)) return true;
+    if (session2.permissions && session2.permissions["view_product_cost_price"] !== void 0) {
+      return !!session2.permissions["view_product_cost_price"];
+    }
+    return !!(session2.permissions && (session2.permissions["view_product_cost_price"] || session2.permissions["view_cost_price"] || session2.permissions["set_make_cost_price"]));
+  }
+  function canViewSalePriceSession(session2) {
+    const role = (session2.role || "").toLowerCase();
+    if (role === "admin" || role === "superadmin" || role === "manager") return true;
+    if (["salesperson", "salesman", "sales", "factory_manager", "factory manager", "factory"].includes(role)) return false;
+    if (["furniture_designer", "furniture designer", "designer", "make_designer"].includes(role)) return true;
+    if (session2.permissions && session2.permissions["view_product_sale_price"] !== void 0) {
+      return !!session2.permissions["view_product_sale_price"];
+    }
+    return false;
+  }
+  function canRecordMakePayment(session2) {
+    const role = (session2.role || "").toLowerCase().trim();
+    if (["admin", "superadmin", "manager", "salesperson", "salesman", "sales", "furniture_designer", "furniture designer", "designer", "make_designer"].includes(role)) return true;
+    return !!(session2.permissions && session2.permissions["make_record_payment"]);
+  }
+  function canViewMaxDiscountSession(session2) {
+    const role = (session2.role || "").toLowerCase();
+    if (role === "admin" || role === "superadmin" || role === "manager") return true;
+    if (session2.permissions && session2.permissions["view_product_max_discount"] !== void 0) {
+      return !!session2.permissions["view_product_max_discount"];
+    }
+    if (role === "factory_manager" || role === "factory manager" || role === "factory") {
+      return !!(session2.permissions && session2.permissions["view_product_max_discount"]);
+    }
+    return true;
+  }
+  function canEditCostPriceSession(session2) {
+    const role = (session2.role || "").toLowerCase();
+    if (role === "salesperson" || role === "salesman" || role === "sales") return false;
+    if (role === "factory_manager" || role === "factory manager" || role === "factory") return false;
+    if (role === "admin" || role === "superadmin" || role === "manager") return true;
+    if (role === "furniture_designer" || role === "furniture designer" || role === "designer" || role === "make_designer") return true;
+    return !!(session2.permissions && session2.permissions["set_make_cost_price"]);
+  }
   function canApproveOrder(session2) {
     const role = session2.role.toLowerCase();
-    if (role === "admin" || role === "superadmin" || role === "salesperson" || role === "sales" || role === "manager") return true;
+    if (role === "admin" || role === "superadmin" || role === "salesperson" || role === "salesman" || role === "sales" || role === "manager") return true;
     return !!(session2.permissions["make_approve"] || session2.permissions["sales_approve"]);
   }
   function canOverridePricing(session2) {
@@ -129569,7 +134589,199 @@ function registerMakeHandlers() {
     if (role === "admin" || role === "superadmin" || role === "factory_manager" || role === "operator" || role === "production") return true;
     return !!(session2.permissions["make_production"] || session2.permissions["factory_manage"]);
   }
-  import_electron14.ipcMain.handle("create-make-order", async (_e, rawOrder) => {
+  function canViewMakeOrders(session2) {
+    if (!session2) return false;
+    const role = (session2.role || "").toLowerCase();
+    if (role === "admin" || role === "superadmin" || role === "manager") return true;
+    if (role === "furniture_designer" || role === "furniture designer" || role === "designer" || role === "make_designer" || role === "salesperson" || role === "salesman" || role === "sales" || role === "factory_manager" || role === "factory manager" || role === "factory" || role === "operator" || role === "production") return true;
+    return !!(session2.permissions && (session2.permissions["make_view"] || session2.permissions["make_read"] || session2.permissions["make_create"] || session2.permissions["make_orders"] || session2.permissions["make_admin"] || session2.permissions["make_production"] || session2.permissions["view_orders"] || session2.permissions["read_orders"]));
+  }
+  async function isAuthorizedAttachment(rawRef, _session) {
+    if (!rawRef || typeof rawRef !== "string" || !rawRef.trim()) {
+      return { authorized: false, error: "Empty or invalid attachment reference" };
+    }
+    if (hasPathTraversal(rawRef) || rawRef.includes("\0") || rawRef.includes("%00")) {
+      return { authorized: false, error: "Path traversal or illegal characters detected" };
+    }
+    const uploadService = DurableUploadService.getInstance();
+    const db2 = uploadService.db;
+    if (isTrustedNasUrl(rawRef)) {
+      if (db2) {
+        try {
+          const row = db2.prepare(`
+                        SELECT id, entity_type, entity_id, status FROM durable_uploads
+                        WHERE remote_url_nas = ?
+                    `).get(rawRef);
+          if (row && (row.entity_type === "make_orders" || row.entity_type === "make_order_items") && row.entity_id) {
+            if (row.entity_type === "make_orders") {
+              const { data: order } = await supabase.from("make_orders").select("id, pdf_urls, invoice_attachment_urls").eq("id", row.entity_id).maybeSingle();
+              if (order) {
+                const pdfs = Array.isArray(order.pdf_urls) ? order.pdf_urls : [];
+                const invs = Array.isArray(order.invoice_attachment_urls) ? order.invoice_attachment_urls : [];
+                if (pdfs.includes(rawRef) || invs.includes(rawRef)) {
+                  return { authorized: true, canonicalKey: rawRef, isNas: true };
+                }
+              }
+            } else if (row.entity_type === "make_order_items") {
+              const { data: item } = await supabase.from("make_order_items").select("id, technical_drawing_url, pdf_urls").eq("id", row.entity_id).maybeSingle();
+              if (item) {
+                const pdfs = Array.isArray(item.pdf_urls) ? item.pdf_urls : [];
+                if (item.technical_drawing_url === rawRef || pdfs.includes(rawRef)) {
+                  return { authorized: true, canonicalKey: rawRef, isNas: true };
+                }
+              }
+            }
+          }
+        } catch {
+        }
+      }
+      try {
+        const { data: matchedOrders } = await supabase.from("make_orders").select("id, pdf_urls, invoice_attachment_urls");
+        if (Array.isArray(matchedOrders)) {
+          const found = matchedOrders.some((o) => {
+            const pdfs = Array.isArray(o.pdf_urls) ? o.pdf_urls : [];
+            const invs = Array.isArray(o.invoice_attachment_urls) ? o.invoice_attachment_urls : [];
+            return pdfs.includes(rawRef) || invs.includes(rawRef);
+          });
+          if (found) return { authorized: true, canonicalKey: rawRef, isNas: true };
+        }
+      } catch {
+      }
+      try {
+        const { data: matchedItems } = await supabase.from("make_order_items").select("id, technical_drawing_url, pdf_urls");
+        if (Array.isArray(matchedItems)) {
+          const found = matchedItems.some((it) => {
+            const pdfs = Array.isArray(it.pdf_urls) ? it.pdf_urls : [];
+            return it.technical_drawing_url === rawRef || pdfs.includes(rawRef);
+          });
+          if (found) return { authorized: true, canonicalKey: rawRef, isNas: true };
+        }
+      } catch {
+      }
+      return { authorized: false, error: "Forbidden: Attachment is unassociated or access is unauthorized." };
+    }
+    if (rawRef.startsWith("file://") || /^[a-zA-Z]:[\\/]/.test(rawRef)) {
+      if (db2) {
+        try {
+          const rawClean = rawRef.replace(/^file:\/\/\/?/, "");
+          const row = db2.prepare(`
+                        SELECT id, local_path, status FROM durable_uploads
+                        WHERE local_path = ? OR local_path LIKE ?
+                    `).get(rawClean, `%${rawClean}%`);
+          if (row && row.status === "staged_local" && fs15.existsSync(row.local_path)) {
+            return { authorized: true, canonicalKey: rawRef, isLocalPending: true };
+          }
+        } catch {
+        }
+      }
+      return { authorized: false, error: "Forbidden: Attachment is unassociated or access is unauthorized." };
+    }
+    const canonical = extractCanonicalSupabaseKey(rawRef);
+    if (!canonical) {
+      return { authorized: false, error: "Forbidden: Attachment is unassociated or access is unauthorized." };
+    }
+    const { fullKey, objectPath } = canonical;
+    if (db2) {
+      try {
+        const row = db2.prepare(`
+                    SELECT id, entity_type, entity_id, status, remote_url_supabase FROM durable_uploads
+                    WHERE remote_url_supabase = ? OR remote_url_supabase = ?
+                `).get(fullKey, objectPath);
+        if (row) {
+          const hasValidOwner = (row.entity_type === "make_orders" || row.entity_type === "make_order_items") && !!row.entity_id;
+          if (!hasValidOwner) {
+            return { authorized: false, error: "Forbidden: Attachment is unassociated or access is unauthorized." };
+          }
+          if (row.entity_type === "make_orders") {
+            const { data: order } = await supabase.from("make_orders").select("id, pdf_urls, invoice_attachment_urls").eq("id", row.entity_id).maybeSingle();
+            if (order) {
+              const pdfs = Array.isArray(order.pdf_urls) ? order.pdf_urls : [];
+              const invs = Array.isArray(order.invoice_attachment_urls) ? order.invoice_attachment_urls : [];
+              const allRefs = [...pdfs, ...invs].filter(Boolean);
+              const matches = allRefs.some((r2) => {
+                const can = extractCanonicalSupabaseKey(r2);
+                return r2 === rawRef || r2 === fullKey || r2 === objectPath || can && can.objectPath === objectPath;
+              });
+              if (matches) {
+                return { authorized: true, canonicalKey: objectPath };
+              }
+            }
+            return { authorized: false, error: "Forbidden: Attachment is unassociated or access is unauthorized." };
+          } else if (row.entity_type === "make_order_items") {
+            const { data: item } = await supabase.from("make_order_items").select("id, technical_drawing_url, pdf_urls").eq("id", row.entity_id).maybeSingle();
+            if (item) {
+              const pdfs = Array.isArray(item.pdf_urls) ? item.pdf_urls : [];
+              const itemRefs = [item.technical_drawing_url, ...pdfs].filter(Boolean);
+              const matches = itemRefs.some((r2) => {
+                const can = extractCanonicalSupabaseKey(r2);
+                return r2 === rawRef || r2 === fullKey || r2 === objectPath || can && can.objectPath === objectPath;
+              });
+              if (matches) {
+                return { authorized: true, canonicalKey: objectPath };
+              }
+            }
+            return { authorized: false, error: "Forbidden: Attachment is unassociated or access is unauthorized." };
+          }
+        }
+      } catch {
+      }
+    }
+    try {
+      const orderMatch = objectPath.match(/^(\d+)\//);
+      if (orderMatch) {
+        const candidateOrderId = parseInt(orderMatch[1], 10);
+        const { data: order } = await supabase.from("make_orders").select("id, pdf_urls, invoice_attachment_urls").eq("id", candidateOrderId).maybeSingle();
+        if (order) {
+          const pdfs = Array.isArray(order.pdf_urls) ? order.pdf_urls : [];
+          const invs = Array.isArray(order.invoice_attachment_urls) ? order.invoice_attachment_urls : [];
+          const allRefs = [...pdfs, ...invs].filter(Boolean);
+          const matches = allRefs.some((r2) => {
+            const can = extractCanonicalSupabaseKey(r2);
+            return r2 === rawRef || r2 === fullKey || r2 === objectPath || can && can.objectPath === objectPath;
+          });
+          if (matches) {
+            return { authorized: true, canonicalKey: objectPath };
+          }
+        }
+      }
+      const { data: matchedOrders } = await supabase.from("make_orders").select("id, pdf_urls, invoice_attachment_urls");
+      if (Array.isArray(matchedOrders)) {
+        const found = matchedOrders.some((o) => {
+          const pdfs = Array.isArray(o.pdf_urls) ? o.pdf_urls : [];
+          const invs = Array.isArray(o.invoice_attachment_urls) ? o.invoice_attachment_urls : [];
+          return [...pdfs, ...invs].filter(Boolean).some((r2) => {
+            const can = extractCanonicalSupabaseKey(r2);
+            return r2 === rawRef || r2 === fullKey || r2 === objectPath || can && can.objectPath === objectPath;
+          });
+        });
+        if (found) {
+          return { authorized: true, canonicalKey: objectPath };
+        }
+      }
+    } catch (err) {
+      console.warn("[isAuthorizedAttachment] make_orders check error:", err.message);
+    }
+    try {
+      const { data: matchedItems } = await supabase.from("make_order_items").select("id, technical_drawing_url, pdf_urls");
+      if (Array.isArray(matchedItems)) {
+        const found = matchedItems.some((it) => {
+          const pdfs = Array.isArray(it.pdf_urls) ? it.pdf_urls : [];
+          const itemRefs = [it.technical_drawing_url, ...pdfs].filter(Boolean);
+          return itemRefs.some((r2) => {
+            const can = extractCanonicalSupabaseKey(r2);
+            return r2 === rawRef || r2 === fullKey || r2 === objectPath || can && can.objectPath === objectPath;
+          });
+        });
+        if (found) {
+          return { authorized: true, canonicalKey: objectPath };
+        }
+      }
+    } catch (err) {
+      console.warn("[isAuthorizedAttachment] make_order_items check error:", err.message);
+    }
+    return { authorized: false, error: "Forbidden: Attachment is unassociated or access is unauthorized." };
+  }
+  import_electron18.ipcMain.handle("create-make-order", async (_e, rawOrder) => {
     try {
       const session2 = requireSession();
       const role = (session2.role || "").toLowerCase();
@@ -129577,6 +134789,10 @@ function registerMakeHandlers() {
         throw new Error("Forbidden: Factory Manager is strictly prohibited from creating orders.");
       }
       const parsed = CreateMakeOrderSchema.parse(rawOrder);
+      const isAdmin = role === "admin" || role === "superadmin" || role === "manager";
+      if (!isAdmin && rawOrder.salesman_id && Number(rawOrder.salesman_id) !== session2.userId) {
+        throw new Error("Forbidden: Only administrators can place orders on behalf of another salesperson.");
+      }
       const result = await MakeOrderService.createOrder(parsed, session2);
       if (!result.success) {
         throw new Error(result.error);
@@ -129587,7 +134803,7 @@ function registerMakeHandlers() {
       throw new Error(err.message || "Failed to create order");
     }
   });
-  import_electron14.ipcMain.handle("approve-make-order", async (_e, rawPayload) => {
+  import_electron18.ipcMain.handle("approve-make-order", async (_e, rawPayload) => {
     try {
       const session2 = requireSession();
       if (!canApproveOrder(session2)) {
@@ -129599,9 +134815,10 @@ function registerMakeHandlers() {
           throw new Error("Forbidden: Only managers or administrators can authorize loss-making order approval.");
         }
         parsed.override.authorizedBy = session2.fullName || session2.username;
+        parsed.override.timestamp = parsed.override.timestamp || (/* @__PURE__ */ new Date()).toISOString();
       }
       const result = await MakeOrderService.approveOrder({
-        orderId: parsed.orderId,
+        orderId: Number(parsed.orderId),
         actorSession: session2,
         override: parsed.override,
         notes: parsed.notes
@@ -129615,12 +134832,12 @@ function registerMakeHandlers() {
       throw new Error(err.message || "Failed to approve order");
     }
   });
-  import_electron14.ipcMain.handle("make-designer-save-specs-and-pricing", async (_e, rawPayload) => {
+  import_electron18.ipcMain.handle("make-designer-save-specs-and-pricing", async (_e, rawPayload) => {
     try {
       const session2 = requireSession();
       const parsed = DesignerSaveSpecsAndPricingSchema.parse(rawPayload);
       const result = await MakeOrderService.saveDesignerSpecsAndPricing({
-        orderId: parsed.orderId,
+        orderId: Number(parsed.orderId),
         costPrice: parsed.costPrice ? Number(parsed.costPrice) : void 0,
         salePrice: parsed.salePrice !== void 0 && parsed.salePrice !== null ? Number(parsed.salePrice) : null,
         items: parsed.items,
@@ -129636,7 +134853,7 @@ function registerMakeHandlers() {
       return { error: err.message || "Failed to save specifications and pricing" };
     }
   });
-  import_electron14.ipcMain.handle("make-update-production-stage", async (_e, rawPayload) => {
+  import_electron18.ipcMain.handle("make-update-production-stage", async (_e, rawPayload) => {
     try {
       const session2 = requireSession();
       if (!canAdvanceProduction(session2)) {
@@ -129661,10 +134878,11 @@ function registerMakeHandlers() {
                 fileBuffer,
                 fileName,
                 mimeType,
-                `make-order-files/${parsed.orderId}/stages`
+                `make-order-files/${parsed.orderId}/stages`,
+                { entityType: "make_orders", entityId: parsed.orderId, fieldName: "current_stage_photo" }
               );
-              if (uploadResult.success && uploadResult.publicUrl) {
-                finalPhotoUrl = uploadResult.publicUrl;
+              if (uploadResult.success || uploadResult.isPendingUpload) {
+                finalPhotoUrl = uploadResult.durableKey || uploadResult.publicUrl || null;
               }
             }
           }
@@ -129687,7 +134905,7 @@ function registerMakeHandlers() {
       return { success: false, error: err.message || "Failed to advance stage" };
     }
   });
-  import_electron14.ipcMain.handle("make-alter-order", async (_e, rawPayload) => {
+  import_electron18.ipcMain.handle("make-alter-order", async (_e, rawPayload) => {
     try {
       const session2 = requireSession();
       const parsed = AlterMakeOrderSchema.parse(rawPayload);
@@ -129704,50 +134922,62 @@ function registerMakeHandlers() {
       return { error: err.message || "Failed to alter order" };
     }
   });
-  import_electron14.ipcMain.handle("make-get-order-versions", async (_e, orderId) => {
+  import_electron18.ipcMain.handle("make-get-order-versions", async (_e, orderId) => {
     return MakeVersionService.getOrderVersions(orderId);
   });
-  import_electron14.ipcMain.handle("make-get-version-diff", async (_e, rawPayload, maybeFrom, maybeTo) => {
+  import_electron18.ipcMain.handle("make-get-version-diff", async (_e, rawPayload, maybeFrom, maybeTo) => {
     const orderId = typeof rawPayload === "object" && rawPayload !== null ? rawPayload.orderId : rawPayload;
     const fromVersion = typeof rawPayload === "object" && rawPayload !== null ? rawPayload.fromVersion : maybeFrom;
     const toVersion = typeof rawPayload === "object" && rawPayload !== null ? rawPayload.toVersion : maybeTo;
     return MakeVersionService.getVersionDiff(orderId, fromVersion, toVersion);
   });
-  import_electron14.ipcMain.handle("make-pick-and-upload-drawing", async (_e, { orderId, itemId }) => {
+  import_electron18.ipcMain.handle("make-pick-and-upload-drawing", async (_e, { orderId, itemId }) => {
     try {
-      requireSession();
-      const focusedWin = import_electron14.BrowserWindow.getFocusedWindow();
+      const session2 = requireSession();
+      if (!canModifyMakeOrder(session2)) {
+        throw new Error("Forbidden: Session lacks MAKE order modification permissions");
+      }
+      const focusedWin = import_electron18.BrowserWindow.getFocusedWindow();
       const validation = await MakeCadService.pickAndValidateFile("cad", focusedWin);
       if ("canceled" in validation) {
         return { canceled: true, error: validation.error };
       }
       const subfolder = itemId ? `make-order-files/${orderId}/items/${itemId}` : `make-order-files/${orderId}`;
+      const meta3 = itemId ? { entityType: "make_order_items", entityId: itemId, fieldName: "technical_drawing_url" } : { entityType: "make_orders", entityId: orderId, fieldName: "pdf_urls" };
       const uploadResult = await MakeCadService.uploadValidatedBuffer(
         validation.fileBuffer,
         validation.sanitizedFileName,
         validation.mimeType,
-        subfolder
+        subfolder,
+        meta3
       );
-      if (!uploadResult.success || !uploadResult.publicUrl) {
+      if (!uploadResult.success && !uploadResult.isPendingUpload) {
         return { success: false, error: uploadResult.error || "Failed to upload to storage" };
+      }
+      const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+      if (!persistentRef) {
+        return { success: false, error: "Failed to establish persistent storage reference" };
       }
       if (itemId) {
         const { data: item } = await supabase.from("make_order_items").select("pdf_urls, technical_drawing_url").eq("id", itemId).maybeSingle();
         const existing = Array.isArray(item?.pdf_urls) ? item.pdf_urls : [];
-        const combined = [...existing, uploadResult.publicUrl];
+        const combined = Array.from(/* @__PURE__ */ new Set([...existing, persistentRef]));
         await supabase.from("make_order_items").update({
           pdf_urls: combined,
-          technical_drawing_url: uploadResult.publicUrl
+          technical_drawing_url: persistentRef
         }).eq("id", itemId);
       } else {
         const { data: order } = await supabase.from("make_orders").select("pdf_urls").eq("id", orderId).maybeSingle();
         const existing = Array.isArray(order?.pdf_urls) ? order.pdf_urls : [];
-        const combined = [...existing, uploadResult.publicUrl];
+        const combined = Array.from(/* @__PURE__ */ new Set([...existing, persistentRef]));
         await supabase.from("make_orders").update({ pdf_urls: combined }).eq("id", orderId);
       }
       return {
         success: true,
-        publicUrl: uploadResult.publicUrl,
+        publicUrl: uploadResult.publicUrl || void 0,
+        durableKey: persistentRef,
+        isPendingUpload: uploadResult.isPendingUpload,
+        status: uploadResult.status,
         fileName: validation.sanitizedFileName
       };
     } catch (err) {
@@ -129755,10 +134985,10 @@ function registerMakeHandlers() {
       return { success: false, error: err.message };
     }
   });
-  import_electron14.ipcMain.handle("make-pick-and-upload-stage-photo", async (_e, { orderId }) => {
+  import_electron18.ipcMain.handle("make-pick-and-upload-stage-photo", async (_e, { orderId }) => {
     try {
       requireSession();
-      const focusedWin = import_electron14.BrowserWindow.getFocusedWindow();
+      const focusedWin = import_electron18.BrowserWindow.getFocusedWindow();
       const validation = await MakeCadService.pickAndValidateFile("photo", focusedWin);
       if ("canceled" in validation) {
         return { canceled: true, error: validation.error };
@@ -129767,14 +134997,22 @@ function registerMakeHandlers() {
         validation.fileBuffer,
         validation.sanitizedFileName,
         validation.mimeType,
-        `make-order-files/${orderId}/stages`
+        `make-order-files/${orderId}/stages`,
+        { entityType: "make_orders", entityId: orderId, fieldName: "current_stage_photo" }
       );
-      if (!uploadResult.success || !uploadResult.publicUrl) {
+      if (!uploadResult.success && !uploadResult.isPendingUpload) {
         return { success: false, error: uploadResult.error || "Failed to upload photo" };
+      }
+      const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+      if (!persistentRef) {
+        return { success: false, error: "Failed to obtain persistent photo reference" };
       }
       return {
         success: true,
-        publicUrl: uploadResult.publicUrl,
+        publicUrl: uploadResult.publicUrl || void 0,
+        durableKey: persistentRef,
+        isPendingUpload: uploadResult.isPendingUpload,
+        status: uploadResult.status,
         fileName: validation.sanitizedFileName
       };
     } catch (err) {
@@ -129782,100 +135020,266 @@ function registerMakeHandlers() {
       return { success: false, error: err.message };
     }
   });
-  import_electron14.ipcMain.handle("make-upload-item-pdf", async (_e, { orderId, itemId, filePath }) => {
-    if (filePath) {
-      return { error: "Arbitrary filesystem paths are rejected. Use the native file picker." };
+  import_electron18.ipcMain.handle("make-upload-item-pdf", async (_e, { orderId, itemId, filePath }) => {
+    try {
+      const session2 = requireSession();
+      if (!canModifyMakeOrder(session2)) {
+        return { error: "Forbidden: Session lacks MAKE order modification permissions" };
+      }
+      if (filePath) {
+        return { error: "Arbitrary filesystem paths are rejected. Use the native file picker." };
+      }
+      const focusedWin = import_electron18.BrowserWindow.getFocusedWindow();
+      const validation = await MakeCadService.pickAndValidateFile("cad", focusedWin);
+      if ("canceled" in validation) {
+        return { canceled: true, error: validation.error };
+      }
+      const subfolder = `make-order-files/${orderId}/items/${itemId}`;
+      const uploadResult = await MakeCadService.uploadValidatedBuffer(
+        validation.fileBuffer,
+        validation.sanitizedFileName,
+        validation.mimeType,
+        subfolder,
+        { entityType: "make_order_items", entityId: itemId, fieldName: "technical_drawing_url" }
+      );
+      if (!uploadResult.success && !uploadResult.isPendingUpload) {
+        return { error: uploadResult.error || "Failed to upload drawing" };
+      }
+      const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+      if (!persistentRef) {
+        return { error: "Failed to establish persistent drawing reference" };
+      }
+      const { data: item } = await supabase.from("make_order_items").select("pdf_urls").eq("id", itemId).maybeSingle();
+      const existing = Array.isArray(item?.pdf_urls) ? item.pdf_urls : [];
+      const combined = Array.from(/* @__PURE__ */ new Set([...existing, persistentRef]));
+      await supabase.from("make_order_items").update({
+        pdf_urls: combined,
+        technical_drawing_url: persistentRef
+      }).eq("id", itemId);
+      return {
+        success: true,
+        paths: [persistentRef],
+        allPaths: combined,
+        publicUrl: uploadResult.publicUrl || void 0,
+        durableKey: persistentRef,
+        isPendingUpload: uploadResult.isPendingUpload,
+        status: uploadResult.status
+      };
+    } catch (err) {
+      return { error: err?.message || "Upload failed" };
     }
-    const focusedWin = import_electron14.BrowserWindow.getFocusedWindow();
-    const validation = await MakeCadService.pickAndValidateFile("cad", focusedWin);
-    if ("canceled" in validation) {
-      return { canceled: true, error: validation.error };
-    }
-    const subfolder = `make-order-files/${orderId}/items/${itemId}`;
-    const uploadResult = await MakeCadService.uploadValidatedBuffer(
-      validation.fileBuffer,
-      validation.sanitizedFileName,
-      validation.mimeType,
-      subfolder
-    );
-    if (!uploadResult.success || !uploadResult.publicUrl) {
-      return { error: uploadResult.error || "Failed to upload drawing" };
-    }
-    const { data: item } = await supabase.from("make_order_items").select("pdf_urls").eq("id", itemId).maybeSingle();
-    const existing = Array.isArray(item?.pdf_urls) ? item.pdf_urls : [];
-    const combined = [...existing, uploadResult.publicUrl];
-    await supabase.from("make_order_items").update({
-      pdf_urls: combined,
-      technical_drawing_url: uploadResult.publicUrl
-    }).eq("id", itemId);
-    return { success: true, paths: [uploadResult.publicUrl], allPaths: combined };
   });
-  import_electron14.ipcMain.handle("make-upload-pdf", async (_e, { orderId, filePath }) => {
-    if (filePath) {
-      return { error: "Arbitrary filesystem paths are rejected. Use the native file picker." };
+  import_electron18.ipcMain.handle("make-upload-pdf", async (_e, { orderId, filePath }) => {
+    try {
+      const session2 = requireSession();
+      if (!canModifyMakeOrder(session2)) {
+        return { error: "Forbidden: Session lacks MAKE order modification permissions" };
+      }
+      if (filePath) {
+        return { error: "Arbitrary filesystem paths are rejected. Use the native file picker." };
+      }
+      const focusedWin = import_electron18.BrowserWindow.getFocusedWindow();
+      const validation = await MakeCadService.pickAndValidateFile("cad", focusedWin);
+      if ("canceled" in validation) {
+        return { canceled: true, error: validation.error };
+      }
+      const subfolder = `make-order-files/${orderId}`;
+      const uploadResult = await MakeCadService.uploadValidatedBuffer(
+        validation.fileBuffer,
+        validation.sanitizedFileName,
+        validation.mimeType,
+        subfolder,
+        { entityType: "make_orders", entityId: orderId, fieldName: "pdf_urls" }
+      );
+      if (!uploadResult.success && !uploadResult.isPendingUpload) {
+        return { error: uploadResult.error || "Failed to upload drawing" };
+      }
+      const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+      if (!persistentRef) {
+        return { error: "Failed to obtain persistent reference for uploaded drawing" };
+      }
+      const { data: order } = await supabase.from("make_orders").select("pdf_urls").eq("id", orderId).maybeSingle();
+      const existing = Array.isArray(order?.pdf_urls) ? order.pdf_urls : [];
+      const combined = Array.from(/* @__PURE__ */ new Set([...existing, persistentRef]));
+      await supabase.from("make_orders").update({ pdf_urls: combined }).eq("id", orderId);
+      return {
+        success: true,
+        paths: [persistentRef],
+        publicUrl: uploadResult.publicUrl || void 0,
+        durableKey: persistentRef,
+        isPendingUpload: uploadResult.isPendingUpload,
+        status: uploadResult.status
+      };
+    } catch (err) {
+      return { error: err?.message || "Upload failed" };
     }
-    const focusedWin = import_electron14.BrowserWindow.getFocusedWindow();
-    const validation = await MakeCadService.pickAndValidateFile("cad", focusedWin);
-    if ("canceled" in validation) {
-      return { canceled: true, error: validation.error };
+  });
+  import_electron18.ipcMain.handle("make-get-pdf-urls", async (_e, orderId) => {
+    const session2 = requireSession();
+    if (!canViewMakeOrders(session2)) {
+      throw new Error("Forbidden: Session lacks MAKE permissions");
     }
-    const subfolder = `make-order-files/${orderId}`;
-    const uploadResult = await MakeCadService.uploadValidatedBuffer(
-      validation.fileBuffer,
-      validation.sanitizedFileName,
-      validation.mimeType,
-      subfolder
-    );
-    if (!uploadResult.success || !uploadResult.publicUrl) {
-      return { error: uploadResult.error || "Failed to upload drawing" };
+    if (!orderId || typeof orderId !== "number" || orderId <= 0) {
+      throw new Error("Invalid order ID");
     }
     const { data: order } = await supabase.from("make_orders").select("pdf_urls").eq("id", orderId).maybeSingle();
-    const existing = Array.isArray(order?.pdf_urls) ? order.pdf_urls : [];
-    const combined = [...existing, uploadResult.publicUrl];
-    await supabase.from("make_orders").update({ pdf_urls: combined }).eq("id", orderId);
-    return { success: true, paths: [uploadResult.publicUrl] };
-  });
-  import_electron14.ipcMain.handle("make-get-pdf-urls", async (_e, orderId) => {
-    const { data: order } = await supabase.from("make_orders").select("pdf_urls").eq("id", orderId).maybeSingle();
-    const paths = order?.pdf_urls || [];
+    const paths = Array.isArray(order?.pdf_urls) ? order.pdf_urls : [];
     const signedUrls = await Promise.all(paths.map(async (p) => {
-      if (p.startsWith("http://") || p.startsWith("https://")) {
-        return { path: p, name: p.split("/").pop()?.replace(/^\d+_/, "") || "drawing", url: p };
-      }
-      if (p.startsWith("make-order-files/")) {
-        const url2 = `https://storage.lenas.me/files/${p}`;
-        return { path: p, name: p.split("/").pop()?.replace(/^\d+_/, "") || "drawing", url: url2 };
-      } else {
-        const { data: data2 } = await supabase.storage.from("make-order-files").createSignedUrl(p, 3600);
-        return { path: p, name: p.split("/").pop()?.replace(/^\d+_/, "") || "drawing", url: data2?.signedUrl || "" };
-      }
+      return await resolveAttachmentUrl(p);
     }));
-    return signedUrls.filter((u) => u.url);
+    return signedUrls.filter((u) => u.url || u.isPending);
   });
-  import_electron14.ipcMain.handle("make-delete-pdf", async (_e, { orderId, storagePath }) => {
-    requireSession();
-    const { data: order } = await supabase.from("make_orders").select("pdf_urls").eq("id", orderId).maybeSingle();
-    const remaining = (order?.pdf_urls || []).filter((p) => p !== storagePath);
-    await supabase.from("make_orders").update({ pdf_urls: remaining }).eq("id", orderId);
+  import_electron18.ipcMain.handle("make-delete-pdf", async (_e, rawPayload) => {
+    const session2 = requireSession();
+    if (!canModifyMakeOrder(session2)) {
+      throw new Error("Forbidden: Session lacks MAKE order modification permissions");
+    }
+    const parsed = DeleteOrderPdfSchema.parse(rawPayload);
+    if (!isAllowedAttachmentReference(parsed.storagePath)) {
+      throw new Error("Invalid or unsupported attachment reference");
+    }
+    const { data: order, error: orderErr } = await supabase.from("make_orders").select("id, status, pdf_urls").eq("id", parsed.orderId).maybeSingle();
+    if (orderErr) {
+      throw new Error(`Database error looking up order: ${orderErr.message}`);
+    }
+    if (!order) {
+      throw new Error(`Order with ID ${parsed.orderId} not found`);
+    }
+    if (!canModifyMakeOrder(session2, order)) {
+      throw new Error(`Order #${parsed.orderId} is in "${order.status}". Only Administrators can modify this order.`);
+    }
+    const currentPdfs = Array.isArray(order.pdf_urls) ? order.pdf_urls : [];
+    const matchIndex = currentPdfs.findIndex((p) => isMatchingAttachment(p, parsed.storagePath));
+    if (matchIndex === -1) {
+      throw new Error(`Attachment "${parsed.storagePath}" does not belong to order #${parsed.orderId}`);
+    }
+    const remaining = currentPdfs.filter((_, idx) => idx !== matchIndex);
+    const { data: updateRes, error: updateErr, count } = await supabase.from("make_orders").update({ pdf_urls: remaining }, { count: "exact" }).eq("id", parsed.orderId).select("id");
+    if (updateErr) {
+      throw new Error(`Database error removing attachment: ${updateErr.message}`);
+    }
+    const affectedCount = Array.isArray(updateRes) ? updateRes.length : updateRes ? 1 : count ?? 0;
+    if (affectedCount === 0) {
+      throw new Error(`Order attachment deletion failed: 0 rows affected for order #${parsed.orderId}`);
+    }
+    try {
+      const can = extractCanonicalSupabaseKey(parsed.storagePath);
+      if (can) {
+        const uploadService = DurableUploadService.getInstance();
+        await uploadService.pruneCloudCopy("make-order-files", can.fullKey, 0);
+      }
+    } catch (cleanupErr) {
+      console.warn("[make-delete-pdf] Background cloud cleanup deferred/failed:", cleanupErr);
+    }
     return { success: true };
   });
-  import_electron14.ipcMain.handle("make-delete-item-pdf", async (_e, { itemId, storagePath }) => {
-    requireSession();
-    const { data: item } = await supabase.from("make_order_items").select("pdf_urls, technical_drawing_url").eq("id", itemId).maybeSingle();
-    const remaining = (item?.pdf_urls || []).filter((p) => p !== storagePath);
-    const newTechUrl = item?.technical_drawing_url === storagePath ? remaining.length > 0 ? remaining[0] : null : item?.technical_drawing_url;
-    await supabase.from("make_order_items").update({
+  import_electron18.ipcMain.handle("make-delete-item-pdf", async (_e, rawPayload) => {
+    const session2 = requireSession();
+    if (!canModifyMakeOrder(session2)) {
+      throw new Error("Forbidden: Session lacks MAKE order modification permissions");
+    }
+    const parsed = DeleteItemPdfSchema.parse(rawPayload);
+    if (!isAllowedAttachmentReference(parsed.storagePath)) {
+      throw new Error("Invalid or unsupported attachment reference");
+    }
+    const { data: item, error: itemErr } = await supabase.from("make_order_items").select("id, order_id, pdf_urls, technical_drawing_url").eq("id", parsed.itemId).maybeSingle();
+    if (itemErr) {
+      throw new Error(`Database error looking up item: ${itemErr.message}`);
+    }
+    if (!item) {
+      throw new Error(`Item with ID ${parsed.itemId} not found`);
+    }
+    if (!item.order_id) {
+      throw new Error(`Item #${parsed.itemId} has no associated parent order`);
+    }
+    if (parsed.orderId !== void 0 && Number(item.order_id) !== Number(parsed.orderId)) {
+      throw new Error(`Item #${parsed.itemId} belongs to order #${item.order_id}, not order #${parsed.orderId}`);
+    }
+    const { data: parentOrder, error: parentErr } = await supabase.from("make_orders").select("id, status").eq("id", item.order_id).maybeSingle();
+    if (parentErr) {
+      throw new Error(`Database error verifying parent order: ${parentErr.message}`);
+    }
+    if (!parentOrder) {
+      throw new Error(`Parent order #${item.order_id} not found for item #${item.id}`);
+    }
+    if (!canModifyMakeOrder(session2, parentOrder)) {
+      throw new Error(`Parent order #${item.order_id} is in "${parentOrder.status}". Only Administrators can modify this order.`);
+    }
+    const currentPdfs = Array.isArray(item.pdf_urls) ? item.pdf_urls : [];
+    const pdfMatchIndex = currentPdfs.findIndex((p) => isMatchingAttachment(p, parsed.storagePath));
+    const techMatch = item.technical_drawing_url && isMatchingAttachment(item.technical_drawing_url, parsed.storagePath);
+    if (pdfMatchIndex === -1 && !techMatch) {
+      throw new Error(`Attachment "${parsed.storagePath}" does not belong to item #${parsed.itemId}`);
+    }
+    const remaining = pdfMatchIndex !== -1 ? currentPdfs.filter((_, idx) => idx !== pdfMatchIndex) : currentPdfs;
+    const newTechUrl = techMatch ? remaining.length > 0 ? remaining[0] : null : item.technical_drawing_url;
+    const { data: updateRes, error: updateErr, count } = await supabase.from("make_order_items").update({
       pdf_urls: remaining,
       technical_drawing_url: newTechUrl
-    }).eq("id", itemId);
+    }, { count: "exact" }).eq("id", parsed.itemId).select("id");
+    if (updateErr) {
+      throw new Error(`Database error removing item attachment: ${updateErr.message}`);
+    }
+    const affectedCount = Array.isArray(updateRes) ? updateRes.length : updateRes ? 1 : count ?? 0;
+    if (affectedCount === 0) {
+      throw new Error(`Item attachment deletion failed: 0 rows affected for item #${parsed.itemId}`);
+    }
+    try {
+      const can = extractCanonicalSupabaseKey(parsed.storagePath);
+      if (can) {
+        const uploadService = DurableUploadService.getInstance();
+        await uploadService.pruneCloudCopy("make-order-files", can.fullKey, 0);
+      }
+    } catch (cleanupErr) {
+      console.warn("[make-delete-item-pdf] Background cloud cleanup deferred/failed:", cleanupErr);
+    }
     return { success: true };
   });
-  import_electron14.ipcMain.handle("make-get-order-parts", async (_e, orderId) => {
+  import_electron18.ipcMain.handle("make-download-pdf", async (_e, { url: url2, fileName }) => {
+    try {
+      const session2 = requireSession();
+      if (!canViewMakeOrders(session2)) {
+        throw new Error("Forbidden: Session lacks MAKE permissions");
+      }
+      if (!url2 || typeof url2 !== "string" || !url2.trim()) {
+        throw new Error("Invalid or malformed attachment reference");
+      }
+      const auth = await isAuthorizedAttachment(url2, session2);
+      if (!auth.authorized || !auth.canonicalKey) {
+        throw new Error("Forbidden: Attachment is unassociated or access is unauthorized.");
+      }
+      const { app: app22, shell: shell2 } = await import("electron");
+      const tempDir = app22.getPath("temp");
+      const res = await downloadPdfFromNas(auth.canonicalKey, fileName, tempDir);
+      if (res.success && res.path) {
+        await shell2.openPath(res.path);
+      }
+      return res;
+    } catch (e2) {
+      console.error("[make-download-pdf] Download error:", e2);
+      return { success: false, error: e2?.message || "Download error" };
+    }
+  });
+  import_electron18.ipcMain.handle("make-resolve-attachment-url", async (_e, rawUrl) => {
+    const session2 = requireSession();
+    if (!canViewMakeOrders(session2)) {
+      throw new Error("Forbidden: Session lacks MAKE permissions");
+    }
+    if (!rawUrl || typeof rawUrl !== "string" || !rawUrl.trim()) {
+      throw new Error("Invalid or malformed attachment reference");
+    }
+    const auth = await isAuthorizedAttachment(rawUrl, session2);
+    if (!auth.authorized || !auth.canonicalKey) {
+      throw new Error("Forbidden: Attachment is unassociated or access is unauthorized.");
+    }
+    return await resolveAttachmentUrl(auth.canonicalKey);
+  });
+  import_electron18.ipcMain.handle("make-get-order-parts", async (_e, orderId) => {
     const { data: data2, error: error51 } = await supabase.from("make_order_parts").select("*").eq("order_id", orderId).order("sort_order", { ascending: true });
     if (error51) throw error51;
     return decryptRows(data2 || []);
   });
-  import_electron14.ipcMain.handle("make-upsert-part", async (_e, part) => {
+  import_electron18.ipcMain.handle("make-upsert-part", async (_e, part) => {
     requireSession();
     if (part.id) {
       const { data: data2, error: error51 } = await supabase.from("make_order_parts").update({ part_name: part.part_name, length: part.length, width: part.width, height: part.height, notes: part.notes, sort_order: part.sort_order }).eq("id", part.id).select().maybeSingle();
@@ -129887,24 +135291,24 @@ function registerMakeHandlers() {
       return decryptObject(data2);
     }
   });
-  import_electron14.ipcMain.handle("make-delete-part", async (_e, partId) => {
+  import_electron18.ipcMain.handle("make-delete-part", async (_e, partId) => {
     requireSession();
     const { error: error51 } = await supabase.from("make_order_parts").delete().eq("id", partId);
     return error51 ? { error: error51.message } : { success: true };
   });
-  import_electron14.ipcMain.handle("make-get-alteration-log", async (_e, orderId) => {
+  import_electron18.ipcMain.handle("make-get-alteration-log", async (_e, orderId) => {
     const { data: data2 } = await supabase.from("make_order_alteration_log").select("*").eq("order_id", orderId).order("altered_at", { ascending: false });
     return decryptRows(data2 || []);
   });
-  import_electron14.ipcMain.handle("make-get-catalog-products", async (_e, { search: search2, activeOnly } = {}) => {
+  import_electron18.ipcMain.handle("make-get-catalog-products", async (_e, { search: search2, activeOnly } = {}) => {
     const queryFn = async (client) => {
-      let q = client.from("make_products").select("*, specifications:make_product_specifications(*), sizes:make_product_sizes(*), colors:make_product_colors(*), images:make_product_images(*)").order("created_at", { ascending: false });
+      let q = client.from("make_products").select("*, specifications:make_product_specifications(*), sizes:make_product_sizes!make_product_sizes_product_id_fkey(*), colors:make_product_colors(*), images:make_product_images(*)").order("created_at", { ascending: false });
       if (activeOnly) q = q.eq("is_active", true);
       if (search2) q = q.or(`product_name.ilike.%${search2}%,product_code.ilike.%${search2}%`);
       const res = await q;
       if (res.error?.code === "PGRST200" && res.error?.message?.includes("make_product_images")) {
         console.warn("[make-get-catalog-products] make_product_images relationship missing (Cloud fallback), retrying without images join.");
-        let q2 = client.from("make_products").select("*, specifications:make_product_specifications(*), sizes:make_product_sizes(*), colors:make_product_colors(*)").order("created_at", { ascending: false });
+        let q2 = client.from("make_products").select("*, specifications:make_product_specifications(*), sizes:make_product_sizes!make_product_sizes_product_id_fkey(*), colors:make_product_colors(*)").order("created_at", { ascending: false });
         if (activeOnly) q2 = q2.eq("is_active", true);
         if (search2) q2 = q2.or(`product_name.ilike.%${search2}%,product_code.ilike.%${search2}%`);
         const fallbackRes = await q2;
@@ -129971,14 +135375,61 @@ function registerMakeHandlers() {
         p.categories = p.category_id ? [{ id: p.category_id, name: p.category || "" }] : [];
       }
     }
+    for (const p of products) {
+      if (p.size_id && p.sizes && Array.isArray(p.sizes)) {
+        p.size = p.sizes.find((s2) => s2.id === p.size_id) || p.sizes[0] || null;
+      } else if (p.sizes && Array.isArray(p.sizes) && p.sizes.length > 0) {
+        p.size = p.sizes[0];
+        p.size_id = p.size.id;
+      }
+      if (p.size) {
+        p.size_label = p.size.size_label || p.size.label || (p.size.length && p.size.width ? `${p.size.length}x${p.size.width}${p.size.height ? `x${p.size.height}` : ""} ${p.size.unit || "mm"}` : null);
+      }
+    }
+    const session2 = SessionManager.getSession();
+    const canViewCost = session2 ? canViewCostPriceSession(session2) : false;
+    const canViewSale = session2 ? canViewSalePriceSession(session2) : false;
+    const canViewMaxDiscount = session2 ? canViewMaxDiscountSession(session2) : false;
+    const canViewBlueprint = session2 ? canViewBlueprintSession(session2) : false;
+    for (const p of products) {
+      if (!canViewCost) {
+        delete p.cost_price;
+      }
+      if (!canViewSale) {
+        delete p.sale_price;
+        delete p.base_price;
+        delete p.price;
+      }
+      if (!canViewMaxDiscount) {
+        delete p.max_discount_type;
+        delete p.max_discount_value;
+      }
+      if (!canViewBlueprint) {
+        delete p.blueprint_url;
+      }
+    }
     return products;
   });
-  import_electron14.ipcMain.handle("make-save-catalog-product", async (_e, rawProduct) => {
+  import_electron18.ipcMain.handle("make-save-catalog-product", async (_e, rawProduct) => {
     const session2 = requireSession();
     if (!canManageCatalog(session2)) {
       throw new Error("Forbidden: Catalog modification requires Administrator or Furniture Designer privileges.");
     }
     const product = CatalogProductSchema.parse(rawProduct);
+    const validPricing = MakePricingService.validateCatalogProductPricing(product);
+    if (!validPricing.isValid) {
+      throw new Error(validPricing.error);
+    }
+    const isUpdate = Boolean(product.id);
+    const canEditCost = canEditCostPriceSession(session2);
+    let costPriceToWrite = validPricing.costPrice;
+    if (!canEditCost) {
+      if (isUpdate) {
+        costPriceToWrite = void 0;
+      } else {
+        costPriceToWrite = 0;
+      }
+    }
     const rawCatIds = product.category_ids || product.categoryIds || (product.category_id ? [product.category_id] : []);
     const categoryIds = rawCatIds.map(Number).filter((id) => !isNaN(id) && id > 0);
     let resolvedCategoryId = null;
@@ -130005,7 +135456,8 @@ function registerMakeHandlers() {
         resolvedCategoryName = product.category.trim();
       }
     }
-    const isUpdate = Boolean(product.id);
+    const effectiveSizeId = product.size_id !== void 0 ? product.size_id ? Number(product.size_id) : null : product.sizeId !== void 0 ? product.sizeId ? Number(product.sizeId) : null : void 0;
+    const effectiveBlueprintUrl = product.blueprint_url !== void 0 ? product.blueprint_url : product.blueprintUrl;
     const writePayload = isUpdate ? {
       product_code: product.product_code,
       product_name: product.product_name,
@@ -130014,6 +135466,9 @@ function registerMakeHandlers() {
       category: resolvedCategoryName,
       main_image: product.main_image || null,
       is_active: product.is_active !== void 0 ? product.is_active : true,
+      sale_price: validPricing.salePrice,
+      max_discount_type: validPricing.maxDiscountType,
+      max_discount_value: validPricing.maxDiscountValue,
       updated_at: (/* @__PURE__ */ new Date()).toISOString()
     } : {
       product_code: product.product_code,
@@ -130023,9 +135478,21 @@ function registerMakeHandlers() {
       category: resolvedCategoryName,
       main_image: product.main_image || null,
       is_active: product.is_active !== void 0 ? product.is_active : true,
+      sale_price: validPricing.salePrice,
+      max_discount_type: validPricing.maxDiscountType,
+      max_discount_value: validPricing.maxDiscountValue,
       created_by: session2.fullName || session2.username
     };
-    const writeResult = await failoverEngine.executeWrite(
+    if (costPriceToWrite !== void 0) {
+      writePayload.cost_price = costPriceToWrite;
+    }
+    if (effectiveSizeId !== void 0) {
+      writePayload.size_id = effectiveSizeId;
+    }
+    if (effectiveBlueprintUrl !== void 0) {
+      writePayload.blueprint_url = effectiveBlueprintUrl ? MakeOrderService.normalizeAttachmentReference(effectiveBlueprintUrl) : null;
+    }
+    let writeResult = await failoverEngine.executeWrite(
       async (client) => {
         if (isUpdate) {
           return await client.from("make_products").update(writePayload).eq("id", product.id).select().single();
@@ -130041,6 +135508,33 @@ function registerMakeHandlers() {
       },
       isUpdate ? "update-product" : "insert-product"
     );
+    if (writeResult.error) {
+      const msg = writeResult.error.message || "";
+      if (/cost_price|sale_price|max_discount/i.test(msg)) {
+        console.warn("[make-save-catalog-product] Fallback: DB schema missing pricing/discount columns, retrying without them.");
+        const fallbackPayload = { ...writePayload };
+        delete fallbackPayload.cost_price;
+        delete fallbackPayload.sale_price;
+        delete fallbackPayload.max_discount_type;
+        delete fallbackPayload.max_discount_value;
+        writeResult = await failoverEngine.executeWrite(
+          async (client) => {
+            if (isUpdate) {
+              return await client.from("make_products").update(fallbackPayload).eq("id", product.id).select().single();
+            } else {
+              return await client.from("make_products").insert(fallbackPayload).select().single();
+            }
+          },
+          {
+            table: "make_products",
+            operation: isUpdate ? "update" : "insert",
+            primaryKey: isUpdate ? { name: "id", value: product.id } : void 0,
+            data: fallbackPayload
+          },
+          isUpdate ? "update-product-fallback" : "insert-product-fallback"
+        );
+      }
+    }
     if (writeResult.error) throw writeResult.error;
     const savedData = writeResult.data;
     const specIds = product.specIds;
@@ -130099,7 +135593,7 @@ function registerMakeHandlers() {
     MakeSearchService.invalidateCache();
     return savedData;
   });
-  import_electron14.ipcMain.handle("make-delete-catalog-product", async (_e, id) => {
+  import_electron18.ipcMain.handle("make-delete-catalog-product", async (_e, id) => {
     const session2 = requireSession();
     if (!canManageCatalog(session2)) {
       throw new Error("Forbidden: Catalog modification requires Administrator or Manager privileges.");
@@ -130113,43 +135607,40 @@ function registerMakeHandlers() {
     MakeSearchService.invalidateCache();
     return { success: true };
   });
-  import_electron14.ipcMain.handle("make-save-spec", async (_e, rawSpec) => {
+  import_electron18.ipcMain.handle("make-save-spec", async (_e, rawSpec) => {
     const session2 = requireSession();
     const spec = CatalogSpecSchema.parse(rawSpec);
     const isGlobal = !spec.product_id;
     if (isGlobal ? !canManageGlobalProductAttributes(session2) : !canManageCatalog(session2)) {
       throw new Error(`Forbidden: ${isGlobal ? 'Global specification modification requires "manage_global_product_attributes" permission.' : "Catalog modification requires Administrator or Manager privileges."}`);
     }
-    if (spec.id) {
-      const { data: data2, error: error51 } = await supabase.from("make_product_specifications").update({
-        spec_code: spec.spec_code || null,
-        spec_name: spec.spec_name,
-        spec_details: spec.spec_details || null,
-        is_active: spec.is_active !== void 0 ? spec.is_active : true
-      }).eq("id", spec.id).select().single();
-      if (error51) throw error51;
-      MakeSearchService.invalidateCache();
-      if (supabaseAdmin && data2) {
-        supabaseAdmin.from("make_product_specifications").upsert(data2).catch((e2) => console.warn("[SYNC] Cloud spec sync:", e2.message));
+    const specImageUrl = spec.image_url || null;
+    const payload = {
+      spec_code: spec.spec_code || null,
+      spec_name: spec.spec_name,
+      spec_details: spec.spec_details || null,
+      is_active: spec.is_active !== void 0 ? spec.is_active : true
+    };
+    const isMissingImageColumn = (e2) => !!e2 && (e2.code === "PGRST204" || e2.code === "42703") && /image_url/i.test(String(e2.message || ""));
+    const writeSpec = async (body) => {
+      const q = supabase.from("make_product_specifications");
+      return spec.id ? await q.update(body).eq("id", spec.id).select().single() : await q.insert({ ...body, product_id: spec.product_id }).select().single();
+    };
+    const result = await writeSpec(specImageUrl ? { ...payload, image_url: specImageUrl } : payload);
+    if (result.error) {
+      if (specImageUrl && isMissingImageColumn(result.error)) {
+        throw new Error("Saving specification with an image requires database migration 066 (image_url column). Please contact your administrator.");
       }
-      return data2;
-    } else {
-      const { data: data2, error: error51 } = await supabase.from("make_product_specifications").insert({
-        product_id: spec.product_id,
-        spec_code: spec.spec_code || null,
-        spec_name: spec.spec_name,
-        spec_details: spec.spec_details || null,
-        is_active: spec.is_active !== void 0 ? spec.is_active : true
-      }).select().single();
-      if (error51) throw error51;
-      MakeSearchService.invalidateCache();
-      if (supabaseAdmin && data2) {
-        supabaseAdmin.from("make_product_specifications").upsert(data2).catch((e2) => console.warn("[SYNC] Cloud spec sync:", e2.message));
-      }
-      return data2;
+      throw result.error;
     }
+    const data2 = result.data;
+    MakeSearchService.invalidateCache();
+    if (supabaseAdmin && data2) {
+      supabaseAdmin.from("make_product_specifications").upsert(data2).catch((e2) => console.warn("[SYNC] Cloud spec sync:", e2.message));
+    }
+    return data2;
   });
-  import_electron14.ipcMain.handle("make-delete-spec", async (_e, id) => {
+  import_electron18.ipcMain.handle("make-delete-spec", async (_e, id) => {
     const session2 = requireSession();
     const { data: spec } = await failoverEngine.executeRead(
       async (client) => client.from("make_product_specifications").select("product_id").eq("id", id).maybeSingle(),
@@ -130168,7 +135659,7 @@ function registerMakeHandlers() {
     MakeSearchService.invalidateCache();
     return { success: true };
   });
-  import_electron14.ipcMain.handle("make-save-size", async (_e, rawSize) => {
+  import_electron18.ipcMain.handle("make-save-size", async (_e, rawSize) => {
     const session2 = requireSession();
     const size = CatalogSizeSchema.parse(rawSize);
     const isGlobal = !size.product_id;
@@ -130204,7 +135695,7 @@ function registerMakeHandlers() {
       return data2;
     }
   });
-  import_electron14.ipcMain.handle("make-delete-size", async (_e, id) => {
+  import_electron18.ipcMain.handle("make-delete-size", async (_e, id) => {
     const session2 = requireSession();
     const { data: size } = await failoverEngine.executeRead(
       async (client) => client.from("make_product_sizes").select("product_id").eq("id", id).maybeSingle(),
@@ -130223,7 +135714,7 @@ function registerMakeHandlers() {
     MakeSearchService.invalidateCache();
     return { success: true };
   });
-  import_electron14.ipcMain.handle("make-save-color", async (_e, rawColor) => {
+  import_electron18.ipcMain.handle("make-save-color", async (_e, rawColor) => {
     const session2 = requireSession();
     const color = CatalogColorSchema.parse(rawColor);
     const isGlobal = !color.product_id;
@@ -130256,7 +135747,7 @@ function registerMakeHandlers() {
       return data2;
     }
   });
-  import_electron14.ipcMain.handle("make-delete-color", async (_e, id) => {
+  import_electron18.ipcMain.handle("make-delete-color", async (_e, id) => {
     const session2 = requireSession();
     const { data: color } = await failoverEngine.executeRead(
       async (client) => client.from("make_product_colors").select("product_id").eq("id", id).maybeSingle(),
@@ -130275,15 +135766,15 @@ function registerMakeHandlers() {
     MakeSearchService.invalidateCache();
     return { success: true };
   });
-  import_electron14.ipcMain.handle("make-get-product-purchase-history", async (_e, productId) => {
+  import_electron18.ipcMain.handle("make-get-product-purchase-history", async (_e, productId) => {
     try {
       const { data: prod } = await supabase.from("make_products").select("id, product_name, product_code").eq("id", productId).single();
       if (!prod) return { totalQuantity: 0, orderCount: 0, totalRevenue: 0, history: [] };
       const { data: items, error: error51 } = await supabase.from("make_order_items").select(`
                     *,
                     order:make_orders(
-                        id, order_number, customer_name, customer_phone, delivery_address, 
-                        location_landmark, receiver_name, receiver_phone, status, 
+                        id, order_number, customer_name, customer_phone, delivery_address,
+                        location_landmark, receiver_name, receiver_phone, status,
                         approval_status, current_version, salesperson_name, designer_name,
                         created_at, delivery_date, cost_price, sale_price
                     )
@@ -130340,7 +135831,11 @@ function registerMakeHandlers() {
       return { totalQuantity: 0, orderCount: 0, totalRevenue: 0, history: [] };
     }
   });
-  import_electron14.ipcMain.handle("make-get-order-items", async (_e, orderId) => {
+  import_electron18.ipcMain.handle("make-get-order-items", async (_e, orderId) => {
+    const session2 = requireSession();
+    if (!canViewMakeOrders(session2)) {
+      throw new Error("Forbidden: Session lacks MAKE permissions");
+    }
     const { data: data2, error: error51 } = await supabase.from("make_order_items").select("*").eq("order_id", orderId).order("id", { ascending: true });
     if (error51) throw error51;
     const decrypted = decryptRows(data2 || []);
@@ -130350,33 +135845,62 @@ function registerMakeHandlers() {
         rawPaths.unshift(item.technical_drawing_url);
       }
       const drawings = await Promise.all(rawPaths.map(async (p) => {
-        if (p.startsWith("http://") || p.startsWith("https://")) {
-          return { path: p, name: p.split("/").pop()?.replace(/^\d+_/, "") || "drawing", url: p };
-        }
-        if (p.startsWith("make-order-files/")) {
-          const url2 = `https://storage.lenas.me/files/${p}`;
-          return { path: p, name: p.split("/").pop()?.replace(/^\d+_/, "") || "drawing", url: url2 };
-        } else {
-          const { data: sData } = await supabase.storage.from("make-order-files").createSignedUrl(p, 3600);
-          return { path: p, name: p.split("/").pop()?.replace(/^\d+_/, "") || "drawing", url: sData?.signedUrl || "" };
-        }
+        return await resolveAttachmentUrl(p);
       }));
       return {
         ...item,
-        drawings: drawings.filter((d) => d.url)
+        drawings: drawings.filter((d) => d.url || d.isPending)
       };
     }));
-    const session2 = SessionManager.getSession();
-    const role = (session2?.role || "").toLowerCase();
-    if (role === "factory_manager" || role === "factory manager" || role === "factory") {
-      return itemsWithDrawings.map((it) => {
-        const { item_sale_price, unit_sale_price, total_sale_price, ...rest } = it;
-        return rest;
-      });
-    }
-    return itemsWithDrawings;
+    const canViewCost = canViewCostPriceSession(session2);
+    const canViewSale = canViewSalePriceSession(session2);
+    const canViewMaxDiscount = canViewMaxDiscountSession(session2);
+    return itemsWithDrawings.map((it) => {
+      const itemCopy = { ...it };
+      if (!canViewCost) {
+        delete itemCopy.item_cost_price;
+        delete itemCopy.cost_price;
+        delete itemCopy.total_cost;
+      }
+      if (!canViewSale) {
+        delete itemCopy.item_sale_price;
+        delete itemCopy.unit_sale_price;
+        delete itemCopy.total_sale_price;
+        delete itemCopy.final_item_price;
+        delete itemCopy.total_sale;
+      }
+      if (!canViewMaxDiscount) {
+        delete itemCopy.max_discount_type;
+        delete itemCopy.max_discount_value;
+        delete itemCopy.discount_type;
+        delete itemCopy.discount_value;
+        delete itemCopy.discount_amount;
+      }
+      return itemCopy;
+    });
   });
-  import_electron14.ipcMain.handle("make-get-dashboard-stats", async () => {
+  import_electron18.ipcMain.handle("make-remove-order-item", async (_e, rawPayload) => {
+    const session2 = requireSession();
+    const result = await MakeOrderService.removeOrderItem({
+      orderId: Number(rawPayload?.orderId),
+      itemId: Number(rawPayload?.itemId),
+      actorSession: session2
+    });
+    if (!result.success) return { success: false, error: result.error };
+    return { success: true };
+  });
+  import_electron18.ipcMain.handle("make-update-order-item-quantity", async (_e, rawPayload) => {
+    const session2 = requireSession();
+    const result = await MakeOrderService.updateDesignerOrderItemQuantity({
+      orderId: Number(rawPayload?.orderId),
+      itemId: Number(rawPayload?.itemId),
+      quantity: Number(rawPayload?.quantity),
+      actorSession: session2
+    });
+    if (!result.success) return { success: false, error: result.error };
+    return { success: true };
+  });
+  import_electron18.ipcMain.handle("make-get-dashboard-stats", async () => {
     const { data: allOrders } = await supabase.from("make_orders").select("status, priority, created_at, furniture_name, designer_name, id").order("created_at", { ascending: false });
     const orders = allOrders || [];
     const total = orders.length;
@@ -130423,9 +135947,9 @@ function registerMakeHandlers() {
       return { success: false, error: err.message || "Failed to delete order" };
     }
   };
-  import_electron14.ipcMain.handle("delete-make-order", async (_e, payload) => handleDeleteOrder(payload));
-  import_electron14.ipcMain.handle("make-delete-order", async (_e, payload) => handleDeleteOrder(payload));
-  import_electron14.ipcMain.handle("make-search-products", async (_e, rawPayload) => {
+  import_electron18.ipcMain.handle("delete-make-order", async (_e, payload) => handleDeleteOrder(payload));
+  import_electron18.ipcMain.handle("make-delete-order", async (_e, payload) => handleDeleteOrder(payload));
+  import_electron18.ipcMain.handle("make-search-products", async (_e, rawPayload) => {
     try {
       const parsed = SearchCatalogProductsSchema.parse(rawPayload || {});
       return await MakeSearchService.searchProducts(parsed);
@@ -130434,7 +135958,7 @@ function registerMakeHandlers() {
       return [];
     }
   });
-  import_electron14.ipcMain.handle("make-search-orders", async (_e, rawPayload) => {
+  import_electron18.ipcMain.handle("make-search-orders", async (_e, rawPayload) => {
     try {
       const parsed = rawPayload || {};
       const orders = await MakeSearchService.searchOrders({
@@ -130446,7 +135970,11 @@ function registerMakeHandlers() {
       const role = (session2?.role || "").toLowerCase();
       if (role === "factory_manager" || role === "factory manager" || role === "factory") {
         return (orders || []).map((o) => {
-          const { sale_price, custom_price, ...rest } = o;
+          const { sale_price, custom_price, final_price, total_sale_price, money_received, amount_due, payment_status, ...rest } = o;
+          if (rest.custom_details && typeof rest.custom_details === "object") {
+            const { subtotal, final_price: cFinal, money_received: cRec, amount_due: cDue, payment_status: cStat, ...safeDetails } = rest.custom_details;
+            rest.custom_details = safeDetails;
+          }
           return rest;
         });
       }
@@ -130456,7 +135984,7 @@ function registerMakeHandlers() {
       return [];
     }
   });
-  import_electron14.ipcMain.handle("make-get-next-order-number", async () => {
+  import_electron18.ipcMain.handle("make-get-next-order-number", async () => {
     try {
       return await MakeOrderService.generateUniqueOrderNumber();
     } catch (err) {
@@ -130464,7 +135992,7 @@ function registerMakeHandlers() {
       return MakeOrderService.generateOrderNumber();
     }
   });
-  import_electron14.ipcMain.handle("make-get-global-attributes", async () => {
+  import_electron18.ipcMain.handle("make-get-global-attributes", async () => {
     try {
       const res = await failoverEngine.executeRead(async (client) => {
         const [categoriesRes, specsRes, sizesRes, colorsRes] = await Promise.all([
@@ -130489,7 +136017,7 @@ function registerMakeHandlers() {
       return { categories: [], specs: [], sizes: [], colors: [] };
     }
   });
-  import_electron14.ipcMain.handle("make-save-global-attribute", async (_e, rawPayload) => {
+  import_electron18.ipcMain.handle("make-save-global-attribute", async (_e, rawPayload) => {
     try {
       const session2 = requireSession();
       if (!canManageGlobalProductAttributes(session2)) {
@@ -130627,7 +136155,7 @@ function registerMakeHandlers() {
       return { success: false, error: err.message || "Failed to save global attribute" };
     }
   });
-  import_electron14.ipcMain.handle("make-delete-category", async (_e, id) => {
+  import_electron18.ipcMain.handle("make-delete-category", async (_e, id) => {
     try {
       const session2 = requireSession();
       if (!canManageGlobalProductAttributes(session2)) {
@@ -130662,7 +136190,7 @@ function registerMakeHandlers() {
       return { success: false, error: err.message || "Failed to delete category" };
     }
   });
-  import_electron14.ipcMain.handle("make-assign-product-attributes", async (_e, rawPayload) => {
+  import_electron18.ipcMain.handle("make-assign-product-attributes", async (_e, rawPayload) => {
     try {
       const session2 = requireSession();
       if (!canManageCatalog(session2)) {
@@ -130715,10 +136243,10 @@ function registerMakeHandlers() {
       return { success: false, error: err.message || "Failed to assign product attributes" };
     }
   });
-  import_electron14.ipcMain.handle("make-pick-and-upload-invoice-attachment", async (_e, { orderId } = {}) => {
+  import_electron18.ipcMain.handle("make-pick-and-upload-invoice-attachment", async (_e, { orderId } = {}) => {
     try {
       requireSession();
-      const focusedWin = import_electron14.BrowserWindow.getFocusedWindow();
+      const focusedWin = import_electron18.BrowserWindow.getFocusedWindow();
       const validation = await MakeCadService.pickAndValidateFile("invoice_attachment", focusedWin);
       if ("canceled" in validation) {
         return { canceled: true, error: validation.error };
@@ -130728,20 +136256,28 @@ function registerMakeHandlers() {
         validation.fileBuffer,
         validation.sanitizedFileName,
         validation.mimeType,
-        subfolder
+        subfolder,
+        orderId ? { entityType: "make_orders", entityId: orderId, fieldName: "invoice_attachment_urls" } : void 0
       );
-      if (!uploadResult.success || !uploadResult.publicUrl) {
+      if (!uploadResult.success && !uploadResult.isPendingUpload) {
         return { success: false, error: uploadResult.error || "Failed to upload invoice image" };
+      }
+      const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+      if (!persistentRef) {
+        return { success: false, error: "Failed to establish persistent invoice reference" };
       }
       if (orderId) {
         const { data: order } = await supabase.from("make_orders").select("invoice_attachment_urls").eq("id", orderId).maybeSingle();
         const existing = Array.isArray(order?.invoice_attachment_urls) ? order.invoice_attachment_urls : [];
-        const combined = [...existing, uploadResult.publicUrl];
+        const combined = Array.from(/* @__PURE__ */ new Set([...existing, persistentRef]));
         await supabase.from("make_orders").update({ invoice_attachment_urls: combined }).eq("id", orderId);
       }
       return {
         success: true,
-        publicUrl: uploadResult.publicUrl,
+        publicUrl: uploadResult.publicUrl || void 0,
+        durableKey: persistentRef,
+        isPendingUpload: uploadResult.isPendingUpload,
+        status: uploadResult.status,
         fileName: validation.sanitizedFileName
       };
     } catch (err) {
@@ -130749,7 +136285,46 @@ function registerMakeHandlers() {
       return { success: false, error: err.message };
     }
   });
-  import_electron14.ipcMain.handle("make-upload-invoice-attachment-buffer", async (_e, payload) => {
+  import_electron18.ipcMain.handle("make-pick-and-upload-blueprint", async (_e, { productId } = {}) => {
+    try {
+      requireSession();
+      const focusedWin = import_electron18.BrowserWindow.getFocusedWindow();
+      const validation = await MakeCadService.pickAndValidateFile("cad", focusedWin);
+      if ("canceled" in validation) {
+        return { canceled: true, error: validation.error };
+      }
+      const subfolder = productId ? `make-catalog/blueprints/${productId}` : "make-catalog/blueprints";
+      const uploadResult = await MakeCadService.uploadValidatedBuffer(
+        validation.fileBuffer,
+        validation.sanitizedFileName,
+        validation.mimeType,
+        subfolder,
+        productId ? { entityType: "make_products", entityId: productId, fieldName: "blueprint_url" } : void 0
+      );
+      if (!uploadResult.success && !uploadResult.isPendingUpload) {
+        return { success: false, error: uploadResult.error || "Failed to upload product blueprint" };
+      }
+      const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+      if (!persistentRef) {
+        return { success: false, error: "Failed to establish persistent blueprint reference" };
+      }
+      if (productId) {
+        await supabase.from("make_products").update({ blueprint_url: persistentRef }).eq("id", productId);
+      }
+      return {
+        success: true,
+        publicUrl: uploadResult.publicUrl || void 0,
+        durableKey: persistentRef,
+        isPendingUpload: uploadResult.isPendingUpload,
+        status: uploadResult.status,
+        fileName: validation.sanitizedFileName
+      };
+    } catch (err) {
+      console.error("[MAKE IPC] make-pick-and-upload-blueprint error:", err);
+      return { success: false, error: err.message };
+    }
+  });
+  import_electron18.ipcMain.handle("make-upload-invoice-attachment-buffer", async (_e, payload) => {
     try {
       requireSession();
       const { fileName, fileBase64, orderId, itemId } = payload;
@@ -130769,32 +136344,41 @@ function registerMakeHandlers() {
         return { success: false, error: validation.error };
       }
       const subfolder = itemId ? `make-order-files/${orderId || "general"}/items/${itemId}` : orderId ? `make-order-files/${orderId}/invoices` : "make-order-files/invoices";
+      const meta3 = itemId ? { entityType: "make_order_items", entityId: itemId, fieldName: "technical_drawing_url" } : orderId ? { entityType: "make_orders", entityId: orderId, fieldName: "invoice_attachment_urls" } : void 0;
       const uploadResult = await MakeCadService.uploadValidatedBuffer(
         validation.fileBuffer,
         validation.sanitizedFileName,
         validation.mimeType,
-        subfolder
+        subfolder,
+        meta3
       );
-      if (!uploadResult.success || !uploadResult.publicUrl) {
+      if (!uploadResult.success && !uploadResult.isPendingUpload) {
         return { success: false, error: uploadResult.error || "Failed to upload attachment" };
+      }
+      const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+      if (!persistentRef) {
+        return { success: false, error: "Failed to establish persistent attachment reference" };
       }
       if (itemId) {
         const { data: item } = await supabase.from("make_order_items").select("pdf_urls, technical_drawing_url").eq("id", itemId).maybeSingle();
         const existing = Array.isArray(item?.pdf_urls) ? item.pdf_urls : [];
-        const combined = [...existing, uploadResult.publicUrl];
+        const combined = Array.from(/* @__PURE__ */ new Set([...existing, persistentRef]));
         await supabase.from("make_order_items").update({
           pdf_urls: combined,
-          technical_drawing_url: uploadResult.publicUrl
+          technical_drawing_url: persistentRef
         }).eq("id", itemId);
       } else if (orderId) {
         const { data: order } = await supabase.from("make_orders").select("invoice_attachment_urls").eq("id", orderId).maybeSingle();
         const existing = Array.isArray(order?.invoice_attachment_urls) ? order.invoice_attachment_urls : [];
-        const combined = [...existing, uploadResult.publicUrl];
+        const combined = Array.from(/* @__PURE__ */ new Set([...existing, persistentRef]));
         await supabase.from("make_orders").update({ invoice_attachment_urls: combined }).eq("id", orderId);
       }
       return {
         success: true,
-        publicUrl: uploadResult.publicUrl,
+        publicUrl: uploadResult.publicUrl || void 0,
+        durableKey: persistentRef,
+        isPendingUpload: uploadResult.isPendingUpload,
+        status: uploadResult.status,
         fileName: validation.sanitizedFileName
       };
     } catch (err) {
@@ -130802,7 +136386,7 @@ function registerMakeHandlers() {
       return { success: false, error: err.message };
     }
   });
-  import_electron14.ipcMain.handle("make-search-customers", async (_e, rawQuery) => {
+  import_electron18.ipcMain.handle("make-search-customers", async (_e, rawQuery) => {
     try {
       requireSession();
       const trimmed = (rawQuery || "").trim();
@@ -130845,7 +136429,7 @@ function registerMakeHandlers() {
       return { success: false, error: err.message, customers: [] };
     }
   });
-  import_electron14.ipcMain.handle("make-get-customer-details", async (_e, customerId) => {
+  import_electron18.ipcMain.handle("make-get-customer-details", async (_e, customerId) => {
     try {
       requireSession();
       const cId = Number(customerId);
@@ -130860,7 +136444,7 @@ function registerMakeHandlers() {
       if (!customer) {
         return { success: false, error: "Customer not found" };
       }
-      const decrypted = decryptObject(customer, ["address"]);
+      const decrypted = decryptObject(customer);
       let recentDelivery = null;
       try {
         const { data: latestOrder } = await supabase.from("make_orders").select("delivery_address, location_landmark, receiver_name, receiver_phone").eq("customer_id", cId).order("created_at", { ascending: false }).limit(1).maybeSingle();
@@ -130890,13 +136474,78 @@ function registerMakeHandlers() {
       return { success: false, error: err.message };
     }
   });
+  import_electron18.ipcMain.handle("make-request-production-approval", async (_e, rawPayload) => {
+    try {
+      const session2 = requireSession();
+      const payload = RequestProductionApprovalSchema.parse(rawPayload);
+      return await MakeOrderService.requestProductionApproval(
+        payload.order_id,
+        payload.notes,
+        session2
+      );
+    } catch (err) {
+      console.error("[MAKE IPC] make-request-production-approval error:", err);
+      return { success: false, error: err.message || "Failed to request production approval." };
+    }
+  });
+  import_electron18.ipcMain.handle("make-decide-production-approval", async (_e, rawPayload) => {
+    try {
+      const session2 = requireSession();
+      const payload = DecideProductionApprovalSchema.parse(rawPayload);
+      return await MakeOrderService.decideProductionApproval(
+        payload.order_id,
+        payload.decision,
+        payload.notes,
+        session2
+      );
+    } catch (err) {
+      console.error("[MAKE IPC] make-decide-production-approval error:", err);
+      return { success: false, error: err.message || "Failed to record approval decision." };
+    }
+  });
+  import_electron18.ipcMain.handle("make-record-order-payment", async (_e, rawPayload) => {
+    try {
+      const session2 = requireSession();
+      if (!canRecordMakePayment(session2)) {
+        return { success: false, error: "Forbidden: You cannot record MAKE order payments." };
+      }
+      const payload = RecordOrderPaymentSchema.parse(rawPayload);
+      return await MakeOrderService.recordOrderPayment({
+        orderId: payload.order_id,
+        amount: payload.amount,
+        paymentMethod: payload.payment_method,
+        reference: payload.reference,
+        notes: payload.notes,
+        actorSession: session2
+      });
+    } catch (err) {
+      console.error("[MAKE IPC] make-record-order-payment error:", err);
+      return { success: false, error: err.message || "Failed to record order payment." };
+    }
+  });
+  import_electron18.ipcMain.handle("make-get-order-payments", async (_e, orderId) => {
+    try {
+      const session2 = requireSession();
+      if (!canViewSalePriceSession(session2)) {
+        return { success: false, error: "Forbidden: You cannot view order payment ledgers." };
+      }
+      const numId = Number(orderId);
+      if (!numId || isNaN(numId)) {
+        return { success: false, error: "Invalid order ID." };
+      }
+      return await MakeOrderService.getOrderPayments(numId);
+    } catch (err) {
+      console.error("[MAKE IPC] make-get-order-payments error:", err);
+      return { success: false, error: err.message || "Failed to get order payments." };
+    }
+  });
 }
 
 // electron/services/make/NASConnectionManager.ts
-var import_electron15 = require("electron");
-var import_fs12 = __toESM(require("fs"), 1);
-var import_path13 = __toESM(require("path"), 1);
-var import_crypto10 = __toESM(require("crypto"), 1);
+var import_electron19 = require("electron");
+var import_fs15 = __toESM(require("fs"), 1);
+var import_path16 = __toESM(require("path"), 1);
+var import_crypto12 = __toESM(require("crypto"), 1);
 init_supabase();
 var NASConnectionManager = class _NASConnectionManager {
   static instance;
@@ -130930,21 +136579,21 @@ var NASConnectionManager = class _NASConnectionManager {
    */
   loadOrGenerateInstallationId() {
     try {
-      const userData = import_electron15.app?.getPath ? import_electron15.app.getPath("userData") : import_path13.default.join(process.env.APPDATA || process.cwd(), "le-soft");
-      const idPath = import_path13.default.join(userData, "installation_id.json");
-      if (import_fs12.default.existsSync(idPath)) {
-        const parsed = JSON.parse(import_fs12.default.readFileSync(idPath, "utf-8"));
+      const userData = import_electron19.app?.getPath ? import_electron19.app.getPath("userData") : import_path16.default.join(process.env.APPDATA || process.cwd(), "le-soft");
+      const idPath = import_path16.default.join(userData, "installation_id.json");
+      if (import_fs15.default.existsSync(idPath)) {
+        const parsed = JSON.parse(import_fs15.default.readFileSync(idPath, "utf-8"));
         if (parsed.installationId && typeof parsed.installationId === "string") {
           if (parsed.sessionSecret) this.sessionSecret = parsed.sessionSecret;
           return parsed.installationId;
         }
       }
-      const newId = `inst-${import_crypto10.default.randomUUID()}`;
-      import_fs12.default.mkdirSync(import_path13.default.dirname(idPath), { recursive: true });
-      import_fs12.default.writeFileSync(idPath, JSON.stringify({ installationId: newId, createdAt: Date.now() }, null, 2), "utf-8");
+      const newId = `inst-${import_crypto12.default.randomUUID()}`;
+      import_fs15.default.mkdirSync(import_path16.default.dirname(idPath), { recursive: true });
+      import_fs15.default.writeFileSync(idPath, JSON.stringify({ installationId: newId, createdAt: Date.now() }, null, 2), "utf-8");
       return newId;
     } catch {
-      return `inst-${import_crypto10.default.randomBytes(16).toString("hex")}`;
+      return `inst-${import_crypto12.default.randomBytes(16).toString("hex")}`;
     }
   }
   /**
@@ -130952,12 +136601,12 @@ var NASConnectionManager = class _NASConnectionManager {
    */
   persistSessionSecret(secret) {
     try {
-      const userData = import_electron15.app?.getPath ? import_electron15.app.getPath("userData") : import_path13.default.join(process.env.APPDATA || process.cwd(), "le-soft");
-      const idPath = import_path13.default.join(userData, "installation_id.json");
-      if (import_fs12.default.existsSync(idPath)) {
-        const parsed = JSON.parse(import_fs12.default.readFileSync(idPath, "utf-8"));
+      const userData = import_electron19.app?.getPath ? import_electron19.app.getPath("userData") : import_path16.default.join(process.env.APPDATA || process.cwd(), "le-soft");
+      const idPath = import_path16.default.join(userData, "installation_id.json");
+      if (import_fs15.default.existsSync(idPath)) {
+        const parsed = JSON.parse(import_fs15.default.readFileSync(idPath, "utf-8"));
         parsed.sessionSecret = secret;
-        import_fs12.default.writeFileSync(idPath, JSON.stringify(parsed, null, 2), { encoding: "utf-8", mode: 384 });
+        import_fs15.default.writeFileSync(idPath, JSON.stringify(parsed, null, 2), { encoding: "utf-8", mode: 384 });
       }
     } catch {
     }
@@ -130967,12 +136616,12 @@ var NASConnectionManager = class _NASConnectionManager {
    */
   clearSessionSecret() {
     try {
-      const userData = import_electron15.app?.getPath ? import_electron15.app.getPath("userData") : import_path13.default.join(process.env.APPDATA || process.cwd(), "le-soft");
-      const idPath = import_path13.default.join(userData, "installation_id.json");
-      if (import_fs12.default.existsSync(idPath)) {
-        const parsed = JSON.parse(import_fs12.default.readFileSync(idPath, "utf-8"));
+      const userData = import_electron19.app?.getPath ? import_electron19.app.getPath("userData") : import_path16.default.join(process.env.APPDATA || process.cwd(), "le-soft");
+      const idPath = import_path16.default.join(userData, "installation_id.json");
+      if (import_fs15.default.existsSync(idPath)) {
+        const parsed = JSON.parse(import_fs15.default.readFileSync(idPath, "utf-8"));
         delete parsed.sessionSecret;
-        import_fs12.default.writeFileSync(idPath, JSON.stringify(parsed, null, 2), { encoding: "utf-8", mode: 384 });
+        import_fs15.default.writeFileSync(idPath, JSON.stringify(parsed, null, 2), { encoding: "utf-8", mode: 384 });
       }
     } catch {
     }
@@ -131047,7 +136696,7 @@ var NASConnectionManager = class _NASConnectionManager {
     const candidates = this.getHeartbeatCandidates();
     let connectedCandidate = null;
     let isDegradedCandidate = false;
-    const appVersion = import_electron15.app?.getVersion ? import_electron15.app.getVersion() : "1.8.11";
+    const appVersion = import_electron19.app?.getVersion ? import_electron19.app.getVersion() : "1.8.11";
     const cfHeaders = getCfAccessHeaders();
     for (const baseUrl of candidates) {
       const cleanUrl = baseUrl.replace(/\/$/, "");
@@ -131095,11 +136744,11 @@ var NASConnectionManager = class _NASConnectionManager {
         } else if (response.status === 403) {
           this.sessionSecret = null;
           this.clearSessionSecret();
-          this.installationId = `inst-${import_crypto10.default.randomUUID()}`;
+          this.installationId = `inst-${import_crypto12.default.randomUUID()}`;
           try {
-            const userData = import_electron15.app?.getPath ? import_electron15.app.getPath("userData") : import_path13.default.join(process.env.APPDATA || process.cwd(), "le-soft");
-            const idPath = import_path13.default.join(userData, "installation_id.json");
-            import_fs12.default.writeFileSync(idPath, JSON.stringify({ installationId: this.installationId, createdAt: Date.now() }, null, 2), "utf-8");
+            const userData = import_electron19.app?.getPath ? import_electron19.app.getPath("userData") : import_path16.default.join(process.env.APPDATA || process.cwd(), "le-soft");
+            const idPath = import_path16.default.join(userData, "installation_id.json");
+            import_fs15.default.writeFileSync(idPath, JSON.stringify({ installationId: this.installationId, createdAt: Date.now() }, null, 2), "utf-8");
           } catch {
           }
         }
@@ -131150,9 +136799,9 @@ var NASConnectionManager = class _NASConnectionManager {
   }
   writeDiagnosticsState() {
     try {
-      const userData = import_electron15.app?.getPath ? import_electron15.app.getPath("userData") : import_path13.default.join(process.env.APPDATA || process.cwd(), "le-soft");
-      const statePath = import_path13.default.join(userData, "nas_connection_state.json");
-      import_fs12.default.writeFileSync(statePath, JSON.stringify(this.getSafeStatus(), null, 2), "utf-8");
+      const userData = import_electron19.app?.getPath ? import_electron19.app.getPath("userData") : import_path16.default.join(process.env.APPDATA || process.cwd(), "le-soft");
+      const statePath = import_path16.default.join(userData, "nas_connection_state.json");
+      import_fs15.default.writeFileSync(statePath, JSON.stringify(this.getSafeStatus(), null, 2), "utf-8");
     } catch {
     }
   }
@@ -131161,8 +136810,8 @@ var NASConnectionManager = class _NASConnectionManager {
    */
   broadcastStatusToWindows() {
     const payload = this.getSafeStatus();
-    if (typeof import_electron15.BrowserWindow?.getAllWindows === "function") {
-      import_electron15.BrowserWindow.getAllWindows().forEach((win) => {
+    if (typeof import_electron19.BrowserWindow?.getAllWindows === "function") {
+      import_electron19.BrowserWindow.getAllWindows().forEach((win) => {
         if (!win.isDestroyed()) {
           win.webContents.send("nas-connection-status-changed", payload);
         }
@@ -131185,9 +136834,9 @@ var NASConnectionManager = class _NASConnectionManager {
 };
 
 // electron/services/WindowsNotificationService.ts
-var import_electron16 = require("electron");
-var import_fs13 = __toESM(require("fs"), 1);
-var import_path14 = __toESM(require("path"), 1);
+var import_electron20 = require("electron");
+var import_fs16 = __toESM(require("fs"), 1);
+var import_path17 = __toESM(require("path"), 1);
 var WindowsNotificationService = class _WindowsNotificationService {
   static instance;
   settingsPath;
@@ -131203,11 +136852,11 @@ var WindowsNotificationService = class _WindowsNotificationService {
   DEDUP_COOLDOWN_MS = 1e4;
   // 10s cooldown for identical events
   constructor() {
-    const userData = import_electron16.app?.getPath ? import_electron16.app.getPath("userData") : import_path14.default.join(process.env.APPDATA || process.cwd(), "le-soft");
-    this.settingsPath = import_path14.default.join(userData, "notification_settings.json");
+    const userData = import_electron20.app?.getPath ? import_electron20.app.getPath("userData") : import_path17.default.join(process.env.APPDATA || process.cwd(), "le-soft");
+    this.settingsPath = import_path17.default.join(userData, "notification_settings.json");
     this.loadSettings();
     if (process.platform === "win32") {
-      import_electron16.app.setAppUserModelId("com.leadingedge.lesoft");
+      import_electron20.app.setAppUserModelId("com.leadingedge.lesoft");
     }
   }
   static getInstance() {
@@ -131218,8 +136867,8 @@ var WindowsNotificationService = class _WindowsNotificationService {
   }
   loadSettings() {
     try {
-      if (import_fs13.default.existsSync(this.settingsPath)) {
-        const raw = import_fs13.default.readFileSync(this.settingsPath, "utf-8");
+      if (import_fs16.default.existsSync(this.settingsPath)) {
+        const raw = import_fs16.default.readFileSync(this.settingsPath, "utf-8");
         const parsed = JSON.parse(raw);
         this.settings = { ...this.settings, ...parsed };
       }
@@ -131232,8 +136881,8 @@ var WindowsNotificationService = class _WindowsNotificationService {
   updateSettings(newSettings) {
     this.settings = { ...this.settings, ...newSettings };
     try {
-      import_fs13.default.mkdirSync(import_path14.default.dirname(this.settingsPath), { recursive: true });
-      import_fs13.default.writeFileSync(this.settingsPath, JSON.stringify(this.settings, null, 2), "utf-8");
+      import_fs16.default.mkdirSync(import_path17.default.dirname(this.settingsPath), { recursive: true });
+      import_fs16.default.writeFileSync(this.settingsPath, JSON.stringify(this.settings, null, 2), "utf-8");
     } catch {
     }
     return this.getSettings();
@@ -131243,7 +136892,7 @@ var WindowsNotificationService = class _WindowsNotificationService {
    */
   showNotification(options) {
     if (!this.settings.enabled) return false;
-    if (!import_electron16.Notification.isSupported()) return false;
+    if (!import_electron20.Notification.isSupported()) return false;
     const category = options.category || "system_status";
     if (category === "new_order" && !this.settings.orderNotifications) return false;
     if (category === "app_update" && !this.settings.updateNotifications) return false;
@@ -131259,19 +136908,19 @@ var WindowsNotificationService = class _WindowsNotificationService {
     try {
       let iconPath;
       try {
-        const resourceDir = import_path14.default.join(__dirname, "../../resource");
-        const candidate = import_path14.default.join(resourceDir, "icon.png");
-        if (import_fs13.default.existsSync(candidate)) iconPath = candidate;
+        const resourceDir = import_path17.default.join(__dirname, "../../resource");
+        const candidate = import_path17.default.join(resourceDir, "icon.png");
+        if (import_fs16.default.existsSync(candidate)) iconPath = candidate;
       } catch {
       }
-      const notification = new import_electron16.Notification({
+      const notification = new import_electron20.Notification({
         title: options.title,
         body: options.body,
         icon: iconPath,
         silent: false
       });
       notification.on("click", () => {
-        const win = import_electron16.BrowserWindow.getAllWindows()[0];
+        const win = import_electron20.BrowserWindow.getAllWindows()[0];
         if (win && !win.isDestroyed()) {
           if (win.isMinimized()) win.restore();
           win.focus();
@@ -131290,9 +136939,9 @@ var WindowsNotificationService = class _WindowsNotificationService {
 };
 
 // electron/services/WatchdogService.ts
-var import_electron17 = require("electron");
-var import_fs14 = __toESM(require("fs"), 1);
-var import_path15 = __toESM(require("path"), 1);
+var import_electron21 = require("electron");
+var import_fs17 = __toESM(require("fs"), 1);
+var import_path18 = __toESM(require("path"), 1);
 var WatchdogService = class _WatchdogService {
   static instance;
   mainLoopCheckTimer = null;
@@ -131306,8 +136955,8 @@ var WatchdogService = class _WatchdogService {
   PONG_TIMEOUT_MS = 5e3;
   diagnosticsLogPath;
   constructor() {
-    const userData = import_electron17.app?.getPath ? import_electron17.app.getPath("userData") : import_path15.default.join(process.env.APPDATA || process.cwd(), "le-soft");
-    this.diagnosticsLogPath = import_path15.default.join(userData, "stability_diagnostics.json");
+    const userData = import_electron21.app?.getPath ? import_electron21.app.getPath("userData") : import_path18.default.join(process.env.APPDATA || process.cwd(), "le-soft");
+    this.diagnosticsLogPath = import_path18.default.join(userData, "stability_diagnostics.json");
   }
   static getInstance() {
     if (!_WatchdogService.instance) {
@@ -131381,7 +137030,7 @@ var WatchdogService = class _WatchdogService {
    */
   startRendererResponsivenessMonitor() {
     this.rendererPingTimer = setInterval(() => {
-      const windows = import_electron17.BrowserWindow.getAllWindows();
+      const windows = import_electron21.BrowserWindow.getAllWindows();
       if (windows.length === 0) return;
       this.lastPingSent = Date.now();
       this.pendingPong = true;
@@ -131408,6 +137057,9 @@ var WatchdogService = class _WatchdogService {
   handleRendererPong() {
     this.pendingPong = false;
   }
+  recordRendererHeartbeat() {
+    this.handleRendererPong();
+  }
   /**
    * Records an IPC or operation duration metric. Logs to file only if exceeding threshold.
    */
@@ -131433,13 +137085,13 @@ var WatchdogService = class _WatchdogService {
         success: entry.success,
         errorCategory: entry.errorCategory || (entry.success ? "OK" : "UNKNOWN_ERROR"),
         connectionState: entry.connectionState || "normal",
-        appVersion: import_electron17.app?.getVersion ? import_electron17.app.getVersion() : "1.8.11",
+        appVersion: import_electron21.app?.getVersion ? import_electron21.app.getVersion() : "1.8.11",
         memoryHeapMb: entry.memoryHeapMb || Math.round(process.memoryUsage().heapUsed / (1024 * 1024))
       };
       let logs = [];
-      if (import_fs14.default.existsSync(this.diagnosticsLogPath)) {
+      if (import_fs17.default.existsSync(this.diagnosticsLogPath)) {
         try {
-          logs = JSON.parse(import_fs14.default.readFileSync(this.diagnosticsLogPath, "utf-8"));
+          logs = JSON.parse(import_fs17.default.readFileSync(this.diagnosticsLogPath, "utf-8"));
           if (!Array.isArray(logs)) logs = [];
         } catch {
           logs = [];
@@ -131449,8 +137101,8 @@ var WatchdogService = class _WatchdogService {
       if (logs.length > 200) {
         logs = logs.slice(-200);
       }
-      import_fs14.default.mkdirSync(import_path15.default.dirname(this.diagnosticsLogPath), { recursive: true });
-      import_fs14.default.writeFileSync(this.diagnosticsLogPath, JSON.stringify(logs, null, 2), "utf-8");
+      import_fs17.default.mkdirSync(import_path18.default.dirname(this.diagnosticsLogPath), { recursive: true });
+      import_fs17.default.writeFileSync(this.diagnosticsLogPath, JSON.stringify(logs, null, 2), "utf-8");
     } catch {
     }
   }
@@ -131459,8 +137111,8 @@ var WatchdogService = class _WatchdogService {
    */
   getRecentDiagnostics() {
     try {
-      if (import_fs14.default.existsSync(this.diagnosticsLogPath)) {
-        const raw = import_fs14.default.readFileSync(this.diagnosticsLogPath, "utf-8");
+      if (import_fs17.default.existsSync(this.diagnosticsLogPath)) {
+        const raw = import_fs17.default.readFileSync(this.diagnosticsLogPath, "utf-8");
         const parsed = JSON.parse(raw);
         return Array.isArray(parsed) ? parsed : [];
       }
@@ -131518,44 +137170,77 @@ async function optimizeImageBuffer(buffer) {
 }
 async function uploadOptimizedImage(buffer, filenamePrefix) {
   const optimized = await optimizeImageBuffer(buffer);
-  const candidates = getNasStorageCandidates();
   const finalFilename = `${filenamePrefix}_${Date.now()}.webp`;
+  try {
+    const staged = await DurableUploadService.getInstance().stageFile(
+      optimized,
+      finalFilename,
+      "image/webp",
+      "product-images",
+      void 0,
+      { autoDispatch: false }
+    );
+    const result = await DurableUploadService.getInstance().dispatchUpload(staged.id);
+    if (result.success || result.status === "buffered_supabase") {
+      return result.activeUrl || `https://storage.lenas.me/files/product-images/${finalFilename}`;
+    }
+    if (result.status === "staged_local") {
+      return `file://${staged.localPath}`;
+    }
+  } catch (err) {
+    console.warn("[uploadOptimizedImage] DurableUploadService exception, falling back to direct pipeline:", err.message);
+  }
+  const candidates = getNasStorageCandidates();
   if (candidates.length > 0) {
-    let lastError = null;
     for (const candidateUrl of candidates) {
       try {
-        const formData2 = new FormData();
-        formData2.append("file", new Blob([new Uint8Array(optimized)], { type: "image/webp" }), finalFilename);
+        const formData = new FormData();
+        formData.append("file", new Blob([new Uint8Array(optimized)], { type: "image/webp" }), finalFilename);
         const cfHeaders = candidateUrl.startsWith("https://") ? getCfAccessHeaders() : {};
-        const response2 = await fetch(`${candidateUrl.replace(/\/$/, "")}/upload`, {
+        const response = await fetch(`${candidateUrl.replace(/\/$/, "")}/upload`, {
           method: "POST",
-          body: formData2,
+          body: formData,
           headers: {
             "x-subfolder": "product-images",
             ...cfHeaders
           },
-          signal: AbortSignal.timeout(3e3)
+          signal: AbortSignal.timeout(2e4)
         });
-        if (response2.ok) {
-          const data3 = await response2.json();
-          if (data3.success) {
+        if (response.ok) {
+          const data2 = await response.json();
+          if (data2.success) {
             return `https://storage.lenas.me/files/product-images/${finalFilename}`;
           }
         }
-      } catch (err) {
-        lastError = err;
+      } catch {
       }
     }
   }
-  const formData = new FormData();
-  formData.append("secret_key", HOSTINGER_UPLOAD_SECRET);
-  formData.append("image", new Blob([new Uint8Array(optimized)], { type: "image/webp" }), finalFilename);
-  const response = await fetch(HOSTINGER_UPLOAD_URL, { method: "POST", body: formData });
-  const data2 = await response.json();
-  if (!data2.success || !data2.url) {
-    throw new Error(data2.error || "Failed to upload image");
+  try {
+    const quotaMgr = SupabaseQuotaManager.getInstance();
+    if (quotaMgr.canAcceptStorageUpload(optimized.length)) {
+      const storagePath = `product-images/${finalFilename}`;
+      const { error: sbErr } = await supabase_default.storage.from("make-order-files").upload(storagePath, optimized, { contentType: "image/webp", upsert: false });
+      if (!sbErr) {
+        return storagePath;
+      }
+    }
+  } catch {
   }
-  return data2.url;
+  if (HOSTINGER_UPLOAD_SECRET) {
+    try {
+      const formData = new FormData();
+      formData.append("secret_key", HOSTINGER_UPLOAD_SECRET);
+      formData.append("image", new Blob([new Uint8Array(optimized)], { type: "image/webp" }), finalFilename);
+      const response = await fetch(HOSTINGER_UPLOAD_URL, { method: "POST", body: formData, signal: AbortSignal.timeout(1e4) });
+      const data2 = await response.json();
+      if (data2.success && data2.url) {
+        return data2.url;
+      }
+    } catch {
+    }
+  }
+  throw new Error("Failed to upload image");
 }
 async function createSystemNotification(input) {
   if (input.notificationKey) {
@@ -131592,7 +137277,7 @@ async function checkLowStockForProduct(productId) {
 }
 function generateFirstTimePassword() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%";
-  const bytes = import_crypto12.default.randomBytes(16);
+  const bytes = import_crypto14.default.randomBytes(16);
   return Array.from(bytes).map((b) => chars[b % chars.length]).join("");
 }
 async function checkAndSeedSuperAdmin() {
@@ -131639,10 +137324,10 @@ async function checkAndSeedSuperAdmin() {
     if (!existing) {
       const generatedPassword = generateFirstTimePassword();
       const generatedHash = await import_bcryptjs2.default.hash(generatedPassword, BCRYPT_ROUNDS);
-      const logPath = import_path18.default.join(import_electron20.app.getPath("userData"), "app.log");
-      import_fs18.default.appendFileSync(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] [SEED] FIRST LAUNCH \u2014 Super Admin generated password: ${generatedPassword}
+      const logPath = import_path21.default.join(import_electron24.app.getPath("userData"), "app.log");
+      import_fs21.default.appendFileSync(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] [SEED] FIRST LAUNCH \u2014 Super Admin generated password: ${generatedPassword}
 `);
-      import_fs18.default.appendFileSync(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] [SEED] Please change this password immediately after first login.
+      import_fs21.default.appendFileSync(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] [SEED] Please change this password immediately after first login.
 `);
       const email3 = "sabbirsuperadmin@lesoft.local";
       const { data: authUser, error: authErr } = await supabaseAdmin.auth.admin.createUser({
@@ -131668,9 +137353,9 @@ async function checkAndSeedSuperAdmin() {
           ...encryptedProfile
         }).eq("auth_id", authUser.user.id);
         console.log("[SEED] Super Admin account created with random password and encrypted profile.");
-        const allWindows = import_electron20.BrowserWindow.getAllWindows();
+        const allWindows = import_electron24.BrowserWindow.getAllWindows();
         const targetWindow = allWindows.length > 0 ? allWindows[0] : void 0;
-        import_electron20.dialog.showMessageBoxSync(targetWindow || {}, {
+        import_electron24.dialog.showMessageBoxSync(targetWindow || {}, {
           type: "info",
           title: "\u{1F510} LE-SOFT \u2014 First Launch Setup",
           message: "Super Admin Account Created",
@@ -131692,8 +137377,8 @@ async function checkAndSeedSuperAdmin() {
     } else if (!existing.password_hash || !existing.password_hash.startsWith("$2")) {
       const repairedPassword = generateFirstTimePassword();
       const repairedHash = await import_bcryptjs2.default.hash(repairedPassword, BCRYPT_ROUNDS);
-      const logPath = import_path18.default.join(import_electron20.app.getPath("userData"), "app.log");
-      import_fs18.default.appendFileSync(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] [SEED] Password hash repaired. New password: ${repairedPassword}
+      const logPath = import_path21.default.join(import_electron24.app.getPath("userData"), "app.log");
+      import_fs21.default.appendFileSync(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] [SEED] Password hash repaired. New password: ${repairedPassword}
 `);
       await supabase_default.from("users").update({
         password_hash: repairedHash,
@@ -131701,7 +137386,7 @@ async function checkAndSeedSuperAdmin() {
         role: "superadmin"
       }).eq("id", existing.id);
       console.log("[SEED] Super Admin password hash repaired with a new random password. Check app.log.");
-      import_electron20.dialog.showMessageBoxSync({}, {
+      import_electron24.dialog.showMessageBoxSync({}, {
         type: "warning",
         title: "\u26A0\uFE0F  LE-SOFT \u2014 Account Repair",
         message: "Super Admin Password Reset",
@@ -131742,9 +137427,9 @@ function resetLoginAttempts(username) {
 }
 var mysqlPool = null;
 try {
-  const cfgPath = import_path18.default.join(import_electron20.app.getPath("userData"), "mysql-config.json");
-  if (import_fs18.default.existsSync(cfgPath)) {
-    const cfg = JSON.parse(import_fs18.default.readFileSync(cfgPath, "utf-8"));
+  const cfgPath = import_path21.default.join(import_electron24.app.getPath("userData"), "mysql-config.json");
+  if (import_fs21.default.existsSync(cfgPath)) {
+    const cfg = JSON.parse(import_fs21.default.readFileSync(cfgPath, "utf-8"));
     mysqlPool = import_promise.default.createPool({ host: cfg.host, user: cfg.user, password: cfg.password, database: cfg.database, port: cfg.port || 3306, waitForConnections: true, connectionLimit: 5 });
   }
 } catch {
@@ -131762,10 +137447,58 @@ async function syncProductToMySQL(p) {
     if (category) await mysqlPool.query("INSERT IGNORE INTO product_categories (product_id, category_name) VALUES (?,?)", [id, category]);
   }
 }
-async function syncStockToMySQL(localId, soldQty) {
-  if (!mysqlPool) return;
-  await mysqlPool.query("UPDATE products SET quantity = GREATEST(quantity - ?, 0) WHERE le_local_id = ?", [soldQty, localId]).catch(() => {
-  });
+async function syncStockToMySQL(localId, soldQty, syncId, invoiceNumber) {
+  if (!mysqlPool) {
+    throw new Error("[MySQLSync] MySQL connection pool is not configured or offline; cannot sync stock");
+  }
+  const dedupKey = syncId || (invoiceNumber ? `sync_${invoiceNumber}_${localId}` : `sync_p${localId}_q${soldQty}_${Date.now()}`);
+  try {
+    await mysqlPool.query(`
+            CREATE TABLE IF NOT EXISTS le_stock_sync_idempotency (
+                dedup_key VARCHAR(191) PRIMARY KEY,
+                invoice_number VARCHAR(100),
+                product_id INT NOT NULL,
+                quantity INT NOT NULL,
+                synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB;
+        `);
+  } catch (createErr) {
+    try {
+      await mysqlPool.query("SELECT 1 FROM le_stock_sync_idempotency LIMIT 1");
+    } catch {
+      throw new Error(`[MySQLSync] Idempotency schema prerequisite missing: table 'le_stock_sync_idempotency' does not exist on MySQL destination and cannot be auto-provisioned: ${createErr.message}`);
+    }
+  }
+  const connection = await mysqlPool.getConnection();
+  try {
+    await connection.beginTransaction();
+    try {
+      await connection.query(
+        "INSERT INTO le_stock_sync_idempotency (dedup_key, invoice_number, product_id, quantity) VALUES (?, ?, ?, ?)",
+        [dedupKey, invoiceNumber || null, localId, soldQty]
+      );
+    } catch (insertErr) {
+      if (insertErr.code === "ER_DUP_ENTRY" || insertErr.errno === 1062 || insertErr.message?.includes("Duplicate entry")) {
+        console.log(`[MySQLSync] Operation ${dedupKey} was already applied on MySQL destination. Skipping duplicate decrement.`);
+        await connection.rollback();
+        return;
+      }
+      throw insertErr;
+    }
+    const [updateResult] = await connection.query(
+      "UPDATE products SET quantity = GREATEST(quantity - ?, 0) WHERE le_local_id = ?",
+      [soldQty, localId]
+    );
+    if (updateResult && updateResult.affectedRows === 0) {
+      throw new Error(`Product with le_local_id ${localId} not found on MySQL destination`);
+    }
+    await connection.commit();
+  } catch (err) {
+    await connection.rollback();
+    throw new Error(`[MySQLSync] Failed to decrement MySQL stock for product ${localId}: ${err.message}`);
+  } finally {
+    connection.release();
+  }
 }
 var userPresence = /* @__PURE__ */ new Map();
 var userTyping = /* @__PURE__ */ new Map();
@@ -131786,10 +137519,10 @@ async function writeAuditLog(params) {
 }
 function registerHandlers() {
   try {
-    const _origHandle = import_electron20.ipcMain.handle.bind(import_electron20.ipcMain);
-    import_electron20.ipcMain.handle = (channel, listener) => {
+    const _origHandle = import_electron24.ipcMain.handle.bind(import_electron24.ipcMain);
+    import_electron24.ipcMain.handle = (channel, listener) => {
       try {
-        import_electron20.ipcMain.removeHandler(channel);
+        import_electron24.ipcMain.removeHandler(channel);
       } catch (e2) {
       }
       return _origHandle(channel, listener);
@@ -131797,6 +137530,14 @@ function registerHandlers() {
   } catch (e2) {
   }
   registerMakeHandlers();
+  DurableOutboxService.registerCustomHandler("mysql_stock_sync", async (payload) => {
+    const { product_id, quantity, invoice_number, sync_id } = payload || {};
+    if (product_id && quantity) {
+      await syncStockToMySQL(Number(product_id), Number(quantity), sync_id, invoice_number);
+      await checkLowStockForProduct(Number(product_id)).catch(() => {
+      });
+    }
+  });
   function requireSession() {
     const session2 = SessionManager.getSession();
     if (!session2) {
@@ -131813,7 +137554,7 @@ function registerHandlers() {
     const r2 = (s2?.role || "").toLowerCase();
     return r2 === "superadmin" || r2 === "admin";
   }
-  import_electron20.ipcMain.handle("ping-supabase", async () => {
+  import_electron24.ipcMain.handle("ping-supabase", async () => {
     try {
       const { error: error51 } = await supabase_default.from("users").select("id").limit(1);
       if (error51) return { connected: false, error: error51.message };
@@ -131822,7 +137563,7 @@ function registerHandlers() {
       return { connected: false, error: e2.message };
     }
   });
-  import_electron20.ipcMain.handle("preload-cache", async () => {
+  import_electron24.ipcMain.handle("preload-cache", async () => {
     try {
       await preloadCache();
       return { success: true, stats: getCacheStats() };
@@ -131830,13 +137571,13 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron20.ipcMain.handle("get-cache-stats", async () => {
+  import_electron24.ipcMain.handle("get-cache-stats", async () => {
     return getCacheStats();
   });
-  import_electron20.ipcMain.handle("get-queue-stats", async () => {
+  import_electron24.ipcMain.handle("get-queue-stats", async () => {
     return getQueueStats();
   });
-  import_electron20.ipcMain.handle("update-user-presence", async (_e, userId) => {
+  import_electron24.ipcMain.handle("update-user-presence", async (_e, userId) => {
     const session2 = requireSession();
     const uid = Number(session2.id) || Number(userId);
     if (uid) {
@@ -131844,7 +137585,7 @@ function registerHandlers() {
     }
     return { success: true };
   });
-  import_electron20.ipcMain.handle("get-online-users", async () => {
+  import_electron24.ipcMain.handle("get-online-users", async () => {
     requireSession();
     const now = Date.now();
     const onlineIds = [];
@@ -131854,7 +137595,7 @@ function registerHandlers() {
     }
     return onlineIds;
   });
-  import_electron20.ipcMain.handle("set-typing-status", async (_e, payload = {}) => {
+  import_electron24.ipcMain.handle("set-typing-status", async (_e, payload = {}) => {
     const session2 = requireSession();
     const senderId = Number(session2.id);
     const receiverId = Number(payload.receiverId);
@@ -131864,7 +137605,7 @@ function registerHandlers() {
     else userTyping.delete(key);
     return { success: true };
   });
-  import_electron20.ipcMain.handle("get-typing-status", async (_e, { receiverId } = {}) => {
+  import_electron24.ipcMain.handle("get-typing-status", async (_e, { receiverId } = {}) => {
     requireSession();
     const now = Date.now();
     const typingIds = [];
@@ -131877,7 +137618,7 @@ function registerHandlers() {
     }
     return typingIds;
   });
-  import_electron20.ipcMain.handle("get-chat-messages", async (_e, { senderId, receiverId } = {}) => {
+  import_electron24.ipcMain.handle("get-chat-messages", async (_e, { senderId, receiverId } = {}) => {
     const session2 = requireSession();
     const uid = Number(session2.id);
     const otherId = Number(senderId) === uid ? Number(receiverId) : Number(senderId);
@@ -131885,7 +137626,7 @@ function registerHandlers() {
     if (error51) throw error51;
     return decryptRows(data2 || []);
   });
-  import_electron20.ipcMain.handle("send-chat-message", async (_e, msg = {}) => {
+  import_electron24.ipcMain.handle("send-chat-message", async (_e, msg = {}) => {
     const session2 = requireSession();
     const senderId = Number(session2.id);
     const receiverId = Number(msg.receiverId);
@@ -131909,7 +137650,7 @@ function registerHandlers() {
     });
     return { success: true, id: data2.id };
   });
-  import_electron20.ipcMain.handle("email-get-inbox", async (_e, userId) => {
+  import_electron24.ipcMain.handle("email-get-inbox", async (_e, userId) => {
     const session2 = requireSession();
     const uid = isSessionAdminOrSuper(session2) && userId ? Number(userId) : Number(session2.id);
     if (!uid) return [];
@@ -131917,7 +137658,7 @@ function registerHandlers() {
     if (error51) throw error51;
     return decryptRows(data2 || []);
   });
-  import_electron20.ipcMain.handle("email-get-sent", async (_e, userId) => {
+  import_electron24.ipcMain.handle("email-get-sent", async (_e, userId) => {
     const session2 = requireSession();
     const uid = isSessionAdminOrSuper(session2) && userId ? Number(userId) : Number(session2.id);
     if (!uid) return [];
@@ -131925,7 +137666,7 @@ function registerHandlers() {
     if (error51) throw error51;
     return decryptRows(data2 || []);
   });
-  import_electron20.ipcMain.handle("email-send", async (_e, emailPayload = {}) => {
+  import_electron24.ipcMain.handle("email-send", async (_e, emailPayload = {}) => {
     const session2 = requireSession();
     const senderId = Number(session2.id);
     const { receiverId, subject, body } = emailPayload;
@@ -131939,7 +137680,7 @@ function registerHandlers() {
     if (error51) throw error51;
     return { success: true };
   });
-  import_electron20.ipcMain.handle("email-mark-read", async (_e, emailId) => {
+  import_electron24.ipcMain.handle("email-mark-read", async (_e, emailId) => {
     const session2 = requireSession();
     const uid = Number(session2.id);
     let query = supabase_default.from("system_emails").update({ is_read: true }).eq("id", emailId);
@@ -131950,7 +137691,7 @@ function registerHandlers() {
     if (error51) throw error51;
     return { success: true };
   });
-  import_electron20.ipcMain.handle("email-delete", async (_e, { emailId, folder }) => {
+  import_electron24.ipcMain.handle("email-delete", async (_e, { emailId, folder }) => {
     const session2 = requireSession();
     const uid = Number(session2.id);
     const field = folder === "inbox" ? "is_deleted_by_receiver" : "is_deleted_by_sender";
@@ -131963,12 +137704,12 @@ function registerHandlers() {
     if (error51) throw error51;
     return { success: true };
   });
-  import_electron20.ipcMain.handle("get-groups", async () => {
+  import_electron24.ipcMain.handle("get-groups", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("groups").select("*, parent:groups!parent_group_id(name)").order("name");
     if (error51) throw error51;
     return decryptRows(data2 || []).map((g) => ({ ...g, parent_name: g.parent?.name || null }));
   });
-  import_electron20.ipcMain.handle("create-group", async (_e, group) => {
+  import_electron24.ipcMain.handle("create-group", async (_e, group) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -131991,7 +137732,7 @@ function registerHandlers() {
     });
     return { success: true, id: data2.id };
   });
-  import_electron20.ipcMain.handle("update-group", async (_e, id, group) => {
+  import_electron24.ipcMain.handle("update-group", async (_e, id, group) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -132021,7 +137762,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron20.ipcMain.handle("delete-group", async (_e, id) => {
+  import_electron24.ipcMain.handle("delete-group", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -132038,12 +137779,12 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron20.ipcMain.handle("get-ledgers", async () => {
+  import_electron24.ipcMain.handle("get-ledgers", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("ledgers").select("*, group:groups(name)").order("name");
     if (error51) throw error51;
     return decryptRows(data2 || []).map((l) => ({ ...l, group_name: l.group?.name || null }));
   });
-  import_electron20.ipcMain.handle("create-ledger", async (_e, ledger) => {
+  import_electron24.ipcMain.handle("create-ledger", async (_e, ledger) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -132078,7 +137819,7 @@ function registerHandlers() {
     });
     return { success: true, id: data2.id };
   });
-  import_electron20.ipcMain.handle("delete-ledger", async (_e, id) => {
+  import_electron24.ipcMain.handle("delete-ledger", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -132095,12 +137836,12 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron20.ipcMain.handle("get-vouchers", async () => {
+  import_electron24.ipcMain.handle("get-vouchers", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("vouchers").select("*, voucher_entries(ledger_id, amount, type, ledger:ledgers(name))").order("date", { ascending: false }).order("id", { ascending: false });
     if (error51) throw error51;
     return decryptRows(data2 || []).map((v) => ({ ...v, particulars: v.voucher_entries?.map((e2) => e2.ledger?.name).filter(Boolean).join(", ") || "" }));
   });
-  import_electron20.ipcMain.handle("create-voucher", async (_e, voucher) => {
+  import_electron24.ipcMain.handle("create-voucher", async (_e, voucher) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -132126,7 +137867,7 @@ function registerHandlers() {
     });
     return { success: true, id: vData.id, voucherNumber };
   });
-  import_electron20.ipcMain.handle("delete-voucher", async (_e, id) => {
+  import_electron24.ipcMain.handle("delete-voucher", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -132144,7 +137885,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron20.ipcMain.handle("get-voucher-types", async () => {
+  import_electron24.ipcMain.handle("get-voucher-types", async () => {
     try {
       const { data: data2, error: error51 } = await supabase_default.from("voucher_types").select("*").order("name");
       if (error51) {
@@ -132195,7 +137936,7 @@ function registerHandlers() {
       ];
     }
   });
-  import_electron20.ipcMain.handle("create-voucher-type", async (_e, payload) => {
+  import_electron24.ipcMain.handle("create-voucher-type", async (_e, payload) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -132217,7 +137958,7 @@ function registerHandlers() {
     });
     return { success: true, data: data2 };
   });
-  import_electron20.ipcMain.handle("update-voucher-type", async (_e, id, payload) => {
+  import_electron24.ipcMain.handle("update-voucher-type", async (_e, id, payload) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -132238,7 +137979,7 @@ function registerHandlers() {
     });
     return { success: true, data: data2 };
   });
-  import_electron20.ipcMain.handle("delete-voucher-type", async (_e, id) => {
+  import_electron24.ipcMain.handle("delete-voucher-type", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -132255,12 +137996,12 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron20.ipcMain.handle("get-units", async () => {
+  import_electron24.ipcMain.handle("get-units", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("units").select("*").order("name");
     if (error51) throw error51;
     return decryptRows(data2 || []);
   });
-  import_electron20.ipcMain.handle("create-unit", async (_e, unit) => {
+  import_electron24.ipcMain.handle("create-unit", async (_e, unit) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -132277,7 +138018,7 @@ function registerHandlers() {
     });
     return { success: true, id: data2.id };
   });
-  import_electron20.ipcMain.handle("delete-unit", async (_e, id) => {
+  import_electron24.ipcMain.handle("delete-unit", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -132294,7 +138035,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron20.ipcMain.handle("get-stock-groups", async () => {
+  import_electron24.ipcMain.handle("get-stock-groups", async () => {
     const { data: groupsData, error: groupsError } = await supabase_default.from("stock_groups").select("*, parent:stock_groups!parent_id(name)").order("name");
     if (groupsError) throw groupsError;
     const { data: productsData, error: productsError } = await supabase_default.from("products").select("id, stock_group_id");
@@ -132315,7 +138056,7 @@ function registerHandlers() {
       product_count: productCounts[Number(g.id)] || 0
     }));
   });
-  import_electron20.ipcMain.handle("create-stock-group", async (_e, group) => {
+  import_electron24.ipcMain.handle("create-stock-group", async (_e, group) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -132337,7 +138078,7 @@ function registerHandlers() {
     });
     return { success: true, id: data2.id };
   });
-  import_electron20.ipcMain.handle("update-stock-group", async (_e, id, group) => {
+  import_electron24.ipcMain.handle("update-stock-group", async (_e, id, group) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -132361,7 +138102,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron20.ipcMain.handle("delete-stock-group", async (_e, id) => {
+  import_electron24.ipcMain.handle("delete-stock-group", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -132378,12 +138119,12 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron20.ipcMain.handle("get-stock-items", async () => {
+  import_electron24.ipcMain.handle("get-stock-items", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("stock_items").select("*, group:stock_groups(name), unit:units(name,symbol)").order("name");
     if (error51) throw error51;
     return decryptRows(data2 || []).map((i2) => ({ ...i2, group_name: i2.group?.name || null, unit_name: i2.unit?.name || null, unit_symbol: i2.unit?.symbol || null }));
   });
-  import_electron20.ipcMain.handle("create-stock-item", async (_e, item) => {
+  import_electron24.ipcMain.handle("create-stock-item", async (_e, item) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -132404,7 +138145,7 @@ function registerHandlers() {
     });
     return { success: true, id: data2.id };
   });
-  import_electron20.ipcMain.handle("delete-stock-item", async (_e, id) => {
+  import_electron24.ipcMain.handle("delete-stock-item", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -132421,12 +138162,12 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron20.ipcMain.handle("get-companies", async () => {
+  import_electron24.ipcMain.handle("get-companies", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("companies").select("*").order("name");
     if (error51) throw error51;
     return decryptRows(data2 || []);
   });
-  import_electron20.ipcMain.handle("create-company", async (_e, c) => {
+  import_electron24.ipcMain.handle("create-company", async (_e, c) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -132443,7 +138184,7 @@ function registerHandlers() {
     });
     return { success: true, id: data2.id };
   });
-  import_electron20.ipcMain.handle("get-dashboard-stats", async () => {
+  import_electron24.ipcMain.handle("get-dashboard-stats", async () => {
     try {
       const [ledgers, groups, stockItems, products, bills, recentV] = await Promise.all([
         supabase_default.from("ledgers").select("id"),
@@ -132483,12 +138224,12 @@ function registerHandlers() {
       };
     }
   });
-  import_electron20.ipcMain.handle("get-godowns", async () => {
+  import_electron24.ipcMain.handle("get-godowns", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("godowns").select("*").order("name");
     if (error51) throw error51;
     return decryptRows(data2 || []);
   });
-  import_electron20.ipcMain.handle("create-godown", async (_e, g) => {
+  import_electron24.ipcMain.handle("create-godown", async (_e, g) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -132513,7 +138254,7 @@ function registerHandlers() {
     });
     return { success: true, id: data2?.id };
   });
-  import_electron20.ipcMain.handle("update-godown", async (_e, g) => {
+  import_electron24.ipcMain.handle("update-godown", async (_e, g) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -132537,7 +138278,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron20.ipcMain.handle("delete-godown", async (_e, id) => {
+  import_electron24.ipcMain.handle("delete-godown", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -132554,7 +138295,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron20.ipcMain.handle("get-products", async (_e, filterOpts) => {
+  import_electron24.ipcMain.handle("get-products", async (_e, filterOpts) => {
     let allData = [];
     let from = 0;
     const PAGE_SIZE = 1e3;
@@ -132603,7 +138344,7 @@ function registerHandlers() {
       throw error51;
     }
   });
-  import_electron20.ipcMain.handle("get-product", async (_e, id) => {
+  import_electron24.ipcMain.handle("get-product", async (_e, id) => {
     const { data: data2, error: error51 } = await supabase_default.from("products").select("*, unit:units(name,symbol), group:stock_groups(name), supplier:ledgers(id,name,store_name,contact_number,contact_person)").eq("id", id).maybeSingle();
     if (error51) throw error51;
     if (!data2) return null;
@@ -132650,7 +138391,7 @@ function registerHandlers() {
       serial
     };
   }
-  import_electron20.ipcMain.handle("create-product", async (_e, product) => {
+  import_electron24.ipcMain.handle("create-product", async (_e, product) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -132720,7 +138461,7 @@ function registerHandlers() {
     });
     return { success: true, id: data2.id };
   });
-  import_electron20.ipcMain.handle("update-product", async (_e, product) => {
+  import_electron24.ipcMain.handle("update-product", async (_e, product) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -132797,7 +138538,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron20.ipcMain.handle("get-product-ledger-detail", async (_e, id) => {
+  import_electron24.ipcMain.handle("get-product-ledger-detail", async (_e, id) => {
     const product = await (async () => {
       const { data: data2, error: error51 } = await supabase_default.from("products").select("*, unit:units(name,symbol), group:stock_groups(name), supplier:ledgers(id,name,store_name,contact_number,contact_person,payment_method)").eq("id", id).maybeSingle();
       if (error51) throw error51;
@@ -132837,7 +138578,7 @@ function registerHandlers() {
       lastPurchase: (purchaseItems || [])[0] || null
     };
   });
-  import_electron20.ipcMain.handle("get-product-requisition-summary", async (_e, productId, filters2) => {
+  import_electron24.ipcMain.handle("get-product-requisition-summary", async (_e, productId, filters2) => {
     const id = Number(productId);
     if (!Number.isFinite(id) || id <= 0) throw new Error("Valid product ID is required.");
     const productQuery = supabase_default.from("products").select("id,name,sku,product_code,model_number,quantity,unit:units(name,symbol),group:stock_groups(name)").eq("id", id).maybeSingle();
@@ -132878,7 +138619,7 @@ function registerHandlers() {
       }
     };
   });
-  import_electron20.ipcMain.handle("get-product-model-rules", async () => {
+  import_electron24.ipcMain.handle("get-product-model-rules", async () => {
     try {
       const { data: data2, error: error51 } = await supabase_default.from("product_model_rules").select("*, stock_group:stock_groups(id,name)").order("id", { ascending: true });
       if (error51) throw error51;
@@ -132890,12 +138631,12 @@ function registerHandlers() {
       return data2 || [];
     }
   });
-  import_electron20.ipcMain.handle("get-product-origins", async () => {
+  import_electron24.ipcMain.handle("get-product-origins", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("product_origins").select("*").order("name", { ascending: true });
     if (error51) throw error51;
     return data2 || [];
   });
-  import_electron20.ipcMain.handle("save-product-origin", async (_e, origin) => {
+  import_electron24.ipcMain.handle("save-product-origin", async (_e, origin) => {
     const session2 = requireSession();
     if (!isSessionSuperadmin(session2)) {
       throw new Error("Unauthorized: Super Admin access required");
@@ -132924,7 +138665,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron20.ipcMain.handle("delete-product-origin", async (_e, id) => {
+  import_electron24.ipcMain.handle("delete-product-origin", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionSuperadmin(session2)) {
       throw new Error("Unauthorized: Super Admin access required");
@@ -132950,7 +138691,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron20.ipcMain.handle("save-product-model-rule", async (_e, rule) => {
+  import_electron24.ipcMain.handle("save-product-model-rule", async (_e, rule) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -132981,7 +138722,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron20.ipcMain.handle("delete-product-model-rule", async (_e, id) => {
+  import_electron24.ipcMain.handle("delete-product-model-rule", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -132998,12 +138739,12 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron20.ipcMain.handle("get-product-attributes", async () => {
+  import_electron24.ipcMain.handle("get-product-attributes", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("product_attributes").select("*").order("name");
     if (error51) throw error51;
     return data2 || [];
   });
-  import_electron20.ipcMain.handle("save-product-attribute", async (_e, attribute) => {
+  import_electron24.ipcMain.handle("save-product-attribute", async (_e, attribute) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -133030,7 +138771,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron20.ipcMain.handle("get-damaged-goods", async () => {
+  import_electron24.ipcMain.handle("get-damaged-goods", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("damaged_goods").select("*, product:products(id,name,sku,product_code,model_number,quantity,unit:units(symbol,name),group:stock_groups(name)), requisition:purchase_requisitions(id,requisition_number,status)").order("created_at", { ascending: false });
     if (error51) throw error51;
     return (data2 || []).map((row) => ({
@@ -133041,7 +138782,7 @@ function registerHandlers() {
       usable_stock: row.product?.quantity || 0
     }));
   });
-  import_electron20.ipcMain.handle("create-damaged-goods", async (_e, payload) => {
+  import_electron24.ipcMain.handle("create-damaged-goods", async (_e, payload) => {
     const session2 = requireSession();
     const role = (session2.role || "").toLowerCase();
     const canManage = role === "superadmin" || role === "admin" || !!session2.permissions?.["manage_damaged_goods"] || !!session2.permissions?.["canManageDamaged"];
@@ -133085,7 +138826,7 @@ function registerHandlers() {
     }
     return { success: true, id: data2.id };
   });
-  import_electron20.ipcMain.handle("update-damaged-goods-status", async (_e, id, status, payload) => {
+  import_electron24.ipcMain.handle("update-damaged-goods-status", async (_e, id, status, payload) => {
     const session2 = requireSession();
     const role = (session2.role || "").toLowerCase();
     const canManage = role === "superadmin" || role === "admin" || !!session2.permissions?.["manage_damaged_goods"] || !!session2.permissions?.["canManageDamaged"];
@@ -133129,7 +138870,7 @@ function registerHandlers() {
     if (error51) throw error51;
     return { success: true };
   });
-  import_electron20.ipcMain.handle("delete-product-attribute", async (_e, id) => {
+  import_electron24.ipcMain.handle("delete-product-attribute", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Administrator access required.");
@@ -133138,7 +138879,7 @@ function registerHandlers() {
     if (error51) throw error51;
     return { success: true };
   });
-  import_electron20.ipcMain.handle("delete-product", async (_e, id, _performedByName, _userRole) => {
+  import_electron24.ipcMain.handle("delete-product", async (_e, id, _performedByName, _userRole) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Immediate stashing is restricted. Please request product deletion approval.");
@@ -133155,7 +138896,7 @@ function registerHandlers() {
     if (error51) throw error51;
     return { success: true };
   });
-  import_electron20.ipcMain.handle("request-product-deletion", async (_e, id, _performedByName, notes) => {
+  import_electron24.ipcMain.handle("request-product-deletion", async (_e, id, _performedByName, notes) => {
     const session2 = requireSession();
     const actor = session2.fullName || session2.username || "unknown-user";
     const { error: error51 } = await supabase_default.from("products").update({
@@ -133167,7 +138908,7 @@ function registerHandlers() {
     if (error51) throw error51;
     return { success: true };
   });
-  import_electron20.ipcMain.handle("approve-product-deletion", async (_e, id, _performedByName) => {
+  import_electron24.ipcMain.handle("approve-product-deletion", async (_e, id, _performedByName) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Only administrators can approve product deletion.");
@@ -133183,7 +138924,7 @@ function registerHandlers() {
     if (error51) throw error51;
     return { success: true };
   });
-  import_electron20.ipcMain.handle("reject-product-deletion", async (_e, id) => {
+  import_electron24.ipcMain.handle("reject-product-deletion", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Only administrators can reject product deletion.");
@@ -133194,7 +138935,7 @@ function registerHandlers() {
     if (error51) throw error51;
     return { success: true };
   });
-  import_electron20.ipcMain.handle("restore-product", async (_e, id) => {
+  import_electron24.ipcMain.handle("restore-product", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Only administrators can restore products.");
@@ -133212,12 +138953,12 @@ function registerHandlers() {
     if (error51) throw error51;
     return { success: true };
   });
-  import_electron20.ipcMain.handle("get-product-price-history", async () => {
+  import_electron24.ipcMain.handle("get-product-price-history", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("product_price_history").select("*, products(name, sku)").order("created_at", { ascending: false });
     if (error51) throw error51;
     return data2;
   });
-  import_electron20.ipcMain.handle("search-products-detailed", async (_e, query) => {
+  import_electron24.ipcMain.handle("search-products-detailed", async (_e, query) => {
     if (!query || query.trim().length < 1) return [];
     const q = `%${query}%`;
     const { data: data2, error: error51 } = await supabase_default.from("products").select("*, unit:units(symbol), group:stock_groups(name)").neq("status", "STASHED").or(`name.ilike.${q},sku.ilike.${q},category.ilike.${q}`).order("name").limit(50);
@@ -133228,14 +138969,14 @@ function registerHandlers() {
       group_name: p.group?.name || null
     }));
   });
-  import_electron20.ipcMain.handle("search-billing-customers", async (_e, query) => {
+  import_electron24.ipcMain.handle("search-billing-customers", async (_e, query) => {
     const cached2 = search("billing_customers", ["name", "phone"], query);
     if (cached2) return cached2.slice(0, 15);
     const q = `%${query}%`;
     const { data: data2 } = await supabase_default.from("billing_customers").select("*").or(`phone.ilike.${q},name.ilike.${q}`).order("name").limit(15);
     return decryptRows(data2 || []);
   });
-  import_electron20.ipcMain.handle("create-billing-customer", async (_e, customer) => {
+  import_electron24.ipcMain.handle("create-billing-customer", async (_e, customer) => {
     requireSession();
     const { name, phone, email: email3, address } = customer || {};
     if (phone) {
@@ -133265,11 +139006,21 @@ function registerHandlers() {
     }
     const insertedWithPlain = { ...inserted, address: address || null };
     addOne("billing_customers", insertedWithPlain);
-    const { BrowserWindow: BrowserWindow13 } = require("electron");
-    BrowserWindow13.getAllWindows().forEach((win) => win.webContents.send("data-updated", "billing_customers"));
+    (async () => {
+      try {
+        const { supabase: sbClient } = getDbClients();
+        if (sbClient && inserted?.id) {
+          await sbClient.from("billing_customers").upsert(inserted, { onConflict: "id" });
+        }
+      } catch (mirrorErr) {
+        console.warn("[create-billing-customer] Async Supabase mirror deferral:", mirrorErr);
+      }
+    })();
+    const { BrowserWindow: BrowserWindow16 } = require("electron");
+    BrowserWindow16.getAllWindows().forEach((win) => win.webContents.send("data-updated", "billing_customers"));
     return insertedWithPlain;
   });
-  import_electron20.ipcMain.handle("create-bill", async (_e, billData) => {
+  import_electron24.ipcMain.handle("create-bill", async (_e, billData) => {
     const session2 = requireSession();
     const actor = session2.fullName || session2.username || "Admin";
     const { customer_id, items, shipping, subtotal, discount_total, installation_charge, installation_note, grand_total, price_adjustment } = billData || {};
@@ -133291,151 +139042,160 @@ function registerHandlers() {
       grand_total,
       platform: "desktop"
     };
-    enqueue({
+    const billGraphOps = [];
+    const billOpId = `bill_${invoiceNumber}`;
+    billGraphOps.push({
+      id: billOpId,
       table: "bills",
       operation: "insert",
       data: billRow,
-      onSuccess: async () => {
-        if (items && items.length > 0) {
-          const { data: savedBill } = await supabase_default.from("bills").select("id").eq("invoice_number", invoiceNumber).maybeSingle();
-          const savedBillId = savedBill?.id;
-          if (savedBillId) {
-            const billItems = items.map((item) => ({
-              bill_id: savedBillId,
-              product_id: item.product_id,
-              product_name: item.product_name,
-              sku: item.sku || "",
-              quantity: item.quantity,
-              cost_price: Number(item.cost_price || item.item_cost_price || 0),
-              mrp: item.mrp,
-              discount_pct: item.discount_pct || 0,
-              discount_amt: item.discount_amt || 0,
-              price: item.price,
-              notes: item.notes || null,
-              customization: item.customization || {}
-            }));
-            enqueue({
-              table: "bill_items",
-              operation: "insert",
-              data: billItems,
-              onSuccess: async () => {
-                try {
-                  const { data: insertedItems, error: itemsErr } = await supabase_default.from("bill_items").select("id, product_id, product_name, customization, quantity, cost_price, mrp, price").eq("bill_id", savedBillId);
-                  if (!itemsErr && insertedItems) {
-                    for (const bItem of insertedItems) {
-                      const cust = bItem.customization;
-                      if (cust && typeof cust === "object" && Object.keys(cust).length > 0) {
-                        const descDetails = Object.entries(cust).map(([k, v]) => `${k}: ${v}`).join(", ");
-                        const matchingOriginal = items.find((i2) => i2.product_id === bItem.product_id || i2.product_name === bItem.product_name);
-                        const costP = Number(bItem.cost_price || matchingOriginal?.cost_price || matchingOriginal?.item_cost_price || 0);
-                        const saleP = Number(matchingOriginal?.sale_price || bItem.price || bItem.mrp || 0);
-                        enqueue({
-                          table: "make_orders",
-                          operation: "insert",
-                          data: {
-                            furniture_name: bItem.product_name || "Custom Furniture",
-                            description: `Customized order linked to Invoice ${invoiceNumber}. Attributes: ${descDetails}`,
-                            quantity: Number(bItem.quantity) || 1,
-                            designer_name: actor,
-                            status: saleP > 0 ? "Pricing Done" : "Awaiting Pricing",
-                            priority: "Normal",
-                            bill_id: savedBillId,
-                            bill_item_id: bItem.id,
-                            cost_price: costP,
-                            sale_price: saleP > 0 ? saleP : null,
-                            custom_price: saleP,
-                            custom_details: cust
-                          }
-                        });
-                      }
-                    }
-                  }
-                } catch (e2) {
-                  console.error("[create-bill make-orders sync] Failed:", e2);
-                }
-              }
-            });
-            for (const item of items) {
-              if (item.product_id && item.quantity) {
-                (async () => {
-                  try {
-                    const pId = Number(item.product_id);
-                    const qty = Number(item.quantity || 0);
-                    const { data: prod } = await supabase_default.from("products").select("quantity").eq("id", pId).maybeSingle();
-                    if (prod) {
-                      const currentQty = Number(prod.quantity || 0);
-                      const newQty = Math.max(0, currentQty - qty);
-                      await supabase_default.from("products").update({ quantity: newQty }).eq("id", pId);
-                    }
-                    await checkLowStockForProduct(pId);
-                    syncStockToMySQL(pId, qty);
-                  } catch (err) {
-                    console.error("[create-bill stock decrement failed]:", err);
-                  }
-                })();
-              }
-            }
-          } else {
-            console.error("[create-bill] Failed to find saved bill ID for items mapping:", invoiceNumber);
-          }
-        }
-        if (shipping && shipping.ship_to_name && shipping.ship_to_address) {
-          const { data: b } = await supabase_default.from("bills").select("id").eq("invoice_number", invoiceNumber).maybeSingle();
-          const bId = b?.id;
-          if (bId) {
-            const shippingPayload = {
-              bill_id: bId,
-              ship_to_name: shipping.ship_to_name,
-              ship_to_address: shipping.ship_to_address,
-              ship_to_phone: shipping.ship_to_phone || "",
-              ship_from_name: shipping.ship_from_name || "",
-              ship_from_address: shipping.ship_from_address || "",
-              shipping_charge: shipping.shipping_charge || 0,
-              updated_by: actor,
-              status: "pending_payment"
-            };
-            enqueue({
-              table: "bill_shipping",
-              operation: "insert",
-              data: shippingPayload,
-              onSuccess: async () => {
-                try {
-                  const { data: sh } = await supabase_default.from("bill_shipping").select("id").eq("bill_id", bId).maybeSingle();
-                  if (sh?.id) {
-                    enqueue({
-                      table: "shipping_status_log",
-                      operation: "insert",
-                      data: {
-                        shipment_id: sh.id,
-                        bill_id: bId,
-                        status: "pending_payment",
-                        note: "Shipping order created",
-                        updated_by: actor,
-                        updated_by_role: session2.role || "cashier"
-                      }
-                    });
-                  }
-                } catch (e2) {
-                  console.error("[create-bill shipping log] Failed:", e2);
-                }
-                try {
-                  import_electron20.BrowserWindow.getAllWindows().forEach((win) => {
-                    if (!win.isDestroyed()) win.webContents.send("data-updated", "bill_shipping");
-                  });
-                } catch {
-                }
-              }
-            });
-          }
-        }
+      upsertConflict: "invoice_number",
+      metadata: { invoiceNumber, actor },
+      onSuccess: () => {
         try {
-          import_electron20.BrowserWindow.getAllWindows().forEach((win) => {
-            if (!win.isDestroyed()) win.webContents.send("data-updated", "bills");
+          import_electron24.BrowserWindow.getAllWindows().forEach((win) => {
+            if (!win.isDestroyed()) {
+              win.webContents.send("data-updated", "bills");
+              win.webContents.send("data-updated", "bill_items");
+              win.webContents.send("data-updated", "bill_shipping");
+            }
           });
         } catch {
         }
       }
     });
+    if (items && items.length > 0) {
+      const itemsOpId = `bill_items_${invoiceNumber}`;
+      const billItems = items.map((item) => ({
+        bill_id: null,
+        // Resolved per destination from billOpId by resolveDependentPayload
+        product_id: item.product_id,
+        product_name: item.product_name,
+        sku: item.sku || "",
+        quantity: item.quantity,
+        cost_price: Number(item.cost_price || item.item_cost_price || 0),
+        mrp: item.mrp,
+        discount_pct: item.discount_pct || 0,
+        discount_amt: item.discount_amt || 0,
+        price: item.price,
+        notes: item.notes || null,
+        customization: item.customization || {}
+      }));
+      billGraphOps.push({
+        id: itemsOpId,
+        table: "bill_items",
+        operation: "insert",
+        data: billItems,
+        dependencyOpId: billOpId,
+        metadata: { invoiceNumber }
+      });
+      items.forEach((item, idx) => {
+        const cust = item.customization;
+        if (cust && typeof cust === "object" && Object.keys(cust).length > 0) {
+          const descDetails = Object.entries(cust).map(([k, v]) => `${k}: ${v}`).join(", ");
+          const costP = Number(item.cost_price || item.item_cost_price || 0);
+          const saleP = Number(item.sale_price || item.price || item.mrp || 0);
+          const orderOpId = `make_order_${invoiceNumber}_${idx}`;
+          billGraphOps.push({
+            id: orderOpId,
+            table: "make_orders",
+            operation: "insert",
+            data: {
+              furniture_name: item.product_name || "Custom Furniture",
+              description: `Customized order linked to Invoice ${invoiceNumber}. Attributes: ${descDetails}`,
+              quantity: Number(item.quantity) || 1,
+              designer_name: actor,
+              status: saleP > 0 ? "Pricing Done" : "Awaiting Pricing",
+              priority: "Normal",
+              bill_id: null,
+              // Resolved from billOpId
+              cost_price: costP,
+              sale_price: saleP > 0 ? saleP : null,
+              custom_price: saleP,
+              custom_details: cust
+            },
+            dependencyOpId: billOpId,
+            metadata: { invoiceNumber, itemIndex: idx }
+          });
+        }
+      });
+      items.forEach((item, idx) => {
+        if (item.product_id && item.quantity) {
+          const pId = Number(item.product_id);
+          const qty = Number(item.quantity || 0);
+          const stockOpId = `stock_dec_${invoiceNumber}_${pId}_${idx}`;
+          const mysqlSyncOpId = `mysql_stock_sync_${invoiceNumber}_${pId}_${idx}`;
+          billGraphOps.push({
+            id: stockOpId,
+            table: "inventory_decrement",
+            operation: "custom",
+            data: {
+              product_id: pId,
+              quantity: qty,
+              invoice_number: invoiceNumber
+            },
+            dependencyOpId: billOpId,
+            metadata: { invoiceNumber, product_id: pId, quantity: qty }
+          });
+          billGraphOps.push({
+            id: mysqlSyncOpId,
+            table: "mysql_stock_sync",
+            operation: "custom",
+            data: {
+              product_id: pId,
+              quantity: qty,
+              invoice_number: invoiceNumber,
+              sync_id: mysqlSyncOpId
+            },
+            dependencyOpId: stockOpId,
+            metadata: { invoiceNumber, product_id: pId, quantity: qty }
+          });
+        }
+      });
+    }
+    if (shipping && shipping.ship_to_name && shipping.ship_to_address) {
+      const shippingOpId = `shipping_${invoiceNumber}`;
+      const shippingPayload = {
+        bill_id: null,
+        // Resolved from billOpId
+        invoice_number: invoiceNumber,
+        ship_to_name: shipping.ship_to_name,
+        ship_to_address: shipping.ship_to_address,
+        ship_to_phone: shipping.ship_to_phone || "",
+        ship_from_name: shipping.ship_from_name || "",
+        ship_from_address: shipping.ship_from_address || "",
+        shipping_charge: shipping.shipping_charge || 0,
+        updated_by: actor,
+        status: "pending_payment"
+      };
+      billGraphOps.push({
+        id: shippingOpId,
+        table: "bill_shipping",
+        operation: "insert",
+        data: shippingPayload,
+        upsertConflict: "bill_id",
+        dependencyOpId: billOpId,
+        metadata: { invoiceNumber }
+      });
+      const shippingLogOpId = `shipping_log_${invoiceNumber}`;
+      billGraphOps.push({
+        id: shippingLogOpId,
+        table: "shipping_status_log",
+        operation: "insert",
+        data: {
+          shipment_id: null,
+          // Resolved from shippingOpId
+          bill_id: null,
+          status: "pending_payment",
+          note: "Shipping order created",
+          updated_by: actor,
+          updated_by_role: session2.role || "cashier"
+        },
+        dependencyOpId: shippingOpId,
+        metadata: { invoiceNumber }
+      });
+    }
+    enqueueGraph(billGraphOps);
     await writeAuditLog({
       module: "Billing",
       action: "CREATE",
@@ -133446,7 +139206,7 @@ function registerHandlers() {
     });
     return { success: true, invoice_number: invoiceNumber, queued: true };
   });
-  import_electron20.ipcMain.handle("get-bills", async () => {
+  import_electron24.ipcMain.handle("get-bills", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("bills").select("*, customer:billing_customers(name,phone)").order("created_at", { ascending: false });
     if (error51) throw error51;
     return (data2 || []).map((b) => {
@@ -133456,7 +139216,7 @@ function registerHandlers() {
       return { ...dec, customer_name: custName, customer_phone: custPhone };
     });
   });
-  import_electron20.ipcMain.handle("get-bill-details", async (_e, billId) => {
+  import_electron24.ipcMain.handle("get-bill-details", async (_e, billId) => {
     const { data: bill } = await supabase_default.from("bills").select("*, customer:billing_customers(name,phone,email,address)").eq("id", billId).maybeSingle();
     if (!bill) return null;
     const { data: items } = await supabase_default.from("bill_items").select("*, product:products(image_path)").eq("bill_id", billId);
@@ -133472,7 +139232,7 @@ function registerHandlers() {
       items: decItems.map((i2) => ({ ...i2, image_path: i2.product?.image_path || null }))
     };
   });
-  import_electron20.ipcMain.handle("delete-bill", async (_e, { billId, reason }) => {
+  import_electron24.ipcMain.handle("delete-bill", async (_e, { billId, reason }) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -133512,12 +139272,12 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron20.ipcMain.handle("get-customer-bills", async (_e, customerId) => {
+  import_electron24.ipcMain.handle("get-customer-bills", async (_e, customerId) => {
     const { data: data2, error: error51 } = await supabase_default.from("bills").select("id, invoice_number, grand_total, created_at").eq("customer_id", customerId).order("created_at", { ascending: false }).limit(20);
     if (error51) throw error51;
     return (data2 || []).map((b) => decryptObject(b));
   });
-  import_electron20.ipcMain.handle("update-bill", async (_e, billData) => {
+  import_electron24.ipcMain.handle("update-bill", async (_e, billData) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2) && !session2.permissions?.["alter_bill"]) {
       throw new Error("Unauthorized: Admin access or alter_bill permission required");
@@ -133595,18 +139355,18 @@ function registerHandlers() {
       performed_by: actor
     });
     try {
-      import_electron20.BrowserWindow.getAllWindows().forEach((win) => {
+      import_electron24.BrowserWindow.getAllWindows().forEach((win) => {
         if (!win.isDestroyed()) win.webContents.send("data-updated", "bills");
       });
     } catch {
     }
     return { success: true };
   });
-  import_electron20.ipcMain.handle("get-bill-audit", async (_e, billId) => {
+  import_electron24.ipcMain.handle("get-bill-audit", async (_e, billId) => {
     const { data: data2 } = await supabase_default.from("bill_audit").select("*").eq("bill_id", billId).order("changed_at", { ascending: false });
     return decryptRows(data2 || []);
   });
-  import_electron20.ipcMain.handle("get-customer-ledger-list", async (_e, _opts) => {
+  import_electron24.ipcMain.handle("get-customer-ledger-list", async (_e, _opts) => {
     const session2 = requireSession();
     const isAdmin = isSessionAdminOrSuper(session2);
     const seeAll = isAdmin || !!session2.permissions?.["see_all_customers"] || !!session2.permissions?.["canSeeAllCustomers"];
@@ -133640,7 +139400,7 @@ function registerHandlers() {
       };
     });
   });
-  import_electron20.ipcMain.handle("get-customer-ledger-detail", async (_e, customerId) => {
+  import_electron24.ipcMain.handle("get-customer-ledger-detail", async (_e, customerId) => {
     const [custRes, billsRes, paymentsRes, addressesRes, exchangesRes, quotationsRes] = await Promise.all([
       supabase_default.from("billing_customers").select("*").eq("id", customerId).maybeSingle(),
       supabase_default.from("bills").select("id, invoice_number, grand_total, created_at, billed_by").eq("customer_id", customerId).order("created_at", { ascending: false }),
@@ -133675,7 +139435,7 @@ function registerHandlers() {
       make_orders: decryptRows(makeOrders || [])
     };
   });
-  import_electron20.ipcMain.handle("add-customer-payment", async (_e, payment) => {
+  import_electron24.ipcMain.handle("add-customer-payment", async (_e, payment) => {
     const session2 = requireSession();
     const actor = session2.fullName || session2.username || "Admin";
     const { customer_id, amount, payment_type, payment_method, note } = payment || {};
@@ -133690,7 +139450,7 @@ function registerHandlers() {
     }).select("id").single();
     if (error51) throw error51;
     try {
-      import_electron20.BrowserWindow.getAllWindows().forEach((win) => {
+      import_electron24.BrowserWindow.getAllWindows().forEach((win) => {
         if (!win.isDestroyed()) win.webContents.send("data-updated", "customer_payments");
       });
     } catch {
@@ -133705,7 +139465,7 @@ function registerHandlers() {
     });
     return { success: true, id: data2.id };
   });
-  import_electron20.ipcMain.handle("add-customer-address", async (_e, addr) => {
+  import_electron24.ipcMain.handle("add-customer-address", async (_e, addr) => {
     const session2 = requireSession();
     const { customer_id, label, address } = addr || {};
     if (!customer_id || !address) throw new Error("customer_id and address are required");
@@ -133717,7 +139477,7 @@ function registerHandlers() {
     if (error51) throw error51;
     return { success: true, id: data2.id };
   });
-  import_electron20.ipcMain.handle("delete-billing-customer", async (_e, customerId) => {
+  import_electron24.ipcMain.handle("delete-billing-customer", async (_e, customerId) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -133727,7 +139487,7 @@ function registerHandlers() {
     const { error: error51 } = await supabase_default.from("billing_customers").delete().eq("id", customerId);
     if (error51) throw error51;
     try {
-      import_electron20.BrowserWindow.getAllWindows().forEach((win) => {
+      import_electron24.BrowserWindow.getAllWindows().forEach((win) => {
         if (!win.isDestroyed()) win.webContents.send("data-updated", "billing_customers");
       });
     } catch {
@@ -133742,7 +139502,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron20.ipcMain.handle("create-exchange-order", async (_e, exchange) => {
+  import_electron24.ipcMain.handle("create-exchange-order", async (_e, exchange) => {
     const session2 = requireSession();
     const actor = session2.fullName || session2.username || "Admin";
     const { customer_id, original_bill_id, returned_items, new_items } = exchange || {};
@@ -133816,15 +139576,15 @@ function registerHandlers() {
       performed_by: actor
     });
     try {
-      import_electron20.BrowserWindow.getAllWindows().forEach((win) => {
+      import_electron24.BrowserWindow.getAllWindows().forEach((win) => {
         if (!win.isDestroyed()) win.webContents.send("data-updated", "exchange_orders");
       });
     } catch {
     }
     return { success: true, id: order.id, exchange_number: order.exchange_number, difference_amount: differenceAmount };
   });
-  import_electron20.ipcMain.handle("get-exchange-orders", async () => {
-    const { data: data2, error: error51 } = await supabase_default.from("exchange_orders").select("*, customer:billing_customers(name, phone), bill:bills(invoice_number)").order("created_at", { ascending: false });
+  import_electron24.ipcMain.handle("get-exchange-orders", async () => {
+    const { data: data2, error: error51 } = await supabase_default.from("exchange_orders").select("*, customer:billing_customers(name, phone), bill:bills!exchange_orders_bill_id_fkey(invoice_number)").order("created_at", { ascending: false });
     if (error51) throw error51;
     return (data2 || []).map((ex) => ({
       ...decryptObject(ex),
@@ -133833,7 +139593,7 @@ function registerHandlers() {
       original_invoice_number: decryptField(ex.bill?.invoice_number) || ex.bill?.invoice_number || null
     }));
   });
-  import_electron20.ipcMain.handle("get-exchange-details", async (_e, id) => {
+  import_electron24.ipcMain.handle("get-exchange-details", async (_e, id) => {
     const { data: order, error: error51 } = await supabase_default.from("exchange_orders").select("*, customer:billing_customers(name, phone)").eq("id", id).maybeSingle();
     if (error51) throw error51;
     if (!order) return null;
@@ -133844,12 +139604,12 @@ function registerHandlers() {
       items: decryptRows(items || [])
     };
   });
-  import_electron20.ipcMain.handle("get-purchase-bills", async () => {
+  import_electron24.ipcMain.handle("get-purchase-bills", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("purchase_bills").select("*, supplier:ledgers(name)").order("bill_date", { ascending: false }).order("id", { ascending: false });
     if (error51) throw error51;
     return decryptRows(data2 || []).map((b) => ({ ...b, supplier_name: b.supplier?.name || null }));
   });
-  import_electron20.ipcMain.handle("create-purchase-bill", async (_e, bill) => {
+  import_electron24.ipcMain.handle("create-purchase-bill", async (_e, bill) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -133880,7 +139640,7 @@ function registerHandlers() {
     });
     return { success: true, id: pb.id };
   });
-  import_electron20.ipcMain.handle("delete-purchase-bill", async (_e, id) => {
+  import_electron24.ipcMain.handle("delete-purchase-bill", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -133898,7 +139658,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron20.ipcMain.handle("change-password", async (_e, data2) => {
+  import_electron24.ipcMain.handle("change-password", async (_e, data2) => {
     const id = Number(data2?.id);
     const currentPassword = typeof data2?.currentPassword === "string" ? data2.currentPassword : "";
     const newPassword = typeof data2?.newPassword === "string" ? data2.newPassword : "";
@@ -133933,7 +139693,7 @@ function registerHandlers() {
   });
   checkAndSeedSuperAdmin().catch(() => {
   });
-  import_electron20.ipcMain.handle("get-users", async () => {
+  import_electron24.ipcMain.handle("get-users", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("users").select("id,username,full_name,role,email,phone,is_active,created_at,group_id").order("created_at", { ascending: false });
     if (error51) throw error51;
     return decryptRows(data2 || []);
@@ -133974,7 +139734,7 @@ function registerHandlers() {
       console.warn("[PUBLISH USER TO WEBSITE] Exception:", err?.message);
     }
   };
-  import_electron20.ipcMain.handle("create-user", async (_e, user) => {
+  import_electron24.ipcMain.handle("create-user", async (_e, user) => {
     const { username, password, fullName, role, groupId, email: email3, phone } = user;
     const session2 = requireSession();
     const reqRole = (session2.role || "").toLowerCase();
@@ -134097,9 +139857,19 @@ function registerHandlers() {
       phone: phone || "",
       groupId: parsedGroupId
     });
+    const actorName = session2.username || user?.requestingUserName || "System";
+    await writeAuditLog({
+      module: "users",
+      action: "create",
+      entity_type: "user",
+      entity_id: finalUserId,
+      description: `User "${cleanUsername}" created with role "${role || "operator"}" by ${actorName}`,
+      new_value: { username: cleanUsername, role: role || "operator", fullName: fullName || cleanUsername },
+      performed_by: actorName
+    });
     return { success: true, id: finalUserId };
   });
-  import_electron20.ipcMain.handle("update-user", async (_e, user) => {
+  import_electron24.ipcMain.handle("update-user", async (_e, user) => {
     const { id, username, fullName, role, email: email3, phone, isActive, password, groupId } = user;
     const session2 = requireSession();
     const reqRole = (session2.role || "").toLowerCase();
@@ -134109,7 +139879,7 @@ function registerHandlers() {
       throw new Error("Unauthorized: You do not have permission to update this user.");
     }
     const isActiveValue = isActive === void 0 || isActive === null ? 1 : Number(isActive) ? 1 : 0;
-    const { data: currentUser } = await supabase_default.from("users").select("role, auth_id, group_id").eq("id", id).maybeSingle();
+    const { data: currentUser } = await supabase_default.from("users").select("role, auth_id, group_id, username").eq("id", id).maybeSingle();
     if (role && role === "superadmin" && currentUser?.role !== "superadmin" && reqRole !== "superadmin") {
       throw new Error("Only Super Administrators can assign the Super Admin role.");
     }
@@ -134181,7 +139951,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron20.ipcMain.handle("delete-user", async (_e, id) => {
+  import_electron24.ipcMain.handle("delete-user", async (_e, id) => {
     const session2 = requireSession();
     const reqRole = (session2.role || "").toLowerCase();
     const isAdminOrSuper = reqRole === "superadmin" || reqRole === "admin";
@@ -134234,7 +140004,7 @@ function registerHandlers() {
     }
     return { success: true };
   });
-  import_electron20.ipcMain.handle("authenticate-user", async (_e, credentials) => {
+  import_electron24.ipcMain.handle("authenticate-user", async (_e, credentials) => {
     const username = typeof credentials?.username === "string" ? credentials.username.trim() : "";
     const password = typeof credentials?.password === "string" ? credentials.password : "";
     if (!username || !password) return { success: false, error: "Invalid credentials" };
@@ -134305,6 +140075,12 @@ function registerHandlers() {
         }
       }
       await supabase_default.from("users").update({ is_online: true, device_type: "PC" }).eq("id", row.id);
+      const userAppRole = authData.user?.app_metadata?.role;
+      if (userAppRole === "reconciliation_operator" || userAppRole === "service_role") {
+        SupabaseQuotaManager.getInstance().registerReconciliationClient(supabase_default);
+      } else {
+        SupabaseQuotaManager.getInstance().registerReconciliationClient(null);
+      }
       const { password_hash: _omit, user_groups, ...safeUser } = row;
       safeUser.permissions = user_groups?.is_active === false ? {} : user_groups?.permissions ?? {};
       resetLoginAttempts(username);
@@ -134367,9 +140143,10 @@ function registerHandlers() {
     recordFailedLogin(username);
     return { success: false, error: "Invalid username or password." };
   });
-  import_electron20.ipcMain.handle("clear-session", async () => {
+  import_electron24.ipcMain.handle("clear-session", async () => {
     try {
       await supabase_default.auth.signOut();
+      SupabaseQuotaManager.getInstance().registerReconciliationClient(null);
       clearSession();
       SessionManager.clearSession();
       return { success: true };
@@ -134377,12 +140154,12 @@ function registerHandlers() {
       return { success: false, error: String(e2) };
     }
   });
-  import_electron20.ipcMain.handle("get-active-sessions", async () => {
+  import_electron24.ipcMain.handle("get-active-sessions", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("users").select("*").eq("is_online", true);
     if (error51) return { success: false, error: error51.message };
     return { success: true, data: data2 };
   });
-  import_electron20.ipcMain.handle("verify-admin-password", async (_e, { password }) => {
+  import_electron24.ipcMain.handle("verify-admin-password", async (_e, { password }) => {
     if (!password) return { success: false, error: "Missing password" };
     const { data: superAdmins, error: error51 } = await supabase_default.from("users").select("password_hash").eq("role", "superadmin");
     if (error51 || !superAdmins || superAdmins.length === 0) {
@@ -134395,7 +140172,7 @@ function registerHandlers() {
     }
     return { success: false, error: "Incorrect password" };
   });
-  import_electron20.ipcMain.handle("kick-user-session", async (_e, userId) => {
+  import_electron24.ipcMain.handle("kick-user-session", async (_e, userId) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       return { success: false, error: "Unauthorized: Administrator access required." };
@@ -134405,11 +140182,11 @@ function registerHandlers() {
     if (error51) return { success: false, error: error51.message };
     return { success: true };
   });
-  import_electron20.ipcMain.handle("get-settings", async () => {
+  import_electron24.ipcMain.handle("get-settings", async () => {
     const { data: data2 } = await supabase_default.from("companies").select("*").eq("id", 1).maybeSingle();
     return data2 || {};
   });
-  import_electron20.ipcMain.handle("get-device-sessions", async () => {
+  import_electron24.ipcMain.handle("get-device-sessions", async () => {
     const session2 = requireSession();
     if (!isSessionSuperadmin(session2)) return { success: false, error: "Unauthorized: Superadmin access required." };
     if (!supabaseAdmin) return { success: false, error: "Database Admin Key not configured in settings." };
@@ -134417,7 +140194,7 @@ function registerHandlers() {
     if (error51) return { success: false, error: error51.message };
     return { success: true, data: data2 };
   });
-  import_electron20.ipcMain.handle("force-update-all", async () => {
+  import_electron24.ipcMain.handle("force-update-all", async () => {
     const session2 = requireSession();
     if (!isSessionSuperadmin(session2)) return { success: false, error: "Unauthorized: Superadmin access required." };
     if (!supabaseAdmin) return { success: false, error: "Database Admin Key not configured in settings." };
@@ -134430,7 +140207,7 @@ function registerHandlers() {
     supabaseAdmin.removeChannel(channel);
     return { success: true };
   });
-  import_electron20.ipcMain.handle("clear-database", async (_e, { section, password }) => {
+  import_electron24.ipcMain.handle("clear-database", async (_e, { section, password }) => {
     const session2 = requireSession();
     if (!isSessionSuperadmin(session2)) {
       return { success: false, error: "Unauthorized: Only superadmin can perform this action." };
@@ -134483,7 +140260,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron20.ipcMain.handle("update-settings", async (_e, s2) => {
+  import_electron24.ipcMain.handle("update-settings", async (_e, s2) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Administrator access required.");
@@ -134504,11 +140281,11 @@ function registerHandlers() {
     if (error51) throw error51;
     return { success: true };
   });
-  import_electron20.ipcMain.handle("get-policy", async () => {
+  import_electron24.ipcMain.handle("get-policy", async () => {
     const { data: data2 } = await supabase_default.from("companies").select("max_price_adjustment").eq("id", 1).maybeSingle();
     return { maxPriceAdjustment: Number(data2?.max_price_adjustment ?? 0) };
   });
-  import_electron20.ipcMain.handle("save-policy", async (_e, policy) => {
+  import_electron24.ipcMain.handle("save-policy", async (_e, policy) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Administrator access required.");
@@ -134517,24 +140294,25 @@ function registerHandlers() {
     if (error51) throw error51;
     return { success: true };
   });
-  import_electron20.ipcMain.handle("get-db-connection-state", async () => {
+  import_electron24.ipcMain.handle("get-db-connection-state", async () => {
     const { failoverEngine: failoverEngine2 } = await Promise.resolve().then(() => (init_supabase(), supabase_exports));
     const status = failoverEngine2.getStatus();
     return {
       connectionState: status.connectionTier,
       activeNasUrl: status.activeNasUrl,
       isNasOnline: status.isNasReachable,
+      nasAuthorizationError: status.nasAuthorizationError,
       activeTarget: status.activeTarget,
       circuitState: status.circuitState,
       pendingReconciliationCount: status.pendingReconciliationCount,
       metrics: status.metrics
     };
   });
-  import_electron20.ipcMain.handle("get-db-status", async () => {
+  import_electron24.ipcMain.handle("get-db-status", async () => {
     const { failoverEngine: failoverEngine2 } = await Promise.resolve().then(() => (init_supabase(), supabase_exports));
     return failoverEngine2.getStatus();
   });
-  import_electron20.ipcMain.handle("trigger-db-reconcile", async () => {
+  import_electron24.ipcMain.handle("trigger-db-reconcile", async () => {
     const session2 = requireSession();
     if (session2.role !== "Administrator" && session2.role !== "Manager") {
       throw new Error("Forbidden: Manual database reconciliation requires Administrator or Manager privileges.");
@@ -134542,7 +140320,7 @@ function registerHandlers() {
     const { failoverEngine: failoverEngine2 } = await Promise.resolve().then(() => (init_supabase(), supabase_exports));
     return await failoverEngine2.reconcileFallbackWrites();
   });
-  import_electron20.ipcMain.handle("trigger-retention-cleanup", async () => {
+  import_electron24.ipcMain.handle("trigger-retention-cleanup", async () => {
     const session2 = requireSession();
     if (session2.role !== "Administrator") {
       throw new Error("Forbidden: Retention cleanup requires Administrator privileges.");
@@ -134550,7 +140328,7 @@ function registerHandlers() {
     const { failoverEngine: failoverEngine2 } = await Promise.resolve().then(() => (init_supabase(), supabase_exports));
     return await failoverEngine2.maintainSupabaseRetention();
   });
-  import_electron20.ipcMain.handle("trigger-db-bootstrap", async () => {
+  import_electron24.ipcMain.handle("trigger-db-bootstrap", async () => {
     const session2 = requireSession();
     if (session2.role !== "Administrator") {
       throw new Error("Forbidden: Database bootstrap requires Administrator privileges.");
@@ -134558,7 +140336,7 @@ function registerHandlers() {
     const { failoverEngine: failoverEngine2 } = await Promise.resolve().then(() => (init_supabase(), supabase_exports));
     return await failoverEngine2.bootstrapFallbackDataset();
   });
-  import_electron20.ipcMain.handle("get-supabase-config", async () => {
+  import_electron24.ipcMain.handle("get-supabase-config", async () => {
     try {
       const cfg = loadConfig();
       return {
@@ -134574,7 +140352,8 @@ function registerHandlers() {
         cfAccessClientId: cfg.cfAccessClientId || "",
         // Mask the client secret if present so the UI can show •••••••• without receiving the secret
         cfAccessClientSecret: cfg.cfAccessClientSecret ? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" : "",
-        hasServiceRoleKey: !!cfg.serviceRoleKey
+        hasServiceRoleKey: !!cfg.serviceRoleKey,
+        hasNasJwtToken: !!cfg.nasJwtToken
       };
     } catch (e2) {
       return {
@@ -134583,7 +140362,7 @@ function registerHandlers() {
       };
     }
   });
-  import_electron20.ipcMain.handle("save-supabase-config", async (_e, newConfig) => {
+  import_electron24.ipcMain.handle("save-supabase-config", async (_e, newConfig) => {
     const session2 = requireSession();
     if (!isSessionSuperadmin(session2)) {
       throw new Error("Unauthorized: Superadmin access required.");
@@ -134593,13 +140372,23 @@ function registerHandlers() {
       if (configToSave.cfAccessClientSecret === "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022") {
         delete configToSave.cfAccessClientSecret;
       }
+      if (configToSave.nasJwtToken !== void 0) {
+        if (typeof configToSave.nasJwtToken !== "string" || configToSave.nasJwtToken.length > 16384) {
+          throw new Error("NAS database credential must be a valid JWT string.");
+        }
+        const token = configToSave.nasJwtToken.trim();
+        if (token && token.split(".").length !== 3) {
+          throw new Error("NAS database credential must be a valid JWT string.");
+        }
+        configToSave.nasJwtToken = token;
+      }
       saveSupabaseConfig(configToSave);
       return { success: true };
     } catch (e2) {
       return { success: false, error: e2.message };
     }
   });
-  import_electron20.ipcMain.handle("get-user-groups", async () => {
+  import_electron24.ipcMain.handle("get-user-groups", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("user_groups").select("*").order("id");
     if (error51) throw error51;
     const isSuperAdmin = isSessionSuperadmin();
@@ -134607,7 +140396,7 @@ function registerHandlers() {
     const filtered = groups.filter((g) => isSuperAdmin || g.name !== "Super Admin");
     return filtered;
   });
-  import_electron20.ipcMain.handle("create-user-group", async (_e, group) => {
+  import_electron24.ipcMain.handle("create-user-group", async (_e, group) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Administrator access required to manage user groups.");
@@ -134633,7 +140422,7 @@ function registerHandlers() {
     }
     return { success: true, id: data2.id };
   });
-  import_electron20.ipcMain.handle("update-user-group", async (_e, group) => {
+  import_electron24.ipcMain.handle("update-user-group", async (_e, group) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Administrator access required to manage user groups.");
@@ -134658,7 +140447,7 @@ function registerHandlers() {
     }
     return { success: true };
   });
-  import_electron20.ipcMain.handle("delete-user-group", async (_e, id) => {
+  import_electron24.ipcMain.handle("delete-user-group", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Administrator access required to manage user groups.");
@@ -134675,7 +140464,7 @@ function registerHandlers() {
     }
     return { success: true };
   });
-  import_electron20.ipcMain.handle("get-notifications", async (_e, userId) => {
+  import_electron24.ipcMain.handle("get-notifications", async (_e, userId) => {
     try {
       const sevenDaysAgo = /* @__PURE__ */ new Date();
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
@@ -134694,14 +140483,14 @@ function registerHandlers() {
       return [];
     }
   });
-  import_electron20.ipcMain.handle("clear-all-notifications", async (_e, _userId) => {
+  import_electron24.ipcMain.handle("clear-all-notifications", async (_e, _userId) => {
     const session2 = requireSession();
     const userId = Number(session2.id);
     const { error: error51 } = await supabase_default.from("notifications").delete().or(`recipient_id.eq.${userId},recipient_id.is.null`);
     if (error51) throw error51;
     return { success: true };
   });
-  import_electron20.ipcMain.handle("send-notification", async (_e, notification) => {
+  import_electron24.ipcMain.handle("send-notification", async (_e, notification) => {
     const session2 = requireSession();
     const { title, message, recipientIds, actionPath, actionLabel, metadata, notificationKey } = notification;
     const baseRow = {
@@ -134723,39 +140512,39 @@ function registerHandlers() {
     if (error51) throw error51;
     return { success: true, count: recipientIds.length };
   });
-  import_electron20.ipcMain.handle("mark-notification-read", async (_e, id) => {
+  import_electron24.ipcMain.handle("mark-notification-read", async (_e, id) => {
     requireSession();
     await supabase_default.from("notifications").update({ is_read: true }).eq("id", id);
     return { success: true };
   });
-  import_electron20.ipcMain.handle("mark-all-notifications-read", async (_e, _userId) => {
+  import_electron24.ipcMain.handle("mark-all-notifications-read", async (_e, _userId) => {
     const session2 = requireSession();
     const userId = Number(session2.id);
     await supabase_default.from("notifications").update({ is_read: true }).or(`recipient_id.eq.${userId},recipient_id.is.null`).eq("is_read", false);
     return { success: true };
   });
-  import_electron20.ipcMain.handle("delete-notification", async (_e, id) => {
+  import_electron24.ipcMain.handle("delete-notification", async (_e, id) => {
     requireSession();
     await supabase_default.from("notifications").delete().eq("id", id);
     return { success: true };
   });
-  import_electron20.ipcMain.handle("pick-image", async () => {
-    const result = await import_electron20.dialog.showOpenDialog({ properties: ["openFile"], filters: [{ name: "Images", extensions: ["jpg", "jpeg", "png", "gif", "webp", "bmp"] }] });
+  import_electron24.ipcMain.handle("pick-image", async () => {
+    const result = await import_electron24.dialog.showOpenDialog({ properties: ["openFile"], filters: [{ name: "Images", extensions: ["jpg", "jpeg", "png", "gif", "webp", "bmp"] }] });
     if (result.canceled || result.filePaths.length === 0) return null;
     const filePath = result.filePaths[0];
     try {
-      return await uploadOptimizedImage(import_fs18.default.readFileSync(filePath), import_path18.default.basename(filePath, import_path18.default.extname(filePath)) || "product");
+      return await uploadOptimizedImage(import_fs21.default.readFileSync(filePath), import_path21.default.basename(filePath, import_path21.default.extname(filePath)) || "product");
     } catch (e2) {
       console.error("[IPC] Product image upload failed:", e2);
-      return null;
+      throw new Error(`Upload failed: ${e2?.message || "Storage upload error"}`);
     }
   });
-  import_electron20.ipcMain.handle("pick-chat-file", async () => {
-    const result = await import_electron20.dialog.showOpenDialog({ properties: ["openFile"], filters: [{ name: "All Files", extensions: ["*"] }, { name: "Images", extensions: ["jpg", "png", "gif", "webp"] }, { name: "Docs", extensions: ["pdf", "doc", "docx", "xls", "xlsx", "txt"] }] });
+  import_electron24.ipcMain.handle("pick-chat-file", async () => {
+    const result = await import_electron24.dialog.showOpenDialog({ properties: ["openFile"], filters: [{ name: "All Files", extensions: ["*"] }, { name: "Images", extensions: ["jpg", "png", "gif", "webp"] }, { name: "Docs", extensions: ["pdf", "doc", "docx", "xls", "xlsx", "txt"] }] });
     if (result.canceled || result.filePaths.length === 0) return null;
-    return { path: result.filePaths[0], name: import_path18.default.basename(result.filePaths[0]) };
+    return { path: result.filePaths[0], name: import_path21.default.basename(result.filePaths[0]) };
   });
-  import_electron20.ipcMain.handle("report-trial-balance", async () => {
+  import_electron24.ipcMain.handle("report-trial-balance", async () => {
     const { data: ledgers } = await supabase_default.from("ledgers").select("id,name,opening_balance,opening_balance_type,group:groups(name,nature)").order("name");
     const { data: entries } = await supabase_default.from("voucher_entries").select("ledger_id,amount,type");
     const entryMap = {};
@@ -134766,7 +140555,7 @@ function registerHandlers() {
     }
     return (ledgers || []).map((l) => ({ ...l, group_name: l.group?.name, nature: l.group?.nature, total_debit: entryMap[l.id]?.dr || 0, total_credit: entryMap[l.id]?.cr || 0 }));
   });
-  import_electron20.ipcMain.handle("report-balance-sheet", async () => {
+  import_electron24.ipcMain.handle("report-balance-sheet", async () => {
     const { data: data2 } = await supabase_default.from("ledgers").select("id,name,opening_balance,opening_balance_type,group:groups!inner(name,nature)").in("groups.nature", ["Assets", "Liabilities"]).order("name");
     const { data: entries } = await supabase_default.from("voucher_entries").select("ledger_id,amount,type");
     const em = {};
@@ -134777,7 +140566,7 @@ function registerHandlers() {
     }
     return decryptRows(data2 || []).map((l) => ({ ...l, group_name: l.group?.name, nature: l.group?.nature, total_debit: em[l.id]?.dr || 0, total_credit: em[l.id]?.cr || 0 }));
   });
-  import_electron20.ipcMain.handle("report-profit-and-loss", async () => {
+  import_electron24.ipcMain.handle("report-profit-and-loss", async () => {
     const { data: data2 } = await supabase_default.from("ledgers").select("id,name,opening_balance,opening_balance_type,group:groups!inner(name,nature)").in("groups.nature", ["Income", "Expenses"]).order("name");
     const { data: entries } = await supabase_default.from("voucher_entries").select("ledger_id,amount,type");
     const em = {};
@@ -134788,7 +140577,7 @@ function registerHandlers() {
     }
     return decryptRows(data2 || []).map((l) => ({ ...l, group_name: l.group?.name, nature: l.group?.nature, total_debit: em[l.id]?.dr || 0, total_credit: em[l.id]?.cr || 0 }));
   });
-  import_electron20.ipcMain.handle("report-stock-summary", async () => {
+  import_electron24.ipcMain.handle("report-stock-summary", async () => {
     const { data: products } = await supabase_default.from("products").select("id,name,sku,category,quantity,purchase_price,selling_price,image_path,unit:units(symbol)").order("name");
     const { data: pbi } = await supabase_default.from("purchase_bill_items").select("product_id,qty,amount");
     const pbiMap = {};
@@ -134799,7 +140588,7 @@ function registerHandlers() {
     }
     return (products || []).map((p) => ({ ...p, unit_symbol: p.unit?.symbol || null, purchased_qty: pbiMap[p.id]?.qty || 0, purchased_value: pbiMap[p.id]?.value || 0 }));
   });
-  import_electron20.ipcMain.handle("report-day-book", async (_e, params) => {
+  import_electron24.ipcMain.handle("report-day-book", async (_e, params) => {
     const { fromDate, toDate } = params || {};
     let q = supabase_default.from("vouchers").select("id,voucher_type,voucher_number,date,narration,total_amount,voucher_entries(amount,type,ledger:ledgers(name))").order("date", { ascending: false }).order("id", { ascending: false });
     if (fromDate && toDate) q = q.gte("date", fromDate).lte("date", toDate);
@@ -134809,17 +140598,73 @@ function registerHandlers() {
       (v) => (v.voucher_entries || []).map((e2) => ({ id: v.id, voucher_type: v.voucher_type, voucher_number: v.voucher_number, date: v.date, narration: v.narration, total_amount: v.total_amount, entry_amount: e2.amount, entry_type: e2.type, ledger_name: e2.ledger?.name || null }))
     );
   });
-  import_electron20.ipcMain.handle("get-make-orders", async () => {
+  import_electron24.ipcMain.handle("get-make-orders", async () => {
     const session2 = SessionManager.getSession();
     const role = (session2?.role || "").toLowerCase();
-    const isFactoryManager = role === "factory_manager" || role === "factory manager" || role === "factory";
+    const isAdmin = role === "admin" || role === "superadmin" || role === "manager";
+    const isSales = role === "salesperson" || role === "salesman" || role === "sales";
+    const isFactory = role === "factory_manager" || role === "factory manager" || role === "factory";
+    const isDesigner = role === "furniture_designer" || role === "furniture designer" || role === "designer" || role === "make_designer";
+    const canViewCost = isAdmin || isSales || isFactory || isDesigner || !!session2?.permissions?.view_product_cost_price;
+    const canViewSale = isAdmin || isDesigner || !isSales && !isFactory && !!session2?.permissions?.view_product_sale_price;
+    const canViewBalance = isAdmin || isSales || isDesigner;
+    const canViewMaxDiscount = isAdmin || (session2?.permissions?.view_product_max_discount !== void 0 ? !!session2.permissions.view_product_max_discount : role !== "factory_manager" && role !== "factory manager" && role !== "factory");
     const sanitizeOrder = (o) => {
-      if (!isFactoryManager) return o;
-      const { sale_price, custom_price, ...rest } = o;
-      return rest;
+      const copy = { ...o };
+      if (!canViewCost) {
+        delete copy.cost_price;
+        delete copy.total_cost_price;
+        if (copy.custom_details && typeof copy.custom_details === "object") {
+          const { cost_price: _c, total_cost: _tc, ...restDetails } = copy.custom_details;
+          copy.custom_details = restDetails;
+        }
+      }
+      if (!canViewSale) {
+        delete copy.sale_price;
+        delete copy.custom_price;
+        delete copy.final_price;
+        delete copy.total_sale_price;
+        delete copy.money_received;
+        if (copy.custom_details && typeof copy.custom_details === "object") {
+          const { subtotal: _s, final_price: _fp, money_received: _mr, ...restDetails } = copy.custom_details;
+          copy.custom_details = restDetails;
+        }
+      }
+      if (!canViewBalance) {
+        delete copy.amount_due;
+        delete copy.payment_status;
+        if (copy.custom_details && typeof copy.custom_details === "object") {
+          const { amount_due: _ad, payment_status: _ps, ...restDetails } = copy.custom_details;
+          copy.custom_details = restDetails;
+        }
+      }
+      if (!canViewSale && copy.custom_details && typeof copy.custom_details === "object" && Array.isArray(copy.custom_details.items)) {
+        copy.custom_details = {
+          ...copy.custom_details,
+          items: copy.custom_details.items.map((item) => {
+            const safeItem = { ...item };
+            delete safeItem.item_sale_price;
+            delete safeItem.unit_sale_price;
+            delete safeItem.sale_price;
+            delete safeItem.final_item_price;
+            delete safeItem.total_sale_price;
+            return safeItem;
+          })
+        };
+      }
+      if (!canViewMaxDiscount) {
+        delete copy.discount_type;
+        delete copy.discount_value;
+        delete copy.discount_amount;
+        if (copy.custom_details && typeof copy.custom_details === "object") {
+          const { discount_type: _dt, discount_value: _dv, discount_amount: _da, ...restDetails } = copy.custom_details;
+          copy.custom_details = restDetails;
+        }
+      }
+      return copy;
     };
     try {
-      const { data: data2, error: error51 } = await supabase_default.from("make_orders").select("*, salesman:users(full_name), bill:bills(invoice_number)").order("created_at", { ascending: false });
+      const { data: data2, error: error51 } = await supabase_default.from("make_orders").select("*, salesman:users!make_orders_salesman_id_fkey(full_name), bill:bills!make_orders_bill_id_fkey(invoice_number)").order("created_at", { ascending: false });
       if (!error51 && data2) {
         return decryptRows(data2).map((o) => sanitizeOrder({
           ...o,
@@ -134833,7 +140678,7 @@ function registerHandlers() {
     } catch (err) {
       console.warn("[MAKE] get-make-orders join exception:", err.message);
     }
-    const { data: baseData, error: baseErr } = await supabase_default.from("make_orders").select("*, salesman:users(full_name)").order("created_at", { ascending: false });
+    const { data: baseData, error: baseErr } = await supabase_default.from("make_orders").select("*, salesman:users!make_orders_salesman_id_fkey(full_name)").order("created_at", { ascending: false });
     if (baseErr) throw baseErr;
     return decryptRows(baseData || []).map((o) => sanitizeOrder({
       ...o,
@@ -134841,14 +140686,23 @@ function registerHandlers() {
       bill_invoice_number: null
     }));
   });
-  import_electron20.ipcMain.handle("get-salesmen", async () => {
-    const { data: grp } = await supabase_default.from("user_groups").select("id").eq("name", "Salesman").maybeSingle();
-    if (!grp) return [];
-    const { data: data2, error: error51 } = await supabase_default.from("users").select("id, username, full_name, email").eq("group_id", grp.id).eq("is_active", 1);
-    if (error51) throw error51;
+  import_electron24.ipcMain.handle("get-salesmen", async () => {
+    const { data: grps } = await supabase_default.from("user_groups").select("id, name").in("name", ["Salesman", "Salesperson"]);
+    const groupIds = (grps || []).map((g) => g.id);
+    let query = supabase_default.from("users").select("id, username, full_name, email, role, group_id").eq("is_active", 1);
+    if (groupIds.length > 0) {
+      query = query.or(`group_id.in.(${groupIds.join(",")}),role.in.(salesman,salesperson)`);
+    } else {
+      query = query.in("role", ["salesman", "salesperson"]);
+    }
+    const { data: data2, error: error51 } = await query;
+    if (error51) {
+      const { data: fallbackUsers } = await supabase_default.from("users").select("id, username, full_name, email").in("role", ["salesman", "salesperson"]).eq("is_active", 1);
+      return decryptRows(fallbackUsers || []);
+    }
     return decryptRows(data2 || []);
   });
-  import_electron20.ipcMain.handle("set-make-order-price", async (_e, { orderId, customPrice }) => {
+  import_electron24.ipcMain.handle("set-make-order-price", async (_e, { orderId, customPrice }) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -134866,7 +140720,7 @@ function registerHandlers() {
       note: `Price set to \u09F3${customPrice}`,
       updated_by: actor
     });
-    const { data: order, error: fetchErr } = await supabase_default.from("make_orders").select("designer_name, furniture_name, bill_id, bill:bills(invoice_number)").eq("id", orderId).maybeSingle();
+    const { data: order, error: fetchErr } = await supabase_default.from("make_orders").select("designer_name, furniture_name, bill_id, bill:bills!make_orders_bill_id_fkey(invoice_number)").eq("id", orderId).maybeSingle();
     if (!fetchErr && order) {
       const invoiceNumber = order.bill?.invoice_number || "N/A";
       const { data: designer } = await supabase_default.from("users").select("id").or(`username.eq."${order.designer_name}",full_name.eq."${order.designer_name}"`).maybeSingle();
@@ -134883,7 +140737,7 @@ function registerHandlers() {
       }
     }
     try {
-      import_electron20.BrowserWindow.getAllWindows().forEach((win) => {
+      import_electron24.BrowserWindow.getAllWindows().forEach((win) => {
         if (!win.isDestroyed()) {
           win.webContents.send("data-updated", "make_orders");
           win.webContents.send("data-updated", "notifications");
@@ -134902,7 +140756,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron20.ipcMain.handle("mark-customization-paid", async (_e, { orderId }) => {
+  import_electron24.ipcMain.handle("mark-customization-paid", async (_e, { orderId }) => {
     const session2 = requireSession();
     const actor = session2.fullName || session2.username;
     const { data: order, error: fetchErr } = await supabase_default.from("make_orders").select("*").eq("id", orderId).maybeSingle();
@@ -134936,7 +140790,7 @@ function registerHandlers() {
       }
     }
     try {
-      import_electron20.BrowserWindow.getAllWindows().forEach((win) => {
+      import_electron24.BrowserWindow.getAllWindows().forEach((win) => {
         if (!win.isDestroyed()) {
           win.webContents.send("data-updated", "make_orders");
           win.webContents.send("data-updated", "bills");
@@ -134954,7 +140808,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron20.ipcMain.handle("update-make-order-status", async (_e, { orderId, status, note }) => {
+  import_electron24.ipcMain.handle("update-make-order-status", async (_e, { orderId, status, note }) => {
     const session2 = requireSession();
     const actor = session2.fullName || session2.username;
     await supabase_default.from("make_orders").update({ status, updated_at: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", orderId);
@@ -134970,17 +140824,18 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron20.ipcMain.handle("get-make-order-updates", async (_e, orderId) => {
-    const { data: data2 } = await supabase_default.from("make_order_updates").select("*").eq("order_id", orderId).order("created_at");
+  import_electron24.ipcMain.handle("get-make-order-updates", async (_e, orderId) => {
+    const { data: data2, error: error51 } = await supabase_default.from("make_order_updates").select("*").eq("order_id", orderId).order("created_at");
+    if (error51) throw error51;
     return decryptRows(data2 || []);
   });
-  import_electron20.ipcMain.handle("get-make-furniture-names", async () => {
+  import_electron24.ipcMain.handle("get-make-furniture-names", async () => {
     const { data: data2 } = await supabase_default.from("make_orders").select("furniture_name").order("furniture_name");
     return [...new Set((data2 || []).map((r2) => r2.furniture_name))];
   });
-  import_electron20.ipcMain.handle("get-printers", async () => {
+  import_electron24.ipcMain.handle("get-printers", async () => {
     try {
-      const mainWin = import_electron20.BrowserWindow.getAllWindows()[0];
+      const mainWin = import_electron24.BrowserWindow.getAllWindows()[0];
       if (!mainWin) return [];
       const printers = await mainWin.webContents.getPrintersAsync();
       return printers.map((p) => ({ name: p.name, isDefault: p.isDefault || p.status === 0 }));
@@ -134988,13 +140843,13 @@ function registerHandlers() {
       return [];
     }
   });
-  import_electron20.ipcMain.handle("get-audit-log", async (_e, { module: module2, limit }) => {
+  import_electron24.ipcMain.handle("get-audit-log", async (_e, { module: module2, limit }) => {
     let q = supabase_default.from("system_audit_log").select("*").order("performed_at", { ascending: false }).limit(limit || 200);
     if (module2) q = q.eq("module", module2);
     const { data: data2 } = await q;
     return decryptRows(data2 || []);
   });
-  import_electron20.ipcMain.handle("stage-bill-alteration", async (_e, { billId, changes, reason }) => {
+  import_electron24.ipcMain.handle("stage-bill-alteration", async (_e, { billId, changes, reason }) => {
     const session2 = requireSession();
     const actor = session2.fullName || session2.username;
     const { data: currentBill } = await supabase_default.from("bills").select("*").eq("id", billId).maybeSingle();
@@ -135022,7 +140877,7 @@ function registerHandlers() {
     });
     return { success: true, audit_id: data2.id };
   });
-  import_electron20.ipcMain.handle("get-pending-alterations", async () => {
+  import_electron24.ipcMain.handle("get-pending-alterations", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("bill_audit").select("*, bill:bills(invoice_number, customer:billing_customers(name))").eq("alter_status", "pending_approval").order("changed_at", { ascending: false });
     if (error51) throw error51;
     return (data2 || []).map((r2) => ({
@@ -135031,7 +140886,7 @@ function registerHandlers() {
       customer_name: decryptField(r2.bill?.customer?.name) || r2.bill?.customer?.name
     }));
   });
-  import_electron20.ipcMain.handle("approve-alteration", async (_e, { auditId }) => {
+  import_electron24.ipcMain.handle("approve-alteration", async (_e, { auditId }) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -135057,7 +140912,7 @@ function registerHandlers() {
     await writeAuditLog({ module: "Billing", action: "BILL_ALTER_APPROVED", entity_type: "bill", entity_id: audit.bill_id, description: `Approved by ${actor}`, performed_by: actor });
     return { success: true };
   });
-  import_electron20.ipcMain.handle("reject-alteration", async (_e, { auditId, rejectReason }) => {
+  import_electron24.ipcMain.handle("reject-alteration", async (_e, { auditId, rejectReason }) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -135068,7 +140923,7 @@ function registerHandlers() {
     await writeAuditLog({ module: "Billing", action: "BILL_ALTER_REJECTED", entity_type: "bill", entity_id: audit?.bill_id, description: `Rejected by ${actor}. Reason: ${rejectReason}`, performed_by: actor });
     return { success: true };
   });
-  import_electron20.ipcMain.handle("add-bill-shipping", async (_e, data2) => {
+  import_electron24.ipcMain.handle("add-bill-shipping", async (_e, data2) => {
     requireSession();
     enqueue({
       table: "bill_shipping",
@@ -135077,11 +140932,11 @@ function registerHandlers() {
     });
     return { success: true, queued: true };
   });
-  import_electron20.ipcMain.handle("get-bill-shipping", async (_e, billId) => {
+  import_electron24.ipcMain.handle("get-bill-shipping", async (_e, billId) => {
     const { data: data2 } = await supabase_default.from("bill_shipping").select("*").eq("bill_id", billId).maybeSingle();
     return data2 || null;
   });
-  import_electron20.ipcMain.handle("get-all-shipments", async (_e, { status } = {}) => {
+  import_electron24.ipcMain.handle("get-all-shipments", async (_e, { status } = {}) => {
     let q = supabase_default.from("bill_shipping").select("*, bill:bills(invoice_number,grand_total,created_at,customer:billing_customers(name,phone))").order("created_at", { ascending: false });
     if (status) q = q.eq("status", status);
     const { data: data2, error: error51 } = await q;
@@ -135094,11 +140949,11 @@ function registerHandlers() {
       customer_phone: decryptField(s2.bill?.customer?.phone) || s2.bill?.customer?.phone
     }));
   });
-  import_electron20.ipcMain.handle("get-shipment-history", async (_e, shipmentId) => {
+  import_electron24.ipcMain.handle("get-shipment-history", async (_e, shipmentId) => {
     const { data: data2 } = await supabase_default.from("shipping_status_log").select("*").eq("shipment_id", shipmentId).order("created_at");
     return decryptRows(data2 || []);
   });
-  import_electron20.ipcMain.handle("update-shipment-status", async (_e, { shipmentId, billId, status, note, imagePath }) => {
+  import_electron24.ipcMain.handle("update-shipment-status", async (_e, { shipmentId, billId, status, note, imagePath }) => {
     const session2 = requireSession();
     const actor = session2.fullName || session2.username;
     const actorRole = session2.role;
@@ -135110,7 +140965,7 @@ function registerHandlers() {
     await writeAuditLog({ module: "Shipping", action: "SHIPPING_STATUS_UPDATED", entity_type: "shipment", entity_id: shipmentId, description: `Status \u2192 "${status}" by ${actor}`, new_value: { status, note }, performed_by: actor });
     return { success: true };
   });
-  import_electron20.ipcMain.handle("upload-packaging-image", async (_e, { shipmentId, billId, imageBase64 }) => {
+  import_electron24.ipcMain.handle("upload-packaging-image", async (_e, { shipmentId, billId, imageBase64 }) => {
     const session2 = requireSession();
     const actor = session2.fullName || session2.username;
     const actorRole = session2.role;
@@ -135125,9 +140980,9 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron20.ipcMain.handle("get-machine-id", async () => getMachineId());
-  import_electron20.ipcMain.handle("check-license", async () => isLicensed());
-  import_electron20.ipcMain.handle("activate-license", async (_e, key) => {
+  import_electron24.ipcMain.handle("get-machine-id", async () => getMachineId());
+  import_electron24.ipcMain.handle("check-license", async () => isLicensed());
+  import_electron24.ipcMain.handle("activate-license", async (_e, key) => {
     if (!key || typeof key !== "string")
       return { success: false, error: "Invalid license key format" };
     const cleanKey = key.replace(/\s+/g, "");
@@ -135141,7 +140996,7 @@ function registerHandlers() {
     }
     return { success: true, credentialsDecrypted: credResult };
   });
-  import_electron20.ipcMain.handle("get-db-monitoring", async () => {
+  import_electron24.ipcMain.handle("get-db-monitoring", async () => {
     const [products, bills, users, vouchers, makeOrders] = await Promise.all([
       supabase_default.from("products").select("id", { count: "exact", head: true }),
       supabase_default.from("bills").select("id", { count: "exact", head: true }),
@@ -135152,11 +141007,11 @@ function registerHandlers() {
     return { products: products.count || 0, bills: bills.count || 0, users: users.count || 0, vouchers: vouchers.count || 0, makeOrders: makeOrders.count || 0, lastChecked: (/* @__PURE__ */ new Date()).toISOString() };
   });
   function getBackupDir() {
-    const d = import_path18.default.join(import_electron20.app.getPath("userData"), "backups");
-    if (!import_fs18.default.existsSync(d)) import_fs18.default.mkdirSync(d, { recursive: true });
+    const d = import_path21.default.join(import_electron24.app.getPath("userData"), "backups");
+    if (!import_fs21.default.existsSync(d)) import_fs21.default.mkdirSync(d, { recursive: true });
     return d;
   }
-  import_electron20.ipcMain.handle("create-db-backup", async () => {
+  import_electron24.ipcMain.handle("create-db-backup", async () => {
     const session2 = requireSession();
     if (!isSessionSuperadmin(session2)) {
       throw new Error("Unauthorized: Super Admin access required");
@@ -135170,12 +141025,12 @@ function registerHandlers() {
         backup[t2] = data2 || [];
       }
       const ts = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-").substring(0, 19);
-      const backupFile = import_path18.default.join(getBackupDir(), `le-soft-backup-${ts}.json`);
-      import_fs18.default.writeFileSync(backupFile, JSON.stringify(backup, null, 2), "utf-8");
-      const files = import_fs18.default.readdirSync(getBackupDir()).filter((f3) => f3.startsWith("le-soft-backup-") && f3.endsWith(".json")).sort().reverse();
+      const backupFile = import_path21.default.join(getBackupDir(), `le-soft-backup-${ts}.json`);
+      import_fs21.default.writeFileSync(backupFile, JSON.stringify(backup, null, 2), "utf-8");
+      const files = import_fs21.default.readdirSync(getBackupDir()).filter((f3) => f3.startsWith("le-soft-backup-") && f3.endsWith(".json")).sort().reverse();
       files.slice(10).forEach((f3) => {
         try {
-          import_fs18.default.unlinkSync(import_path18.default.join(getBackupDir(), f3));
+          import_fs21.default.unlinkSync(import_path21.default.join(getBackupDir(), f3));
         } catch {
         }
       });
@@ -135183,7 +141038,7 @@ function registerHandlers() {
         module: "Database",
         action: "BACKUP_CREATED",
         entity_type: "database",
-        description: `Backup created: ${import_path18.default.basename(backupFile)}`,
+        description: `Backup created: ${import_path21.default.basename(backupFile)}`,
         performed_by: actor
       });
       return { success: true, path: backupFile, time: (/* @__PURE__ */ new Date()).toISOString() };
@@ -135191,30 +141046,30 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron20.ipcMain.handle("list-db-backups", async () => {
+  import_electron24.ipcMain.handle("list-db-backups", async () => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
     }
     try {
-      return import_fs18.default.readdirSync(getBackupDir()).filter((f3) => f3.startsWith("le-soft-backup-") && f3.endsWith(".json")).map((f3) => {
-        const st = import_fs18.default.statSync(import_path18.default.join(getBackupDir(), f3));
+      return import_fs21.default.readdirSync(getBackupDir()).filter((f3) => f3.startsWith("le-soft-backup-") && f3.endsWith(".json")).map((f3) => {
+        const st = import_fs21.default.statSync(import_path21.default.join(getBackupDir(), f3));
         return { name: f3, size: st.size, date: st.mtime.toISOString() };
       }).sort((a, b) => b.date.localeCompare(a.date));
     } catch {
       return [];
     }
   });
-  import_electron20.ipcMain.handle("restore-db-backup", async (_e, backupName) => {
+  import_electron24.ipcMain.handle("restore-db-backup", async (_e, backupName) => {
     const session2 = requireSession();
     if (!isSessionSuperadmin(session2)) {
       throw new Error("Unauthorized: Super Admin access required");
     }
     const actor = session2.fullName || session2.username;
     try {
-      const backupPath = import_path18.default.join(getBackupDir(), backupName);
-      if (!import_fs18.default.existsSync(backupPath)) return { success: false, error: "Backup file not found" };
-      const backup = JSON.parse(import_fs18.default.readFileSync(backupPath, "utf-8"));
+      const backupPath = import_path21.default.join(getBackupDir(), backupName);
+      if (!import_fs21.default.existsSync(backupPath)) return { success: false, error: "Backup file not found" };
+      const backup = JSON.parse(import_fs21.default.readFileSync(backupPath, "utf-8"));
       for (const [table, rows] of Object.entries(backup)) {
         if (!Array.isArray(rows) || rows.length === 0) continue;
         try {
@@ -135266,14 +141121,14 @@ function registerHandlers() {
   function stripHTML(html3) {
     return html3.replace(/<[^>]*>/g, "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&nbsp;/g, " ").trim();
   }
-  import_electron20.ipcMain.handle("import-woocommerce-csv", async (_e, csvFilePath) => {
+  import_electron24.ipcMain.handle("import-woocommerce-csv", async (_e, csvFilePath) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
     }
     const actor = session2.fullName || session2.username;
     try {
-      let raw = import_fs18.default.readFileSync(csvFilePath, "utf-8");
+      let raw = import_fs21.default.readFileSync(csvFilePath, "utf-8");
       if (raw.charCodeAt(0) === 65279) raw = raw.slice(1);
       const lines = [];
       let cur = "";
@@ -135377,7 +141232,7 @@ function registerHandlers() {
       return { imported: 0, skipped: 0, errors: [e2.message] };
     }
   });
-  import_electron20.ipcMain.handle("sync-products-to-website", async () => {
+  import_electron24.ipcMain.handle("sync-products-to-website", async () => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -135404,29 +141259,29 @@ function registerHandlers() {
     });
     return { success: true, synced, failed, total: rows.length };
   });
-  import_electron20.ipcMain.handle("get-connected-devices", async () => getConnectedDevices());
-  import_electron20.ipcMain.handle("set-backup-node", async (_e, isBackup) => {
+  import_electron24.ipcMain.handle("get-connected-devices", async () => getConnectedDevices());
+  import_electron24.ipcMain.handle("set-backup-node", async (_e, isBackup) => {
     const session2 = requireSession();
     if (!isSessionSuperadmin(session2)) {
       throw new Error("Unauthorized: Super Admin access required");
     }
     return setBackupNode(isBackup);
   });
-  import_electron20.ipcMain.handle("get-device-id", async () => getMachineId());
-  import_electron20.ipcMain.handle("restart-app", () => {
-    import_electron20.app.relaunch();
-    import_electron20.app.exit();
+  import_electron24.ipcMain.handle("get-device-id", async () => getMachineId());
+  import_electron24.ipcMain.handle("restart-app", () => {
+    import_electron24.app.relaunch();
+    import_electron24.app.exit();
   });
-  import_electron20.ipcMain.handle("get-network-config", async () => ({}));
-  import_electron20.ipcMain.handle("save-network-config", async () => {
+  import_electron24.ipcMain.handle("get-network-config", async () => ({}));
+  import_electron24.ipcMain.handle("save-network-config", async () => {
     const session2 = requireSession();
     if (!isSessionSuperadmin(session2)) {
       throw new Error("Unauthorized: Super Admin access required");
     }
     return { success: true };
   });
-  import_electron20.ipcMain.handle("test-server-connection", async () => ({ success: false, error: "Network config not applicable in Supabase mode" }));
-  import_electron20.ipcMain.handle("get-local-ip", async () => {
+  import_electron24.ipcMain.handle("test-server-connection", async () => ({ success: false, error: "Network config not applicable in Supabase mode" }));
+  import_electron24.ipcMain.handle("get-local-ip", async () => {
     const ifaces = import_os5.default.networkInterfaces();
     for (const name of Object.keys(ifaces)) {
       for (const iface of ifaces[name] || []) {
@@ -135435,7 +141290,7 @@ function registerHandlers() {
     }
     return "127.0.0.1";
   });
-  import_electron20.ipcMain.handle("check-license-cloud", async () => {
+  import_electron24.ipcMain.handle("check-license-cloud", async () => {
     const localResult = isLicensed();
     if (localResult.valid) return { valid: true, source: "local", machineId: localResult.machineId };
     const { data: data2 } = await supabase_default.from("app_license").select("license_key").limit(1).maybeSingle();
@@ -135447,7 +141302,7 @@ function registerHandlers() {
     }
     return { valid: isValid, source: "cloud", machineId: localResult.machineId };
   });
-  import_electron20.ipcMain.handle("activate-license-cloud", async (_e, { key }) => {
+  import_electron24.ipcMain.handle("activate-license-cloud", async (_e, { key }) => {
     const machineId = getMachineId();
     const isValid = validateLicense(machineId, key);
     if (!isValid) return { success: false, error: "Invalid license key for this machine" };
@@ -135456,7 +141311,7 @@ function registerHandlers() {
       // enforce single row
       license_key: key.replace(/[\s-]/g, "").toUpperCase(),
       activated_by: machineId,
-      app_version: import_electron20.app.getVersion(),
+      app_version: import_electron24.app.getVersion(),
       activated_at: (/* @__PURE__ */ new Date()).toISOString()
     }, { onConflict: "id" });
     if (error51) return { success: false, error: error51.message };
@@ -135464,12 +141319,12 @@ function registerHandlers() {
     bootstrapPublicClientConfig();
     return { success: true };
   });
-  import_electron20.ipcMain.handle("hrm-get-employees", async () => {
+  import_electron24.ipcMain.handle("hrm-get-employees", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("hrm_employees").select("*").order("name");
     if (error51) throw error51;
     return decryptRows(data2 || []);
   });
-  import_electron20.ipcMain.handle("hrm-upsert-employee", async (_e, emp) => {
+  import_electron24.ipcMain.handle("hrm-upsert-employee", async (_e, emp) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -135501,12 +141356,12 @@ function registerHandlers() {
       return { success: true, id: data2.id };
     }
   });
-  import_electron20.ipcMain.handle("get-bill-exchange-count", async (_e, billId) => {
+  import_electron24.ipcMain.handle("get-bill-exchange-count", async (_e, billId) => {
     const { count, error: error51 } = await supabase_default.from("exchange_orders").select("*", { count: "exact", head: true }).eq("original_bill_id", billId);
     if (error51) throw error51;
     return count || 0;
   });
-  import_electron20.ipcMain.handle("hrm-delete-employee", async (_e, id) => {
+  import_electron24.ipcMain.handle("hrm-delete-employee", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -135523,14 +141378,14 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron20.ipcMain.handle("hrm-get-attendance", async (_e, { date: date5 }) => {
+  import_electron24.ipcMain.handle("hrm-get-attendance", async (_e, { date: date5 }) => {
     let q = supabase_default.from("hrm_attendance").select("*, employee:employee_id(name)");
     if (date5) q = q.eq("date", date5);
     const { data: data2, error: error51 } = await q.order("date", { ascending: false });
     if (error51) throw error51;
     return decryptRows(data2 || []);
   });
-  import_electron20.ipcMain.handle("hrm-mark-attendance", async (_e, att) => {
+  import_electron24.ipcMain.handle("hrm-mark-attendance", async (_e, att) => {
     const session2 = requireSession();
     const actor = session2.fullName || session2.username;
     const { error: error51 } = await supabase_default.from("hrm_attendance").upsert({
@@ -135551,12 +141406,12 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron20.ipcMain.handle("hrm-get-leaves", async () => {
+  import_electron24.ipcMain.handle("hrm-get-leaves", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("hrm_leaves").select("*, employee:employee_id(name)").order("created_at", { ascending: false });
     if (error51) throw error51;
     return decryptRows(data2 || []);
   });
-  import_electron20.ipcMain.handle("hrm-request-leave", async (_e, leave) => {
+  import_electron24.ipcMain.handle("hrm-request-leave", async (_e, leave) => {
     const session2 = requireSession();
     const actor = session2.fullName || session2.username;
     const { data: data2, error: error51 } = await supabase_default.from("hrm_leaves").insert(leave).select("id").single();
@@ -135571,7 +141426,7 @@ function registerHandlers() {
     });
     return { success: true, id: data2.id };
   });
-  import_electron20.ipcMain.handle("hrm-update-leave-status", async (_e, { id, status }) => {
+  import_electron24.ipcMain.handle("hrm-update-leave-status", async (_e, { id, status }) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -135589,7 +141444,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron20.ipcMain.handle("hrm-get-payroll", async (_e, { month, year }) => {
+  import_electron24.ipcMain.handle("hrm-get-payroll", async (_e, { month, year }) => {
     let q = supabase_default.from("hrm_payroll").select("*, employee:employee_id(name)");
     if (month) q = q.eq("month", month);
     if (year) q = q.eq("year", year);
@@ -135597,7 +141452,7 @@ function registerHandlers() {
     if (error51) throw error51;
     return decryptRows(data2 || []);
   });
-  import_electron20.ipcMain.handle("hrm-generate-payroll", async (_e, pr) => {
+  import_electron24.ipcMain.handle("hrm-generate-payroll", async (_e, pr) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -135626,7 +141481,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron20.ipcMain.handle("hrm-mark-payroll-paid", async (_e, id) => {
+  import_electron24.ipcMain.handle("hrm-mark-payroll-paid", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -135644,12 +141499,12 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron20.ipcMain.handle("hrm-get-holidays", async () => {
+  import_electron24.ipcMain.handle("hrm-get-holidays", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("hrm_holidays").select("*").order("holiday_date", { ascending: true });
     if (error51) throw error51;
     return data2 || [];
   });
-  import_electron20.ipcMain.handle("hrm-upsert-holiday", async (_e, item) => {
+  import_electron24.ipcMain.handle("hrm-upsert-holiday", async (_e, item) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -135686,7 +141541,7 @@ function registerHandlers() {
       return { success: true };
     }
   });
-  import_electron20.ipcMain.handle("hrm-delete-holiday", async (_e, id) => {
+  import_electron24.ipcMain.handle("hrm-delete-holiday", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -135703,14 +141558,14 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron20.ipcMain.handle("crm-get-customers", async () => {
+  import_electron24.ipcMain.handle("crm-get-customers", async () => {
     const cached2 = get2("billing_customers");
     if (cached2) return cached2;
     const { data: data2, error: error51 } = await supabase_default.from("billing_customers").select("*").order("name");
     if (error51) throw error51;
     return decryptRows(data2 || []);
   });
-  import_electron20.ipcMain.handle("crm-upsert-customer", async (_e, cust) => {
+  import_electron24.ipcMain.handle("crm-upsert-customer", async (_e, cust) => {
     const session2 = requireSession();
     const actor = session2.fullName || session2.username;
     const payload = encryptObject(cust);
@@ -135742,12 +141597,12 @@ function registerHandlers() {
       return { success: true, id: data2.id };
     }
   });
-  import_electron20.ipcMain.handle("crm-get-tracking-logs", async (_e, { customerId }) => {
+  import_electron24.ipcMain.handle("crm-get-tracking-logs", async (_e, { customerId }) => {
     const { data: data2, error: error51 } = await supabase_default.from("crm_tracking").select("*, user:user_id(full_name)").eq("customer_id", customerId).order("created_at", { ascending: false });
     if (error51) throw error51;
     return decryptRows(data2 || []);
   });
-  import_electron20.ipcMain.handle("crm-add-tracking-log", async (_e, log) => {
+  import_electron24.ipcMain.handle("crm-add-tracking-log", async (_e, log) => {
     const session2 = requireSession();
     const actor = session2.fullName || session2.username;
     const safeLog = {
@@ -135766,7 +141621,7 @@ function registerHandlers() {
     });
     return { success: true, id: data2.id };
   });
-  import_electron20.ipcMain.handle("create-quotation", async (_e, payload) => {
+  import_electron24.ipcMain.handle("create-quotation", async (_e, payload) => {
     const session2 = requireSession();
     const actor = session2.fullName || session2.username;
     const actorRole = session2.role;
@@ -135839,19 +141694,19 @@ function registerHandlers() {
     });
     return { id: quot.id, quoteNumber: quot.quote_number };
   });
-  import_electron20.ipcMain.handle("get-quotations", async () => {
+  import_electron24.ipcMain.handle("get-quotations", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("quotations").select("id,quote_number,quote_date,valid_until,customer_name,company_name,grand_total,status").order("created_at", { ascending: false });
     if (error51) throw error51;
     return decryptRows(data2 || []);
   });
-  import_electron20.ipcMain.handle("get-quotation", async (_e, id) => {
+  import_electron24.ipcMain.handle("get-quotation", async (_e, id) => {
     const { data: quot, error: error51 } = await supabase_default.from("quotations").select("*").eq("id", id).single();
     if (error51) throw error51;
     const { data: items } = await supabase_default.from("quotation_items").select("*").eq("quotation_id", id).order("sl_no");
     const decrypted = decryptObject(quot);
     return { ...decrypted, items: items || [] };
   });
-  import_electron20.ipcMain.handle("delete-quotation", async (_e, id) => {
+  import_electron24.ipcMain.handle("delete-quotation", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -135869,7 +141724,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron20.ipcMain.handle("get-customer-ledger-list", async (_e, _opts) => {
+  import_electron24.ipcMain.handle("get-customer-ledger-list", async (_e, _opts) => {
     const session2 = requireSession();
     const isAdmin = isSessionAdminOrSuper(session2);
     const seeAll = isAdmin || !!session2.permissions?.["see_all_customers"] || !!session2.permissions?.["canSeeAllCustomers"];
@@ -135903,7 +141758,7 @@ function registerHandlers() {
       };
     });
   });
-  import_electron20.ipcMain.handle("delete-billing-customer", async (_e, id) => {
+  import_electron24.ipcMain.handle("delete-billing-customer", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -135917,7 +141772,7 @@ function registerHandlers() {
     const { error: error51 } = await supabase_default.from("billing_customers").delete().eq("id", id);
     if (error51) throw error51;
     invalidate("billing_customers");
-    import_electron20.BrowserWindow.getAllWindows().forEach((win) => win.webContents.send("data-updated", "billing_customers"));
+    import_electron24.BrowserWindow.getAllWindows().forEach((win) => win.webContents.send("data-updated", "billing_customers"));
     await writeAuditLog({
       module: "CRM",
       action: "DELETE",
@@ -135928,7 +141783,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron20.ipcMain.handle("get-customer-ledger-detail", async (_e, id) => {
+  import_electron24.ipcMain.handle("get-customer-ledger-detail", async (_e, id) => {
     const { data: cust } = await supabase_default.from("billing_customers").select("*").eq("id", id).single();
     if (!cust) return null;
     const decryptedPhone = decryptField(cust.phone) || cust.phone;
@@ -135956,7 +141811,7 @@ function registerHandlers() {
       make_orders: decryptRows(makeOrdersRes.data || [])
     };
   });
-  import_electron20.ipcMain.handle("get-permission-levels", async () => {
+  import_electron24.ipcMain.handle("get-permission-levels", async () => {
     const { data: data2, error: error51 } = await supabase_default.from("permission_levels").select("*, approver:approver_user_id(full_name, username)").order("workflow_key", { ascending: true, nullsFirst: false }).order("workflow_step", { ascending: true, nullsFirst: false }).order("feature_name");
     if (error51) throw error51;
     return decryptRows(data2 || []).map((p) => ({
@@ -135964,7 +141819,7 @@ function registerHandlers() {
       approver_user_name: p.approver ? p.approver.full_name || p.approver.username : null
     }));
   });
-  import_electron20.ipcMain.handle("create-permission-level", async (_e, payload) => {
+  import_electron24.ipcMain.handle("create-permission-level", async (_e, payload) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Administrator access required.");
@@ -135983,7 +141838,7 @@ function registerHandlers() {
     if (error51) throw error51;
     return { success: true, id: data2.id };
   });
-  import_electron20.ipcMain.handle("update-permission-level", async (_e, payload) => {
+  import_electron24.ipcMain.handle("update-permission-level", async (_e, payload) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Administrator access required.");
@@ -135994,7 +141849,7 @@ function registerHandlers() {
     if (error51) throw error51;
     return { success: true };
   });
-  import_electron20.ipcMain.handle("delete-permission-level", async (_e, id) => {
+  import_electron24.ipcMain.handle("delete-permission-level", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Administrator access required.");
@@ -136003,31 +141858,31 @@ function registerHandlers() {
     if (error51) throw error51;
     return { success: true };
   });
-  import_electron20.ipcMain.handle("save-ai-key", (_e, key) => {
+  import_electron24.ipcMain.handle("save-ai-key", (_e, key) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       return { success: false, error: "Unauthorized: Administrator access required." };
     }
     try {
-      const cfgPath = import_path18.default.join(import_electron20.app.getPath("userData"), "supabase-config.json");
+      const cfgPath = import_path21.default.join(import_electron24.app.getPath("userData"), "supabase-config.json");
       let cfg = {};
-      if (import_fs18.default.existsSync(cfgPath)) cfg = JSON.parse(import_fs18.default.readFileSync(cfgPath, "utf-8"));
+      if (import_fs21.default.existsSync(cfgPath)) cfg = JSON.parse(import_fs21.default.readFileSync(cfgPath, "utf-8"));
       cfg.geminiKey = key ? encryptStandardSecret(key.trim()) : "";
-      import_fs18.default.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), { mode: 384 });
+      import_fs21.default.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), { mode: 384 });
       return { success: true };
     } catch (err) {
       return { success: false, error: err.message };
     }
   });
-  import_electron20.ipcMain.handle("get-ai-key", () => {
+  import_electron24.ipcMain.handle("get-ai-key", () => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       return "";
     }
     try {
-      const cfgPath = import_path18.default.join(import_electron20.app.getPath("userData"), "supabase-config.json");
-      if (import_fs18.default.existsSync(cfgPath)) {
-        const cfg = JSON.parse(import_fs18.default.readFileSync(cfgPath, "utf-8"));
+      const cfgPath = import_path21.default.join(import_electron24.app.getPath("userData"), "supabase-config.json");
+      if (import_fs21.default.existsSync(cfgPath)) {
+        const cfg = JSON.parse(import_fs21.default.readFileSync(cfgPath, "utf-8"));
         if (!cfg.geminiKey) return "";
         return cfg.geminiKey.startsWith("enc:v1:") ? decryptStandardSecret(cfg.geminiKey) : cfg.geminiKey;
       }
@@ -136035,12 +141890,12 @@ function registerHandlers() {
     }
     return "";
   });
-  import_electron20.ipcMain.handle("get-competitor-urls", async (_e, productId) => {
+  import_electron24.ipcMain.handle("get-competitor-urls", async (_e, productId) => {
     const { data: data2, error: error51 } = await supabase_default.from("product_competitor_urls").select("*").eq("product_id", productId).order("created_at", { ascending: false });
     if (error51) throw error51;
     return decryptRows(data2 || []);
   });
-  import_electron20.ipcMain.handle("add-competitor-url", async (_e, data2) => {
+  import_electron24.ipcMain.handle("add-competitor-url", async (_e, data2) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -136057,7 +141912,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron20.ipcMain.handle("delete-competitor-url", async (_e, id) => {
+  import_electron24.ipcMain.handle("delete-competitor-url", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -136074,7 +141929,7 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron20.ipcMain.handle("get-market-analysis-history", async (_e, productId) => {
+  import_electron24.ipcMain.handle("get-market-analysis-history", async (_e, productId) => {
     let q = supabase_default.from("market_analysis_history").select("*, product:products(item_name)").order("recorded_at", { ascending: false });
     if (productId) q = q.eq("product_id", productId);
     const { data: data2, error: error51 } = await q;
@@ -136084,7 +141939,7 @@ function registerHandlers() {
       product_name: row.product ? row.product.item_name : "Unknown Product"
     }));
   });
-  import_electron20.ipcMain.handle("run-auto-price-scan", async (_e, productId) => {
+  import_electron24.ipcMain.handle("run-auto-price-scan", async (_e, productId) => {
     const session2 = requireSession();
     const actor = session2.fullName || session2.username;
     try {
@@ -136134,7 +141989,7 @@ function registerHandlers() {
       return { success: false, error: err.message };
     }
   });
-  import_electron20.ipcMain.handle("verify-bill-payment", async (_e, { paymentRef, status }) => {
+  import_electron24.ipcMain.handle("verify-bill-payment", async (_e, { paymentRef, status }) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -136151,9 +142006,9 @@ function registerHandlers() {
     });
     return { success: true };
   });
-  import_electron20.ipcMain.handle("set-theme", (event, theme) => {
+  import_electron24.ipcMain.handle("set-theme", (event, theme) => {
     requireSession();
-    const win = import_electron20.BrowserWindow.fromWebContents(event.sender);
+    const win = import_electron24.BrowserWindow.fromWebContents(event.sender);
     if (!win) return;
     if (process.platform === "win32" && typeof win.setTitleBarOverlay === "function") {
       try {
@@ -136166,7 +142021,7 @@ function registerHandlers() {
       }
     }
   });
-  import_electron20.ipcMain.handle("get-payment-methods", async () => {
+  import_electron24.ipcMain.handle("get-payment-methods", async () => {
     try {
       const { data: data2, error: error51 } = await supabase_default.from("payment_methods").select("*").order("name");
       if (error51) {
@@ -136187,7 +142042,7 @@ function registerHandlers() {
       ];
     }
   });
-  import_electron20.ipcMain.handle("create-payment-method", async (_e, method) => {
+  import_electron24.ipcMain.handle("create-payment-method", async (_e, method) => {
     try {
       const session2 = requireSession();
       if (!isSessionAdminOrSuper(session2)) {
@@ -136200,7 +142055,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron20.ipcMain.handle("delete-payment-method", async (_e, id) => {
+  import_electron24.ipcMain.handle("delete-payment-method", async (_e, id) => {
     try {
       const session2 = requireSession();
       if (!isSessionAdminOrSuper(session2)) {
@@ -136213,7 +142068,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron20.ipcMain.handle("update-payment-method", async (_e, method) => {
+  import_electron24.ipcMain.handle("update-payment-method", async (_e, method) => {
     try {
       const session2 = requireSession();
       if (!isSessionAdminOrSuper(session2)) {
@@ -136231,7 +142086,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron20.ipcMain.handle("generate-license-key", async (_e, { machineId }) => {
+  import_electron24.ipcMain.handle("generate-license-key", async (_e, { machineId }) => {
     const session2 = requireSession();
     if (!isSessionSuperadmin(session2)) {
       return { success: false, error: "Unauthorized: superadmin access required" };
@@ -136245,12 +142100,12 @@ function registerHandlers() {
     }
     const VERIFICATION_SALT2 = "LE-SOFT-2026-VERIFY-SALT-xK9mQ2";
     const id = machineId.trim();
-    const prefix = import_crypto12.default.createHmac("sha256", VERIFICATION_SALT2).update(id).digest("hex").substring(0, 8).toUpperCase();
-    const body = import_crypto12.default.createHmac("sha256", GENERATION_SECRET).update(id).digest("hex").substring(0, 24).toUpperCase();
+    const prefix = import_crypto14.default.createHmac("sha256", VERIFICATION_SALT2).update(id).digest("hex").substring(0, 8).toUpperCase();
+    const body = import_crypto14.default.createHmac("sha256", GENERATION_SECRET).update(id).digest("hex").substring(0, 24).toUpperCase();
     const formatted = (prefix + body).match(/.{1,4}/g).join("-");
     return { success: true, key: formatted };
   });
-  import_electron20.ipcMain.handle("get-purchase-requisitions", async (_e, filters2) => {
+  import_electron24.ipcMain.handle("get-purchase-requisitions", async (_e, filters2) => {
     try {
       let query = supabase_default.from("purchase_requisitions").select("*").is("deleted_at", null).order("created_at", { ascending: false });
       if (filters2?.status) {
@@ -136302,7 +142157,7 @@ function registerHandlers() {
       return [];
     }
   });
-  import_electron20.ipcMain.handle("get-purchase-requisition-by-id", async (_e, id) => {
+  import_electron24.ipcMain.handle("get-purchase-requisition-by-id", async (_e, id) => {
     try {
       const { data: data2, error: error51 } = await supabase_default.from("purchase_requisitions").select("*").eq("id", id).single();
       if (error51) throw error51;
@@ -136364,12 +142219,12 @@ function registerHandlers() {
       metadata: { type: "purchase_requisition" }
     });
   }
-  import_electron20.ipcMain.handle("get-purchase-requisition-history", async (_e, requisitionId) => {
+  import_electron24.ipcMain.handle("get-purchase-requisition-history", async (_e, requisitionId) => {
     const { data: data2, error: error51 } = await supabase_default.from("purchase_requisition_status_history").select("*").eq("requisition_id", requisitionId).order("performed_at", { ascending: false });
     if (error51) throw error51;
     return data2 || [];
   });
-  import_electron20.ipcMain.handle("create-purchase-requisition", async (_e, input) => {
+  import_electron24.ipcMain.handle("create-purchase-requisition", async (_e, input) => {
     const session2 = requireSession();
     try {
       const userName = session2.fullName || session2.username;
@@ -136452,7 +142307,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron20.ipcMain.handle("update-purchase-requisition", async (_e, id, updates) => {
+  import_electron24.ipcMain.handle("update-purchase-requisition", async (_e, id, updates) => {
     const session2 = requireSession();
     try {
       const userName = session2.fullName || session2.username;
@@ -136515,7 +142370,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron20.ipcMain.handle("approve-purchase-requisition", async (_e, id, _status, notes) => {
+  import_electron24.ipcMain.handle("approve-purchase-requisition", async (_e, id, _status, notes) => {
     const session2 = requireSession();
     const isAdmin = isSessionAdminOrSuper(session2);
     const isStoreHead = session2.role === "Store Head" || session2.role === "store_head";
@@ -136563,7 +142418,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron20.ipcMain.handle("submit-purchase-estimates", async (_e, id, quotes) => {
+  import_electron24.ipcMain.handle("submit-purchase-estimates", async (_e, id, quotes) => {
     const session2 = requireSession();
     try {
       const userName = session2.fullName || session2.username;
@@ -136640,7 +142495,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron20.ipcMain.handle("get-purchase-requisition-quotes", async (_e, id) => {
+  import_electron24.ipcMain.handle("get-purchase-requisition-quotes", async (_e, id) => {
     const db2 = supabaseAdmin || supabase_default;
     const { data: data2, error: error51 } = await db2.from("purchase_requisition_quotes").select("*, supplier:ledgers(id,name,store_name,contact_person,contact_number), product:products(id,name)").eq("requisition_id", id).order("created_at", { ascending: true });
     if (error51) throw error51;
@@ -136656,12 +142511,12 @@ function registerHandlers() {
     });
     return decryptedData;
   });
-  import_electron20.ipcMain.handle("get-product-purchase-history", async (_e, productId) => {
+  import_electron24.ipcMain.handle("get-product-purchase-history", async (_e, productId) => {
     const { data: data2, error: error51 } = await supabase_default.from("purchase_bill_items").select("rate, amount, qty, purchase_bill:purchase_bills(bill_date, supplier:ledgers(name))").eq("product_id", productId).order("id", { ascending: false }).limit(5);
     if (error51) throw error51;
     return data2 || [];
   });
-  import_electron20.ipcMain.handle("audit-review-purchase-requisition", async (_e, id, status, notes) => {
+  import_electron24.ipcMain.handle("audit-review-purchase-requisition", async (_e, id, status, notes) => {
     const session2 = requireSession();
     const isAdmin = isSessionAdminOrSuper(session2);
     const isAuditor = session2.role === "Auditor" || session2.role === "auditor";
@@ -136706,7 +142561,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron20.ipcMain.handle("director-review-purchase-requisition", async (_e, id, status, notes) => {
+  import_electron24.ipcMain.handle("director-review-purchase-requisition", async (_e, id, status, notes) => {
     const session2 = requireSession();
     const isAdmin = isSessionAdminOrSuper(session2);
     const isDirector = session2.role === "Director" || session2.role === "director";
@@ -136750,7 +142605,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron20.ipcMain.handle("purchase-purchase-requisition", async (_e, id, payload) => {
+  import_electron24.ipcMain.handle("purchase-purchase-requisition", async (_e, id, payload) => {
     const session2 = requireSession();
     const isAdmin = isSessionAdminOrSuper(session2);
     const hasPerm = !!session2.permissions?.["purchase_requisition"] || !!session2.permissions?.["can_purchase_requisition"];
@@ -136827,7 +142682,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron20.ipcMain.handle("receive-purchase-requisition", async (_e, id) => {
+  import_electron24.ipcMain.handle("receive-purchase-requisition", async (_e, id) => {
     const session2 = requireSession();
     try {
       const userName = session2.fullName || session2.username;
@@ -136858,7 +142713,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron20.ipcMain.handle("complete-purchase-requisition", async (_e, id) => {
+  import_electron24.ipcMain.handle("complete-purchase-requisition", async (_e, id) => {
     const session2 = requireSession();
     try {
       const userName = session2.fullName || session2.username;
@@ -136948,7 +142803,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron20.ipcMain.handle("delete-purchase-requisition", async (_e, id) => {
+  import_electron24.ipcMain.handle("delete-purchase-requisition", async (_e, id) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -136973,7 +142828,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron20.ipcMain.handle("get-supplier-settlements", async (_e, supplierLedgerId) => {
+  import_electron24.ipcMain.handle("get-supplier-settlements", async (_e, supplierLedgerId) => {
     let q = supabase_default.from("supplier_settlements").select("*, purchase_bill:purchase_bills(bill_number, bill_date, grand_total), supplier:ledgers(name)").is("deleted_at", null).order("settlement_date", { ascending: false });
     if (supplierLedgerId) q = q.eq("supplier_ledger_id", supplierLedgerId);
     const { data: data2, error: error51 } = await q;
@@ -136984,7 +142839,7 @@ function registerHandlers() {
       purchase_bill_number: row.purchase_bill?.bill_number || null
     }));
   });
-  import_electron20.ipcMain.handle("create-supplier-settlement", async (_e, settlement) => {
+  import_electron24.ipcMain.handle("create-supplier-settlement", async (_e, settlement) => {
     const session2 = requireSession();
     if (!isSessionAdminOrSuper(session2)) {
       throw new Error("Unauthorized: Admin or Super Admin access required");
@@ -137021,7 +142876,7 @@ function registerHandlers() {
     await notifyProcurementWorkflow("Supplier settlement recorded", `Settlement posted for supplier ledger ${payload.supplier_ledger_id}.`);
     return { success: true, id: data2.id };
   });
-  import_electron20.ipcMain.handle("website-get-dashboard-data", async () => {
+  import_electron24.ipcMain.handle("website-get-dashboard-data", async () => {
     try {
       const { count: billCount } = await supabase_default.from("bills").select("*", { count: "exact", head: true });
       const { count: customerCount } = await supabase_default.from("billing_customers").select("*", { count: "exact", head: true });
@@ -137045,7 +142900,7 @@ function registerHandlers() {
       };
     }
   });
-  import_electron20.ipcMain.handle("report-client-error", async (_e, payload) => {
+  import_electron24.ipcMain.handle("report-client-error", async (_e, payload) => {
     try {
       const { TelemetryEngine: TelemetryEngine2 } = (init_TelemetryEngine(), __toCommonJS(TelemetryEngine_exports));
       const session2 = SessionManager.getSession();
@@ -137067,7 +142922,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron20.ipcMain.handle("get-telemetry-status", async () => {
+  import_electron24.ipcMain.handle("get-telemetry-status", async () => {
     try {
       const { TelemetryEngine: TelemetryEngine2 } = (init_TelemetryEngine(), __toCommonJS(TelemetryEngine_exports));
       return { success: true, data: TelemetryEngine2.getInstance().getStatus() };
@@ -137075,7 +142930,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron20.ipcMain.handle("set-telemetry-enabled", async (_e, enabled) => {
+  import_electron24.ipcMain.handle("set-telemetry-enabled", async (_e, enabled) => {
     try {
       const { TelemetryEngine: TelemetryEngine2 } = (init_TelemetryEngine(), __toCommonJS(TelemetryEngine_exports));
       TelemetryEngine2.getInstance().setEnabled(enabled);
@@ -137084,7 +142939,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron20.ipcMain.handle("send-diagnostic-test", async () => {
+  import_electron24.ipcMain.handle("send-diagnostic-test", async () => {
     try {
       const { TelemetryEngine: TelemetryEngine2 } = (init_TelemetryEngine(), __toCommonJS(TelemetryEngine_exports));
       const res = await TelemetryEngine2.getInstance().sendDiagnosticTest();
@@ -137093,7 +142948,7 @@ function registerHandlers() {
       return { success: false, message: e2.message };
     }
   });
-  import_electron20.ipcMain.handle("export-diagnostic-log", async () => {
+  import_electron24.ipcMain.handle("export-diagnostic-log", async () => {
     try {
       const { TelemetryEngine: TelemetryEngine2 } = (init_TelemetryEngine(), __toCommonJS(TelemetryEngine_exports));
       return await TelemetryEngine2.getInstance().exportDiagnosticLog();
@@ -137101,7 +142956,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron20.ipcMain.handle("get-admin-error-reports", async (_e, params) => {
+  import_electron24.ipcMain.handle("get-admin-error-reports", async (_e, params) => {
     const session2 = SessionManager.getSession();
     if (session2 && !isSessionAdminOrSuper(session2)) {
       return { success: false, error: "Unauthorized: Admin or Superadmin role required." };
@@ -137113,7 +142968,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron20.ipcMain.handle("prune-remote-reports", async (_e, params) => {
+  import_electron24.ipcMain.handle("prune-remote-reports", async (_e, params) => {
     const session2 = SessionManager.getSession();
     if (session2 && !isSessionAdminOrSuper(session2)) {
       return { success: false, error: "Unauthorized: Admin or Superadmin role required." };
@@ -137125,7 +142980,7 @@ function registerHandlers() {
       return { success: false, error: e2.message };
     }
   });
-  import_electron20.ipcMain.handle("diagnose-image", async (_e, rawSrc) => {
+  import_electron24.ipcMain.handle("diagnose-image", async (_e, rawSrc) => {
     try {
       const { MediaProtocolService: MediaProtocolService2 } = (init_MediaProtocolService(), __toCommonJS(MediaProtocolService_exports));
       return await MediaProtocolService2.getInstance().diagnoseImage(rawSrc);
@@ -137139,17 +142994,17 @@ function registerHandlers() {
       };
     }
   });
-  import_electron20.ipcMain.handle("resolve-image-src", (_e, imagePath) => {
+  import_electron24.ipcMain.handle("resolve-image-src", (_e, imagePath) => {
     return imagePath || "";
   });
-  import_electron20.ipcMain.handle("get-nas-connection-status", async () => {
+  import_electron24.ipcMain.handle("get-nas-connection-status", async () => {
     try {
       return NASConnectionManager.getInstance().getSafeStatus();
     } catch {
       return { status: "Offline", lastSync: 0, isNasOnline: false };
     }
   });
-  import_electron20.ipcMain.handle("get-notification-settings", async () => {
+  import_electron24.ipcMain.handle("get-notification-settings", async () => {
     try {
       return WindowsNotificationService.getInstance().getSettings();
     } catch {
@@ -137162,38 +143017,179 @@ function registerHandlers() {
       };
     }
   });
-  import_electron20.ipcMain.handle("update-notification-settings", async (_e, settings) => {
+  import_electron24.ipcMain.handle("update-notification-settings", async (_e, settings) => {
     try {
       return WindowsNotificationService.getInstance().updateSettings(settings);
     } catch (e2) {
       return { success: false, error: e2.message };
     }
   });
-  import_electron20.ipcMain.handle("show-windows-notification", async (_e, options) => {
+  import_electron24.ipcMain.handle("show-windows-notification", async (_e, options) => {
     try {
       return WindowsNotificationService.getInstance().showNotification(options);
     } catch {
       return false;
     }
   });
-  import_electron20.ipcMain.on("watchdog-pong", () => {
+  import_electron24.ipcMain.on("watchdog-pong", () => {
     try {
       WatchdogService.getInstance().recordRendererHeartbeat();
     } catch {
     }
   });
-  import_electron20.ipcMain.handle("get-stability-diagnostics", async () => {
+  import_electron24.ipcMain.handle("get-stability-diagnostics", async () => {
     try {
       return WatchdogService.getInstance().getSanitizedDiagnostics();
     } catch {
       return [];
     }
   });
+  import_electron24.ipcMain.handle("get-outbox-status", async () => {
+    try {
+      return DurableOutboxService.getInstance().getStats();
+    } catch {
+      return {
+        totalPending: 0,
+        bufferedSupabase: 0,
+        blockedDependencies: 0,
+        deadLetterCount: 0,
+        oldestPendingTime: null,
+        recentErrors: []
+      };
+    }
+  });
+  import_electron24.ipcMain.handle("get-dead-letter-operations", async () => {
+    try {
+      return DurableOutboxService.getInstance().getDeadLetters();
+    } catch {
+      return [];
+    }
+  });
+  import_electron24.ipcMain.handle("replay-dead-letter-operation", async (_e, id) => {
+    try {
+      return { success: DurableOutboxService.getInstance().replayDeadLetter(id) };
+    } catch (e2) {
+      return { success: false, error: e2.message };
+    }
+  });
+  import_electron24.ipcMain.handle("replay-all-dead-letters", async () => {
+    try {
+      return { count: DurableOutboxService.getInstance().replayAllDeadLetters() };
+    } catch (e2) {
+      return { count: 0, error: e2.message };
+    }
+  });
+  import_electron24.ipcMain.handle("get-supabase-quota-status", async () => {
+    try {
+      return SupabaseQuotaManager.getInstance().getQuotaStatus();
+    } catch {
+      return null;
+    }
+  });
+  import_electron24.ipcMain.handle("audit-supabase-quota", async () => {
+    try {
+      return await SupabaseQuotaManager.getInstance().auditUsage();
+    } catch (e2) {
+      return { error: e2.message };
+    }
+  });
+  import_electron24.ipcMain.handle("get-consolidated-health", async () => {
+    try {
+      const engine = ConsolidatedHealthEngine.getInstance();
+      return {
+        state: engine.getCurrentState(),
+        probes: engine.getProbeDetails()
+      };
+    } catch {
+      return null;
+    }
+  });
+  import_electron24.ipcMain.handle("get-pending-uploads", async () => {
+    try {
+      return DurableUploadService.getInstance().getStagedUploads();
+    } catch {
+      return [];
+    }
+  });
+  import_electron24.ipcMain.handle("retry-staged-upload", async (_e, id) => {
+    try {
+      return await DurableUploadService.getInstance().dispatchUpload(id);
+    } catch (e2) {
+      return { success: false, error: e2.message };
+    }
+  });
 }
 
 // electron/main.ts
+init_field_encryption();
 init_supabase();
 init_MediaProtocolService();
+
+// electron/services/updater/versionCompare.ts
+var SEMVER_RE = /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+function parseVersion(input) {
+  if (typeof input !== "string") return null;
+  const m2 = SEMVER_RE.exec(input.trim());
+  if (!m2) return null;
+  const prerelease = m2[4] ? m2[4].split(".").map((id) => /^\d+$/.test(id) ? Number(id) : id) : [];
+  return { major: Number(m2[1]), minor: Number(m2[2]), patch: Number(m2[3]), prerelease };
+}
+function isPrereleaseVersion(input) {
+  const p = parseVersion(input);
+  return !!p && p.prerelease.length > 0;
+}
+function compareIdentifiers(a, b) {
+  const aNum = typeof a === "number";
+  const bNum = typeof b === "number";
+  if (aNum && bNum) return a === b ? 0 : a < b ? -1 : 1;
+  if (aNum) return -1;
+  if (bNum) return 1;
+  return a === b ? 0 : a < b ? -1 : 1;
+}
+function compareVersions(a, b) {
+  const pa = parseVersion(a);
+  const pb = parseVersion(b);
+  if (!pa || !pb) return null;
+  for (const key of ["major", "minor", "patch"]) {
+    if (pa[key] !== pb[key]) return pa[key] > pb[key] ? 1 : -1;
+  }
+  const aPre = pa.prerelease;
+  const bPre = pb.prerelease;
+  if (aPre.length === 0 && bPre.length === 0) return 0;
+  if (aPre.length === 0) return 1;
+  if (bPre.length === 0) return -1;
+  const len = Math.max(aPre.length, bPre.length);
+  for (let i2 = 0; i2 < len; i2++) {
+    if (i2 >= aPre.length) return -1;
+    if (i2 >= bPre.length) return 1;
+    const c = compareIdentifiers(aPre[i2], bPre[i2]);
+    if (c !== 0) return c;
+  }
+  return 0;
+}
+function isNewerVersion(candidate, current) {
+  return compareVersions(candidate, current) === 1;
+}
+function getManualUpdateFeedUrl(owner, repo) {
+  return `https://api.github.com/repos/${owner}/${repo}/releases?per_page=30`;
+}
+function selectManualUpdateRelease(currentVersion, releases) {
+  if (!parseVersion(currentVersion) || !Array.isArray(releases)) return null;
+  const allowPrerelease = isPrereleaseVersion(currentVersion);
+  let best = null;
+  for (const rel of releases) {
+    if (!rel || rel.draft) continue;
+    const tag = rel.tag_name;
+    if (!parseVersion(tag)) continue;
+    const isPre = rel.prerelease === true || isPrereleaseVersion(tag);
+    if (isPre && !allowPrerelease) continue;
+    if (!isNewerVersion(tag, currentVersion)) continue;
+    if (!best || compareVersions(tag, best.tag_name) === 1) best = rel;
+  }
+  return best;
+}
+
+// electron/main.ts
 MediaProtocolService.registerSchemeAsPrivileged();
 function sanitizeUpdaterLog(msg) {
   if (typeof msg !== "string") {
@@ -137207,8 +143203,8 @@ function sanitizeUpdaterLog(msg) {
 }
 function appendUpdaterLog(msg) {
   try {
-    const logPath = import_path19.default.join(import_electron21.app.getPath("userData"), "app.log");
-    import_fs19.default.appendFileSync(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
+    const logPath = import_path22.default.join(import_electron25.app.getPath("userData"), "app.log");
+    import_fs22.default.appendFileSync(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
 `);
   } catch {
   }
@@ -137231,7 +143227,7 @@ function setupAutoUpdater() {
       appendUpdaterLog(`[Updater ERROR] ${clean}`);
     },
     debug: (msg) => {
-      if (!import_electron21.app.isPackaged) {
+      if (!import_electron25.app.isPackaged) {
         console.log(`[Updater DEBUG] ${sanitizeUpdaterLog(msg)}`);
       }
     }
@@ -137245,21 +143241,21 @@ function setupAutoUpdater() {
     appendUpdaterLog(`[Updater ERROR] Failed to configure autoUpdater: ${sanitizeUpdaterLog(e2.message)}`);
   }
   const broadcast = (data2) => {
-    import_electron21.BrowserWindow.getAllWindows().forEach((win) => {
+    import_electron25.BrowserWindow.getAllWindows().forEach((win) => {
       if (!win.isDestroyed()) win.webContents.send("update-status", data2);
     });
   };
-  if (import_electron21.app.isPackaged) {
+  if (import_electron25.app.isPackaged) {
     import_electron_updater2.autoUpdater.on("checking-for-update", () => {
       updaterLogger.info("Checking for update at provider feed...");
       broadcast({ status: "checking" });
     });
     import_electron_updater2.autoUpdater.on("update-not-available", (info) => {
-      updaterLogger.info(`Update check complete: application is up-to-date (v${import_electron21.app.getVersion()})`);
+      updaterLogger.info(`Update check complete: application is up-to-date (v${import_electron25.app.getVersion()})`);
       broadcast({ status: "up-to-date", info });
     });
     import_electron_updater2.autoUpdater.on("update-available", (info) => {
-      updaterLogger.info(`Update available: v${info?.version} (current: v${import_electron21.app.getVersion()})`);
+      updaterLogger.info(`Update available: v${info?.version} (current: v${import_electron25.app.getVersion()})`);
       broadcast({ status: "available", info });
     });
     import_electron_updater2.autoUpdater.on("error", (err) => {
@@ -137277,41 +143273,30 @@ function setupAutoUpdater() {
   }
   const performManualMacCheck = async () => {
     try {
-      const response = await fetch("https://api.github.com/repos/sabbir-404/Leading-Edge-ECO-System/releases/latest");
+      const response = await fetch(getManualUpdateFeedUrl("sabbir-404", "Leading-Edge-ECO-System"));
       if (!response.ok) return;
-      const data2 = await response.json();
-      if (data2 && data2.tag_name) {
-        const current = import_electron21.app.getVersion().replace("v", "").split(".").map(Number);
-        const latest = data2.tag_name.replace("v", "").split(".").map(Number);
-        let isNewer = false;
-        for (let i2 = 0; i2 < 3; i2++) {
-          if ((latest[i2] || 0) > (current[i2] || 0)) {
-            isNewer = true;
-            break;
+      const releases = await response.json();
+      const currentVersion = import_electron25.app.getVersion();
+      const newer = selectManualUpdateRelease(currentVersion, releases);
+      if (newer) {
+        updaterLogger.info(`Manual fallback: ${newer.tag_name} available (current: v${currentVersion})`);
+        broadcast({
+          status: "available",
+          isManual: true,
+          info: {
+            version: newer.tag_name,
+            releaseNotes: "Automatic installation is unavailable because this Mac build is unsigned. Please download the latest version from the releases page manually."
           }
-          if ((latest[i2] || 0) < (current[i2] || 0)) {
-            break;
-          }
-        }
-        if (isNewer) {
-          broadcast({
-            status: "available",
-            isManual: true,
-            info: {
-              version: data2.tag_name,
-              releaseNotes: "Automatic installation is unavailable because this Mac build is unsigned. Please download the latest version from the releases page manually."
-            }
-          });
-        } else {
-          broadcast({ status: "up-to-date" });
-        }
+        });
+      } else {
+        broadcast({ status: "up-to-date" });
       }
     } catch (err) {
       updaterLogger.error(`Manual fallback fetch failed: ${sanitizeUpdaterLog(err?.message)}`);
     }
   };
-  import_electron21.ipcMain.handle("check-for-update", async () => {
-    if (!import_electron21.app.isPackaged) {
+  import_electron25.ipcMain.handle("check-for-update", async () => {
+    if (!import_electron25.app.isPackaged) {
       return { status: "up-to-date" };
     }
     try {
@@ -137328,8 +143313,8 @@ function setupAutoUpdater() {
       return { status: "error", message: cleanMsg };
     }
   });
-  import_electron21.ipcMain.handle("download-update", async () => {
-    if (!import_electron21.app.isPackaged) return { status: "idle" };
+  import_electron25.ipcMain.handle("download-update", async () => {
+    if (!import_electron25.app.isPackaged) return { status: "idle" };
     try {
       updaterLogger.info("download-update requested via IPC");
       await import_electron_updater2.autoUpdater.downloadUpdate();
@@ -137341,8 +143326,8 @@ function setupAutoUpdater() {
       return { status: "error", message: cleanMsg, phase: "download" };
     }
   });
-  import_electron21.ipcMain.handle("install-update", async () => {
-    if (!import_electron21.app.isPackaged) return { status: "idle" };
+  import_electron25.ipcMain.handle("install-update", async () => {
+    if (!import_electron25.app.isPackaged) return { status: "idle" };
     try {
       updaterLogger.info("install-update requested via IPC \u2014 calling quitAndInstall");
       import_electron_updater2.autoUpdater.quitAndInstall(false, true);
@@ -137354,8 +143339,8 @@ function setupAutoUpdater() {
       return { status: "error", message: cleanMsg, phase: "install" };
     }
   });
-  import_electron21.ipcMain.handle("get-app-version", () => import_electron21.app.getVersion());
-  if (import_electron21.app.isPackaged) {
+  import_electron25.ipcMain.handle("get-app-version", () => import_electron25.app.getVersion());
+  if (import_electron25.app.isPackaged) {
     setTimeout(() => {
       updaterLogger.info("Running automated 5s startup update check...");
       import_electron_updater2.autoUpdater.checkForUpdates().catch((e2) => {
@@ -137369,17 +143354,17 @@ function setupAutoUpdater() {
   }
 }
 function createWindow() {
-  import_electron21.Menu.setApplicationMenu(null);
+  import_electron25.Menu.setApplicationMenu(null);
   const lockFilePath = getLockFilePath();
-  if (import_fs19.default.existsSync(lockFilePath)) {
+  if (import_fs22.default.existsSync(lockFilePath)) {
     let lockReason = "tampering detected";
     try {
-      const content = import_fs19.default.readFileSync(lockFilePath, "utf-8");
+      const content = import_fs22.default.readFileSync(lockFilePath, "utf-8");
       const data2 = JSON.parse(content);
       if (data2.reason) lockReason = data2.reason;
     } catch {
     }
-    const win2 = new import_electron21.BrowserWindow({
+    const win2 = new import_electron25.BrowserWindow({
       width: 600,
       height: 400,
       resizable: false,
@@ -137467,17 +143452,17 @@ function createWindow() {
     win2.show();
     return;
   }
-  const logPath = import_path19.default.join(import_electron21.app.getPath("userData"), "app.log");
+  const logPath = import_path22.default.join(import_electron25.app.getPath("userData"), "app.log");
   const log = (msg) => {
     const entry = `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
 `;
-    import_fs19.default.appendFileSync(logPath, entry);
+    import_fs22.default.appendFileSync(logPath, entry);
     console.log(msg);
   };
   log("Creating window...");
   const isMac = process.platform === "darwin";
-  const iconFile = isMac ? import_path19.default.join(__dirname, "../Logo/icon.icns") : import_path19.default.join(import_path19.default.dirname(import_path19.default.dirname(__dirname)), "icon.ico");
-  const win = new import_electron21.BrowserWindow({
+  const iconFile = isMac ? import_path22.default.join(__dirname, "../Logo/icon.icns") : import_path22.default.join(import_path22.default.dirname(import_path22.default.dirname(__dirname)), "icon.ico");
+  const win = new import_electron25.BrowserWindow({
     width: 1280,
     height: 800,
     webPreferences: {
@@ -137486,7 +143471,7 @@ function createWindow() {
       sandbox: false,
       webSecurity: true,
       allowRunningInsecureContent: false,
-      preload: import_path19.default.join(__dirname, "preload.cjs")
+      preload: import_path22.default.join(__dirname, "preload.cjs")
     },
     icon: iconFile,
     backgroundColor: "#f5f6fa",
@@ -137512,13 +143497,13 @@ function createWindow() {
   } catch (e2) {
     log(`Failed to attach watchdog or background services to window: ${e2.message}`);
   }
-  if (import_electron21.app.isPackaged) {
+  if (import_electron25.app.isPackaged) {
     win.webContents.on("devtools-opened", () => {
       triggerSystemLockout("DevTools opened in production");
     });
   }
-  if (import_electron21.app.isPackaged) {
-    win.loadFile(import_path19.default.join(__dirname, "../resource/index.html"));
+  if (import_electron25.app.isPackaged) {
+    win.loadFile(import_path22.default.join(__dirname, "../resource/index.html"));
   } else {
     const tryLoad = (retries = 10) => {
       win.loadURL("http://localhost:5173").catch(() => {
@@ -137527,7 +143512,7 @@ function createWindow() {
           setTimeout(() => tryLoad(retries - 1), 1e3);
         } else {
           console.error("[Main] Dev server unavailable. Falling back to resource/index.html");
-          win.loadFile(import_path19.default.join(__dirname, "../resource/index.html")).catch(console.error);
+          win.loadFile(import_path22.default.join(__dirname, "../resource/index.html")).catch(console.error);
         }
       });
     };
@@ -137535,7 +143520,7 @@ function createWindow() {
   }
   win.once("ready-to-show", () => {
     win.show();
-    if (!import_electron21.app.isPackaged) {
+    if (!import_electron25.app.isPackaged) {
       win.webContents.openDevTools();
     }
   });
@@ -137545,20 +143530,20 @@ function createWindow() {
     }
   }, 3e3);
   win.webContents.on("did-fail-load", (_, errorCode, errorDescription, validatedURL) => {
-    const lp = import_path19.default.join(import_electron21.app.getPath("userData"), "app.log");
-    import_fs19.default.appendFileSync(lp, `[${(/* @__PURE__ */ new Date()).toISOString()}] LOAD FAILED: ${errorCode} ${errorDescription} @ ${validatedURL}
+    const lp = import_path22.default.join(import_electron25.app.getPath("userData"), "app.log");
+    import_fs22.default.appendFileSync(lp, `[${(/* @__PURE__ */ new Date()).toISOString()}] LOAD FAILED: ${errorCode} ${errorDescription} @ ${validatedURL}
 `);
   });
   win.webContents.on("console-message", (_, level, message, line, sourceId) => {
     if (level >= 2) {
-      const lp = import_path19.default.join(import_electron21.app.getPath("userData"), "app.log");
-      import_fs19.default.appendFileSync(lp, `[${(/* @__PURE__ */ new Date()).toISOString()}] RENDERER[${level}]: ${message} (${sourceId}:${line})
+      const lp = import_path22.default.join(import_electron25.app.getPath("userData"), "app.log");
+      import_fs22.default.appendFileSync(lp, `[${(/* @__PURE__ */ new Date()).toISOString()}] RENDERER[${level}]: ${message} (${sourceId}:${line})
 `);
     }
   });
   win.webContents.on("render-process-gone", (_event, details) => {
-    const lp = import_path19.default.join(import_electron21.app.getPath("userData"), "app.log");
-    import_fs19.default.appendFileSync(lp, `[${(/* @__PURE__ */ new Date()).toISOString()}] RENDER PROCESS GONE: ${details.reason} (exit: ${details.exitCode})
+    const lp = import_path22.default.join(import_electron25.app.getPath("userData"), "app.log");
+    import_fs22.default.appendFileSync(lp, `[${(/* @__PURE__ */ new Date()).toISOString()}] RENDER PROCESS GONE: ${details.reason} (exit: ${details.exitCode})
 `);
     try {
       const { TelemetryEngine: TelemetryEngine2 } = (init_TelemetryEngine(), __toCommonJS(TelemetryEngine_exports));
@@ -137573,8 +143558,8 @@ function createWindow() {
     }
   });
   win.webContents.on("unresponsive", () => {
-    const lp = import_path19.default.join(import_electron21.app.getPath("userData"), "app.log");
-    import_fs19.default.appendFileSync(lp, `[${(/* @__PURE__ */ new Date()).toISOString()}] RENDERER UNRESPONSIVE
+    const lp = import_path22.default.join(import_electron25.app.getPath("userData"), "app.log");
+    import_fs22.default.appendFileSync(lp, `[${(/* @__PURE__ */ new Date()).toISOString()}] RENDERER UNRESPONSIVE
 `);
     try {
       const { TelemetryEngine: TelemetryEngine2 } = (init_TelemetryEngine(), __toCommonJS(TelemetryEngine_exports));
@@ -137614,7 +143599,7 @@ function createWindow() {
   });
   win.on("close", (e2) => {
     e2.preventDefault();
-    const choice = import_electron21.dialog.showMessageBoxSync(win, {
+    const choice = import_electron25.dialog.showMessageBoxSync(win, {
       type: "question",
       buttons: ["Yes, Close", "Cancel"],
       defaultId: 1,
@@ -137630,12 +143615,12 @@ function createWindow() {
     }
   });
 }
-import_electron21.app.disableHardwareAcceleration();
+import_electron25.app.disableHardwareAcceleration();
 process.on("uncaughtException", (error51) => {
   console.error("[MAIN:FATAL] Uncaught Exception:", error51);
   try {
-    const lp = import_path19.default.join(import_electron21.app.getPath("userData"), "app.log");
-    import_fs19.default.appendFileSync(lp, `[${(/* @__PURE__ */ new Date()).toISOString()}] UNCAUGHT EXCEPTION: ${error51?.stack || error51}
+    const lp = import_path22.default.join(import_electron25.app.getPath("userData"), "app.log");
+    import_fs22.default.appendFileSync(lp, `[${(/* @__PURE__ */ new Date()).toISOString()}] UNCAUGHT EXCEPTION: ${error51?.stack || error51}
 `);
   } catch {
   }
@@ -137654,8 +143639,8 @@ process.on("uncaughtException", (error51) => {
 process.on("unhandledRejection", (reason) => {
   console.error("[MAIN] Unhandled Promise Rejection:", reason);
   try {
-    const lp = import_path19.default.join(import_electron21.app.getPath("userData"), "app.log");
-    import_fs19.default.appendFileSync(lp, `[${(/* @__PURE__ */ new Date()).toISOString()}] UNHANDLED REJECTION: ${reason instanceof Error ? reason.stack : reason}
+    const lp = import_path22.default.join(import_electron25.app.getPath("userData"), "app.log");
+    import_fs22.default.appendFileSync(lp, `[${(/* @__PURE__ */ new Date()).toISOString()}] UNHANDLED REJECTION: ${reason instanceof Error ? reason.stack : reason}
 `);
   } catch {
   }
@@ -137670,11 +143655,11 @@ process.on("unhandledRejection", (reason) => {
   } catch {
   }
 });
-import_electron21.app.whenReady().then(() => {
-  const logPath = import_path19.default.join(import_electron21.app.getPath("userData"), "app.log");
-  const log = (msg) => import_fs19.default.appendFileSync(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
+import_electron25.app.whenReady().then(() => {
+  const logPath = import_path22.default.join(import_electron25.app.getPath("userData"), "app.log");
+  const log = (msg) => import_fs22.default.appendFileSync(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
 `);
-  if (import_electron21.app.isPackaged) {
+  if (import_electron25.app.isPackaged) {
     const args = process.argv || [];
     const hasDebugArgs = args.some(
       (arg) => arg.startsWith("--inspect") || arg.startsWith("--remote-debugging-port") || arg.startsWith("--remote-debugging-pipe")
@@ -137682,7 +143667,7 @@ import_electron21.app.whenReady().then(() => {
     if (hasDebugArgs) {
       const lockFilePath2 = getLockFilePath();
       try {
-        import_fs19.default.writeFileSync(lockFilePath2, JSON.stringify({
+        import_fs22.default.writeFileSync(lockFilePath2, JSON.stringify({
           timestamp: (/* @__PURE__ */ new Date()).toISOString(),
           reason: "unauthorized debugging command-line flags"
         }, null, 2), "utf-8");
@@ -137691,7 +143676,7 @@ import_electron21.app.whenReady().then(() => {
     }
   }
   const lockFilePath = getLockFilePath();
-  if (import_fs19.default.existsSync(lockFilePath)) {
+  if (import_fs22.default.existsSync(lockFilePath)) {
     log("App starting in LOCKED mode. Aborting initialization.");
     createWindow();
     return;
@@ -137712,7 +143697,7 @@ import_electron21.app.whenReady().then(() => {
   createWindow();
   log("Window created call done");
   try {
-    import_electron21.session.defaultSession.webRequest.onBeforeSendHeaders(
+    import_electron25.session.defaultSession.webRequest.onBeforeSendHeaders(
       { urls: ["https://storage.lenas.me/*"] },
       (details, callback) => {
         const cfHeaders = getCfAccessHeaders();
@@ -137725,7 +143710,7 @@ import_electron21.app.whenReady().then(() => {
     log(`CF Access interceptor setup failed: ${e2.message}`);
   }
   try {
-    import_electron21.session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    import_electron25.session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
       const responseHeaders = { ...details.responseHeaders };
       if (!responseHeaders["content-security-policy"] && !responseHeaders["Content-Security-Policy"]) {
         responseHeaders["Content-Security-Policy"] = [
@@ -137771,15 +143756,15 @@ import_electron21.app.whenReady().then(() => {
       log(`Service start error: ${e2.message}`);
     }
   })();
-  import_electron21.app.on("activate", () => {
-    if (import_electron21.BrowserWindow.getAllWindows().length === 0) {
+  import_electron25.app.on("activate", () => {
+    if (import_electron25.BrowserWindow.getAllWindows().length === 0) {
       createWindow();
     }
   });
 });
 var isQuitting = false;
 var cleanupDone = false;
-import_electron21.app.on("before-quit", async (event) => {
+import_electron25.app.on("before-quit", async (event) => {
   if (cleanupDone) {
     return;
   }
@@ -137798,14 +143783,14 @@ import_electron21.app.on("before-quit", async (event) => {
     const { TelemetryEngine: TelemetryEngine2 } = (init_TelemetryEngine(), __toCommonJS(TelemetryEngine_exports));
     await Promise.race([
       TelemetryEngine2.getInstance().flushOfflineQueue(),
-      new Promise((resolve) => setTimeout(resolve, 1500))
+      new Promise((resolve2) => setTimeout(resolve2, 1500))
     ]);
   } catch {
   }
   try {
     await Promise.race([
       NASConnectionManager.getInstance().stop(),
-      new Promise((resolve) => setTimeout(resolve, 1e3))
+      new Promise((resolve2) => setTimeout(resolve2, 1e3))
     ]);
     WatchdogService.getInstance().stopMonitoring();
   } catch {
@@ -137814,11 +143799,11 @@ import_electron21.app.on("before-quit", async (event) => {
   clearEncryptionKey();
   console.log("[App] Cleanup done. Re-triggering quit.");
   cleanupDone = true;
-  import_electron21.app.quit();
+  import_electron25.app.quit();
 });
-import_electron21.app.on("window-all-closed", () => {
+import_electron25.app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
-    import_electron21.app.quit();
+    import_electron25.app.quit();
   }
 });
 /*! Bundled license information:

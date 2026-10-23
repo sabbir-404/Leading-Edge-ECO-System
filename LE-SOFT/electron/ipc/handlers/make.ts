@@ -2,7 +2,7 @@
  * make.ts
  * ─────────────────────────────────────────────────────────────────────────────
  * Fortified, Authenticated, and Schema-Validated IPC Handlers for MAKE V1.
- * 
+ *
  * Guarantees:
  *  - Native Electron file selection (no arbitrary renderer-supplied file paths).
  *  - Main-process session resolution via SessionManager (no forged userRole or isSuperadmin).
@@ -21,8 +21,10 @@ import { MakeOrderService } from '../../services/make/MakeOrderService';
 import { MakePricingService } from '../../services/make/MakePricingService';
 import { MakeProductionService } from '../../services/make/MakeProductionService';
 import { MakeVersionService } from '../../services/make/MakeVersionService';
+import { isAllowedNonProductionEndpoint, isLoopbackEndpoint, isNonProductionEnvironment } from '../../runtime-environment';
 import { MakeCadService } from '../../services/make/MakeCadService';
 import { MakeSearchService } from '../../services/make/MakeSearchService';
+import { DurableUploadService } from '../../services/media/DurableUploadService';
 import { decryptRows, decryptObject } from '../../field-encryption';
 import {
     CreateMakeOrderSchema,
@@ -31,6 +33,9 @@ import {
     UpdateProductionStageSchema,
     AlterMakeOrderSchema,
     DeleteMakeOrderSchema,
+    DeleteOrderPdfSchema,
+    DeleteItemPdfSchema,
+    hasUnsupportedStorageScheme,
     CatalogProductSchema,
     CatalogSpecSchema,
     CatalogSizeSchema,
@@ -38,7 +43,10 @@ import {
     GlobalAttributeSchema,
     normalizeGlobalAttributePayload,
     AssignProductAttributesSchema,
-    SearchCatalogProductsSchema
+    SearchCatalogProductsSchema,
+    RequestProductionApprovalSchema,
+    DecideProductionApprovalSchema,
+    RecordOrderPaymentSchema
 } from '../schemas/make.schema';
 
 export interface ValidatedDownloadUrlResult {
@@ -54,6 +62,7 @@ export interface ValidatedDownloadUrlResult {
 export function isApprovedNasHost(hostname: string, port?: string): boolean {
     if (!hostname || typeof hostname !== 'string') return false;
     const lowerHost = hostname.toLowerCase();
+    if (isNonProductionEnvironment() && ['storage.lenas.me', '100.88.85.6', '192.168.1.14'].includes(lowerHost)) return false;
 
     const runtimeCandidates = typeof getNasStorageCandidates === 'function'
         ? getNasStorageCandidates()
@@ -83,6 +92,7 @@ export function isApprovedNasHost(hostname: string, port?: string): boolean {
  */
 export function isApprovedNasPort(hostname: string, port?: string): boolean {
     const lowerHost = (hostname || '').toLowerCase();
+    if (isNonProductionEnvironment() && ['storage.lenas.me', '100.88.85.6', '192.168.1.14'].includes(lowerHost)) return false;
 
     const runtimeCandidates = typeof getNasStorageCandidates === 'function'
         ? getNasStorageCandidates()
@@ -102,6 +112,17 @@ export function isApprovedNasPort(hostname: string, port?: string): boolean {
             } catch {}
         }
         return false;
+    }
+
+    if (port === '8080' && isLoopbackEndpoint(`http://${lowerHost}`)) {
+        return runtimeCandidates.some(candidate => {
+            try {
+                const url = new URL(candidate);
+                return url.hostname.toLowerCase() === lowerHost
+                    && url.protocol === 'http:'
+                    && (url.port || '80') === '8081';
+            } catch { return false; }
+        });
     }
 
     // Explicit port rules for configured candidate hosts (reject arbitrary ports)
@@ -279,8 +300,12 @@ export function validateAndNormalizeDownloadUrl(rawUrl: string): ValidatedDownlo
             return cand.protocol.toLowerCase() === parsedUrl.protocol.toLowerCase() &&
                    candPort === effectivePort;
         });
+        const legacyLoopbackPort = isLoopbackEndpoint(`${parsedUrl.protocol}//${parsedUrl.hostname}`)
+            && parsedUrl.protocol === 'http:'
+            && parsedUrl.port === '8080'
+            && matchingCandidates.some(cand => cand.protocol === 'http:' && (cand.port || '80') === '8081');
 
-        if (!matches) {
+        if (!matches && !legacyLoopbackPort) {
             return { isValid: false, error: `Unapproved endpoint: ${parsedUrl.protocol}//${parsedUrl.host}`, candidates: [] };
         }
     }
@@ -367,11 +392,15 @@ export function validateAndNormalizeRedirect(redirectUrlStr: string, currentUrlS
     // Ensure redirects cannot bypass legacy :8080 normalization.
     // Either reject those redirects or safely normalize them through approved candidates; do not request port 8080 directly.
     if (redirectParsed.port === '8080') {
-        if (lowerHost === '100.88.85.6' || lowerHost === '192.168.1.14') {
+        if (lowerHost === '100.88.85.6' || lowerHost === '192.168.1.14' || isLoopbackEndpoint(`${redirectParsed.protocol}//${redirectParsed.hostname}`)) {
             redirectParsed.port = '8081';
         } else {
             throw new Error(`Unapproved port 8080 on host "${redirectParsed.hostname}"`);
         }
+    }
+
+    if (isNonProductionEnvironment() && !isAllowedNonProductionEndpoint(redirectParsed.href)) {
+        throw new Error('Redirect to a non-isolated endpoint was blocked');
     }
 
     const runtimeCandidates = typeof getNasStorageCandidates === 'function'
@@ -482,17 +511,52 @@ export async function downloadPdfFromNas(
     tempDir: string,
     timeoutMs: number = 6000
 ): Promise<{ success: boolean; path?: string; error?: string }> {
-    const validation = validateAndNormalizeDownloadUrl(url);
-    if (!validation.isValid) {
-        return { success: false, error: validation.error || 'Invalid download URL' };
-    }
-
     let targetPath: string;
     try {
         const dest = sanitizeDownloadDestination(fileName, tempDir);
         targetPath = dest.targetPath;
     } catch (err: any) {
         return { success: false, error: err.message || 'Invalid filename' };
+    }
+
+    // Check if this is a Supabase private bucket object or signed URL
+    const canonicalSupabase = extractCanonicalSupabaseKey(url);
+    const isSupabaseUrl = url.includes('.supabase.co/') || url.startsWith('make-order-files/') || url.startsWith('supabase://') || !!canonicalSupabase;
+    if (isSupabaseUrl) {
+        try {
+            let fetchUrl = url;
+            if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                const resolved = await resolveAttachmentUrl(canonicalSupabase ? canonicalSupabase.objectPath : url);
+                if (!resolved.url) {
+                    return { success: false, error: 'Could not resolve attachment for download' };
+                }
+                fetchUrl = resolved.url;
+            }
+
+            const electron = await import('electron').catch(() => null);
+            const fetchFn: typeof fetch = (electron as any)?.net?.fetch || globalThis.fetch;
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(new Error(`Download timed out after ${timeoutMs}ms`)), timeoutMs);
+
+            try {
+                const resp = await fetchFn(fetchUrl, { signal: controller.signal });
+                if (!resp.ok) {
+                    return { success: false, error: `Supabase download failed: HTTP ${resp.status}` };
+                }
+                const arrayBuf = await resp.arrayBuffer();
+                fs.writeFileSync(targetPath, Buffer.from(arrayBuf));
+                return { success: true, path: targetPath };
+            } finally {
+                clearTimeout(timeoutId);
+            }
+        } catch (err: any) {
+            return { success: false, error: err.message || 'Failed to download attachment from cloud buffer' };
+        }
+    }
+
+    const validation = validateAndNormalizeDownloadUrl(url);
+    if (!validation.isValid) {
+        return { success: false, error: validation.error || 'Invalid download URL' };
     }
 
     const { candidates } = validation;
@@ -606,6 +670,248 @@ export async function downloadPdfFromNas(
     return { success: false, error: `Failed to download file from NAS: ${lastError}` };
 }
 
+/**
+ * Validates whether a raw URL string is an authorized, exact TrueNAS endpoint.
+ * Enforces exact hostnames and approved ports, preventing lookalike domain prefix bypasses.
+ */
+export function isTrustedNasUrl(rawUrl: string): boolean {
+    if (!rawUrl || typeof rawUrl !== 'string') return false;
+    try {
+        const parsed = new URL(rawUrl);
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+        if (hasPathTraversal(parsed.pathname) || hasPathTraversal(decodeURIComponent(parsed.pathname))) return false;
+
+        const lowerHost = parsed.hostname.toLowerCase();
+        if (lowerHost === 'storage.lenas.me') {
+            const port = parsed.port || '443';
+            return parsed.protocol === 'https:' && port === '443';
+        }
+        if (lowerHost === '100.88.85.6' || lowerHost === '192.168.1.14') {
+            const port = parsed.port || '80';
+            return parsed.protocol === 'http:' && (port === '8080' || port === '8081' || port === '80');
+        }
+        return isApprovedNasHost(parsed.hostname, parsed.port);
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Extracts and canonicalizes the storage path within 'make-order-files' bucket.
+ * Guarantees no directory traversal or null bytes, and strips query parameters.
+ */
+export function extractCanonicalSupabaseKey(ref: string): { fullKey: string; objectPath: string } | null {
+    if (!ref || typeof ref !== 'string') return null;
+    const trimmed = ref.trim();
+    if (!trimmed) return null;
+    if (trimmed.includes('..') || trimmed.includes('\0') || trimmed.includes('%00')) return null;
+
+    let subPath = '';
+    if (trimmed.includes('/storage/v1/object/sign/make-order-files/')) {
+        subPath = decodeURIComponent(trimmed.split('/storage/v1/object/sign/make-order-files/')[1] || '').split('?')[0];
+    } else if (trimmed.includes('/storage/v1/object/public/make-order-files/')) {
+        subPath = decodeURIComponent(trimmed.split('/storage/v1/object/public/make-order-files/')[1] || '').split('?')[0];
+    } else if (trimmed.startsWith('supabase://make-order-files/')) {
+        subPath = trimmed.replace(/^supabase:\/\/make-order-files\//, '').split('?')[0];
+    } else if (trimmed.startsWith('make-order-files/')) {
+        subPath = trimmed.replace(/^make-order-files\//, '').split('?')[0];
+    } else if (trimmed.startsWith('/make-order-files/')) {
+        subPath = trimmed.replace(/^\/make-order-files\//, '').split('?')[0];
+    } else if (!trimmed.includes('://') && !/^[a-zA-Z]:[\\/]/.test(trimmed)) {
+        subPath = trimmed.split('?')[0];
+    } else {
+        return null;
+    }
+
+    subPath = subPath.replace(/^\/+/, '').trim();
+    if (!subPath || subPath.includes('..') || subPath.includes('\0')) return null;
+
+    return {
+        fullKey: `make-order-files/${subPath}`,
+        objectPath: subPath
+    };
+}
+
+/**
+ * Resolves a durable attachment reference (TrueNAS URL, Supabase private object key, or local pending file)
+ * into a safe, authorized access URL for viewing/downloading.
+ *
+ * Rules:
+ *  - Do NOT guess unconfirmed URLs.
+ *  - Do NOT return file:// as a successful remote attachment.
+ *  - Private bucket objects in 'make-order-files' are resolved on-demand via short-lived signed URLs (never persisted).
+ *  - TrueNAS confirmed URLs (storage.lenas.me or 100.88.85.6) are verified via exact hostname and port matching.
+ *  - Legacy unauthenticated public URLs to private buckets are recognized and resolved via signed URLs.
+ */
+export async function resolveAttachmentUrl(p: string): Promise<{ path: string; name: string; url: string; isPending?: boolean }> {
+    if (!p || typeof p !== 'string') return { path: '', name: 'attachment', url: '' };
+
+    const name = p.split('/').pop()?.replace(/^\d+_/, '')?.split('?')[0] || 'document';
+
+    // 1. Staged local / pending upload
+    if (p.startsWith('file://') || /^[a-zA-Z]:[\\/]/.test(p)) {
+        return { path: p, name, url: '', isPending: true };
+    }
+
+    // 2. Confirmed TrueNAS Remote URL (exact hostname & port check, not string prefix)
+    if (isTrustedNasUrl(p)) {
+        return { path: p, name, url: p, isPending: false };
+    }
+
+    // 3. Supabase Storage Object Key in private bucket 'make-order-files'
+    const canonical = extractCanonicalSupabaseKey(p);
+    if (canonical) {
+        const storagePath = canonical.objectPath;
+        try {
+            const { data, error } = await supabase.storage.from('make-order-files').createSignedUrl(storagePath, 3600);
+            if (!error && data?.signedUrl) {
+                return { path: p, name, url: data.signedUrl, isPending: true };
+            }
+        } catch (sErr: any) {
+            console.warn('[resolveAttachmentUrl] Signed URL creation failed:', sErr.message);
+        }
+    }
+
+    // 4. Other approved HTTP/HTTPS URLs (external or candidate hosts)
+    if (isTrustedNasUrl(p)) {
+        return { path: p, name, url: p, isPending: false };
+    }
+
+    // 5. If missing or unresolvable, NEVER return a guessed URL; mark pending if it resembles a durable key or upload reference
+    const isPending = p.includes('upl_') || p.includes('make-order-files/');
+    return { path: p, name, url: '', isPending: isPending || undefined };
+}
+
+/**
+ * Verifies if the session user has permissions to modify MAKE orders or their attachments.
+ *
+ * Rules:
+ *  - Superadmin, Admin, and Manager have global modification authority.
+ *  - Furniture Designers have modification authority over orders not yet in or past production.
+ *  - Users with explicit permissions ('make_edit', 'write_make', 'make_admin', 'delete_make_order',
+ *    'make_delete', 'alter_make_order', 'manage_orders') have modification authority.
+ *  - Read-only users, operators, guests, auditors, and unauthenticated sessions are strictly rejected.
+ *  - If an authoritative order record is provided and has reached or passed production ('Production On Going', etc.),
+ *    only Administrators retain modification rights.
+ */
+export function canModifyMakeOrder(
+    session: UserSession | null | undefined,
+    order?: { status?: string | null } | null
+): boolean {
+    if (!session) return false;
+    const role = (session.role || '').toLowerCase().trim();
+    const isAdmin = role === 'admin' || role === 'superadmin' || role === 'manager';
+    const isDesigner = (
+        role === 'furniture_designer' ||
+        role === 'furniture designer' ||
+        role === 'designer' ||
+        role === 'make_designer'
+    );
+    const permissions = session.permissions || {};
+    // A configured deny in User Groups takes precedence over role defaults. Keep
+    // administrator authority and the production-stage lock as hard safeguards.
+    const modifyKeys = ['alter_make', 'make_edit', 'write_make', 'make_admin', 'delete_make_order', 'make_delete', 'alter_make_order', 'manage_orders'];
+    const explicitModify = modifyKeys.find((key) => Object.prototype.hasOwnProperty.call(permissions, key));
+    if (!isAdmin && explicitModify && permissions[explicitModify] === false) return false;
+    const hasModifyPerm = !!(
+        session.permissions && (
+            session.permissions['alter_make'] ||
+            session.permissions['make_edit'] ||
+            session.permissions['write_make'] ||
+            session.permissions['make_admin'] ||
+            session.permissions['delete_make_order'] ||
+            session.permissions['make_delete'] ||
+            session.permissions['alter_make_order'] ||
+            session.permissions['manage_orders']
+        )
+    );
+
+    if (!isAdmin && !isDesigner && !hasModifyPerm) {
+        return false;
+    }
+
+    // If an authoritative order record is provided, check stage boundaries
+    if (order && order.status) {
+        const postProductionStages = [
+            'production on going',
+            'production',
+            'finishing',
+            'packaging',
+            'ready to ship',
+            'delivered',
+            'welding',
+            'painting',
+            'ready for dispatch'
+        ];
+        const statusNorm = order.status.trim().toLowerCase();
+        if (postProductionStages.includes(statusNorm) && !isAdmin) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/**
+ * Strictly verifies whether an attachment reference is an approved storage reference.
+ * Rejects illegal schemes (javascript:, file:, data:, etc.), traversal paths,
+ * null bytes, and untrusted HTTP/HTTPS endpoints.
+ */
+export function isAllowedAttachmentReference(ref: string): boolean {
+    if (!ref || typeof ref !== 'string') return false;
+    const trimmed = ref.trim();
+    if (trimmed.length === 0) return false;
+    if (hasPathTraversal(trimmed) || trimmed.includes('\0') || trimmed.includes('%00')) return false;
+    if (hasUnsupportedStorageScheme(trimmed)) return false;
+
+    if (/^https?:\/\//i.test(trimmed)) {
+        if (isTrustedNasUrl(trimmed)) return true;
+        if (extractCanonicalSupabaseKey(trimmed) !== null) return true;
+        return false;
+    }
+
+    if (/^app-media:\/\/nas\//i.test(trimmed)) return true;
+
+    // Relative storage key or filename without dangerous schemes or Windows drive prefixes
+    if (!trimmed.includes('://') && !/^[a-zA-Z]:[\\/]/.test(trimmed)) {
+        return true;
+    }
+
+    return false;
+}
+
+/**
+ * Checks if a stored attachment reference matches the requested deletion target.
+ * Supports exact string equality, canonical Supabase object key equivalence,
+ * and TrueNAS URL subpath equivalence.
+ */
+export function isMatchingAttachment(recordedRef: string, requestedRef: string): boolean {
+    if (!recordedRef || !requestedRef) return false;
+    const recTrim = recordedRef.trim();
+    const reqTrim = requestedRef.trim();
+    if (recTrim === reqTrim) return true;
+
+    // Supabase canonical key comparison
+    const canRec = extractCanonicalSupabaseKey(recTrim);
+    const canReq = extractCanonicalSupabaseKey(reqTrim);
+    if (canRec && canReq && canRec.objectPath === canReq.objectPath) {
+        return true;
+    }
+
+    // NAS subpath comparison
+    if (isTrustedNasUrl(recTrim) && isTrustedNasUrl(reqTrim)) {
+        try {
+            const u1 = new URL(recTrim);
+            const u2 = new URL(reqTrim);
+            const p1 = decodeURIComponent(u1.pathname).replace(/^\/+/, '');
+            const p2 = decodeURIComponent(u2.pathname).replace(/^\/+/, '');
+            if (p1 === p2) return true;
+        } catch {}
+    }
+
+    return false;
+}
+
 export function registerMakeHandlers(): void {
     /**
      * Resolves the active authenticated session strictly from the Electron Main Process.
@@ -624,15 +930,23 @@ export function registerMakeHandlers(): void {
      * Furniture Designer and Admin groups are authorized.
      * Salesperson / Sales group is strictly denied.
      */
+    function permissionOverride(session: UserSession, key: string): boolean | undefined {
+        const permissions = session.permissions;
+        if (!permissions || !Object.prototype.hasOwnProperty.call(permissions, key)) return undefined;
+        return !!permissions[key];
+    }
+
     function canManageCatalog(session: UserSession): boolean {
         const role = (session.role || '').toLowerCase();
         // Salespersons and Factory Managers are strictly forbidden from creating or managing products
         if (role === 'salesperson' || role === 'salesman' || role === 'sales') return false;
         if (role === 'factory_manager' || role === 'factory manager' || role === 'factory') return false;
         if (role === 'admin' || role === 'superadmin' || role === 'manager') return true;
+        const explicit = permissionOverride(session, 'write_make_catalog');
+        if (explicit !== undefined) return explicit;
         if (
-            role === 'furniture_designer' || 
-            role === 'furniture designer' || 
+            role === 'furniture_designer' ||
+            role === 'furniture designer' ||
             role === 'designer' ||
             role === 'make_designer'
         ) return true;
@@ -645,6 +959,37 @@ export function registerMakeHandlers(): void {
                 session.permissions['create_product_from_place_order']
             )
         );
+    }
+
+    function canCreateCostingRequest(session: UserSession): boolean {
+        const role = (session.role || '').toLowerCase().trim();
+        if (['admin', 'superadmin', 'manager'].includes(role)) return true;
+        const explicit = permissionOverride(session, 'create_make_costing_request');
+        if (explicit !== undefined) return explicit;
+        return ['salesperson', 'salesman', 'sales', 'furniture_designer', 'furniture designer', 'designer', 'make_designer'].includes(role) ||
+            !!(session.permissions?.read_make || session.permissions?.write_make);
+    }
+
+    function canReadCostingRequests(session: UserSession): boolean {
+        const role = (session.role || '').toLowerCase().trim();
+        if (['admin', 'superadmin', 'manager'].includes(role)) return true;
+        const explicit = permissionOverride(session, 'read_make_costing_requests');
+        if (explicit !== undefined) return explicit;
+        return canCreateCostingRequest(session) || canManageCatalog(session) || isFactoryRole(session);
+    }
+
+    function canPriceCostingRequest(session: UserSession): boolean {
+        const role = (session.role || '').toLowerCase().trim();
+        if (['admin', 'superadmin', 'manager'].includes(role)) return true;
+        const explicit = permissionOverride(session, 'price_make_costing_request');
+        return explicit !== undefined ? explicit : canManageCatalog(session);
+    }
+
+    function canDeleteCostingRequest(session: UserSession): boolean {
+        const role = (session.role || '').toLowerCase().trim();
+        if (['admin', 'superadmin', 'manager'].includes(role)) return true;
+        const explicit = permissionOverride(session, 'delete_make_costing_request');
+        return explicit !== undefined ? explicit : canManageCatalog(session);
     }
 
     /**
@@ -661,12 +1006,113 @@ export function registerMakeHandlers(): void {
     }
 
     /**
+     * Verifies if the session user has permissions to view product blueprint files.
+     */
+    function canViewBlueprintSession(session: UserSession): boolean {
+        const role = (session.role || '').toLowerCase();
+        if (role === 'admin' || role === 'superadmin' || role === 'manager') return true;
+        if (session.permissions && session.permissions['view_product_blueprint'] !== undefined) {
+            return !!session.permissions['view_product_blueprint'];
+        }
+        if (isFactoryRole(session)) return true;
+        if (
+            role === 'furniture_designer' ||
+            role === 'furniture designer' ||
+            role === 'designer' ||
+            role === 'make_designer'
+        ) return true;
+        return false;
+    }
+
+    /** Product drawings are customer-facing; factory-only roles must not receive the URL. */
+    function canViewProductDrawingSession(session: UserSession): boolean {
+        if (isFactoryRole(session)) return false;
+        if (session.permissions?.view_product_drawing !== undefined) return !!session.permissions.view_product_drawing;
+        return canManageCatalog(session) || isCostingRequester(session);
+    }
+
+    /**
+     * Verifies if the session user has permissions to view cost prices of products.
+     */
+    function canViewCostPriceSession(session: UserSession): boolean {
+        const role = (session.role || '').toLowerCase();
+        if (role === 'admin' || role === 'superadmin' || role === 'manager') return true;
+        if (session.permissions && session.permissions['view_product_cost_price'] !== undefined) {
+            return !!session.permissions['view_product_cost_price'];
+        }
+        if (['salesperson', 'salesman', 'sales', 'factory_manager', 'factory manager', 'factory'].includes(role)) return true;
+        if (['furniture_designer', 'furniture designer', 'designer', 'make_designer'].includes(role)) return true;
+        return !!(session.permissions && (session.permissions['view_product_cost_price'] || session.permissions['view_cost_price'] || session.permissions['set_make_cost_price']));
+    }
+
+    /**
+     * Verifies if the session user has permissions to view sale prices of products.
+     */
+    function canViewSalePriceSession(session: UserSession): boolean {
+        const role = (session.role || '').toLowerCase();
+        if (role === 'admin' || role === 'superadmin' || role === 'manager') return true;
+        if (['salesperson', 'salesman', 'sales', 'factory_manager', 'factory manager', 'factory'].includes(role)) return false;
+        if (session.permissions && session.permissions['view_product_sale_price'] !== undefined) {
+            return !!session.permissions['view_product_sale_price'];
+        }
+        if (['furniture_designer', 'furniture designer', 'designer', 'make_designer'].includes(role)) return true;
+        return false;
+    }
+
+    function canRecordMakePayment(session: UserSession): boolean {
+        const role = (session.role || '').toLowerCase().trim();
+        if (['admin', 'superadmin', 'manager'].includes(role)) return true;
+        const explicit = permissionOverride(session, 'make_record_payment') ?? permissionOverride(session, 'record_make_order_payment');
+        if (explicit !== undefined) return explicit;
+        if (['admin', 'superadmin', 'manager', 'salesperson', 'salesman', 'sales', 'furniture_designer', 'furniture designer', 'designer', 'make_designer'].includes(role)) return true;
+        return false;
+    }
+
+    /**
+     * Verifies if the session user has permissions to view product maximum discount limits.
+     */
+    function canViewMaxDiscountSession(session: UserSession): boolean {
+        const role = (session.role || '').toLowerCase();
+        if (role === 'admin' || role === 'superadmin' || role === 'manager') return true;
+        if (session.permissions && session.permissions['view_product_max_discount'] !== undefined) {
+            return !!session.permissions['view_product_max_discount'];
+        }
+        if (role === 'factory_manager' || role === 'factory manager' || role === 'factory') {
+            return !!(session.permissions && session.permissions['view_product_max_discount']);
+        }
+        return true;
+    }
+
+    /**
+     * Verifies if the session user has permissions to edit/set product cost prices.
+     * Strictly Superadmin, Admin, and Furniture Designer.
+     * Factory Manager and Salespersons cannot set or edit cost prices.
+     */
+    function canEditCostPriceSession(session: UserSession): boolean {
+        const role = (session.role || '').toLowerCase();
+        if (role === 'salesperson' || role === 'salesman' || role === 'sales') return false;
+        if (role === 'factory_manager' || role === 'factory manager' || role === 'factory') return false;
+        if (role === 'admin' || role === 'superadmin' || role === 'manager') return true;
+        const explicit = permissionOverride(session, 'set_make_cost_price');
+        if (explicit !== undefined) return explicit;
+        if (
+            role === 'furniture_designer' ||
+            role === 'furniture designer' ||
+            role === 'designer' ||
+            role === 'make_designer'
+        ) return true;
+        return !!(session.permissions && session.permissions['set_make_cost_price']);
+    }
+
+    /**
      * Verifies if the session user has permissions to approve MAKE orders.
      */
     function canApproveOrder(session: UserSession): boolean {
-        const role = session.role.toLowerCase();
-        if (role === 'admin' || role === 'superadmin' || role === 'salesperson' || role === 'sales' || role === 'manager') return true;
-        return !!(session.permissions['make_approve'] || session.permissions['sales_approve']);
+        const role = (session.role || '').toLowerCase();
+        if (role === 'admin' || role === 'superadmin' || role === 'manager') return true;
+        const explicit = permissionOverride(session, 'approve_make_order') ?? permissionOverride(session, 'make_approve') ?? permissionOverride(session, 'sales_approve');
+        if (explicit !== undefined) return explicit;
+        return ['salesperson', 'salesman', 'sales'].includes(role);
     }
 
     /**
@@ -682,9 +1128,283 @@ export function registerMakeHandlers(): void {
      * Verifies if the session user has permissions to advance factory production stages.
      */
     function canAdvanceProduction(session: UserSession): boolean {
-        const role = session.role.toLowerCase();
-        if (role === 'admin' || role === 'superadmin' || role === 'factory_manager' || role === 'operator' || role === 'production') return true;
+        const role = (session.role || '').toLowerCase();
+        if (role === 'admin' || role === 'superadmin' || role === 'manager') return true;
+        const explicit = permissionOverride(session, 'update_make_production_stage') ?? permissionOverride(session, 'make_production') ?? permissionOverride(session, 'factory_manage');
+        if (explicit !== undefined) return explicit;
+        if (role === 'factory_manager' || role === 'operator' || role === 'production') return true;
         return !!(session.permissions['make_production'] || session.permissions['factory_manage']);
+    }
+
+    /**
+     * Verifies if the session user has permissions to view MAKE orders and attachments.
+     */
+    function canViewMakeOrders(session: UserSession): boolean {
+        if (!session) return false;
+        const role = (session.role || '').toLowerCase();
+        if (role === 'admin' || role === 'superadmin' || role === 'manager') return true;
+        if (
+            role === 'furniture_designer' || role === 'furniture designer' || role === 'designer' || role === 'make_designer' ||
+            role === 'salesperson' || role === 'salesman' || role === 'sales' ||
+            role === 'factory_manager' || role === 'factory manager' || role === 'factory' ||
+            role === 'operator' || role === 'production'
+        ) return true;
+        return !!(
+            session.permissions && (
+                session.permissions['make_view'] ||
+                session.permissions['make_read'] ||
+                session.permissions['read_make'] ||
+                session.permissions['make_create'] ||
+                session.permissions['make_orders'] ||
+                session.permissions['make_admin'] ||
+                session.permissions['make_production'] ||
+                session.permissions['view_orders'] ||
+                session.permissions['read_orders']
+            )
+        );
+    }
+
+    /**
+     * Verifies that a given attachment reference or storage key belongs to an
+     * order or item the current session is authorized to access.
+     * Fails closed for unauthorized, malformed, or unassociated references.
+     * Guarantees that parsed upload IDs cannot bypass path authorization,
+     * unassociated buffered uploads cannot be signed, and NAS URLs require exact hostnames.
+     */
+    async function isAuthorizedAttachment(rawRef: string, _session: UserSession): Promise<{
+        authorized: boolean;
+        canonicalKey?: string;
+        isNas?: boolean;
+        isLocalPending?: boolean;
+        error?: string;
+    }> {
+        if (!rawRef || typeof rawRef !== 'string' || !rawRef.trim()) {
+            return { authorized: false, error: 'Empty or invalid attachment reference' };
+        }
+        // Reject path traversal, control chars, null bytes
+        if (hasPathTraversal(rawRef) || rawRef.includes('\0') || rawRef.includes('%00')) {
+            return { authorized: false, error: 'Path traversal or illegal characters detected' };
+        }
+
+        const uploadService = DurableUploadService.getInstance();
+        const db = (uploadService as any).db;
+
+        // 1. Confirmed TrueNAS Remote URLs (Exact hostname & port check)
+        if (isTrustedNasUrl(rawRef)) {
+            if (db) {
+                try {
+                    const row = db.prepare(`
+                        SELECT id, entity_type, entity_id, status FROM durable_uploads
+                        WHERE remote_url_nas = ?
+                    `).get(rawRef) as any;
+                    if (row && (row.entity_type === 'make_orders' || row.entity_type === 'make_order_items') && row.entity_id) {
+                        if (row.entity_type === 'make_orders') {
+                            const { data: order } = await supabase.from('make_orders')
+                                .select('id, pdf_urls, invoice_attachment_urls')
+                                .eq('id', row.entity_id)
+                                .maybeSingle();
+                            if (order) {
+                                const pdfs = Array.isArray(order.pdf_urls) ? order.pdf_urls : [];
+                                const invs = Array.isArray(order.invoice_attachment_urls) ? order.invoice_attachment_urls : [];
+                                if (pdfs.includes(rawRef) || invs.includes(rawRef)) {
+                                    return { authorized: true, canonicalKey: rawRef, isNas: true };
+                                }
+                            }
+                        } else if (row.entity_type === 'make_order_items') {
+                            const { data: item } = await supabase.from('make_order_items')
+                                .select('id, technical_drawing_url, pdf_urls')
+                                .eq('id', row.entity_id)
+                                .maybeSingle();
+                            if (item) {
+                                const pdfs = Array.isArray(item.pdf_urls) ? item.pdf_urls : [];
+                                if (item.technical_drawing_url === rawRef || pdfs.includes(rawRef)) {
+                                    return { authorized: true, canonicalKey: rawRef, isNas: true };
+                                }
+                            }
+                        }
+                    }
+                } catch {}
+            }
+
+            try {
+                const { data: matchedOrders } = await supabase.from('make_orders').select('id, pdf_urls, invoice_attachment_urls');
+                if (Array.isArray(matchedOrders)) {
+                    const found = matchedOrders.some((o: any) => {
+                        const pdfs = Array.isArray(o.pdf_urls) ? o.pdf_urls : [];
+                        const invs = Array.isArray(o.invoice_attachment_urls) ? o.invoice_attachment_urls : [];
+                        return pdfs.includes(rawRef) || invs.includes(rawRef);
+                    });
+                    if (found) return { authorized: true, canonicalKey: rawRef, isNas: true };
+                }
+            } catch {}
+
+            try {
+                const { data: matchedItems } = await supabase.from('make_order_items').select('id, technical_drawing_url, pdf_urls');
+                if (Array.isArray(matchedItems)) {
+                    const found = matchedItems.some((it: any) => {
+                        const pdfs = Array.isArray(it.pdf_urls) ? it.pdf_urls : [];
+                        return it.technical_drawing_url === rawRef || pdfs.includes(rawRef);
+                    });
+                    if (found) return { authorized: true, canonicalKey: rawRef, isNas: true };
+                }
+            } catch {}
+
+            return { authorized: false, error: 'Forbidden: Attachment is unassociated or access is unauthorized.' };
+        }
+
+        // 2. Staged Local Files (Narrow explicit policy: local file on disk staged in SQLite)
+        if (rawRef.startsWith('file://') || /^[a-zA-Z]:[\\/]/.test(rawRef)) {
+            if (db) {
+                try {
+                    const rawClean = rawRef.replace(/^file:\/\/\/?/, '');
+                    const row = db.prepare(`
+                        SELECT id, local_path, status FROM durable_uploads
+                        WHERE local_path = ? OR local_path LIKE ?
+                    `).get(rawClean, `%${rawClean}%`) as any;
+                    if (row && row.status === 'staged_local' && fs.existsSync(row.local_path)) {
+                        return { authorized: true, canonicalKey: rawRef, isLocalPending: true };
+                    }
+                } catch {}
+            }
+            return { authorized: false, error: 'Forbidden: Attachment is unassociated or access is unauthorized.' };
+        }
+
+        // 3. Supabase Storage Object Key in private bucket 'make-order-files'
+        const canonical = extractCanonicalSupabaseKey(rawRef);
+        if (!canonical) {
+            return { authorized: false, error: 'Forbidden: Attachment is unassociated or access is unauthorized.' };
+        }
+
+        const { fullKey, objectPath } = canonical;
+
+        // (a) Verify in local SQLite registry by exact recorded remote_url_supabase.
+        // A matching local record and nonempty owner metadata must NOT, by themselves, authorize a signed URL.
+        // For an ordinary owned attachment, verify that the claimed owner row exists and actually contains the key.
+        if (db) {
+            try {
+                const row = db.prepare(`
+                    SELECT id, entity_type, entity_id, status, remote_url_supabase FROM durable_uploads
+                    WHERE remote_url_supabase = ? OR remote_url_supabase = ?
+                `).get(fullKey, objectPath) as any;
+
+                if (row) {
+                    const hasValidOwner = (row.entity_type === 'make_orders' || row.entity_type === 'make_order_items') && !!row.entity_id;
+                    if (!hasValidOwner) {
+                        // Unassociated buffered upload: cannot be signed
+                        return { authorized: false, error: 'Forbidden: Attachment is unassociated or access is unauthorized.' };
+                    }
+
+                    if (row.entity_type === 'make_orders') {
+                        const { data: order } = await supabase.from('make_orders')
+                            .select('id, pdf_urls, invoice_attachment_urls')
+                            .eq('id', row.entity_id)
+                            .maybeSingle();
+
+                        if (order) {
+                            const pdfs = Array.isArray(order.pdf_urls) ? order.pdf_urls : [];
+                            const invs = Array.isArray(order.invoice_attachment_urls) ? order.invoice_attachment_urls : [];
+                            const allRefs = [...pdfs, ...invs].filter(Boolean);
+                            const matches = allRefs.some((r: string) => {
+                                const can = extractCanonicalSupabaseKey(r);
+                                return r === rawRef || r === fullKey || r === objectPath || (can && can.objectPath === objectPath);
+                            });
+                            if (matches) {
+                                return { authorized: true, canonicalKey: objectPath };
+                            }
+                        }
+                        // Claimed order does not exist or does not contain this attachment key
+                        return { authorized: false, error: 'Forbidden: Attachment is unassociated or access is unauthorized.' };
+                    } else if (row.entity_type === 'make_order_items') {
+                        const { data: item } = await supabase.from('make_order_items')
+                            .select('id, technical_drawing_url, pdf_urls')
+                            .eq('id', row.entity_id)
+                            .maybeSingle();
+
+                        if (item) {
+                            const pdfs = Array.isArray(item.pdf_urls) ? item.pdf_urls : [];
+                            const itemRefs = [item.technical_drawing_url, ...pdfs].filter(Boolean);
+                            const matches = itemRefs.some((r: string) => {
+                                const can = extractCanonicalSupabaseKey(r);
+                                return r === rawRef || r === fullKey || r === objectPath || (can && can.objectPath === objectPath);
+                            });
+                            if (matches) {
+                                return { authorized: true, canonicalKey: objectPath };
+                            }
+                        }
+                        // Claimed item does not exist or does not contain this attachment key
+                        return { authorized: false, error: 'Forbidden: Attachment is unassociated or access is unauthorized.' };
+                    }
+                }
+            } catch {}
+        }
+
+        // (b) Verify in remote database make_orders (for attachments not in local upload queue)
+        try {
+            const orderMatch = objectPath.match(/^(\d+)\//);
+            if (orderMatch) {
+                const candidateOrderId = parseInt(orderMatch[1], 10);
+                const { data: order } = await supabase.from('make_orders')
+                    .select('id, pdf_urls, invoice_attachment_urls')
+                    .eq('id', candidateOrderId)
+                    .maybeSingle();
+
+                if (order) {
+                    const pdfs = Array.isArray(order.pdf_urls) ? order.pdf_urls : [];
+                    const invs = Array.isArray(order.invoice_attachment_urls) ? order.invoice_attachment_urls : [];
+                    const allRefs = [...pdfs, ...invs].filter(Boolean);
+                    const matches = allRefs.some(r => {
+                        const can = extractCanonicalSupabaseKey(r);
+                        return r === rawRef || r === fullKey || r === objectPath || (can && can.objectPath === objectPath);
+                    });
+                    if (matches) {
+                        return { authorized: true, canonicalKey: objectPath };
+                    }
+                }
+            }
+
+            const { data: matchedOrders } = await supabase.from('make_orders')
+                .select('id, pdf_urls, invoice_attachment_urls');
+
+            if (Array.isArray(matchedOrders)) {
+                const found = matchedOrders.some((o: any) => {
+                    const pdfs = Array.isArray(o.pdf_urls) ? o.pdf_urls : [];
+                    const invs = Array.isArray(o.invoice_attachment_urls) ? o.invoice_attachment_urls : [];
+                    return [...pdfs, ...invs].filter(Boolean).some((r: string) => {
+                        const can = extractCanonicalSupabaseKey(r);
+                        return r === rawRef || r === fullKey || r === objectPath || (can && can.objectPath === objectPath);
+                    });
+                });
+                if (found) {
+                    return { authorized: true, canonicalKey: objectPath };
+                }
+            }
+        } catch (err: any) {
+            console.warn('[isAuthorizedAttachment] make_orders check error:', err.message);
+        }
+
+        // (c) Verify in remote database make_order_items (for attachments not in local upload queue)
+        try {
+            const { data: matchedItems } = await supabase.from('make_order_items')
+                .select('id, technical_drawing_url, pdf_urls');
+
+            if (Array.isArray(matchedItems)) {
+                const found = matchedItems.some((it: any) => {
+                    const pdfs = Array.isArray(it.pdf_urls) ? it.pdf_urls : [];
+                    const itemRefs = [it.technical_drawing_url, ...pdfs].filter(Boolean);
+                    return itemRefs.some((r: string) => {
+                        const can = extractCanonicalSupabaseKey(r);
+                        return r === rawRef || r === fullKey || r === objectPath || (can && can.objectPath === objectPath);
+                    });
+                });
+                if (found) {
+                    return { authorized: true, canonicalKey: objectPath };
+                }
+            }
+        } catch (err: any) {
+            console.warn('[isAuthorizedAttachment] make_order_items check error:', err.message);
+        }
+
+        return { authorized: false, error: 'Forbidden: Attachment is unassociated or access is unauthorized.' };
     }
 
     // ── 1. Create Make Order ──────────────────────────────────────────────────
@@ -696,6 +1416,10 @@ export function registerMakeHandlers(): void {
                 throw new Error('Forbidden: Factory Manager is strictly prohibited from creating orders.');
             }
             const parsed = CreateMakeOrderSchema.parse(rawOrder);
+            const isAdmin = role === 'admin' || role === 'superadmin' || role === 'manager';
+            if (!isAdmin && rawOrder.salesman_id && Number(rawOrder.salesman_id) !== session.userId) {
+                throw new Error('Forbidden: Only administrators can place orders on behalf of another salesperson.');
+            }
             const result = await MakeOrderService.createOrder(parsed as any, session);
             if (!result.success) {
                 throw new Error(result.error);
@@ -723,12 +1447,13 @@ export function registerMakeHandlers(): void {
                     throw new Error('Forbidden: Only managers or administrators can authorize loss-making order approval.');
                 }
                 parsed.override.authorizedBy = session.fullName || session.username;
+                (parsed.override as any).timestamp = (parsed.override as any).timestamp || new Date().toISOString();
             }
 
             const result = await MakeOrderService.approveOrder({
-                orderId: parsed.orderId,
+                orderId: Number(parsed.orderId),
                 actorSession: session,
-                override: parsed.override,
+                override: parsed.override as any,
                 notes: parsed.notes
             });
 
@@ -748,7 +1473,7 @@ export function registerMakeHandlers(): void {
             const session = requireSession();
             const parsed = DesignerSaveSpecsAndPricingSchema.parse(rawPayload);
             const result = await MakeOrderService.saveDesignerSpecsAndPricing({
-                orderId: parsed.orderId,
+                orderId: Number(parsed.orderId),
                 costPrice: parsed.costPrice ? Number(parsed.costPrice) : undefined,
                 salePrice: parsed.salePrice !== undefined && parsed.salePrice !== null ? Number(parsed.salePrice) : null,
                 items: parsed.items,
@@ -798,10 +1523,11 @@ export function registerMakeHandlers(): void {
                                 fileBuffer,
                                 fileName,
                                 mimeType,
-                                `make-order-files/${parsed.orderId}/stages`
+                                `make-order-files/${parsed.orderId}/stages`,
+                                { entityType: 'make_orders', entityId: parsed.orderId, fieldName: 'current_stage_photo' }
                             );
-                            if (uploadResult.success && uploadResult.publicUrl) {
-                                finalPhotoUrl = uploadResult.publicUrl;
+                            if (uploadResult.success || uploadResult.isPendingUpload) {
+                                finalPhotoUrl = uploadResult.durableKey || uploadResult.publicUrl || null;
                             }
                         }
                     }
@@ -819,6 +1545,39 @@ export function registerMakeHandlers(): void {
                 actorRole: session.role,
                 actorUserId: session.userId
             });
+
+            if (result.success && ['ready to ship', 'ready for dispatch'].includes(String(parsed.stage || '').trim().toLowerCase())) {
+                const { data: order, error: orderError } = await failoverEngine.executeRead(async client => await client.from('make_orders').select('id,bill_id,order_number,customer_name,customer_phone,shipping_address,delivery_address,amount_due').eq('id', parsed.orderId).maybeSingle(), 'load-make-order-for-shipping');
+                if (orderError || !order) {
+                    console.warn('[MAKE Shipping] Production completed, but shipping handoff could not load the order:', orderError?.message || 'Order not found');
+                } else {
+                    const { data: existingShipment, error: existingShipmentError } = await failoverEngine.executeRead(async client => await client.from('bill_shipping').select('id').eq('make_order_id', parsed.orderId).maybeSingle(), 'check-make-shipment-exists');
+                    if (existingShipmentError) {
+                        console.warn('[MAKE Shipping] Could not check for an existing shipment:', existingShipmentError.message);
+                    } else if (!existingShipment) {
+                        const handoff = await failoverEngine.executeWrite(async client => await client.from('bill_shipping').insert({
+                            bill_id: order.bill_id || null,
+                            make_order_id: order.id,
+                            ship_to_name: order.customer_name || 'Customer',
+                            ship_to_address: order.shipping_address || order.delivery_address || null,
+                            ship_to_phone: order.customer_phone || null,
+                            shipping_charge: 0,
+                            status: 'ready_to_ship',
+                            delivery_note: 'Transferred from MAKE production; logistics to arrange dispatch.'
+                        }).select('id').single(), { table: 'bill_shipping', operation: 'insert' }, 'create-make-shipment-handoff');
+                        if (handoff.error) console.warn('[MAKE Shipping] Could not create shipping handoff:', handoff.error.message);
+                        else await failoverEngine.executeWrite(async client => await client.from('shipping_status_log').insert({
+                            shipment_id: handoff.data.id,
+                            bill_id: order.bill_id || null,
+                            make_order_id: order.id,
+                            status: 'ready_to_ship',
+                            note: 'Order received from MAKE production and is ready for dispatch.',
+                            updated_by: session.fullName || session.username,
+                            updated_by_role: session.role
+                        }), { table: 'shipping_status_log', operation: 'insert' }, 'log-make-shipment-handoff');
+                    }
+                }
+            }
 
             return result;
         } catch (err: any) {
@@ -861,7 +1620,10 @@ export function registerMakeHandlers(): void {
     // ── 7. Native Secure File Picker & Upload for Drawings ────────────────────
     ipcMain.handle('make-pick-and-upload-drawing', async (_e, { orderId, itemId }: { orderId: number; itemId?: number }) => {
         try {
-            requireSession();
+            const session = requireSession();
+            if (!canModifyMakeOrder(session)) {
+                throw new Error('Forbidden: Session lacks MAKE order modification permissions');
+            }
             const focusedWin = BrowserWindow.getFocusedWindow();
             const validation = await MakeCadService.pickAndValidateFile('cad', focusedWin);
             if ('canceled' in validation) {
@@ -872,42 +1634,74 @@ export function registerMakeHandlers(): void {
                 ? `make-order-files/${orderId}/items/${itemId}`
                 : `make-order-files/${orderId}`;
 
+            const meta = itemId
+                ? { entityType: 'make_order_items', entityId: itemId, fieldName: 'technical_drawing_url' }
+                : { entityType: 'make_orders', entityId: orderId, fieldName: 'pdf_urls' };
+
             const uploadResult = await MakeCadService.uploadValidatedBuffer(
                 validation.fileBuffer,
                 validation.sanitizedFileName,
                 validation.mimeType,
-                subfolder
+                subfolder,
+                meta
             );
 
-            if (!uploadResult.success || !uploadResult.publicUrl) {
+            if (!uploadResult.success && !uploadResult.isPendingUpload) {
                 return { success: false, error: uploadResult.error || 'Failed to upload to storage' };
             }
 
-            // Update item or order records with drawing path
+            const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+            if (!persistentRef) {
+                return { success: false, error: 'Failed to establish persistent storage reference' };
+            }
+
+            // Update item or order records with durable reference
             if (itemId) {
                 const { data: item } = await supabase.from('make_order_items').select('pdf_urls, technical_drawing_url').eq('id', itemId).maybeSingle();
                 const existing: string[] = Array.isArray(item?.pdf_urls) ? item.pdf_urls : [];
-                const combined = [...existing, uploadResult.publicUrl];
+                const combined = Array.from(new Set([...existing, persistentRef]));
                 await supabase.from('make_order_items').update({
                     pdf_urls: combined,
-                    technical_drawing_url: uploadResult.publicUrl
+                    technical_drawing_url: persistentRef
                 }).eq('id', itemId);
             } else {
                 const { data: order } = await supabase.from('make_orders').select('pdf_urls').eq('id', orderId).maybeSingle();
                 const existing: string[] = Array.isArray(order?.pdf_urls) ? order.pdf_urls : [];
-                const combined = [...existing, uploadResult.publicUrl];
+                const combined = Array.from(new Set([...existing, persistentRef]));
                 await supabase.from('make_orders').update({ pdf_urls: combined }).eq('id', orderId);
             }
 
             return {
                 success: true,
-                publicUrl: uploadResult.publicUrl,
-                fileName: validation.sanitizedFileName
+                publicUrl: uploadResult.publicUrl || undefined,
+                durableKey: persistentRef,
+                isPendingUpload: uploadResult.isPendingUpload,
+                status: uploadResult.status,
+                fileName: validation.sanitizedFileName,
+                uploadId: uploadResult.uploadId
             };
         } catch (err: any) {
             console.error('[MAKE IPC] make-pick-and-upload-drawing error:', err);
             return { success: false, error: err.message };
         }
+    });
+
+    ipcMain.handle('make-associate-order-attachment', async (_e, payload: { uploadId: string; orderId: number | string; itemId: number | string; fileRef: string }) => {
+        const session = requireSession();
+        const role = (session.role || '').toLowerCase();
+        const elevated = ['admin', 'superadmin', 'manager', 'furniture_designer', 'furniture designer', 'designer', 'make_designer'].includes(role);
+        const { data: item, error: itemError } = await supabase.from('make_order_items').select('id, order_id').eq('id', Number(payload.itemId)).maybeSingle();
+        if (itemError || !item || Number(item.order_id) !== Number(payload.orderId)) return { success: false, error: 'Order item not found.' };
+        const { data: order, error: orderError } = await supabase.from('make_orders').select('id, salesman_id').eq('id', Number(payload.orderId)).maybeSingle();
+        if (orderError || !order || (!elevated && Number(order.salesman_id) !== Number(session.userId))) return { success: false, error: 'Not authorized to attach a file to this order.' };
+        const uploadId = String(payload.uploadId || '').trim();
+        if (!/^upl_[0-9]+_[0-9a-f]+$/i.test(uploadId) || !payload.fileRef) return { success: false, error: 'Attachment reference is invalid.' };
+        const associated = DurableUploadService.getInstance().associateUploadWithEntity(uploadId, { entityType: 'make_order_items', entityId: Number(payload.itemId), fieldName: 'technical_drawing_url' });
+        const { data: current } = await supabase.from('make_order_items').select('pdf_urls').eq('id', Number(payload.itemId)).maybeSingle();
+        const refs = Array.isArray(current?.pdf_urls) ? current.pdf_urls : [];
+        const { error: saveError } = await supabase.from('make_order_items').update({ technical_drawing_url: payload.fileRef, pdf_urls: Array.from(new Set([...refs, payload.fileRef])) }).eq('id', Number(payload.itemId));
+        if (saveError) return { success: false, error: saveError.message };
+        return { success: true, associationPending: !associated };
     });
 
     // ── 8. Native Secure File Picker & Upload for Stage Photos ────────────────
@@ -924,17 +1718,27 @@ export function registerMakeHandlers(): void {
                 validation.fileBuffer,
                 validation.sanitizedFileName,
                 validation.mimeType,
-                `make-order-files/${orderId}/stages`
+                `make-order-files/${orderId}/stages`,
+                { entityType: 'make_orders', entityId: orderId, fieldName: 'current_stage_photo' }
             );
 
-            if (!uploadResult.success || !uploadResult.publicUrl) {
+            if (!uploadResult.success && !uploadResult.isPendingUpload) {
                 return { success: false, error: uploadResult.error || 'Failed to upload photo' };
+            }
+
+            const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+            if (!persistentRef) {
+                return { success: false, error: 'Failed to obtain persistent photo reference' };
             }
 
             return {
                 success: true,
-                publicUrl: uploadResult.publicUrl,
-                fileName: validation.sanitizedFileName
+                publicUrl: uploadResult.publicUrl || undefined,
+                durableKey: persistentRef,
+                isPendingUpload: uploadResult.isPendingUpload,
+                status: uploadResult.status,
+                fileName: validation.sanitizedFileName,
+                uploadId: uploadResult.uploadId
             };
         } catch (err: any) {
             console.error('[MAKE IPC] make-pick-and-upload-stage-photo error:', err);
@@ -944,119 +1748,328 @@ export function registerMakeHandlers(): void {
 
     // ── 9. Hardened Legacy Upload Handlers (Backward Compatibility) ───────────
     ipcMain.handle('make-upload-item-pdf', async (_e, { orderId, itemId, filePath }: any) => {
-        if (filePath) {
-            return { error: 'Arbitrary filesystem paths are rejected. Use the native file picker.' };
+        try {
+            const session = requireSession();
+            if (!canModifyMakeOrder(session)) {
+                return { error: 'Forbidden: Session lacks MAKE order modification permissions' };
+            }
+            if (filePath) {
+                return { error: 'Arbitrary filesystem paths are rejected. Use the native file picker.' };
+            }
+
+            const focusedWin = BrowserWindow.getFocusedWindow();
+            const validation = await MakeCadService.pickAndValidateFile('cad', focusedWin);
+            if ('canceled' in validation) {
+                return { canceled: true, error: validation.error };
+            }
+
+            const subfolder = `make-order-files/${orderId}/items/${itemId}`;
+            const uploadResult = await MakeCadService.uploadValidatedBuffer(
+                validation.fileBuffer,
+                validation.sanitizedFileName,
+                validation.mimeType,
+                subfolder,
+                { entityType: 'make_order_items', entityId: itemId, fieldName: 'technical_drawing_url' }
+            );
+
+            if (!uploadResult.success && !uploadResult.isPendingUpload) {
+                return { error: uploadResult.error || 'Failed to upload drawing' };
+            }
+
+            const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+            if (!persistentRef) {
+                return { error: 'Failed to establish persistent drawing reference' };
+            }
+
+            const { data: item } = await supabase.from('make_order_items').select('pdf_urls').eq('id', itemId).maybeSingle();
+            const existing: string[] = Array.isArray(item?.pdf_urls) ? item.pdf_urls : [];
+            const combined = Array.from(new Set([...existing, persistentRef]));
+            await supabase.from('make_order_items').update({
+                pdf_urls: combined,
+                technical_drawing_url: persistentRef
+            }).eq('id', itemId);
+
+            return {
+                success: true,
+                paths: [persistentRef],
+                allPaths: combined,
+                publicUrl: uploadResult.publicUrl || undefined,
+                durableKey: persistentRef,
+                isPendingUpload: uploadResult.isPendingUpload,
+                status: uploadResult.status
+            };
+        } catch (err: any) {
+            return { error: err?.message || 'Upload failed' };
         }
-
-        const focusedWin = BrowserWindow.getFocusedWindow();
-        const validation = await MakeCadService.pickAndValidateFile('cad', focusedWin);
-        if ('canceled' in validation) {
-            return { canceled: true, error: validation.error };
-        }
-
-        const subfolder = `make-order-files/${orderId}/items/${itemId}`;
-        const uploadResult = await MakeCadService.uploadValidatedBuffer(
-            validation.fileBuffer,
-            validation.sanitizedFileName,
-            validation.mimeType,
-            subfolder
-        );
-
-        if (!uploadResult.success || !uploadResult.publicUrl) {
-            return { error: uploadResult.error || 'Failed to upload drawing' };
-        }
-
-        const { data: item } = await supabase.from('make_order_items').select('pdf_urls').eq('id', itemId).maybeSingle();
-        const existing: string[] = Array.isArray(item?.pdf_urls) ? item.pdf_urls : [];
-        const combined = [...existing, uploadResult.publicUrl];
-        await supabase.from('make_order_items').update({
-            pdf_urls: combined,
-            technical_drawing_url: uploadResult.publicUrl
-        }).eq('id', itemId);
-
-        return { success: true, paths: [uploadResult.publicUrl], allPaths: combined };
     });
 
     ipcMain.handle('make-upload-pdf', async (_e, { orderId, filePath }: any) => {
-        if (filePath) {
-            return { error: 'Arbitrary filesystem paths are rejected. Use the native file picker.' };
+        try {
+            const session = requireSession();
+            if (!canModifyMakeOrder(session)) {
+                return { error: 'Forbidden: Session lacks MAKE order modification permissions' };
+            }
+            if (filePath) {
+                return { error: 'Arbitrary filesystem paths are rejected. Use the native file picker.' };
+            }
+
+            const focusedWin = BrowserWindow.getFocusedWindow();
+            const validation = await MakeCadService.pickAndValidateFile('cad', focusedWin);
+            if ('canceled' in validation) {
+                return { canceled: true, error: validation.error };
+            }
+
+            const subfolder = `make-order-files/${orderId}`;
+            const uploadResult = await MakeCadService.uploadValidatedBuffer(
+                validation.fileBuffer,
+                validation.sanitizedFileName,
+                validation.mimeType,
+                subfolder,
+                { entityType: 'make_orders', entityId: orderId, fieldName: 'pdf_urls' }
+            );
+
+            if (!uploadResult.success && !uploadResult.isPendingUpload) {
+                return { error: uploadResult.error || 'Failed to upload drawing' };
+            }
+
+            const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+            if (!persistentRef) {
+                return { error: 'Failed to obtain persistent reference for uploaded drawing' };
+            }
+
+            const { data: order } = await supabase.from('make_orders').select('pdf_urls').eq('id', orderId).maybeSingle();
+            const existing: string[] = Array.isArray(order?.pdf_urls) ? order.pdf_urls : [];
+            const combined = Array.from(new Set([...existing, persistentRef]));
+            await supabase.from('make_orders').update({ pdf_urls: combined }).eq('id', orderId);
+
+            return {
+                success: true,
+                paths: [persistentRef],
+                publicUrl: uploadResult.publicUrl || undefined,
+                durableKey: persistentRef,
+                isPendingUpload: uploadResult.isPendingUpload,
+                status: uploadResult.status
+            };
+        } catch (err: any) {
+            return { error: err?.message || 'Upload failed' };
         }
-
-        const focusedWin = BrowserWindow.getFocusedWindow();
-        const validation = await MakeCadService.pickAndValidateFile('cad', focusedWin);
-        if ('canceled' in validation) {
-            return { canceled: true, error: validation.error };
-        }
-
-        const subfolder = `make-order-files/${orderId}`;
-        const uploadResult = await MakeCadService.uploadValidatedBuffer(
-            validation.fileBuffer,
-            validation.sanitizedFileName,
-            validation.mimeType,
-            subfolder
-        );
-
-        if (!uploadResult.success || !uploadResult.publicUrl) {
-            return { error: uploadResult.error || 'Failed to upload drawing' };
-        }
-
-        const { data: order } = await supabase.from('make_orders').select('pdf_urls').eq('id', orderId).maybeSingle();
-        const existing: string[] = Array.isArray(order?.pdf_urls) ? order.pdf_urls : [];
-        const combined = [...existing, uploadResult.publicUrl];
-        await supabase.from('make_orders').update({ pdf_urls: combined }).eq('id', orderId);
-
-        return { success: true, paths: [uploadResult.publicUrl] };
     });
 
     // ── 10. PDF Storage URLs and Deletion ─────────────────────────────────────
     ipcMain.handle('make-get-pdf-urls', async (_e, orderId: number) => {
+        const session = requireSession();
+        if (!canViewMakeOrders(session)) {
+            throw new Error('Forbidden: Session lacks MAKE permissions');
+        }
+        if (!orderId || typeof orderId !== 'number' || orderId <= 0) {
+            throw new Error('Invalid order ID');
+        }
         const { data: order } = await supabase.from('make_orders').select('pdf_urls').eq('id', orderId).maybeSingle();
-        const paths: string[] = order?.pdf_urls || [];
+        const paths: string[] = Array.isArray(order?.pdf_urls) ? order.pdf_urls : [];
 
         const signedUrls = await Promise.all(paths.map(async (p) => {
-            if (p.startsWith('http://') || p.startsWith('https://')) {
-                return { path: p, name: p.split('/').pop()?.replace(/^\d+_/, '') || 'drawing', url: p };
-            }
-            if (p.startsWith('make-order-files/')) {
-                const url = `https://storage.lenas.me/files/${p}`;
-                return { path: p, name: p.split('/').pop()?.replace(/^\d+_/, '') || 'drawing', url };
-            } else {
-                const { data } = await supabase.storage.from('make-order-files').createSignedUrl(p, 3600);
-                return { path: p, name: p.split('/').pop()?.replace(/^\d+_/, '') || 'drawing', url: data?.signedUrl || '' };
-            }
+            return await resolveAttachmentUrl(p);
         }));
-        return signedUrls.filter(u => u.url);
+        return signedUrls.filter(u => u.url || u.isPending);
     });
 
-    ipcMain.handle('make-delete-pdf', async (_e, { orderId, storagePath }: { orderId: number; storagePath: string }) => {
-        requireSession();
-        const { data: order } = await supabase.from('make_orders').select('pdf_urls').eq('id', orderId).maybeSingle();
-        const remaining = (order?.pdf_urls || []).filter((p: string) => p !== storagePath);
-        await supabase.from('make_orders').update({ pdf_urls: remaining }).eq('id', orderId);
+    // ── Delete Order PDF (Hardened Authorization & Ownership Gate) ───────────
+    ipcMain.handle('make-delete-pdf', async (_e, rawPayload: any) => {
+        // 1. Session verification
+        const session = requireSession();
+
+        // 2. Authorization verification: caller must possess MAKE order modification permission
+        if (!canModifyMakeOrder(session)) {
+            throw new Error('Forbidden: Session lacks MAKE order modification permissions');
+        }
+
+        // 3. Schema & payload validation
+        const parsed = DeleteOrderPdfSchema.parse(rawPayload);
+
+        // 4. Strict attachment reference validation (reject traversal, illegal schemes, untrusted hosts)
+        if (!isAllowedAttachmentReference(parsed.storagePath)) {
+            throw new Error('Invalid or unsupported attachment reference');
+        }
+
+        // 5. Authoritative database lookup
+        const { data: order, error: orderErr } = await supabase
+            .from('make_orders')
+            .select('id, status, pdf_urls')
+            .eq('id', parsed.orderId)
+            .maybeSingle();
+
+        if (orderErr) {
+            throw new Error(`Database error looking up order: ${orderErr.message}`);
+        }
+        if (!order) {
+            throw new Error(`Order with ID ${parsed.orderId} not found`);
+        }
+
+        // 6. Verify caller permission on this specific order (e.g. post-production requires Admin)
+        if (!canModifyMakeOrder(session, order)) {
+            throw new Error(`Order #${parsed.orderId} is in "${order.status}". Only Administrators can modify this order.`);
+        }
+
+        // 7. Verify attachment ownership: must actually belong to this order
+        const currentPdfs: string[] = Array.isArray(order.pdf_urls) ? order.pdf_urls : [];
+        const matchIndex = currentPdfs.findIndex(p => isMatchingAttachment(p, parsed.storagePath));
+        if (matchIndex === -1) {
+            throw new Error(`Attachment "${parsed.storagePath}" does not belong to order #${parsed.orderId}`);
+        }
+
+        // 8. Execute update and assert affected rows > 0 (fail closed)
+        const remaining = currentPdfs.filter((_, idx) => idx !== matchIndex);
+        const { data: updateRes, error: updateErr, count } = await supabase
+            .from('make_orders')
+            .update({ pdf_urls: remaining }, { count: 'exact' })
+            .eq('id', parsed.orderId)
+            .select('id');
+
+        if (updateErr) {
+            throw new Error(`Database error removing attachment: ${updateErr.message}`);
+        }
+        const affectedCount = Array.isArray(updateRes) ? updateRes.length : (updateRes ? 1 : (count ?? 0));
+        if (affectedCount === 0) {
+            throw new Error(`Order attachment deletion failed: 0 rows affected for order #${parsed.orderId}`);
+        }
+
+        // 9. Safe post-update cleanup of cloud copy if buffered in Supabase (preserving metadata on failure)
+        try {
+            const can = extractCanonicalSupabaseKey(parsed.storagePath);
+            if (can) {
+                const uploadService = DurableUploadService.getInstance();
+                await uploadService.pruneCloudCopy('make-order-files', can.fullKey, 0);
+            }
+        } catch (cleanupErr) {
+            console.warn('[make-delete-pdf] Background cloud cleanup deferred/failed:', cleanupErr);
+        }
+
         return { success: true };
     });
 
-    ipcMain.handle('make-delete-item-pdf', async (_e, { itemId, storagePath }: { itemId: number; storagePath: string }) => {
-        requireSession();
-        const { data: item } = await supabase.from('make_order_items').select('pdf_urls, technical_drawing_url').eq('id', itemId).maybeSingle();
-        const remaining = (item?.pdf_urls || []).filter((p: string) => p !== storagePath);
-        const newTechUrl = item?.technical_drawing_url === storagePath
-            ? (remaining.length > 0 ? remaining[0] : null)
-            : item?.technical_drawing_url;
+    // ── Delete Item PDF / Technical Drawing (Hardened Authorization Gate) ────
+    ipcMain.handle('make-delete-item-pdf', async (_e, rawPayload: any) => {
+        // 1. Session verification
+        const session = requireSession();
 
-        await supabase.from('make_order_items').update({
-            pdf_urls: remaining,
-            technical_drawing_url: newTechUrl
-        }).eq('id', itemId);
+        // 2. Authorization verification
+        if (!canModifyMakeOrder(session)) {
+            throw new Error('Forbidden: Session lacks MAKE order modification permissions');
+        }
+
+        // 3. Schema & payload validation
+        const parsed = DeleteItemPdfSchema.parse(rawPayload);
+
+        // 4. Strict attachment reference validation
+        if (!isAllowedAttachmentReference(parsed.storagePath)) {
+            throw new Error('Invalid or unsupported attachment reference');
+        }
+
+        // 5. Authoritative item database lookup
+        const { data: item, error: itemErr } = await supabase
+            .from('make_order_items')
+            .select('id, order_id, pdf_urls, technical_drawing_url')
+            .eq('id', parsed.itemId)
+            .maybeSingle();
+
+        if (itemErr) {
+            throw new Error(`Database error looking up item: ${itemErr.message}`);
+        }
+        if (!item) {
+            throw new Error(`Item with ID ${parsed.itemId} not found`);
+        }
+
+        // 6. Verify item relationship to parent order
+        if (!item.order_id) {
+            throw new Error(`Item #${parsed.itemId} has no associated parent order`);
+        }
+        if (parsed.orderId !== undefined && Number(item.order_id) !== Number(parsed.orderId)) {
+            throw new Error(`Item #${parsed.itemId} belongs to order #${item.order_id}, not order #${parsed.orderId}`);
+        }
+
+        // 7. Verify parent order exists and caller has permission to modify it
+        const { data: parentOrder, error: parentErr } = await supabase
+            .from('make_orders')
+            .select('id, status')
+            .eq('id', item.order_id)
+            .maybeSingle();
+
+        if (parentErr) {
+            throw new Error(`Database error verifying parent order: ${parentErr.message}`);
+        }
+        if (!parentOrder) {
+            throw new Error(`Parent order #${item.order_id} not found for item #${item.id}`);
+        }
+        if (!canModifyMakeOrder(session, parentOrder)) {
+            throw new Error(`Parent order #${item.order_id} is in "${parentOrder.status}". Only Administrators can modify this order.`);
+        }
+
+        // 8. Verify attachment ownership: must belong to this item
+        const currentPdfs: string[] = Array.isArray(item.pdf_urls) ? item.pdf_urls : [];
+        const pdfMatchIndex = currentPdfs.findIndex(p => isMatchingAttachment(p, parsed.storagePath));
+        const techMatch = item.technical_drawing_url && isMatchingAttachment(item.technical_drawing_url, parsed.storagePath);
+
+        if (pdfMatchIndex === -1 && !techMatch) {
+            throw new Error(`Attachment "${parsed.storagePath}" does not belong to item #${parsed.itemId}`);
+        }
+
+        // 9. Compute updated item values
+        const remaining = pdfMatchIndex !== -1
+            ? currentPdfs.filter((_, idx) => idx !== pdfMatchIndex)
+            : currentPdfs;
+
+        const newTechUrl = techMatch
+            ? (remaining.length > 0 ? remaining[0] : null)
+            : item.technical_drawing_url;
+
+        // 10. Execute update and assert affected rows > 0 (fail closed)
+        const { data: updateRes, error: updateErr, count } = await supabase
+            .from('make_order_items')
+            .update({
+                pdf_urls: remaining,
+                technical_drawing_url: newTechUrl
+            }, { count: 'exact' })
+            .eq('id', parsed.itemId)
+            .select('id');
+
+        if (updateErr) {
+            throw new Error(`Database error removing item attachment: ${updateErr.message}`);
+        }
+        const affectedCount = Array.isArray(updateRes) ? updateRes.length : (updateRes ? 1 : (count ?? 0));
+        if (affectedCount === 0) {
+            throw new Error(`Item attachment deletion failed: 0 rows affected for item #${parsed.itemId}`);
+        }
+
+        // 11. Safe post-update cleanup of cloud copy if buffered in Supabase
+        try {
+            const can = extractCanonicalSupabaseKey(parsed.storagePath);
+            if (can) {
+                const uploadService = DurableUploadService.getInstance();
+                await uploadService.pruneCloudCopy('make-order-files', can.fullKey, 0);
+            }
+        } catch (cleanupErr) {
+            console.warn('[make-delete-item-pdf] Background cloud cleanup deferred/failed:', cleanupErr);
+        }
 
         return { success: true };
     });
 
     ipcMain.handle('make-download-pdf', async (_e, { url, fileName }: { url: string; fileName: string }) => {
         try {
+            const session = requireSession();
+            if (!canViewMakeOrders(session)) {
+                throw new Error('Forbidden: Session lacks MAKE permissions');
+            }
+            if (!url || typeof url !== 'string' || !url.trim()) {
+                throw new Error('Invalid or malformed attachment reference');
+            }
+            const auth = await isAuthorizedAttachment(url, session);
+            if (!auth.authorized || !auth.canonicalKey) {
+                throw new Error('Forbidden: Attachment is unassociated or access is unauthorized.');
+            }
             const { app, shell } = await import('electron');
             const tempDir = app.getPath('temp');
-            const res = await downloadPdfFromNas(url, fileName, tempDir);
+            const res = await downloadPdfFromNas(auth.canonicalKey, fileName, tempDir);
             if (res.success && res.path) {
                 await shell.openPath(res.path);
             }
@@ -1065,6 +2078,21 @@ export function registerMakeHandlers(): void {
             console.error('[make-download-pdf] Download error:', e);
             return { success: false, error: e?.message || 'Download error' };
         }
+    });
+
+    ipcMain.handle('make-resolve-attachment-url', async (_e, rawUrl: string) => {
+        const session = requireSession();
+        if (!canViewMakeOrders(session)) {
+            throw new Error('Forbidden: Session lacks MAKE permissions');
+        }
+        if (!rawUrl || typeof rawUrl !== 'string' || !rawUrl.trim()) {
+            throw new Error('Invalid or malformed attachment reference');
+        }
+        const auth = await isAuthorizedAttachment(rawUrl, session);
+        if (!auth.authorized || !auth.canonicalKey) {
+            throw new Error('Forbidden: Attachment is unassociated or access is unauthorized.');
+        }
+        return await resolveAttachmentUrl(auth.canonicalKey);
     });
 
     // ── 11. Parts & Dimensions CRUD ──────────────────────────────────────────
@@ -1107,7 +2135,7 @@ export function registerMakeHandlers(): void {
     ipcMain.handle('make-get-catalog-products', async (_e, { search, activeOnly }: any = {}) => {
         const queryFn = async (client: any) => {
             let q = client.from('make_products')
-                .select('*, specifications:make_product_specifications(*), sizes:make_product_sizes(*), colors:make_product_colors(*), images:make_product_images(*)')
+                .select('*, specifications:make_product_specifications(*), sizes:make_product_sizes!make_product_sizes_product_id_fkey(*), colors:make_product_colors(*), images:make_product_images(*)')
                 .order('created_at', { ascending: false });
 
             if (activeOnly) q = q.eq('is_active', true);
@@ -1119,7 +2147,7 @@ export function registerMakeHandlers(): void {
             if (res.error?.code === 'PGRST200' && res.error?.message?.includes('make_product_images')) {
                 console.warn('[make-get-catalog-products] make_product_images relationship missing (Cloud fallback), retrying without images join.');
                 let q2 = client.from('make_products')
-                    .select('*, specifications:make_product_specifications(*), sizes:make_product_sizes(*), colors:make_product_colors(*)')
+                    .select('*, specifications:make_product_specifications(*), sizes:make_product_sizes!make_product_sizes_product_id_fkey(*), colors:make_product_colors(*)')
                     .order('created_at', { ascending: false });
                 if (activeOnly) q2 = q2.eq('is_active', true);
                 if (search) q2 = q2.or(`product_name.ilike.%${search}%,product_code.ilike.%${search}%`);
@@ -1142,7 +2170,7 @@ export function registerMakeHandlers(): void {
             throw error;
         }
 
-        const products = decryptRows(data || []);
+        const products = decryptRows((data as any) || []);
 
         // Aggregate purchased counts from make_order_items for returned products only (bounded to first 100 to avoid huge joins)
         try {
@@ -1199,6 +2227,51 @@ export function registerMakeHandlers(): void {
             }
         }
 
+        // Map single size and blueprint info
+        for (const p of products) {
+            if (p.size_id && p.sizes && Array.isArray(p.sizes)) {
+                p.size = p.sizes.find((s: any) => s.id === p.size_id) || p.sizes[0] || null;
+            } else if (p.sizes && Array.isArray(p.sizes) && p.sizes.length > 0) {
+                p.size = p.sizes[0];
+                p.size_id = p.size.id;
+            }
+            if (p.size) {
+                p.size_label = p.size.size_label || p.size.label || (p.size.length && p.size.width ? `${p.size.length}x${p.size.width}${p.size.height ? `x${p.size.height}` : ''} ${p.size.unit || 'mm'}` : null);
+            }
+        }
+
+        // Enforce permissions & redact fields
+        const session = SessionManager.getSession();
+        const canViewCost = session ? canViewCostPriceSession(session) : false;
+        const canViewSale = session ? canViewSalePriceSession(session) : false;
+        const canViewMaxDiscount = session ? canViewMaxDiscountSession(session) : false;
+        const canViewBlueprint = session ? canViewBlueprintSession(session) : false;
+        const canViewProductDrawing = session ? canViewProductDrawingSession(session) : false;
+
+        for (const p of products) {
+            const requestionLinked = Boolean(p.requestion_item_id);
+            const productCanViewCost = requestionLinked && session ? (canManageCatalog(session) || isFactoryRole(session)) : canViewCost;
+            const productCanViewSale = requestionLinked && session ? (canManageCatalog(session) || isCostingRequester(session)) : canViewSale;
+            if (!productCanViewCost) {
+                delete p.cost_price;
+            }
+            if (!productCanViewSale) {
+                delete p.sale_price;
+                delete p.base_price;
+                delete p.price;
+            }
+            if (!canViewMaxDiscount) {
+                delete p.max_discount_type;
+                delete p.max_discount_value;
+            }
+            if (!canViewBlueprint) {
+                delete p.blueprint_url;
+            }
+            if (!canViewProductDrawing) {
+                delete p.product_drawing_url;
+            }
+        }
+
         return products;
     });
 
@@ -1210,6 +2283,24 @@ export function registerMakeHandlers(): void {
 
         const product = CatalogProductSchema.parse(rawProduct);
 
+        // Authoritatively validate catalog pricing and discount ranges
+        const validPricing = MakePricingService.validateCatalogProductPricing(product);
+        if (!validPricing.isValid) {
+            throw new Error(validPricing.error);
+        }
+
+        const isUpdate = Boolean(product.id);
+        const canEditCost = canEditCostPriceSession(session);
+        // Cost price permissions enforcement: if unauthorized to edit cost, preserve or zero
+        let costPriceToWrite: number | undefined = validPricing.costPrice;
+        if (!canEditCost) {
+            if (isUpdate) {
+                costPriceToWrite = undefined;
+            } else {
+                costPriceToWrite = 0;
+            }
+        }
+
         // Extract multi-category IDs
         const rawCatIds = (product.category_ids || product.categoryIds || (product.category_id ? [product.category_id] : [])) as any[];
         const categoryIds = rawCatIds.map(Number).filter(id => !isNaN(id) && id > 0);
@@ -1219,7 +2310,7 @@ export function registerMakeHandlers(): void {
 
         if (categoryIds.length > 0) {
             resolvedCategoryId = categoryIds[0];
-            const { data: catRows } = await failoverEngine.executeRead(async client => 
+            const { data: catRows } = await failoverEngine.executeRead(async client =>
                 client.from('make_product_categories').select('id, name').in('id', categoryIds),
                 'resolve-category-ids'
             );
@@ -1227,21 +2318,30 @@ export function registerMakeHandlers(): void {
                 resolvedCategoryName = catRows.map((c: any) => c.name).join(', ');
             }
         } else if (product.category) {
-            const { data: catRow } = await failoverEngine.executeRead(async client => 
+            const { data: catRow } = await failoverEngine.executeRead(async client =>
                 client.from('make_product_categories').select('id, name').ilike('name', product.category!.trim()).maybeSingle(),
                 'resolve-category-name'
             );
             if (catRow) {
-                resolvedCategoryId = catRow.id;
-                resolvedCategoryName = catRow.name;
-                categoryIds.push(catRow.id);
+                resolvedCategoryId = (catRow as any).id;
+                resolvedCategoryName = (catRow as any).name;
+                categoryIds.push((catRow as any).id);
             } else {
                 resolvedCategoryName = product.category.trim();
             }
         }
 
-        const isUpdate = Boolean(product.id);
-        const writePayload = isUpdate ? {
+        const effectiveSizeId = (product as any).size_id !== undefined
+            ? ((product as any).size_id ? Number((product as any).size_id) : null)
+            : ((product as any).sizeId !== undefined ? ((product as any).sizeId ? Number((product as any).sizeId) : null) : undefined);
+        const effectiveBlueprintUrl = (product as any).blueprint_url !== undefined
+            ? (product as any).blueprint_url
+            : (product as any).blueprintUrl;
+        const effectiveProductDrawingUrl = (product as any).product_drawing_url !== undefined
+            ? (product as any).product_drawing_url
+            : (product as any).productDrawingUrl;
+
+        const writePayload: any = isUpdate ? {
             product_code: product.product_code,
             product_name: product.product_name,
             description: product.description || null,
@@ -1249,6 +2349,9 @@ export function registerMakeHandlers(): void {
             category: resolvedCategoryName,
             main_image: product.main_image || null,
             is_active: product.is_active !== undefined ? product.is_active : true,
+            sale_price: validPricing.salePrice,
+            max_discount_type: validPricing.maxDiscountType,
+            max_discount_value: validPricing.maxDiscountValue,
             updated_at: new Date().toISOString()
         } : {
             product_code: product.product_code,
@@ -1258,15 +2361,30 @@ export function registerMakeHandlers(): void {
             category: resolvedCategoryName,
             main_image: product.main_image || null,
             is_active: product.is_active !== undefined ? product.is_active : true,
+            sale_price: validPricing.salePrice,
+            max_discount_type: validPricing.maxDiscountType,
+            max_discount_value: validPricing.maxDiscountValue,
             created_by: session.fullName || session.username
         };
+        if (costPriceToWrite !== undefined) {
+            writePayload.cost_price = costPriceToWrite;
+        }
+        if (effectiveSizeId !== undefined) {
+            writePayload.size_id = effectiveSizeId;
+        }
+        if (effectiveBlueprintUrl !== undefined) {
+            writePayload.blueprint_url = effectiveBlueprintUrl ? MakeOrderService.normalizeAttachmentReference(effectiveBlueprintUrl) : null;
+        }
+        if (effectiveProductDrawingUrl !== undefined) {
+            writePayload.product_drawing_url = effectiveProductDrawingUrl ? MakeOrderService.normalizeAttachmentReference(effectiveProductDrawingUrl) : null;
+        }
 
-        const writeResult = await failoverEngine.executeWrite(
+        let writeResult = await failoverEngine.executeWrite(
             async (client) => {
                 if (isUpdate) {
-                    return await client.from('make_products').update(writePayload).eq('id', product.id).select().single();
+                    return await (client.from('make_products') as any).update(writePayload).eq('id', product.id).select().single();
                 } else {
-                    return await client.from('make_products').insert(writePayload).select().single();
+                    return await (client.from('make_products') as any).insert(writePayload).select().single();
                 }
             },
             {
@@ -1278,8 +2396,37 @@ export function registerMakeHandlers(): void {
             isUpdate ? 'update-product' : 'insert-product'
         );
 
+        // Fallback: If DB schema does not yet have pricing columns, retry without them
+        if (writeResult.error) {
+            const msg = writeResult.error.message || '';
+            if (/cost_price|sale_price|max_discount/i.test(msg)) {
+                console.warn('[make-save-catalog-product] Fallback: DB schema missing pricing/discount columns, retrying without them.');
+                const fallbackPayload = { ...writePayload };
+                delete fallbackPayload.cost_price;
+                delete fallbackPayload.sale_price;
+                delete fallbackPayload.max_discount_type;
+                delete fallbackPayload.max_discount_value;
+                writeResult = await failoverEngine.executeWrite(
+                    async (client) => {
+                        if (isUpdate) {
+                            return await (client.from('make_products') as any).update(fallbackPayload).eq('id', product.id).select().single();
+                        } else {
+                            return await (client.from('make_products') as any).insert(fallbackPayload).select().single();
+                        }
+                    },
+                    {
+                        table: 'make_products',
+                        operation: isUpdate ? 'update' : 'insert',
+                        primaryKey: isUpdate ? { name: 'id', value: product.id } : undefined,
+                        data: fallbackPayload
+                    },
+                    isUpdate ? 'update-product-fallback' : 'insert-product-fallback'
+                );
+            }
+        }
+
         if (writeResult.error) throw writeResult.error;
-        const savedData = writeResult.data;
+        const savedData = writeResult.data as any;
 
         // Process attribute junction links in parallel if provided
         const specIds = (product as any).specIds;
@@ -1370,34 +2517,38 @@ export function registerMakeHandlers(): void {
             throw new Error(`Forbidden: ${isGlobal ? 'Global specification modification requires "manage_global_product_attributes" permission.' : 'Catalog modification requires Administrator or Manager privileges.'}`);
         }
 
-        if (spec.id) {
-            const { data, error } = await supabase.from('make_product_specifications').update({
-                spec_code: spec.spec_code || null,
-                spec_name: spec.spec_name,
-                spec_details: spec.spec_details || null,
-                is_active: spec.is_active !== undefined ? spec.is_active : true
-            }).eq('id', spec.id).select().single();
-            if (error) throw error;
-            MakeSearchService.invalidateCache();
-            if (supabaseAdmin && data) {
-                supabaseAdmin.from('make_product_specifications').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud spec sync:', e.message));
+        const specImageUrl = spec.image_url || null;
+        const payload: Record<string, any> = {
+            spec_code: spec.spec_code || null,
+            spec_name: spec.spec_name,
+            spec_details: spec.spec_details || null,
+            is_active: spec.is_active !== undefined ? spec.is_active : true
+        };
+
+        const isMissingImageColumn = (e: any) =>
+            !!e && (e.code === 'PGRST204' || e.code === '42703') && /image_url/i.test(String(e.message || ''));
+
+        const writeSpec = async (body: any) => {
+            const q = supabase.from('make_product_specifications');
+            return spec.id
+                ? await q.update(body).eq('id', spec.id).select().single()
+                : await q.insert({ ...body, product_id: spec.product_id }).select().single();
+        };
+
+        const result = await writeSpec(specImageUrl ? { ...payload, image_url: specImageUrl } : payload);
+        if (result.error) {
+            if (specImageUrl && isMissingImageColumn(result.error)) {
+                throw new Error('Saving specification with an image requires database migration 066 (image_url column). Please contact your administrator.');
             }
-            return data;
-        } else {
-            const { data, error } = await supabase.from('make_product_specifications').insert({
-                product_id: spec.product_id,
-                spec_code: spec.spec_code || null,
-                spec_name: spec.spec_name,
-                spec_details: spec.spec_details || null,
-                is_active: spec.is_active !== undefined ? spec.is_active : true
-            }).select().single();
-            if (error) throw error;
-            MakeSearchService.invalidateCache();
-            if (supabaseAdmin && data) {
-                supabaseAdmin.from('make_product_specifications').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud spec sync:', e.message));
-            }
-            return data;
+            throw result.error;
         }
+
+        const data = result.data;
+        MakeSearchService.invalidateCache();
+        if (supabaseAdmin && data) {
+            (supabaseAdmin as any).from('make_product_specifications').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud spec sync:', e.message));
+        }
+        return data;
     });
 
     ipcMain.handle('make-delete-spec', async (_e, id: number) => {
@@ -1406,7 +2557,7 @@ export function registerMakeHandlers(): void {
             async client => client.from('make_product_specifications').select('product_id').eq('id', id).maybeSingle(),
             'check-spec-global'
         );
-        const isGlobal = !spec || spec.product_id === null;
+        const isGlobal = !spec || (spec as any).product_id === null;
         if (isGlobal ? !canManageGlobalProductAttributes(session) : !canManageCatalog(session)) {
             throw new Error(`Forbidden: ${isGlobal ? 'Global specification deletion requires "manage_global_product_attributes" permission.' : 'Catalog modification requires Administrator or Manager privileges.'}`);
         }
@@ -1445,7 +2596,7 @@ export function registerMakeHandlers(): void {
             if (error) throw error;
             MakeSearchService.invalidateCache();
             if (supabaseAdmin && data) {
-                supabaseAdmin.from('make_product_sizes').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud size sync:', e.message));
+                (supabaseAdmin as any).from('make_product_sizes').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud size sync:', e.message));
             }
             return data;
         } else {
@@ -1453,7 +2604,7 @@ export function registerMakeHandlers(): void {
             if (error) throw error;
             MakeSearchService.invalidateCache();
             if (supabaseAdmin && data) {
-                supabaseAdmin.from('make_product_sizes').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud size sync:', e.message));
+                (supabaseAdmin as any).from('make_product_sizes').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud size sync:', e.message));
             }
             return data;
         }
@@ -1465,7 +2616,7 @@ export function registerMakeHandlers(): void {
             async client => client.from('make_product_sizes').select('product_id').eq('id', id).maybeSingle(),
             'check-size-global'
         );
-        const isGlobal = !size || size.product_id === null;
+        const isGlobal = !size || (size as any).product_id === null;
         if (isGlobal ? !canManageGlobalProductAttributes(session) : !canManageCatalog(session)) {
             throw new Error(`Forbidden: ${isGlobal ? 'Global size deletion requires "manage_global_product_attributes" permission.' : 'Catalog modification requires Administrator or Manager privileges.'}`);
         }
@@ -1501,7 +2652,7 @@ export function registerMakeHandlers(): void {
             if (error) throw error;
             MakeSearchService.invalidateCache();
             if (supabaseAdmin && data) {
-                supabaseAdmin.from('make_product_colors').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud color sync:', e.message));
+                (supabaseAdmin as any).from('make_product_colors').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud color sync:', e.message));
             }
             return data;
         } else {
@@ -1509,7 +2660,7 @@ export function registerMakeHandlers(): void {
             if (error) throw error;
             MakeSearchService.invalidateCache();
             if (supabaseAdmin && data) {
-                supabaseAdmin.from('make_product_colors').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud color sync:', e.message));
+                (supabaseAdmin as any).from('make_product_colors').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud color sync:', e.message));
             }
             return data;
         }
@@ -1521,7 +2672,7 @@ export function registerMakeHandlers(): void {
             async client => client.from('make_product_colors').select('product_id').eq('id', id).maybeSingle(),
             'check-color-global'
         );
-        const isGlobal = !color || color.product_id === null;
+        const isGlobal = !color || (color as any).product_id === null;
         if (isGlobal ? !canManageGlobalProductAttributes(session) : !canManageCatalog(session)) {
             throw new Error(`Forbidden: ${isGlobal ? 'Global color deletion requires "manage_global_product_attributes" permission.' : 'Catalog modification requires Administrator or Manager privileges.'}`);
         }
@@ -1545,8 +2696,8 @@ export function registerMakeHandlers(): void {
                 .select(`
                     *,
                     order:make_orders(
-                        id, order_number, customer_name, customer_phone, delivery_address, 
-                        location_landmark, receiver_name, receiver_phone, status, 
+                        id, order_number, customer_name, customer_phone, delivery_address,
+                        location_landmark, receiver_name, receiver_phone, status,
                         approval_status, current_version, salesperson_name, designer_name,
                         created_at, delivery_date, cost_price, sale_price
                     )
@@ -1613,6 +2764,10 @@ export function registerMakeHandlers(): void {
 
     // ── 13. Order Items with Drawings ─────────────────────────────────────────
     ipcMain.handle('make-get-order-items', async (_e, orderId: number) => {
+        const session = requireSession();
+        if (!canViewMakeOrders(session)) {
+            throw new Error('Forbidden: Session lacks MAKE permissions');
+        }
         const { data, error } = await supabase
             .from('make_order_items')
             .select('*')
@@ -1621,49 +2776,114 @@ export function registerMakeHandlers(): void {
 
         if (error) throw error;
         const decrypted = decryptRows(data || []);
+        const sessionRole = (session.role || '').toLowerCase().trim();
+        const isFactory = ['factory_manager', 'factory manager', 'factory'].includes(sessionRole);
+        let blueprintsByProduct = new Map<string, string>();
+        if (isFactory) {
+            const productIds = Array.from(new Set(decrypted.map((item: any) => Number(item.product_id)).filter((id: number) => Number.isInteger(id) && id > 0)));
+            if (productIds.length) {
+                const { data: products, error: productError } = await supabase.from('make_products').select('id,blueprint_url').in('id', productIds);
+                if (productError) throw productError;
+                blueprintsByProduct = new Map((products || []).filter((product: any) => product.blueprint_url).map((product: any) => [String(product.id), product.blueprint_url]));
+            }
+        }
 
         const itemsWithDrawings = await Promise.all(decrypted.map(async (item: any) => {
-            const rawPaths: string[] = Array.isArray(item.pdf_urls) ? item.pdf_urls : [];
-            if (item.technical_drawing_url && !rawPaths.includes(item.technical_drawing_url)) {
+            const blueprint = isFactory ? blueprintsByProduct.get(String(item.product_id)) : null;
+            const rawPaths: string[] = isFactory ? (blueprint ? [blueprint] : []) : (Array.isArray(item.pdf_urls) ? item.pdf_urls : []);
+            if (!isFactory && item.technical_drawing_url && !rawPaths.includes(item.technical_drawing_url)) {
                 rawPaths.unshift(item.technical_drawing_url);
             }
 
             const drawings = await Promise.all(rawPaths.map(async (p: string) => {
-                if (p.startsWith('http://') || p.startsWith('https://')) {
-                    return { path: p, name: p.split('/').pop()?.replace(/^\d+_/, '') || 'drawing', url: p };
-                }
-                if (p.startsWith('make-order-files/')) {
-                    const url = `https://storage.lenas.me/files/${p}`;
-                    return { path: p, name: p.split('/').pop()?.replace(/^\d+_/, '') || 'drawing', url };
-                } else {
-                    const { data: sData } = await supabase.storage.from('make-order-files').createSignedUrl(p, 3600);
-                    return { path: p, name: p.split('/').pop()?.replace(/^\d+_/, '') || 'drawing', url: sData?.signedUrl || '' };
-                }
+                return await resolveAttachmentUrl(p);
             }));
 
-            return {
-                ...item,
-                drawings: drawings.filter(d => d.url)
-            };
+            const resolvedDrawings = drawings.filter(d => d.url || d.isPending);
+            if (isFactory) {
+                // Factory users must not receive customer attachments, product
+                // drawings, sale prices, or designer notes, even as hidden fields.
+                return {
+                    id: item.id,
+                    order_id: item.order_id,
+                    product_id: item.product_id,
+                    product_name: item.product_name,
+                    product_code: item.product_code,
+                    quantity: item.quantity,
+                    spec_name: item.spec_name,
+                    size_label: item.size_label,
+                    color_name: item.color_name,
+                    item_cost_price: item.item_cost_price,
+                    production_blueprint_url: blueprint || null,
+                    drawings: resolvedDrawings
+                };
+            }
+            return { ...item, drawings: resolvedDrawings };
         }));
 
-        const session = SessionManager.getSession();
-        const role = (session?.role || '').toLowerCase();
-        if (role === 'factory_manager' || role === 'factory manager' || role === 'factory') {
-            return itemsWithDrawings.map((it: any) => {
-                const { item_sale_price, unit_sale_price, total_sale_price, ...rest } = it;
-                return rest;
-            });
-        }
+        const canViewCost = canViewCostPriceSession(session);
+        const canViewSale = canViewSalePriceSession(session);
+        const canViewMaxDiscount = canViewMaxDiscountSession(session);
 
-        return itemsWithDrawings;
+        return itemsWithDrawings.map((it: any) => {
+            const itemCopy = { ...it };
+            if (!canViewCost) {
+                delete itemCopy.item_cost_price;
+                delete itemCopy.cost_price;
+                delete itemCopy.total_cost;
+            }
+            if (!canViewSale) {
+                delete itemCopy.item_sale_price;
+                delete itemCopy.unit_sale_price;
+                delete itemCopy.total_sale_price;
+                delete itemCopy.final_item_price;
+                delete itemCopy.total_sale;
+            }
+            if (!canViewMaxDiscount) {
+                delete itemCopy.max_discount_type;
+                delete itemCopy.max_discount_value;
+                delete itemCopy.discount_type;
+                delete itemCopy.discount_value;
+                delete itemCopy.discount_amount;
+            }
+            return itemCopy;
+        });
+    });
+
+    ipcMain.handle('make-remove-order-item', async (_e, rawPayload: { orderId: number; itemId: number }) => {
+        const session = requireSession();
+        const result = await MakeOrderService.removeOrderItem({
+            orderId: Number(rawPayload?.orderId),
+            itemId: Number(rawPayload?.itemId),
+            actorSession: session
+        });
+        if (!result.success) return { success: false, error: result.error };
+        return { success: true };
+    });
+
+    ipcMain.handle('make-update-order-item-quantity', async (_e, rawPayload: { orderId: number; itemId: number; quantity: number }) => {
+        const session = requireSession();
+        const result = await MakeOrderService.updateDesignerOrderItemQuantity({
+            orderId: Number(rawPayload?.orderId),
+            itemId: Number(rawPayload?.itemId),
+            quantity: Number(rawPayload?.quantity),
+            actorSession: session
+        });
+        if (!result.success) return { success: false, error: result.error };
+        return { success: true };
     });
 
     // ── 14. Dashboard Stats ───────────────────────────────────────────────────
     ipcMain.handle('make-get-dashboard-stats', async () => {
-        const { data: allOrders } = await supabase.from('make_orders')
+        const session = SessionManager.getSession();
+        const role = (session?.role || '').toLowerCase();
+        const isSales = ['salesperson', 'salesman', 'sales'].includes(role);
+        if (isSales && !session?.userId) return { total: 0, totalOrders: 0, pending: 0, inProgress: 0, readyForDispatch: 0, delivered: 0, completed: 0, byStatus: {}, pendingDelivery: [], recent: [], recentOrders: [] };
+        let orderStatsQuery = supabase.from('make_orders')
             .select('status, priority, created_at, furniture_name, designer_name, id')
             .order('created_at', { ascending: false });
+        if (isSales) orderStatsQuery = orderStatsQuery.eq('salesman_id', session!.userId) as any;
+        const { data: allOrders } = await orderStatsQuery;
 
         const orders = allOrders || [];
         const total = orders.length;
@@ -1745,9 +2965,24 @@ export function registerMakeHandlers(): void {
 
             const session = SessionManager.getSession();
             const role = (session?.role || '').toLowerCase();
+            if (['salesperson', 'salesman', 'sales'].includes(role)) {
+                if (!session?.userId) return [];
+                return (orders || []).filter((o: any) => Number(o.salesman_id) === Number(session.userId)).map((o: any) => {
+                    const { current_stage_photo: _currentPhoto, stage_photo_url: _stagePhoto, factory_photo_url: _factoryPhoto, ...safe } = o;
+                    if (safe.custom_details && typeof safe.custom_details === 'object') {
+                        const { current_stage_photo: _customPhoto, stage_photo_url: _customStagePhoto, ...details } = safe.custom_details;
+                        safe.custom_details = details;
+                    }
+                    return safe;
+                });
+            }
             if (role === 'factory_manager' || role === 'factory manager' || role === 'factory') {
                 return (orders || []).map((o: any) => {
-                    const { sale_price, custom_price, ...rest } = o;
+                    const { sale_price, custom_price, final_price, total_sale_price, money_received, amount_due, payment_status, ...rest } = o;
+                    if (rest.custom_details && typeof rest.custom_details === 'object') {
+                        const { subtotal, final_price: cFinal, money_received: cRec, amount_due: cDue, payment_status: cStat, ...safeDetails } = rest.custom_details;
+                        rest.custom_details = safeDetails;
+                    }
                     return rest;
                 });
             }
@@ -1827,7 +3062,7 @@ export function registerMakeHandlers(): void {
                     await db.from('make_products').update({ category: categoryName }).eq('category_id', parsed.id);
                     MakeSearchService.invalidateCache();
                     if (supabaseAdmin && data) {
-                        supabaseAdmin.from('make_product_categories').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud category sync:', e.message));
+                        (supabaseAdmin as any).from('make_product_categories').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud category sync:', e.message));
                     }
                     return { success: true, attribute: data };
                 } else {
@@ -1835,7 +3070,7 @@ export function registerMakeHandlers(): void {
                     if (error) throw error;
                     MakeSearchService.invalidateCache();
                     if (supabaseAdmin && data) {
-                        supabaseAdmin.from('make_product_categories').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud category sync:', e.message));
+                        (supabaseAdmin as any).from('make_product_categories').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud category sync:', e.message));
                     }
                     return { success: true, attribute: data };
                 }
@@ -1876,7 +3111,7 @@ export function registerMakeHandlers(): void {
                 const data = result.data;
                 MakeSearchService.invalidateCache();
                 if (supabaseAdmin && data) {
-                    supabaseAdmin.from('make_product_specifications').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud spec sync:', e.message));
+                    (supabaseAdmin as any).from('make_product_specifications').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud spec sync:', e.message));
                 }
                 return { success: true, attribute: data };
             } else if (parsed.type === 'size') {
@@ -1897,7 +3132,7 @@ export function registerMakeHandlers(): void {
                     if (error) throw error;
                     MakeSearchService.invalidateCache();
                     if (supabaseAdmin && data) {
-                        supabaseAdmin.from('make_product_sizes').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud size sync:', e.message));
+                        (supabaseAdmin as any).from('make_product_sizes').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud size sync:', e.message));
                     }
                     return { success: true, attribute: data };
                 } else {
@@ -1905,7 +3140,7 @@ export function registerMakeHandlers(): void {
                     if (error) throw error;
                     MakeSearchService.invalidateCache();
                     if (supabaseAdmin && data) {
-                        supabaseAdmin.from('make_product_sizes').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud size sync:', e.message));
+                        (supabaseAdmin as any).from('make_product_sizes').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud size sync:', e.message));
                     }
                     return { success: true, attribute: data };
                 }
@@ -1926,7 +3161,7 @@ export function registerMakeHandlers(): void {
                     if (error) throw error;
                     MakeSearchService.invalidateCache();
                     if (supabaseAdmin && data) {
-                        supabaseAdmin.from('make_product_colors').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud color sync:', e.message));
+                        (supabaseAdmin as any).from('make_product_colors').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud color sync:', e.message));
                     }
                     return { success: true, attribute: data };
                 } else {
@@ -1934,7 +3169,7 @@ export function registerMakeHandlers(): void {
                     if (error) throw error;
                     MakeSearchService.invalidateCache();
                     if (supabaseAdmin && data) {
-                        supabaseAdmin.from('make_product_colors').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud color sync:', e.message));
+                        (supabaseAdmin as any).from('make_product_colors').upsert(data).catch((e: any) => console.warn('[SYNC] Cloud color sync:', e.message));
                     }
                     return { success: true, attribute: data };
                 }
@@ -2068,24 +3303,34 @@ export function registerMakeHandlers(): void {
                 validation.fileBuffer,
                 validation.sanitizedFileName,
                 validation.mimeType,
-                subfolder
+                subfolder,
+                orderId ? { entityType: 'make_orders', entityId: orderId, fieldName: 'invoice_attachment_urls' } : undefined
             );
 
-            if (!uploadResult.success || !uploadResult.publicUrl) {
+            if (!uploadResult.success && !uploadResult.isPendingUpload) {
                 return { success: false, error: uploadResult.error || 'Failed to upload invoice image' };
+            }
+
+            const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+            if (!persistentRef) {
+                return { success: false, error: 'Failed to establish persistent invoice reference' };
             }
 
             if (orderId) {
                 const { data: order } = await supabase.from('make_orders').select('invoice_attachment_urls').eq('id', orderId).maybeSingle();
                 const existing: string[] = Array.isArray(order?.invoice_attachment_urls) ? order.invoice_attachment_urls : [];
-                const combined = [...existing, uploadResult.publicUrl];
+                const combined = Array.from(new Set([...existing, persistentRef]));
                 await supabase.from('make_orders').update({ invoice_attachment_urls: combined }).eq('id', orderId);
             }
 
             return {
                 success: true,
-                publicUrl: uploadResult.publicUrl,
-                fileName: validation.sanitizedFileName
+                publicUrl: uploadResult.publicUrl || undefined,
+                durableKey: persistentRef,
+                isPendingUpload: uploadResult.isPendingUpload,
+                status: uploadResult.status,
+                fileName: validation.sanitizedFileName,
+                uploadId: uploadResult.uploadId
             };
         } catch (err: any) {
             console.error('[MAKE IPC] make-pick-and-upload-invoice-attachment error:', err);
@@ -2093,10 +3338,90 @@ export function registerMakeHandlers(): void {
         }
     });
 
-    ipcMain.handle('make-upload-invoice-attachment-buffer', async (_e, payload: { fileName: string; fileBase64: string; orderId?: string | number; itemId?: string | number }) => {
+    // ── 18.5 Native Secure Picker & In-Memory Upload for Product Blueprint ─────
+    ipcMain.handle('make-pick-and-upload-blueprint', async (_e, { productId }: { productId?: string | number } = {}) => {
         try {
             requireSession();
-            const { fileName, fileBase64, orderId, itemId } = payload;
+            const focusedWin = BrowserWindow.getFocusedWindow();
+            const validation = await MakeCadService.pickAndValidateFile('cad', focusedWin);
+            if ('canceled' in validation) {
+                return { canceled: true, error: validation.error };
+            }
+
+            const subfolder = productId ? `make-catalog/blueprints/${productId}` : 'make-catalog/blueprints';
+            const uploadResult = await MakeCadService.uploadValidatedBuffer(
+                validation.fileBuffer,
+                validation.sanitizedFileName,
+                validation.mimeType,
+                subfolder,
+                productId ? { entityType: 'make_products', entityId: productId, fieldName: 'blueprint_url' } : undefined
+            );
+
+            if (!uploadResult.success && !uploadResult.isPendingUpload) {
+                return { success: false, error: uploadResult.error || 'Failed to upload product blueprint' };
+            }
+
+            const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+            if (!persistentRef) {
+                return { success: false, error: 'Failed to establish persistent blueprint reference' };
+            }
+
+            if (productId) {
+                await supabase.from('make_products').update({ blueprint_url: persistentRef }).eq('id', productId);
+            }
+
+            return {
+                success: true,
+                publicUrl: uploadResult.publicUrl || undefined,
+                durableKey: persistentRef,
+                isPendingUpload: uploadResult.isPendingUpload,
+                status: uploadResult.status,
+                fileName: validation.sanitizedFileName,
+                uploadId: uploadResult.uploadId
+            };
+        } catch (err: any) {
+            console.error('[MAKE IPC] make-pick-and-upload-blueprint error:', err);
+            return { success: false, error: err.message };
+        }
+    });
+
+    ipcMain.handle('make-pick-and-upload-product-drawing', async (_e, { productId }: { productId?: string | number } = {}) => {
+        try {
+            const session = requireSession();
+            if (!canManageCatalog(session)) throw new Error('Forbidden: Only designers and administrators can upload product drawings.');
+            const validation = await MakeCadService.pickAndValidateFile('cad', BrowserWindow.getFocusedWindow());
+            if ('canceled' in validation) return { canceled: true, error: validation.error };
+            const uploadBuffer = await MakeCadService.watermarkProductDrawingPdf(validation.fileBuffer, validation.sanitizedFileName);
+            const fieldName = 'product_drawing_url';
+            const uploadResult = await MakeCadService.uploadValidatedBuffer(
+                uploadBuffer,
+                validation.sanitizedFileName,
+                validation.mimeType,
+                productId ? `make-catalog/product-drawings/${productId}` : 'make-catalog/product-drawings',
+                productId ? { entityType: 'make_products', entityId: productId, fieldName } : undefined
+            );
+            if (!uploadResult.success && !uploadResult.isPendingUpload) return { success: false, error: uploadResult.error || 'Product drawing upload failed.' };
+            const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+            if (!persistentRef) return { success: false, error: 'Could not establish a persistent product drawing reference.' };
+            if (productId) {
+                const write = await failoverEngine.executeWrite(
+                    async client => await client.from('make_products').update({ product_drawing_url: persistentRef }).eq('id', productId).select('id').single(),
+                    { table: 'make_products', operation: 'update', primaryKey: { name: 'id', value: productId } },
+                    'associate-product-drawing'
+                );
+                if (write.error) throw write.error;
+            }
+            return { success: true, publicUrl: uploadResult.publicUrl || undefined, durableKey: persistentRef, isPendingUpload: uploadResult.isPendingUpload, status: uploadResult.status, fileName: validation.sanitizedFileName };
+        } catch (err: any) {
+            console.error('[MAKE IPC] make-pick-and-upload-product-drawing error:', err);
+            return { success: false, error: err.message || 'Product drawing upload failed.' };
+        }
+    });
+
+    ipcMain.handle('make-upload-invoice-attachment-buffer', async (_e, payload: { fileName: string; fileBase64: string; attachmentType?: 'cad' | 'invoice_attachment'; orderId?: string | number; itemId?: string | number }) => {
+        try {
+            requireSession();
+            const { fileName, fileBase64, orderId, itemId, attachmentType } = payload;
             if (!fileBase64 || !fileName) {
                 return { success: false, error: 'File content and name are required.' };
             }
@@ -2109,7 +3434,7 @@ export function registerMakeHandlers(): void {
                 buffer = Buffer.from(fileBase64, 'base64');
             }
 
-            const valType = itemId ? 'cad' : 'invoice_attachment';
+            const valType = itemId || attachmentType === 'cad' ? 'cad' : 'invoice_attachment';
             const validation = MakeCadService.validateBuffer(buffer, fileName, valType);
             if (!validation.isValid) {
                 return { success: false, error: validation.error };
@@ -2118,36 +3443,50 @@ export function registerMakeHandlers(): void {
             const subfolder = itemId
                 ? `make-order-files/${orderId || 'general'}/items/${itemId}`
                 : (orderId ? `make-order-files/${orderId}/invoices` : 'make-order-files/invoices');
+            const meta = itemId
+                ? { entityType: 'make_order_items', entityId: itemId, fieldName: 'technical_drawing_url' }
+                : (orderId ? { entityType: 'make_orders', entityId: orderId, fieldName: 'invoice_attachment_urls' } : undefined);
+
             const uploadResult = await MakeCadService.uploadValidatedBuffer(
                 validation.fileBuffer,
                 validation.sanitizedFileName,
                 validation.mimeType,
-                subfolder
+                subfolder,
+                meta
             );
 
-            if (!uploadResult.success || !uploadResult.publicUrl) {
+            if (!uploadResult.success && !uploadResult.isPendingUpload) {
                 return { success: false, error: uploadResult.error || 'Failed to upload attachment' };
+            }
+
+            const persistentRef = uploadResult.durableKey || uploadResult.publicUrl;
+            if (!persistentRef) {
+                return { success: false, error: 'Failed to establish persistent attachment reference' };
             }
 
             if (itemId) {
                 const { data: item } = await supabase.from('make_order_items').select('pdf_urls, technical_drawing_url').eq('id', itemId).maybeSingle();
                 const existing: string[] = Array.isArray(item?.pdf_urls) ? item.pdf_urls : [];
-                const combined = [...existing, uploadResult.publicUrl];
+                const combined = Array.from(new Set([...existing, persistentRef]));
                 await supabase.from('make_order_items').update({
                     pdf_urls: combined,
-                    technical_drawing_url: uploadResult.publicUrl
+                    technical_drawing_url: persistentRef
                 }).eq('id', itemId);
             } else if (orderId) {
                 const { data: order } = await supabase.from('make_orders').select('invoice_attachment_urls').eq('id', orderId).maybeSingle();
                 const existing: string[] = Array.isArray(order?.invoice_attachment_urls) ? order.invoice_attachment_urls : [];
-                const combined = [...existing, uploadResult.publicUrl];
+                const combined = Array.from(new Set([...existing, persistentRef]));
                 await supabase.from('make_orders').update({ invoice_attachment_urls: combined }).eq('id', orderId);
             }
 
             return {
                 success: true,
-                publicUrl: uploadResult.publicUrl,
-                fileName: validation.sanitizedFileName
+                publicUrl: uploadResult.publicUrl || undefined,
+                durableKey: persistentRef,
+                isPendingUpload: uploadResult.isPendingUpload,
+                status: uploadResult.status,
+                fileName: validation.sanitizedFileName,
+                uploadId: uploadResult.uploadId
             };
         } catch (err: any) {
             console.error('[MAKE IPC] make-upload-invoice-attachment-buffer error:', err);
@@ -2236,7 +3575,7 @@ export function registerMakeHandlers(): void {
                 return { success: false, error: 'Customer not found' };
             }
 
-            const decrypted = decryptObject(customer, ['address']);
+            const decrypted = decryptObject(customer);
 
             // Optionally look up most recent make_orders delivery record for this customer
             let recentDelivery: any = null;
@@ -2276,5 +3615,451 @@ export function registerMakeHandlers(): void {
             return { success: false, error: err.message };
         }
     });
-}
 
+    // ── 22. Production Hold Approval & Order Payment Handlers ─────────────────
+    ipcMain.handle('make-request-production-approval', async (_e, rawPayload: any) => {
+        try {
+            const session = requireSession();
+            const payload = RequestProductionApprovalSchema.parse(rawPayload);
+            return await MakeOrderService.requestProductionApproval(
+                payload.order_id,
+                payload.notes,
+                session
+            );
+        } catch (err: any) {
+            console.error('[MAKE IPC] make-request-production-approval error:', err);
+            return { success: false, error: err.message || 'Failed to request production approval.' };
+        }
+    });
+
+    ipcMain.handle('make-decide-production-approval', async (_e, rawPayload: any) => {
+        try {
+            const session = requireSession();
+            const payload = DecideProductionApprovalSchema.parse(rawPayload);
+            return await MakeOrderService.decideProductionApproval(
+                payload.order_id,
+                payload.decision,
+                payload.notes,
+                session
+            );
+        } catch (err: any) {
+            console.error('[MAKE IPC] make-decide-production-approval error:', err);
+            return { success: false, error: err.message || 'Failed to record approval decision.' };
+        }
+    });
+
+    ipcMain.handle('make-record-order-payment', async (_e, rawPayload: any) => {
+        try {
+            const session = requireSession();
+            if (!canRecordMakePayment(session)) {
+                return { success: false, error: 'Forbidden: You cannot record MAKE order payments.' };
+            }
+            const payload = RecordOrderPaymentSchema.parse(rawPayload);
+            return await MakeOrderService.recordOrderPayment({
+                orderId: payload.order_id,
+                amount: payload.amount,
+                paymentMethod: payload.payment_method,
+                reference: payload.reference,
+                notes: payload.notes,
+                actorSession: session
+            });
+        } catch (err: any) {
+            console.error('[MAKE IPC] make-record-order-payment error:', err);
+            return { success: false, error: err.message || 'Failed to record order payment.' };
+        }
+    });
+
+    ipcMain.handle('make-get-order-payments', async (_e, orderId: number | string) => {
+        try {
+            const session = requireSession();
+            if (!canViewSalePriceSession(session)) {
+                return { success: false, error: 'Forbidden: You cannot view order payment ledgers.' };
+            }
+            const numId = Number(orderId);
+            if (!numId || isNaN(numId)) {
+                return { success: false, error: 'Invalid order ID.' };
+            }
+            return await MakeOrderService.getOrderPayments(numId);
+        } catch (err: any) {
+            console.error('[MAKE IPC] make-get-order-payments error:', err);
+            return { success: false, error: err.message || 'Failed to get order payments.' };
+        }
+    });
+
+    // ── Custom furniture costing requests ───────────────────────────────────
+    const requestRole = (session: UserSession) => (session.role || '').toLowerCase().trim();
+    const isCostingRequester = (session: UserSession) => ['salesperson', 'salesman', 'sales'].includes(requestRole(session));
+    const isFactoryRole = (session: UserSession) => ['factory_manager', 'factory manager', 'factory'].includes(requestRole(session));
+
+    ipcMain.handle('make-create-costing-request', async (event, payload: any) => {
+        try {
+            const session = requireSession();
+            if (!canCreateCostingRequest(session)) throw new Error('Forbidden: your user group cannot create costing requests.');
+            if (!Array.isArray(payload?.items) || payload.items.length < 1 || payload.items.length > 50) {
+                return { success: false, error: 'Add between 1 and 50 furniture items.' };
+            }
+            const itemsWithFiles = payload.items.map((item: any) => ({
+                item_name: String(item?.item_name || '').trim().slice(0, 255),
+                quantity: Number(item?.quantity),
+                remarks: String(item?.remarks || '').trim().slice(0, 5000) || null,
+                files: Array.isArray(item?.files) ? item.files : []
+            }));
+            const items = itemsWithFiles.map(({ files: _files, ...item }: any) => item);
+            if (items.some((item: any) => !item.item_name || !Number.isFinite(item.quantity) || item.quantity <= 0)) {
+                return { success: false, error: 'Each item needs a name and quantity greater than zero.' };
+            }
+            const requestFiles = Array.isArray(payload?.request_files) ? payload.request_files : [];
+            const allFiles = [...requestFiles, ...itemsWithFiles.flatMap((item: any) => item.files)];
+            const totalFileBytes = allFiles.reduce((total: number, file: any) => total + (Number(file?.buffer?.byteLength ?? file?.buffer?.length) || 0), 0);
+            if (totalFileBytes > 50 * 1024 * 1024) return { success: false, error: 'Reference files must total 50 MB or less per request.' };
+            const uploadOperationId = String(payload?.uploadOperationId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 100);
+            let completedBytes = 0;
+            const reportProgress = (fileName: string, phase = 'uploading') => {
+                if (!uploadOperationId || event.sender.isDestroyed()) return;
+                event.sender.send('make-upload-progress', { operationId: uploadOperationId, fileName, phase, uploadedBytes: completedBytes, totalBytes: totalFileBytes, percent: totalFileBytes ? Math.min(100, Math.floor(completedBytes / totalFileBytes * 100)) : 100 });
+            };
+            const requesterName = String(session.fullName || session.username || 'MAKE user').slice(0, 255);
+            const insert = await failoverEngine.executeWrite(
+                async client => await client.from('make_costing_requests').insert({
+                    requested_by: session.userId || null,
+                    requester_name: requesterName,
+                    customer_name: String(payload.customer_name || '').trim().slice(0, 255) || null,
+                    customer_phone: String(payload.customer_phone || '').trim().slice(0, 50) || null,
+                    remarks: String(payload.remarks || '').trim().slice(0, 5000) || null,
+                    file_urls: [], status: 'submitted'
+                }).select().single(),
+                { table: 'make_costing_requests', operation: 'insert' }, 'create-costing-request'
+            );
+            if (insert.error || !insert.data) throw insert.error || new Error('Request could not be created.');
+            const request = insert.data as any;
+            const numbered = await failoverEngine.executeWrite(
+                async client => await client.from('make_costing_requests').update({ request_number: `RQ-${String(request.id).padStart(6, '0')}` }).eq('id', request.id).select().single(),
+                { table: 'make_costing_requests', operation: 'update', primaryKey: { name: 'id', value: request.id } }, 'number-costing-request'
+            );
+            const itemRows = items.map((item: any) => ({ ...item, request_id: request.id }));
+            const itemInsert = await failoverEngine.executeWrite(
+                async client => await client.from('make_costing_request_items').insert(itemRows).select(),
+                { table: 'make_costing_request_items', operation: 'insert' }, 'create-costing-request-items'
+            );
+            if (itemInsert.error || !itemInsert.data) {
+                await failoverEngine.executeWrite(async client => await client.from('make_costing_requests').delete().eq('id', request.id), { table: 'make_costing_requests', operation: 'delete' }, 'rollback-empty-costing-request');
+                throw itemInsert.error || new Error('Request item rows were not saved.');
+            }
+            const attachmentWarnings: string[] = [];
+            const uploadFile = async (file: any, entityType: 'make_costing_requests' | 'make_costing_request_items', entityId: number) => {
+                const name = String(file?.name || 'attachment').slice(0, 255);
+                try {
+                    const rawBuffer = file?.buffer;
+                    const buffer = Buffer.isBuffer(rawBuffer) ? rawBuffer : ArrayBuffer.isView(rawBuffer) ? Buffer.from(rawBuffer.buffer, rawBuffer.byteOffset, rawBuffer.byteLength) : rawBuffer instanceof ArrayBuffer ? Buffer.from(rawBuffer) : Buffer.alloc(0);
+                    if (!buffer.length) throw new Error('Selected file is empty or could not be read.');
+                    const validation = MakeCadService.validateBuffer(buffer, name, 'cad');
+                    if (!validation.isValid) throw new Error(validation.error || 'File failed validation.');
+                    const uploaded = await MakeCadService.uploadValidatedBuffer(validation.fileBuffer, validation.sanitizedFileName, validation.mimeType || String(file?.mimeType || 'application/octet-stream'), `make-order-files/requestions/${request.id}/${entityType === 'make_costing_request_items' ? entityId : 'request'}`, { entityType, entityId, fieldName: 'file_urls' });
+                    const ref = uploaded.durableKey || uploaded.publicUrl;
+                    if ((!uploaded.success && !uploaded.isPendingUpload) || !ref) throw new Error(uploaded.error || 'File upload failed.');
+                    completedBytes += buffer.length;
+                    reportProgress(name);
+                    return ref;
+                } catch (err: any) {
+                    attachmentWarnings.push(`${name}: ${err.message || 'upload failed'}`);
+                    return null;
+                }
+            };
+            const uploadAndAssociateFiles = async (files: any[], entityType: 'make_costing_requests' | 'make_costing_request_items', entityId: number) => {
+                const refs: string[] = [];
+                for (let start = 0; start < files.length; start += 3) {
+                    const batch = await Promise.all(files.slice(start, start + 3).map(file => uploadFile(file, entityType, entityId)));
+                    refs.push(...batch.filter((ref): ref is string => !!ref));
+                }
+                if (refs.length) {
+                    const write = await failoverEngine.executeWrite(async client => await client.from(entityType).update({ file_urls: refs, updated_at: new Date().toISOString() }).eq('id', entityId), { table: entityType, operation: 'update', primaryKey: { name: 'id', value: entityId } }, 'attach-costing-request-create-files');
+                    if (write.error) throw write.error;
+                }
+            };
+            await uploadAndAssociateFiles(requestFiles, 'make_costing_requests', Number(request.id));
+            const insertedItems: any[] = itemInsert.data as any[];
+            for (let index = 0; index < itemsWithFiles.length; index++) {
+                const row = insertedItems[index];
+                if (!row) continue;
+                await uploadAndAssociateFiles(itemsWithFiles[index].files, 'make_costing_request_items', Number(row.id));
+            }
+            reportProgress('', attachmentWarnings.length ? 'completed_with_errors' : 'complete');
+            return { success: true, request: numbered.data || { ...request, request_number: `RQ-${String(request.id).padStart(6, '0')}` }, items: itemInsert.data, warning: attachmentWarnings.length ? attachmentWarnings.join('; ') : undefined };
+        } catch (err: any) {
+            console.error('[MAKE IPC] make-create-costing-request error:', err);
+            return { success: false, error: err.message || 'Failed to submit costing request.' };
+        }
+    });
+
+    ipcMain.handle('make-get-costing-requests', async () => {
+        try {
+            const session = requireSession();
+            if (!canReadCostingRequests(session)) throw new Error('Forbidden: your user group cannot read costing requests.');
+            const designer = canPriceCostingRequest(session);
+            const factory = isFactoryRole(session);
+            const role = (session.role || '').toLowerCase().trim();
+            const isAdmin = ['admin', 'superadmin', 'manager'].includes(role);
+            const readAllOverride = permissionOverride(session, 'read_all_make_costing_requests');
+            const canReadAll = isAdmin || (readAllOverride !== undefined ? readAllOverride : designer || factory);
+            const { data: requests, error } = await failoverEngine.executeRead(async client => {
+                let query: any = client.from('make_costing_requests').select('*');
+                if (!canReadAll && session.userId) query = query.eq('requested_by', session.userId);
+                return await query.order('created_at', { ascending: false });
+            }, 'get-costing-requests');
+            if (error) throw error;
+            const requestRows: any[] = Array.isArray(requests) ? requests as any[] : [];
+            const ids = requestRows.map((row: any) => row.id);
+            if (!ids.length) return [];
+            const { data: items, error: itemsError } = await failoverEngine.executeRead(async client => await client.from('make_costing_request_items').select('*').in('request_id', ids).order('id'), 'get-costing-request-items');
+            if (itemsError) throw itemsError;
+            const itemRows: any[] = Array.isArray(items) ? items as any[] : [];
+            const admin = isAdmin;
+            const costOverride = permissionOverride(session, 'view_product_cost_price');
+            const saleOverride = permissionOverride(session, 'view_product_sale_price');
+            const blueprintOverride = permissionOverride(session, 'view_product_blueprint');
+            const drawingOverride = permissionOverride(session, 'view_product_drawing');
+            const canSeeCost = admin || (costOverride !== undefined ? costOverride : designer || factory);
+            const canSeeSale = !factory && (admin || (saleOverride !== undefined ? saleOverride : designer || isCostingRequester(session)));
+            const result = requestRows.map((request: any) => ({
+                ...request,
+                items: itemRows.filter((item: any) => String(item.request_id) === String(request.id)).map((item: any) => {
+                    const safe = { ...item };
+                    if (!canSeeCost) delete safe.cost_price;
+                    if (!canSeeSale) delete safe.sale_price;
+                    if (!(admin || (blueprintOverride !== undefined ? blueprintOverride : designer || factory))) delete safe.blueprint_url;
+                    if (factory || !(admin || (drawingOverride !== undefined ? drawingOverride : designer || isCostingRequester(session)))) delete safe.product_drawing_url;
+                    return safe;
+                })
+            }));
+            return factory
+                ? result.map((request: any) => ({ ...request, items: request.items.filter((item: any) => item.status === 'priced' || item.status === 'ordered') })).filter((request: any) => request.items.length > 0)
+                : result;
+        } catch (err: any) {
+            console.error('[MAKE IPC] make-get-costing-requests error:', err);
+            return { error: err.message || 'Failed to load costing requests.' };
+        }
+    });
+
+    ipcMain.handle('make-upload-costing-request-file', async (_e, payload: { requestId: number }) => {
+        try {
+            const session = requireSession();
+            const requestId = Number(payload?.requestId);
+            if (!Number.isInteger(requestId) || requestId < 1) throw new Error('Invalid request ID.');
+            const { data: request, error } = await failoverEngine.executeRead(async client => await client.from('make_costing_requests').select('id,requested_by,file_urls').eq('id', requestId).maybeSingle(), 'get-costing-request-for-upload');
+            if (error || !request) throw error || new Error('Request not found.');
+            if (Number((request as any).requested_by) !== Number(session.userId) && !canManageCatalog(session)) throw new Error('Forbidden: You cannot attach files to this request.');
+            const validation = await MakeCadService.pickAndValidateFile('cad', BrowserWindow.getFocusedWindow());
+            if ('canceled' in validation) return { canceled: true };
+            const uploaded = await MakeCadService.uploadValidatedBuffer(validation.fileBuffer, validation.sanitizedFileName, validation.mimeType, `make-order-files/requestions/${requestId}`, { entityType: 'make_costing_requests', entityId: requestId, fieldName: 'file_urls' });
+            const durableRef = uploaded.durableKey || uploaded.publicUrl;
+            if ((!uploaded.success && !uploaded.isPendingUpload) || !durableRef) throw new Error(uploaded.error || 'File upload failed.');
+            const refs = Array.from(new Set([...(Array.isArray((request as any).file_urls) ? (request as any).file_urls : []), durableRef]));
+            const write = await failoverEngine.executeWrite(async client => await client.from('make_costing_requests').update({ file_urls: refs, updated_at: new Date().toISOString() }).eq('id', requestId), { table: 'make_costing_requests', operation: 'update', primaryKey: { name: 'id', value: requestId } }, 'attach-costing-request-file');
+            if (write.error) throw write.error;
+            return { success: true, file: { ref: durableRef, name: validation.sanitizedFileName }, pending: !!uploaded.isPendingUpload };
+        } catch (err: any) {
+            console.error('[MAKE IPC] make-upload-costing-request-file error:', err);
+            return { success: false, error: err.message || 'Failed to upload request file.' };
+        }
+    });
+
+    ipcMain.handle('make-upload-costing-request-item-file', async (_e, payload: { requestId: number; itemId: number }) => {
+        try {
+            const session = requireSession();
+            const requestId = Number(payload?.requestId), itemId = Number(payload?.itemId);
+            if (!Number.isInteger(requestId) || requestId < 1 || !Number.isInteger(itemId) || itemId < 1) throw new Error('Invalid request item.');
+            const { data: item, error } = await failoverEngine.executeRead(async client => await client.from('make_costing_request_items').select('id,request_id,file_urls,request:make_costing_requests!inner(requested_by)').eq('id', itemId).eq('request_id', requestId).maybeSingle(), 'get-costing-item-for-file-upload');
+            if (error || !item) throw error || new Error('Request item not found.');
+            const request = Array.isArray((item as any).request) ? (item as any).request[0] : (item as any).request;
+            if (Number(request?.requested_by) !== Number(session.userId) && !canManageCatalog(session)) throw new Error('Forbidden: You cannot attach files to this request item.');
+            const validation = await MakeCadService.pickAndValidateFile('cad', BrowserWindow.getFocusedWindow());
+            if ('canceled' in validation) return { canceled: true };
+            const uploaded = await MakeCadService.uploadValidatedBuffer(validation.fileBuffer, validation.sanitizedFileName, validation.mimeType, `make-order-files/requestions/${requestId}/${itemId}`, { entityType: 'make_costing_request_items', entityId: itemId, fieldName: 'file_urls' });
+            const durableRef = uploaded.durableKey || uploaded.publicUrl;
+            if ((!uploaded.success && !uploaded.isPendingUpload) || !durableRef) throw new Error(uploaded.error || 'File upload failed.');
+            const refs = Array.from(new Set([...(Array.isArray((item as any).file_urls) ? (item as any).file_urls : []), durableRef]));
+            const write = await failoverEngine.executeWrite(async client => await client.from('make_costing_request_items').update({ file_urls: refs, updated_at: new Date().toISOString() }).eq('id', itemId), { table: 'make_costing_request_items', operation: 'update', primaryKey: { name: 'id', value: itemId } }, 'attach-costing-request-item-file');
+            if (write.error) throw write.error;
+            return { success: true, file: { ref: durableRef, name: validation.sanitizedFileName }, pending: !!uploaded.isPendingUpload };
+        } catch (err: any) {
+            console.error('[MAKE IPC] make-upload-costing-request-item-file error:', err);
+            return { success: false, error: err.message || 'Failed to upload request item file.' };
+        }
+    });
+
+    ipcMain.handle('make-delete-costing-request', async (_e, payload: { requestId: number }) => {
+        try {
+            const session = requireSession();
+            if (!canDeleteCostingRequest(session)) throw new Error('Forbidden: your user group cannot delete costing requests.');
+            const requestId = Number(payload?.requestId);
+            if (!Number.isInteger(requestId) || requestId < 1) throw new Error('Invalid request ID.');
+            const result = await failoverEngine.executeWrite(async client => await client.from('make_costing_requests').delete().eq('id', requestId).select('id'), { table: 'make_costing_requests', operation: 'delete', primaryKey: { name: 'id', value: requestId } }, 'delete-costing-request');
+            if (result.error) throw result.error;
+            if (!result.data?.length) throw new Error('Requestion not found or could not be deleted.');
+            MakeSearchService.invalidateCache();
+            return { success: true };
+        } catch (err: any) {
+            console.error('[MAKE IPC] make-delete-costing-request error:', err);
+            return { success: false, error: err.message || 'Failed to delete requestion.' };
+        }
+    });
+
+    ipcMain.handle('make-pick-costing-product-asset', async (_e, payload: { kind: 'image' | 'blueprint' | 'product_drawing'; requestId: number; itemId: number }) => {
+        try {
+            const session = requireSession();
+            if (!canPriceCostingRequest(session)) throw new Error('Forbidden: your user group cannot prepare costing products.');
+            const kind = payload?.kind;
+            if (kind !== 'image' && kind !== 'blueprint' && kind !== 'product_drawing') throw new Error('Unsupported product asset.');
+            const itemId = Number(payload.itemId);
+            const requestId = Number(payload.requestId);
+            if (!Number.isInteger(itemId) || itemId < 1 || !Number.isInteger(requestId) || requestId < 1) throw new Error('Invalid request item.');
+            const { data: requestItem, error: requestItemError } = await failoverEngine.executeRead(async client => await client.from('make_costing_request_items').select('id').eq('id', itemId).eq('request_id', requestId).maybeSingle(), 'validate-costing-request-asset-owner');
+            if (requestItemError || !requestItem) throw requestItemError || new Error('Request item not found.');
+            const validation = await MakeCadService.pickAndValidateFile(kind === 'image' ? 'photo' : 'cad', BrowserWindow.getFocusedWindow());
+            if ('canceled' in validation) return { canceled: true };
+            const uploadBuffer = kind === 'product_drawing' ? await MakeCadService.watermarkProductDrawingPdf(validation.fileBuffer, validation.sanitizedFileName) : validation.fileBuffer;
+            const fieldName = kind === 'image' ? 'product_image' : kind === 'blueprint' ? 'blueprint_url' : 'product_drawing_url';
+            const uploaded = await MakeCadService.uploadValidatedBuffer(uploadBuffer, validation.sanitizedFileName, validation.mimeType, `make-catalog/requestions/${requestId}/${itemId}/${kind}`, { entityType: 'make_costing_request_items', entityId: itemId, fieldName });
+            const ref = uploaded.durableKey || uploaded.publicUrl;
+            if ((!uploaded.success && !uploaded.isPendingUpload) || !ref) throw new Error(uploaded.error || 'Asset upload failed.');
+            return { success: true, ref, fileName: validation.sanitizedFileName, pending: !!uploaded.isPendingUpload };
+        } catch (err: any) {
+            console.error('[MAKE IPC] make-pick-costing-product-asset error:', err);
+            return { success: false, error: err.message || 'Failed to upload product asset.' };
+        }
+    });
+
+    ipcMain.handle('make-complete-costing-request-item', async (_e, payload: any) => {
+        try {
+            const session = requireSession();
+            if (!canPriceCostingRequest(session)) throw new Error('Forbidden: your user group cannot price costing requests.');
+            const itemId = Number(payload?.itemId);
+            const costRaw = payload?.cost_price;
+            const saleRaw = payload?.sale_price;
+            const cost = Number(costRaw);
+            const sale = Number(saleRaw);
+            const productName = String(payload?.product_name || '').trim().slice(0, 255);
+            const productCode = String(payload?.product_code || '').trim().slice(0, 100);
+            const blueprint = String(payload?.blueprint_url || '').trim();
+            const productDrawing = String(payload?.product_drawing_url || '').trim();
+            const image = String(payload?.product_image || '').trim();
+            const normalizeList = (value: unknown) => Array.isArray(value) ? [...new Set(value.map(v => String(v || '').trim()).filter(Boolean))].slice(0, 30) : [];
+            const requestedSpecifications = normalizeList(payload?.specifications);
+            const requestedSizes = normalizeList(payload?.sizes);
+            const requestedColors = normalizeList(payload?.colors);
+            const categoryProvided = Object.prototype.hasOwnProperty.call(payload || {}, 'category_id');
+            const maxDiscountType = payload?.max_discount_type === 'amount' ? 'amount' : 'percent';
+            const maxDiscountValue = payload?.max_discount_value == null || payload?.max_discount_value === '' ? null : Number(payload.max_discount_value);
+            if (!Number.isInteger(itemId) || itemId < 1 || !productName || !productCode || costRaw == null || String(costRaw).trim() === '' || !Number.isFinite(cost) || cost < 0 || saleRaw == null || String(saleRaw).trim() === '' || !Number.isFinite(sale) || sale < 0) {
+                throw new Error('Enter product name, product code, and valid cost and sale prices. Product image and blueprint are optional.');
+            }
+            if (maxDiscountValue !== null && (!Number.isFinite(maxDiscountValue) || maxDiscountValue < 0 || (maxDiscountType === 'percent' && maxDiscountValue > 100) || (maxDiscountType === 'amount' && maxDiscountValue > sale))) {
+                throw new Error(maxDiscountType === 'percent' ? 'Maximum discount must be between 0 and 100%.' : 'Maximum discount cannot exceed the sale price.');
+            }
+            const { data: item, error: itemErr } = await failoverEngine.executeRead(async client => await client.from('make_costing_request_items').select('*,request:make_costing_requests!inner(id,request_number,requested_by,requester_name,status)').eq('id', itemId).maybeSingle(), 'get-costing-request-item-for-pricing');
+            if (itemErr || !item) throw itemErr || new Error('Request item not found.');
+            const itemRow: any = item;
+            const request = Array.isArray(itemRow.request) ? itemRow.request[0] : itemRow.request;
+            const categoryId = categoryProvided
+                ? (payload.category_id == null || payload.category_id === '' ? null : Number(payload.category_id))
+                : (Number(itemRow.category_id) || null);
+            if (categoryId !== null && (!Number.isInteger(categoryId) || categoryId < 1)) throw new Error('Choose a valid global product category.');
+            let categoryName: string | null = null;
+            if (categoryId !== null) {
+                const { data: category, error: categoryError } = await failoverEngine.executeRead(async client => await client.from('make_product_categories').select('id,name,is_active').eq('id', categoryId).maybeSingle(), 'validate-costing-category');
+                if (categoryError || !category || category.is_active === false) throw categoryError || new Error('The selected global category is unavailable. Refresh the options and try again.');
+                categoryName = String(category.name || '').trim();
+                if (!categoryName) throw new Error('The selected global category does not have a name.');
+            }
+            const validateGlobalAttributeValues = async (table: string, column: string, values: string[], operation: string) => {
+                if (!values.length) return [] as any[];
+                const { data, error } = await failoverEngine.executeRead(async client => await client.from(table).select('*').is('product_id', null).in(column, values), operation);
+                if (error) throw error;
+                const activeRows = (data || []).filter((row: any) => row.is_active !== false);
+                const rowsByValue = new Map(activeRows.map((row: any) => [String(row[column] || '').trim(), row]));
+                if (values.some(value => !rowsByValue.has(value))) throw new Error(`Choose ${column.replace('_', ' ')} values from the active global attributes.`);
+                return values.map(value => rowsByValue.get(value));
+            };
+            const globalSpecifications = await validateGlobalAttributeValues('make_product_specifications', 'spec_name', requestedSpecifications, 'validate-costing-global-specifications');
+            const globalSizes = await validateGlobalAttributeValues('make_product_sizes', 'size_label', requestedSizes, 'validate-costing-global-sizes');
+            const globalColors = await validateGlobalAttributeValues('make_product_colors', 'color_name', requestedColors, 'validate-costing-global-colors');
+            const specifications = globalSpecifications.map((row: any) => String(row.spec_name));
+            const sizes = globalSizes.map((row: any) => String(row.size_label));
+            const colors = globalColors.map((row: any) => String(row.color_name));
+            if (!itemRow.product_id) {
+                const { data: existingProduct } = await failoverEngine.executeRead(async client => await client.from('make_products').select('id').eq('requestion_item_id', itemId).maybeSingle(), 'find-existing-requestion-product');
+                if ((existingProduct as any)?.id) itemRow.product_id = (existingProduct as any).id;
+            }
+            if (itemRow.product_id) {
+                const productUpdate: any = { product_code: productCode, product_name: productName, cost_price: cost, sale_price: sale, max_discount_type: maxDiscountType, max_discount_value: maxDiscountValue, main_image: image || null, blueprint_url: blueprint || null, product_drawing_url: productDrawing || null, updated_at: new Date().toISOString() };
+                if (categoryProvided || categoryId) { productUpdate.category_id = categoryId; productUpdate.category = categoryName; }
+                const updateProduct = await failoverEngine.executeWrite(async client => await client.from('make_products').update(productUpdate).eq('id', itemRow.product_id).select().single(), { table: 'make_products', operation: 'update', primaryKey: { name: 'id', value: itemRow.product_id } }, 'update-requestion-product');
+                if (updateProduct.error) throw updateProduct.error;
+            } else {
+                const productPayload: any = { product_code: productCode, product_name: productName, description: `Created from costing request ${request.request_number || request.id}`, main_image: image || null, blueprint_url: blueprint || null, product_drawing_url: productDrawing || null, cost_price: cost, sale_price: sale, max_discount_type: maxDiscountType, max_discount_value: maxDiscountValue, is_active: true, requestion_item_id: itemId, created_by: session.fullName || session.username };
+                if (categoryId) { productPayload.category_id = categoryId; productPayload.category = categoryName; }
+                const product = await failoverEngine.executeWrite(async client => await client.from('make_products').insert(productPayload).select().single(), { table: 'make_products', operation: 'insert' }, 'create-requestion-catalog-product');
+                if (product.error || !product.data) throw product.error || new Error('Product could not be added to the catalog.');
+                itemRow.product_id = (product.data as any).id;
+            }
+            const productId = Number(itemRow.product_id);
+            const replaceProductAttributes = async (table: string, rows: any[], operation: string) => {
+                const deletion = await failoverEngine.executeWrite(async client => await client.from(table).delete().eq('product_id', productId), { table, operation: 'delete', primaryKey: { name: 'product_id', value: productId } }, `${operation}-clear`);
+                if (deletion.error) throw deletion.error;
+                if (!rows.length) return;
+                const insertion = await failoverEngine.executeWrite(async client => await client.from(table).insert(rows), { table, operation: 'insert', data: rows }, operation);
+                if (insertion.error) throw insertion.error;
+            };
+            await replaceProductAttributes('make_product_specifications', globalSpecifications.map((row: any, index: number) => ({ product_id: productId, spec_code: `${productCode}-S${index + 1}`, spec_name: row.spec_name, spec_details: row.spec_details || null, image_url: row.image_url || null, is_active: true })), 'save-requestion-specifications');
+            await replaceProductAttributes('make_product_sizes', globalSizes.map((row: any) => ({ product_id: productId, size_label: row.size_label, length: row.length ?? null, width: row.width ?? null, height: row.height ?? null, diameter: row.diameter ?? null, unit: row.unit || 'mm', is_active: true })), 'save-requestion-sizes');
+            await replaceProductAttributes('make_product_colors', globalColors.map((row: any) => ({ product_id: productId, spec_id: row.spec_id ?? null, color_name: row.color_name, color_code: row.color_code || null, image_url: row.image_url || null, is_active: true })), 'save-requestion-colors');
+            const itemUpdatePayload: any = { product_name: productName, product_code: productCode, cost_price: cost, sale_price: sale, blueprint_url: blueprint || null, product_drawing_url: productDrawing || null, product_image: image || null, product_id: itemRow.product_id, specifications, sizes, colors, max_discount_type: maxDiscountType, max_discount_value: maxDiscountValue, status: 'priced', designer_notes: String(payload?.designer_notes || '').trim().slice(0, 5000) || null, updated_at: new Date().toISOString() };
+            if (categoryProvided || categoryId) itemUpdatePayload.category_id = categoryId;
+            const itemUpdate = await failoverEngine.executeWrite(async client => await client.from('make_costing_request_items').update(itemUpdatePayload).eq('id', itemId).select().single(), { table: 'make_costing_request_items', operation: 'update', primaryKey: { name: 'id', value: itemId } }, 'complete-costing-request-item');
+            if (itemUpdate.error) throw itemUpdate.error;
+            const { data: siblingItems } = await failoverEngine.executeRead(async client => await client.from('make_costing_request_items').select('status').eq('request_id', request.id), 'check-costing-request-items');
+            const allPriced = (siblingItems || []).every((row: any) => row.status === 'priced' || row.status === 'ordered');
+            await failoverEngine.executeWrite(async client => await client.from('make_costing_requests').update({ status: allPriced ? 'priced' : 'in_progress', updated_at: new Date().toISOString() }).eq('id', request.id), { table: 'make_costing_requests', operation: 'update', primaryKey: { name: 'id', value: request.id } }, 'refresh-costing-request-status');
+            if (request.requested_by) {
+                const notificationWrite = await failoverEngine.executeWrite(async client => await client.from('notifications').insert({ title: `Costing complete: ${itemRow.item_name}`, message: `Your custom furniture request ${request.request_number || request.id} has been priced and is available in MAKE Requestion.`, recipient_id: request.requested_by }), { table: 'notifications', operation: 'insert' }, 'notify-costing-requester');
+                const notificationErr = notificationWrite.error;
+                if (notificationErr) console.warn('[MAKE] Could not create costing notification:', notificationErr.message);
+            }
+            MakeSearchService.invalidateCache();
+            return { success: true, item: itemUpdate.data };
+        } catch (err: any) {
+            console.error('[MAKE IPC] make-complete-costing-request-item error:', err);
+            return { success: false, error: err.message || 'Failed to complete costing.' };
+        }
+    });
+
+    ipcMain.handle('make-order-from-costing-request', async (_e, rawPayload: number | { requestId?: number; itemId?: number }) => {
+        try {
+            const session = requireSession();
+            const payload = typeof rawPayload === 'number' ? { itemId: rawPayload } : (rawPayload || {});
+            const { data: request, error: requestError } = await failoverEngine.executeRead(async client => {
+                let query: any = client.from('make_costing_requests').select('*');
+                query = payload.requestId ? query.eq('id', Number(payload.requestId)) : query.eq('id', -1);
+                return await query.maybeSingle();
+            }, 'get-costing-request-for-order');
+            if (requestError || !request) throw requestError || new Error('Costing request was not found.');
+            const explicitOrderGrant = permissionOverride(session, 'place_order_from_costing_request');
+            const canOrder = Number(request.requested_by) === Number(session.userId) || canApproveOrder(session) || explicitOrderGrant === true;
+            if (explicitOrderGrant === false && !canApproveOrder(session)) throw new Error('Forbidden: your user group cannot place orders from costing requests.');
+            if (!canOrder) throw new Error('Only the request owner or an order approver can place this order.');
+            const { data: rows, error: itemsError } = await failoverEngine.executeRead(async client => {
+                let query: any = client.from('make_costing_request_items').select('*').eq('request_id', request.id).order('id');
+                if (payload.itemId) query = query.eq('id', Number(payload.itemId));
+                return await query;
+            }, 'get-costing-request-items-for-order');
+            if (itemsError) throw itemsError;
+            const pricedRows = (rows || []).filter((row: any) => row.status === 'priced');
+            if (!pricedRows.length) throw new Error('There are no priced items available to order.');
+            if (payload.itemId && pricedRows.length !== 1) throw new Error('The selected costing item is not priced yet.');
+            if (payload.requestId && pricedRows.length !== (rows || []).length) throw new Error('Finish pricing every item before placing the complete request as an order.');
+            return { success: true, request: { id: request.id, request_number: request.request_number, customer_name: request.customer_name, customer_phone: request.customer_phone, remarks: request.remarks }, items: pricedRows.map((row: any) => ({ id: row.id, product_id: row.product_id, requestion_item_id: row.id, product_name: row.product_name || row.item_name, product_code: row.product_code, quantity: row.quantity, sale_price: row.sale_price, main_image: row.product_image, product_drawing_url: row.product_drawing_url, specification: row.specifications || [], sizes: row.sizes || [], colors: row.colors || [], max_discount_type: row.max_discount_type, max_discount_value: row.max_discount_value, notes: row.remarks || '' })) };
+        } catch (err: any) {
+            return { success: false, error: err.message || 'Could not prepare order.' };
+        }
+    });
+}

@@ -58,7 +58,8 @@ vi.mock('../../electron/supabase', () => ({
         storage: {
             from: vi.fn(() => ({
                 upload: vi.fn().mockResolvedValue({ error: null }),
-                getPublicUrl: vi.fn((p: string) => ({ data: { publicUrl: `public/${p}` } }))
+                getPublicUrl: vi.fn((p: string) => ({ data: { publicUrl: `public/${p}` } })),
+                createSignedUrl: vi.fn(async (p: string) => ({ data: { signedUrl: `public/${p}` }, error: null }))
             }))
         }
     },

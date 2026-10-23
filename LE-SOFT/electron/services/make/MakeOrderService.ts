@@ -15,7 +15,8 @@ import { supabase } from '../../supabase';
 import { MakePricingService, PricingItem, PricingOverride } from './MakePricingService';
 import { MakeVersionService } from './MakeVersionService';
 import { MakeSearchService } from './MakeSearchService';
-import { SessionManager } from '../../session-manager';
+import { SessionManager, UserSession } from '../../session-manager';
+import { DurableUploadService } from '../media/DurableUploadService';
 
 export interface CreateMakeOrderInput {
     furniture_name: string;
@@ -35,6 +36,16 @@ export interface CreateMakeOrderInput {
     special_instructions?: string | null;
     cost_price?: number | string | null;
     sale_price?: number | string | null;
+    discount_type?: 'percent' | 'amount' | null;
+    discount_value?: number | string | null;
+    discount_amount?: number | string | null;
+    final_price?: number | string | null;
+    money_received?: number | string | null;
+    amount_due?: number | string | null;
+    payment_status?: 'unpaid' | 'partial' | 'paid' | string | null;
+    production_hold?: boolean;
+    hold_reason?: string | null;
+    admin_approval_status?: string | null;
     customer_id?: number | null;
     invoice_attachment_urls?: string[];
     invoice_attachments?: string[];
@@ -54,11 +65,20 @@ export interface CreateMakeOrderInput {
         quantity: number;
         item_cost_price?: number | string | null;
         item_sale_price?: number | string | null;
+        discount_type?: 'percent' | 'amount' | null;
+        discount_value?: number | string | null;
+        discount_amount?: number | string | null;
+        final_item_price?: number | string | null;
+        max_discount_type?: 'percent' | 'amount' | null;
+        max_discount_value?: number | string | null;
         is_customized?: boolean;
         is_custom?: boolean;
         custom_dimensions?: string | null;
         designer_notes?: string | null;
         custom_notes?: string | null;
+        technical_drawing_url?: string | null;
+        pdf_urls?: string[];
+        drawings?: string[];
     }[];
 }
 
@@ -112,6 +132,49 @@ export class MakeOrderService {
             cleaned = '0' + cleaned.substring(3);
         }
         return cleaned;
+    }
+
+    /**
+     * Normalizes attachment references to durable keys (e.g. make-order-files/...) or confirmed TrueNAS URLs.
+     * Strips ephemeral signed tokens so order records remain permanently valid.
+     */
+    public static normalizeAttachmentReference(rawRef?: string | null): string {
+        if (!rawRef || typeof rawRef !== 'string') return '';
+        const trimmed = rawRef.trim();
+        if (!trimmed) return '';
+
+        // If it's a Supabase signed URL or public URL for make-order-files
+        const sbMatch = trimmed.match(/(?:supabase\.co|\/storage\/v1)\/object\/(?:sign|public)\/make-order-files\/([^?#]+)/i);
+        if (sbMatch) {
+            const rawKey = decodeURIComponent(sbMatch[1]).replace(/^\/+/, '');
+            return `make-order-files/${rawKey}`;
+        }
+
+        // If it's a supabase:// URI
+        if (/^supabase:\/\/make-order-files\//i.test(trimmed)) {
+            const rawKey = trimmed.replace(/^supabase:\/\/make-order-files\//i, '').split('?')[0].replace(/^\/+/, '');
+            return `make-order-files/${rawKey}`;
+        }
+
+        // If it's already a durable key: make-order-files/...
+        if (/^make-order-files\//i.test(trimmed)) {
+            return trimmed.split('?')[0];
+        }
+
+        // Confirmed TrueNAS URLs are kept intact
+        if (/^https?:\/\/(storage\.lenas\.me|100\.88\.85\.6|192\.168\.1\.14)/i.test(trimmed)) {
+            return trimmed;
+        }
+
+        // If another HTTP URL with token= parameter is detected, strip query params
+        if (/^https?:\/\//i.test(trimmed)) {
+            if (trimmed.includes('token=')) {
+                return trimmed.split('?')[0];
+            }
+            return trimmed;
+        }
+
+        return trimmed;
     }
 
     /**
@@ -213,7 +276,7 @@ export class MakeOrderService {
     public static async createOrder(
         input: CreateMakeOrderInput,
         actorSession: { userId: number; username: string; fullName: string; role: string }
-    ): Promise<{ success: boolean; id?: number; order_number?: string; items?: any[]; error?: string }> {
+    ): Promise<{ success: boolean; id?: number; order_number?: string; items?: any[]; unassociatedUploads?: any[]; error?: string }> {
         // 0. Validate customer name (required) and customer phone (optional, but validated if provided)
         if (!input.customer_name || !input.customer_name.trim()) {
             return { success: false, error: 'Customer name is required' };
@@ -228,10 +291,79 @@ export class MakeOrderService {
             }
         }
 
-        // 1. Validate items and compute authoritative pricing totals
-        const pricing = MakePricingService.calculateAndValidateTotals(input.items);
+        // Pre-fetch product catalog pricing & discount limits if items have product_id
+        const productIds = (input.items || []).map(it => it.product_id).filter(Boolean) as number[];
+        let productsMap: Record<number, any> = {};
+        if (productIds.length > 0) {
+            try {
+                const { data: dbProds } = await supabase
+                    .from('make_products')
+                    .select('id, cost_price, sale_price, max_discount_type, max_discount_value')
+                    .in('id', productIds);
+                if (dbProds && dbProds.length > 0) {
+                    productsMap = Object.fromEntries(dbProds.map((p: any) => [p.id, p]));
+                }
+            } catch (err) {
+                console.warn('[MakeOrderService] Could not prefetch product discount rules:', err);
+            }
+        }
+
+        // Enrich items with product rules if not already present on the item
+        const enrichedItems = input.items.map(it => {
+            const dbProd = it.product_id ? productsMap[it.product_id] : null;
+            return {
+                ...it,
+                max_discount_type: it.max_discount_type || dbProd?.max_discount_type || null,
+                max_discount_value: it.max_discount_value !== undefined && it.max_discount_value !== null && it.max_discount_value !== ''
+                    ? it.max_discount_value
+                    : (dbProd?.max_discount_value ?? null)
+            };
+        });
+
+        // 0.5 Validate role-based pricing permissions
+        const rolePricing = MakePricingService.validateRolePricingPermissions(
+            enrichedItems,
+            actorSession.role,
+            productsMap
+        );
+        if (!rolePricing.isValid) {
+            return { success: false, error: rolePricing.error };
+        }
+
+        // 1. Validate items and compute authoritative pricing totals and discounts
+        const pricing = MakePricingService.calculateAndValidateTotals(rolePricing.sanitizedItems, {
+            discount_type: input.discount_type,
+            discount_value: input.discount_value
+        });
         if (!pricing.isValid) {
             return { success: false, error: pricing.error };
+        }
+
+        // 1.2 Validate role permission to enter initial payment (Furniture Designer, Salesperson, Admin, Superadmin)
+        const rawReceived = input.money_received !== undefined ? input.money_received : (input as any).moneyReceived;
+        const normRole = (actorSession.role || '').toLowerCase().trim();
+        const isInitialPaymentAllowed = [
+            'furniture_designer', 'furniture designer', 'designer', 'make_designer',
+            'salesperson', 'salesman', 'sales',
+            'admin', 'superadmin', 'manager'
+        ].includes(normRole);
+
+        const hasNonZeroPayment = rawReceived !== undefined &&
+            rawReceived !== null &&
+            rawReceived !== '' &&
+            Number(rawReceived) > 0;
+
+        if (!isInitialPaymentAllowed && hasNonZeroPayment) {
+            return {
+                success: false,
+                error: 'Forbidden: You do not have permission to enter initial payments.'
+            };
+        }
+
+        // 1.5 Calculate payment status, amount due, and production hold
+        const payment = MakePricingService.calculatePaymentStatus(pricing.finalPrice, rawReceived);
+        if (!payment.isValid) {
+            return { success: false, error: payment.error };
         }
 
         // Deterministically resolve customer
@@ -249,11 +381,36 @@ export class MakeOrderService {
             }
         }
 
+        const isAdminUser = ['admin', 'superadmin', 'manager'].includes((actorSession.role || '').toLowerCase().trim());
+        let effectiveSalesmanId: number | null = null;
+        if (isAdminUser) {
+            effectiveSalesmanId = input.salesman_id !== undefined ? (input.salesman_id ? Number(input.salesman_id) : null) : (actorSession.userId || null);
+        } else {
+            // For normal users, derive strictly from authenticated session
+            effectiveSalesmanId = actorSession.userId || (input.salesman_id ? Number(input.salesman_id) : null);
+        }
+
         const orderNumber = await this.generateUniqueOrderNumber();
         const totalQty = input.items.reduce((sum, item) => sum + (Number(item.quantity) || 1), 0);
-        const initialStatus = input.salesman_id ? 'Pending Approval' : 'Placed';
-        const isApproved = !input.salesman_id;
+        const initialStatus = effectiveSalesmanId ? 'Pending Approval' : 'Placed';
+        const isApproved = !effectiveSalesmanId;
         const initialApprovalStatus = isApproved ? 'sales_approved' : 'awaiting_designer';
+
+        // Storing discount breakdown, subtotal, and payment in custom_details ensures resilience across all DB schemas
+        const customDetails: Record<string, any> = {
+            subtotal: pricing.subtotal,
+            discount_type: pricing.discountType,
+            discount_value: pricing.discountValue,
+            discount_amount: pricing.discountAmount,
+            final_price: pricing.finalPrice,
+            money_received: payment.moneyReceived,
+            amount_due: payment.amountDue,
+            payment_status: payment.paymentStatus,
+            production_hold: payment.productionHold,
+            hold_reason: payment.holdReason,
+            admin_approval_status: 'none',
+            items: pricing.items
+        };
 
         // 2. Insert order header
         const orderHeaderPayload: Record<string, any> = {
@@ -267,11 +424,13 @@ export class MakeOrderService {
             delivery_date: input.delivery_date || input.target_delivery_date || null,
             target_delivery_date: input.target_delivery_date || input.delivery_date || null,
             requested_delivery_date: input.requested_delivery_date || null,
-            salesman_id: input.salesman_id || null,
+            salesman_id: effectiveSalesmanId,
             customer_id: resolvedCustId,
-            invoice_attachment_urls: (Array.isArray(input.invoice_attachment_urls) && input.invoice_attachment_urls.length > 0)
+            invoice_attachment_urls: ((Array.isArray(input.invoice_attachment_urls) && input.invoice_attachment_urls.length > 0)
                 ? input.invoice_attachment_urls
-                : (Array.isArray((input as any).invoice_attachments) ? (input as any).invoice_attachments : []),
+                : (Array.isArray((input as any).invoice_attachments) ? (input as any).invoice_attachments : []))
+                .map((u: any) => typeof u === 'string' ? MakeOrderService.normalizeAttachmentReference(u) : u)
+                .filter(Boolean),
             is_approved: isApproved,
             customer_name: input.customer_name?.trim() || null,
             customer_phone: input.customer_phone?.trim() || null,
@@ -280,8 +439,20 @@ export class MakeOrderService {
             location_landmark: input.location_landmark?.trim() || null,
             receiver_name: input.receiver_name?.trim() || null,
             receiver_phone: input.receiver_phone?.trim() || null,
+            created_by: actorSession.fullName || actorSession.username || null,
             cost_price: pricing.totalCostPrice,
             sale_price: pricing.totalSalePrice,
+            discount_type: pricing.discountType,
+            discount_value: pricing.discountValue,
+            discount_amount: pricing.discountAmount,
+            final_price: pricing.finalPrice,
+            money_received: payment.moneyReceived,
+            amount_due: payment.amountDue,
+            payment_status: payment.paymentStatus,
+            production_hold: payment.productionHold,
+            hold_reason: payment.holdReason,
+            admin_approval_status: 'none',
+            custom_details: customDetails,
             approval_status: initialApprovalStatus,
             current_version: 1,
             created_at: new Date().toISOString()
@@ -297,17 +468,31 @@ export class MakeOrderService {
             .select('id, order_number')
             .single();
 
-        // If insert failed due to reference_bill_no not existing on fallback schema, retry without it
-        if (orderErr && orderErr.message && orderErr.message.includes('reference_bill_no')) {
-            const fallbackPayload = { ...orderHeaderPayload };
-            delete fallbackPayload.reference_bill_no;
-            const retryRes = await supabase
-                .from('make_orders')
-                .insert(fallbackPayload)
-                .select('id, order_number')
-                .single();
-            createdOrder = retryRes.data;
-            orderErr = retryRes.error;
+        // If insert failed due to missing columns on unmigrated schema, strip them and retry
+        if (orderErr && orderErr.message) {
+            const errMessage = orderErr.message;
+            const optionalCols = [
+                'discount_type', 'discount_value', 'discount_amount', 'final_price', 'reference_bill_no',
+                'money_received', 'amount_due', 'payment_status', 'production_hold', 'hold_reason',
+                'admin_approval_status', 'created_by'
+            ];
+            const hasOptionalMissing = optionalCols.some(c => errMessage.includes(c));
+            if (hasOptionalMissing) {
+                console.warn('[MakeOrderService] Detected missing optional column on make_orders, retrying with fallback payload...');
+                const fallbackPayload = { ...orderHeaderPayload };
+                for (const c of optionalCols) {
+                    if (errMessage.includes(c)) {
+                        delete fallbackPayload[c];
+                    }
+                }
+                const retryRes = await supabase
+                    .from('make_orders')
+                    .insert(fallbackPayload)
+                    .select('id, order_number')
+                    .single();
+                createdOrder = retryRes.data;
+                orderErr = retryRes.error;
+            }
         }
 
         if (orderErr || !createdOrder) {
@@ -317,30 +502,48 @@ export class MakeOrderService {
         const orderId = createdOrder.id;
 
         // 3. Insert items with rollback guarantee on failure
-        const itemsPayload = input.items.map(item => ({
-            order_id: orderId,
-            product_id: item.product_id || null,
-            spec_id: item.spec_id || null,
-            size_id: item.size_id || null,
-            color_id: item.color_id || null,
-            product_name: item.product_name.trim(),
-            spec_name: item.spec_name || null,
-            spec_details: item.spec_details || null,
-            size_label: item.size_id ? (item.dimensions_text || (item as any).size_label || null) : ((item as any).size_label || null),
-            dimensions_text: item.dimensions_text || null,
-            custom_size: item.custom_size || (item.is_customized ? item.dimensions_text : null) || null,
-            custom_dimensions: item.custom_dimensions || (item.is_customized ? (item.custom_size || item.dimensions_text) : null) || null,
-            color_name: item.color_name || (item as any).custom_color || null,
-            quantity: Number(item.quantity) || 1,
-            item_cost_price: item.item_cost_price !== undefined && item.item_cost_price !== null && item.item_cost_price !== ''
-                ? Math.max(0, Number(item.item_cost_price))
-                : 0.00,
-            item_sale_price: item.item_sale_price !== undefined && item.item_sale_price !== null && item.item_sale_price !== ''
-                ? Math.max(0, Number(item.item_sale_price))
-                : null,
-            is_customized: !!(item.is_customized || (item as any).is_custom),
-            designer_notes: item.designer_notes || (item as any).custom_notes || null
-        }));
+        const itemsPayload = input.items.map(item => {
+            const rawTechDrawing = item.technical_drawing_url || (item as any).drawing_url || null;
+            const normTechDrawing = rawTechDrawing ? MakeOrderService.normalizeAttachmentReference(rawTechDrawing) : null;
+            const rawPdfs = (item as any).pdf_urls || (item as any).drawings || [];
+            const normPdfs = Array.isArray(rawPdfs)
+                ? rawPdfs.map((p: any) => typeof p === 'string' ? MakeOrderService.normalizeAttachmentReference(p) : p).filter(Boolean)
+                : (normTechDrawing ? [normTechDrawing] : []);
+
+            return {
+                order_id: orderId,
+                requestion_item_id: (item as any).requestion_item_id ? Number((item as any).requestion_item_id) : null,
+                product_id: item.product_id || null,
+                spec_id: item.spec_id || null,
+                size_id: item.size_id || null,
+                color_id: item.color_id || null,
+                product_name: item.product_name.trim(),
+                spec_name: item.spec_name || null,
+                spec_details: item.spec_details || null,
+                size_label: item.size_id ? (item.dimensions_text || (item as any).size_label || null) : ((item as any).size_label || null),
+                dimensions_text: item.dimensions_text || null,
+                custom_size: item.custom_size || (item.is_customized ? item.dimensions_text : null) || null,
+                custom_dimensions: item.custom_dimensions || (item.is_customized ? (item.custom_size || item.dimensions_text) : null) || null,
+                color_name: item.color_name || (item as any).custom_color || null,
+                quantity: Number(item.quantity) || 1,
+                technical_drawing_url: normTechDrawing,
+                pdf_urls: normPdfs,
+                item_cost_price: item.item_cost_price !== undefined && item.item_cost_price !== null && item.item_cost_price !== ''
+                    ? Math.max(0, Number(item.item_cost_price))
+                    : 0.00,
+                item_sale_price: item.item_sale_price !== undefined && item.item_sale_price !== null && item.item_sale_price !== ''
+                    ? Math.max(0, Number(item.item_sale_price))
+                    : null,
+                discount_type: item.discount_type || null,
+                discount_value: item.discount_value !== undefined && item.discount_value !== null && item.discount_value !== '' ? Number(item.discount_value) : null,
+                discount_amount: item.discount_amount !== undefined && item.discount_amount !== null && item.discount_amount !== '' ? Number(item.discount_amount) : 0,
+                final_item_price: item.final_item_price !== undefined && item.final_item_price !== null && item.final_item_price !== '' ? Number(item.final_item_price) : null,
+                is_customized: !!(item.is_customized || (item as any).is_custom),
+                max_discount_type: item.max_discount_type || null,
+                max_discount_value: item.max_discount_value !== undefined && item.max_discount_value !== null && item.max_discount_value !== '' ? Number(item.max_discount_value) : null,
+                designer_notes: item.designer_notes || (item as any).custom_notes || null
+            };
+        });
 
         let { data: insertedItems, error: itemsErr } = await supabase
             .from('make_order_items')
@@ -348,9 +551,6 @@ export class MakeOrderService {
             .select('id, product_name');
 
         // Schema compatibility fallback:
-        // TrueNAS PostgREST has migration 057 columns (designer_notes, technical_drawing_url, pdf_urls),
-        // but Supabase Cloud lacks them (42703). If insert fails due to a missing column,
-        // sanitize and retry so order creation never breaks on schema differences.
         if (itemsErr && (itemsErr.code === '42703' || (itemsErr.message && /column.*does not exist/i.test(itemsErr.message)))) {
             console.warn('[MakeOrderService] Detected missing column on make_order_items insert:', itemsErr.message, 'Retrying with schema-compatible payload...');
             const missingColMatch = itemsErr.message.match(/column (?:[a-zA-Z0-9_]+\.)?([a-zA-Z0-9_]+) does not exist/i);
@@ -364,6 +564,12 @@ export class MakeOrderService {
                     delete sanitized.designer_notes;
                     delete sanitized.technical_drawing_url;
                     delete sanitized.pdf_urls;
+                    delete sanitized.max_discount_type;
+                    delete sanitized.max_discount_value;
+                    delete sanitized.discount_type;
+                    delete sanitized.discount_value;
+                    delete sanitized.discount_amount;
+                    delete sanitized.final_item_price;
                 }
                 return sanitized;
             });
@@ -383,6 +589,64 @@ export class MakeOrderService {
             return { success: false, error: `Order creation rolled back due to item insertion error: ${itemsErr.message}` };
         }
 
+        const requestionItemIds = Array.from(new Set(input.items
+            .map((item: any) => Number(item.requestion_item_id || 0))
+            .filter((id: number) => Number.isInteger(id) && id > 0)));
+        for (const requestionItemId of requestionItemIds) {
+            try {
+                const { data: linkedItem } = await supabase.from('make_costing_request_items').update({ status: 'ordered', updated_at: new Date().toISOString() }).eq('id', requestionItemId).select('request_id').maybeSingle();
+                if (linkedItem?.request_id) {
+                    const { data: requestItems } = await supabase.from('make_costing_request_items').select('status').eq('request_id', linkedItem.request_id);
+                    if ((requestItems || []).length && (requestItems || []).every((row: any) => row.status === 'ordered')) {
+                        await supabase.from('make_costing_requests').update({ status: 'ordered', updated_at: new Date().toISOString() }).eq('id', linkedItem.request_id);
+                    }
+                }
+            } catch (err: any) {
+                console.warn('[MakeOrderService] Could not mark linked costing request item ordered:', err?.message || err);
+            }
+        }
+
+        // 3.5 Record initial payment into make_order_payments if money received
+        if (payment.moneyReceived > 0) {
+            try {
+                const initRef = input.reference_bill_no || 'INITIAL_PAYMENT';
+                // Idempotency check: check if initial payment for this order already exists
+                const { data: existingInit } = await supabase
+                    .from('make_order_payments')
+                    .select('id, amount')
+                    .eq('order_id', orderId)
+                    .eq('reference', initRef)
+                    .maybeSingle();
+
+                if (!existingInit) {
+                    const { error: payErr } = await supabase.from('make_order_payments').insert({
+                        order_id: orderId,
+                        amount: payment.moneyReceived,
+                        payment_method: 'CASH',
+                        reference: initRef,
+                        notes: 'Initial payment recorded at order placement',
+                        received_by: actorSession.fullName || actorSession.username || 'System'
+                    });
+
+                    if (payErr) {
+                        const tableMissing = payErr.code === '42P01' || /relation.*does not exist/i.test(payErr.message);
+                        if (!tableMissing) {
+                            console.error('[MakeOrderService] Could not insert initial payment record into make_order_payments:', payErr.message);
+                            // ATOMIC ROLLBACK: Remove order items and header to prevent inconsistent state
+                            await supabase.from('make_order_items').delete().eq('order_id', orderId);
+                            await supabase.from('make_orders').delete().eq('id', orderId);
+                            return { success: false, error: `Failed to persist initial payment in payment ledger: ${payErr.message}` };
+                        }
+                    }
+                }
+            } catch (payErr: any) {
+                console.error('[MakeOrderService] Exception persisting initial payment record into make_order_payments:', payErr);
+                await supabase.from('make_order_items').delete().eq('order_id', orderId);
+                await supabase.from('make_orders').delete().eq('id', orderId);
+                return { success: false, error: `Failed to persist initial payment: ${payErr?.message || 'Database error'}` };
+            }
+        }
+
         // 4. Initial timeline update (preserve any item notes in timeline so they are never lost)
         const collectedItemNotes = input.items
             .map((it, idx) => {
@@ -390,7 +654,10 @@ export class MakeOrderService {
                 return note ? `Item #${idx + 1} (${it.product_name}): ${note}` : null;
             })
             .filter(Boolean);
-        const baseTimelineNote = input.salesman_id ? 'Order created, awaiting salesperson approval' : 'Order placed and approved';
+        let baseTimelineNote = input.salesman_id ? 'Order created, awaiting salesperson approval' : 'Order placed and approved';
+        if (payment.productionHold) {
+            baseTimelineNote += ` [PRODUCTION HOLD: Outstanding balance of ৳${payment.amountDue.toLocaleString()} due]`;
+        }
         const finalTimelineNote = collectedItemNotes.length > 0
             ? `${baseTimelineNote} [Item Notes: ${collectedItemNotes.join('; ')}]`
             : baseTimelineNote;
@@ -419,11 +686,94 @@ export class MakeOrderService {
             }
         }
 
+        // 5.5 If order is placed with outstanding balance, notify admins of production hold
+        if (payment.productionHold) {
+            try {
+                const { data: adminUsers } = await supabase
+                    .from('users')
+                    .select('id')
+                    .in('role', ['admin', 'superadmin'])
+                    .eq('is_active', 1);
+                if (adminUsers && adminUsers.length > 0) {
+                    for (const adm of adminUsers) {
+                        await supabase.from('notifications').insert({
+                            title: 'Order on Production Hold (Payment Due)',
+                            message: `Order ${orderNumber} ("${input.furniture_name}") placed with outstanding balance of ৳${payment.amountDue.toLocaleString()}. Production is on hold.`,
+                            recipient_id: adm.id,
+                            sender_id: actorSession.userId,
+                            action_path: '/make/track',
+                            action_label: 'Review Order Hold',
+                            metadata: { type: 'make_order_hold', order_id: orderId, amount_due: payment.amountDue }
+                        });
+                    }
+                }
+            } catch (holdNotifErr) {
+                console.warn('[MakeOrderService] Hold notification error (non-fatal):', holdNotifErr);
+            }
+        }
+
+        // 6. Associate any pre-staged uploads with the newly created order and item records
+        const failedAssociations: Array<{ ref: string; meta: any }> = [];
+        try {
+            const durableUpload = DurableUploadService.getInstance();
+            const invAttachments = orderHeaderPayload.invoice_attachment_urls;
+            if (Array.isArray(invAttachments)) {
+                for (const att of invAttachments) {
+                    if (typeof att === 'string') {
+                        const meta = {
+                            entityType: 'make_orders',
+                            entityId: orderId,
+                            fieldName: 'invoice_attachment_urls'
+                        };
+                        const associated = durableUpload.associateUploadWithEntity(att, meta);
+                        if (!associated && (att.includes('upl_') || att.includes('make-order-files/'))) {
+                            console.warn(`[MakeOrderService] Failed to associate invoice attachment "${att}" with order ${orderId}. Stored in pending retry queue.`);
+                            failedAssociations.push({ ref: att, meta });
+                        }
+                    }
+                }
+            }
+
+            if (Array.isArray(insertedItems)) {
+                for (let idx = 0; idx < insertedItems.length; idx++) {
+                    const itemRecord = insertedItems[idx];
+                    const rawItem = input.items[idx];
+                    if (!itemRecord?.id || !rawItem) continue;
+
+                    const drawings = (rawItem as any).pdf_urls || (rawItem as any).drawings || [(rawItem as any).technical_drawing_url].filter(Boolean);
+                    if (Array.isArray(drawings)) {
+                        for (const d of drawings) {
+                            const dRef = typeof d === 'string' ? d : d?.url;
+                            if (dRef) {
+                                const meta = {
+                                    entityType: 'make_order_items',
+                                    entityId: itemRecord.id,
+                                    fieldName: 'technical_drawing_url'
+                                };
+                                const associated = durableUpload.associateUploadWithEntity(dRef, meta);
+                                if (!associated && (dRef.includes('upl_') || dRef.includes('make-order-files/'))) {
+                                    console.warn(`[MakeOrderService] Failed to associate drawing "${dRef}" with item ${itemRecord.id}. Stored in pending retry queue.`);
+                                    failedAssociations.push({ ref: dRef, meta });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (failedAssociations.length > 0) {
+                console.warn(`[MakeOrderService] Order ${orderNumber} created with ${failedAssociations.length} unassociated staged upload(s). Retained in durable queue for reconciliation.`);
+            }
+        } catch (assocErr: any) {
+            console.warn('[MakeOrderService] Pre-staged upload association warning (non-fatal):', assocErr.message);
+        }
+
         return {
             success: true,
             id: orderId,
             order_number: orderNumber,
-            items: insertedItems || []
+            items: insertedItems || [],
+            unassociatedUploads: failedAssociations.length > 0 ? failedAssociations : undefined
         };
     }
 
@@ -461,13 +811,26 @@ export class MakeOrderService {
             return { success: false, error: pricingValidation.error };
         }
 
+        // 2.5 Outstanding balance & Admin approval enforcement
+        const dueAmount = Number(order.amount_due || 0);
+        const isAdminActor = ['admin', 'superadmin', 'manager'].includes((actorSession.role || '').toLowerCase().trim());
+        const hasAdminApproval = order.admin_approval_status === 'approved';
+
+        if ((dueAmount > 0 || order.production_hold) && !isAdminActor && !hasAdminApproval) {
+            return {
+                success: false,
+                error: `Cannot start processing order with outstanding balance (৳${dueAmount.toLocaleString()}). Submit a Request for Admin Review.`
+            };
+        }
+
         const actorName = actorSession.fullName || actorSession.username;
         const actorRole = actorSession.role;
+        const approvalVersion = Math.max(1, Number(order.current_version) || 1);
 
-        // 3. Create immutable Version 1 snapshot in make_order_versions
+        // 3. Create or reuse the exact pending revision snapshot.
         const versionResult = await MakeVersionService.createSnapshot({
             orderId,
-            versionNumber: 1,
+            versionNumber: approvalVersion,
             changeReason: override?.overrideReason
                 ? `Initial approval (Loss override: ${override.overrideReason})`
                 : 'Initial order approval by salesperson',
@@ -480,14 +843,17 @@ export class MakeOrderService {
         }
 
         // 4. Record formal approval in make_order_approvals
-        await MakeVersionService.recordApprovalAudit({
+        const approvalAudit = await MakeVersionService.recordApprovalAudit({
             orderId,
-            versionNumber: 1,
+            versionNumber: approvalVersion,
             action: 'approved',
             actedBy: actorName,
             userRole: actorRole,
             notesOrReason: notes || override?.overrideReason || 'Order approved and placed into factory queue'
         });
+        if (!approvalAudit.success) {
+            return { success: false, error: `Failed to record approval audit: ${approvalAudit.error || 'unknown database error'}` };
+        }
 
         // 5. Update make_orders table atomically
         const { error: updErr } = await supabase
@@ -496,7 +862,7 @@ export class MakeOrderService {
                 status: 'Placed',
                 approval_status: 'sales_approved',
                 is_approved: true,
-                approved_version: 1,
+                approved_version: approvalVersion,
                 approved_by: actorName,
                 approved_at: new Date().toISOString(),
                 updated_at: new Date().toISOString()
@@ -564,14 +930,16 @@ export class MakeOrderService {
             .eq('id', orderId)
             .maybeSingle();
 
-        if (fetchErr || !current) return { success: false, error: 'Order not found' };
+        if (fetchErr) return { success: false, error: `Failed to load order: ${fetchErr.message}` };
+        if (!current) return { success: false, error: 'Order not found' };
 
         let calcCostPrice = 0;
         let calcSalePrice = 0;
         let hasItemCost = false;
         let hasItemSale = false;
 
-        // 2. Update items if provided
+        // 2. Validate and total item changes before writing anything.
+        const itemUpdates: Array<{ item: any; itemQty: number; itemCost: number; hasSale: boolean }> = [];
         if (Array.isArray(items) && items.length > 0) {
             for (const item of items) {
                 const itemQty = Math.max(1, Number(item.quantity) || 1);
@@ -585,20 +953,7 @@ export class MakeOrderService {
                     calcSalePrice += parsedSale * itemQty;
                     hasItemSale = true;
                 }
-
-                if (item.id) {
-                    await supabase.from('make_order_items').update({
-                        quantity: itemQty,
-                        item_cost_price: itemCost,
-                        item_sale_price: hasSale ? Number(item.item_sale_price) : null,
-                        spec_name: item.spec_name || '',
-                        size_label: item.size_label || '',
-                        color_name: item.color_name || '',
-                        salesperson_note: item.salesperson_note || null,
-                        designer_notes: item.designer_notes || null,
-                        technical_drawing_url: item.technical_drawing_url || null
-                    }).eq('id', item.id);
-                }
+                if (item.id) itemUpdates.push({ item, itemQty, itemCost, hasSale });
             }
         }
 
@@ -609,24 +964,35 @@ export class MakeOrderService {
             return { success: false, error: 'Cost price must be greater than 0.' };
         }
 
-        const isReModification = current.approved_version !== null &&
-            (current.approval_status === 'sales_approved' || current.status === 'Placed');
+        // Do not accept an item id from another order (or stale UI state).
+        if (itemUpdates.length > 0) {
+            const itemIds = itemUpdates.map(({ item }) => String(item.id));
+            const { data: ownedItems, error: ownedItemsErr } = await supabase
+                .from('make_order_items')
+                .select('id')
+                .eq('order_id', orderId)
+                .in('id', itemIds);
+            if (ownedItemsErr) {
+                return { success: false, error: `Failed to validate order items: ${ownedItemsErr.message}` };
+            }
+            const ownedIds = new Set((ownedItems || []).map((row: any) => String(row.id)));
+            const missingId = itemIds.find(id => !ownedIds.has(id));
+            if (missingId) {
+                return { success: false, error: `Order item ${missingId} is no longer part of this order. Refresh Track Orders and try again.` };
+            }
+        }
+
+        const isReModification = Number(current.approved_version || 0) > 0 ||
+            current.approval_status === 'sales_approved' || String(current.status || '').trim().toLowerCase() === 'placed';
         const nextVersion = isReModification ? (current.current_version || 1) + 1 : (current.current_version || 1);
 
         const actorName = actorSession.fullName || actorSession.username;
         const actorRole = actorSession.role;
 
-        // 3. Snapshot previous version if modifying an already-approved order
+        // 3. Audit approved-order modifications. The immutable vN+1 snapshot is
+        // written after item updates so the version reflects the designer's new data.
         if (isReModification) {
-            await MakeVersionService.createSnapshot({
-                orderId,
-                versionNumber: current.current_version || 1,
-                changeReason: modificationReason || 'Designer modified product specifications/pricing after approval',
-                actorName,
-                actorRole
-            });
-
-            await supabase.from('make_order_alteration_log').insert({
+            const { error: auditErr } = await supabase.from('make_order_alteration_log').insert({
                 order_id: orderId,
                 altered_by: actorName,
                 user_role: actorRole,
@@ -635,6 +1001,60 @@ export class MakeOrderService {
                 new_value: `v${nextVersion}: Cost ৳${finalCostPrice}, Sale ৳${finalSalePrice || 0}`,
                 reason: modificationReason || 'Designer adjusted individual product specifications/pricing'
             });
+            if (auditErr) return { success: false, error: `Could not record order modification audit: ${auditErr.message}` };
+        }
+
+        // Save item-level details only after validation/snapshot has succeeded.
+        for (const { item, itemQty, itemCost, hasSale } of itemUpdates) {
+            const { data: updatedItem, error: itemUpdateErr } = await supabase
+                .from('make_order_items')
+                .update({
+                    quantity: itemQty,
+                    item_cost_price: itemCost,
+                    item_sale_price: hasSale ? Number(item.item_sale_price) : null,
+                    spec_name: item.spec_name ?? '',
+                    size_label: item.size_label ?? '',
+                    color_name: item.color_name ?? '',
+                    salesperson_note: item.salesperson_note || null,
+                    designer_notes: item.designer_notes || null,
+                    technical_drawing_url: item.technical_drawing_url || null
+                })
+                .eq('id', item.id)
+                .eq('order_id', orderId)
+                .select('id')
+                .maybeSingle();
+            if (itemUpdateErr) {
+                return { success: false, error: `Failed to save order item ${item.id}: ${itemUpdateErr.message}` };
+            }
+            if (!updatedItem) {
+                return { success: false, error: `Order item ${item.id} was not updated. Refresh Track Orders and try again.` };
+            }
+        }
+
+        if (isReModification) {
+            const { data: latestItems, error: latestItemsError } = await supabase.from('make_order_items').select('*').eq('order_id', orderId).order('id', { ascending: true });
+            if (latestItemsError) return { success: false, error: `Could not read the revised order items: ${latestItemsError.message}` };
+            const snapshotOrder = {
+                ...current,
+                cost_price: finalCostPrice,
+                sale_price: finalSalePrice,
+                current_version: nextVersion,
+                approved_version: null,
+                approval_status: 'modification_pending_approval',
+                status: 'Modification Pending Approval',
+                is_approved: false,
+                rejection_reason: null,
+                updated_at: new Date().toISOString()
+            };
+            const snapshotResult = await MakeVersionService.createSnapshot({
+                orderId,
+                versionNumber: nextVersion,
+                changeReason: modificationReason || `Designer submitted revised order v${nextVersion}; salesperson re-approval required`,
+                actorName,
+                actorRole,
+                snapshotOverride: { order: snapshotOrder, items: latestItems || [], timestamp: new Date().toISOString() }
+            });
+            if (!snapshotResult.success) return { success: false, error: `Could not save revised order v${nextVersion}: ${snapshotResult.error || 'snapshot failed'}` };
         }
 
         // 4. Update make_orders table
@@ -652,12 +1072,13 @@ export class MakeOrderService {
         if (updErr) return { success: false, error: updErr.message };
 
         // 5. Timeline update
-        await supabase.from('make_order_updates').insert({
+        const { error: timelineErr } = await supabase.from('make_order_updates').insert({
             order_id: orderId,
             status: isReModification ? 'Modification Pending Approval' : 'Awaiting Salesperson Approval',
             note: `Cost price set to ৳${finalCostPrice.toLocaleString()}${finalSalePrice ? ` | Sale price: ৳${finalSalePrice.toLocaleString()}` : ''}${isReModification ? ` (v${nextVersion} requires re-approval)` : ''}`,
             updated_by: `${actorName} (${actorRole})`
         });
+        if (timelineErr) console.error('[MakeOrderService] Failed to add designer pricing timeline entry:', timelineErr);
 
         // 6. Notify salesperson
         if (current.salesman_id) {
@@ -739,7 +1160,7 @@ export class MakeOrderService {
             reason = paramsOrOrderId.reason;
             actorSession = paramsOrOrderId.actorSession || SessionManager.getSession() || (paramsOrOrderId.userRole ? { role: paramsOrOrderId.userRole, username: paramsOrOrderId.alteredBy || 'User' } : null);
         } else {
-            orderId = paramsOrOrderId;
+            orderId = paramsOrOrderId as number;
             changes = changesArg || {};
             itemChanges = itemsArg || [];
             reason = reasonArg;
@@ -1004,8 +1425,11 @@ export class MakeOrderService {
             filteredOrderChanges.cost_price = totalCost;
             filteredOrderChanges.total_sale_price = totalSale;
             filteredOrderChanges.sale_price = totalSale;
-            filteredOrderChanges.total_amount = totalSale;
             filteredOrderChanges.remaining_balance = Math.max(0, totalSale - Number(current.advance_amount || 0));
+            const historicalMoneyReceived = Number(current.money_received || 0);
+            filteredOrderChanges.money_received = historicalMoneyReceived;
+            filteredOrderChanges.amount_due = Math.max(0, Math.round((totalSale - historicalMoneyReceived + Number.EPSILON) * 100) / 100);
+            filteredOrderChanges.payment_status = filteredOrderChanges.amount_due <= 0 ? 'paid' : (historicalMoneyReceived > 0 ? 'partial' : 'unpaid');
 
             // If there is a primary item product name, keep furniture_name consistent
             if (allItems.length === 1 && allItems[0].product_name) {
@@ -1060,6 +1484,44 @@ export class MakeOrderService {
             return { success: true, message: 'No changes detected', order_number: current.order_number };
         }
 
+        const designerRevisingApprovedOrder = isDesigner && (
+            Number(current.approved_version || 0) > 0 ||
+            current.approval_status === 'sales_approved' ||
+            String(current.status || '').trim().toLowerCase() === 'placed'
+        );
+        if (designerRevisingApprovedOrder) {
+            const currentVersion = Math.max(1, Number(current.current_version) || 1);
+            const nextVersion = currentVersion + 1;
+            filteredOrderChanges.current_version = nextVersion;
+            filteredOrderChanges.approved_version = null;
+            filteredOrderChanges.approval_status = 'modification_pending_approval';
+            filteredOrderChanges.status = 'Modification Pending Approval';
+            filteredOrderChanges.is_approved = false;
+            filteredOrderChanges.rejection_reason = null;
+            const { data: latestItems, error: latestItemsError } = await supabase.from('make_order_items').select('*').eq('order_id', orderId).order('id', { ascending: true });
+            if (latestItemsError) return { success: false, error: `Could not read the revised order items: ${latestItemsError.message}` };
+            const projectedOrder = { ...current, ...filteredOrderChanges, updated_at: new Date().toISOString() };
+            const snapshot = await MakeVersionService.createSnapshot({
+                orderId,
+                versionNumber: nextVersion,
+                changeReason: reason?.trim() || `Designer submitted revised order v${nextVersion}; salesperson re-approval is required.`,
+                actorName,
+                actorRole,
+                snapshotOverride: { order: projectedOrder, items: latestItems || [], timestamp: new Date().toISOString() }
+            });
+            if (!snapshot.success) return { success: false, error: `Could not save revised order v${nextVersion}: ${snapshot.error || 'snapshot failed'}` };
+            auditRows.push({
+                order_id: orderId,
+                altered_by: actorName,
+                user_role: actorRole,
+                field_name: 'order_version',
+                old_value: `v${currentVersion}`,
+                new_value: `v${nextVersion}`,
+                reason: reason?.trim() || 'Designer modification requires salesperson re-approval',
+                altered_at: new Date().toISOString()
+            });
+        }
+
         // 6. Save audit rows
         if (auditRows.length > 0) {
             await supabase.from('make_order_alteration_log').insert(auditRows);
@@ -1074,6 +1536,17 @@ export class MakeOrderService {
                 .eq('id', orderId);
 
             if (updateErr) return { success: false, error: updateErr.message };
+        }
+
+        if (designerRevisingApprovedOrder) {
+            const nextVersion = Math.max(1, Number(current.current_version) || 1) + 1;
+            const { error: timelineError } = await supabase.from('make_order_updates').insert({
+                order_id: orderId,
+                status: 'Modification Pending Approval',
+                note: `Designer submitted v${nextVersion}; salesperson approval is required before production continues.`,
+                updated_by: `${actorName} (${actorRole})`
+            });
+            if (timelineError) console.warn('[MakeOrderService] Failed to write version timeline update:', timelineError.message);
         }
 
         return {
@@ -1178,6 +1651,460 @@ export class MakeOrderService {
         } catch (err: any) {
             console.error('[MakeOrderService] Deletion error:', err);
             return { success: false, error: err.message || 'Transaction error during order deletion' };
+        }
+    }
+
+    /**
+     * Request administrator approval to proceed with production despite an unpaid balance / production hold.
+     */
+    public static async requestProductionApproval(
+        orderId: number,
+        notes: string | undefined,
+        actorSession: UserSession
+    ): Promise<{ success: boolean; error?: string; message?: string }> {
+        const { data: order, error: fetchErr } = await supabase
+            .from('make_orders')
+            .select('id, order_number, furniture_name, amount_due, production_hold, admin_approval_status')
+            .eq('id', orderId)
+            .maybeSingle();
+
+        if (fetchErr) return { success: false, error: `Failed to load order: ${fetchErr.message}` };
+        if (!order) return { success: false, error: 'Order not found.' };
+
+        const role = (actorSession.role || '').toLowerCase().trim();
+        const requestPermission = actorSession.permissions?.['request_make_production_approval'];
+        if (role !== 'admin' && role !== 'superadmin' && role !== 'manager' && requestPermission === false) {
+            return { success: false, error: 'Forbidden: your user group cannot request production release approval.' };
+        }
+        if (!['salesperson', 'salesman', 'sales', 'admin', 'superadmin', 'manager'].includes(role) && requestPermission !== true) {
+            return { success: false, error: 'Only Sales or Admin can request production release for an order with a due balance.' };
+        }
+        const due = Number(order.amount_due || 0);
+        if (due <= 0) return { success: false, error: 'This order has no outstanding payment due.' };
+        if (order.admin_approval_status === 'approved') {
+            return { success: false, error: 'Admin has already approved this order for production.' };
+        }
+
+        const requester = actorSession.fullName || actorSession.username || 'Staff';
+        const nowIso = new Date().toISOString();
+
+        const { error: updErr } = await supabase
+            .from('make_orders')
+            .update({
+                admin_approval_status: 'pending',
+                admin_approval_requested_by: requester,
+                admin_approval_requested_at: nowIso,
+                admin_approval_notes: notes || null,
+                updated_at: nowIso
+            })
+            .eq('id', orderId);
+
+        if (updErr) {
+            return { success: false, error: `Failed to update approval status: ${updErr.message}` };
+        }
+
+        const noteText = `Production release approval requested from Admin${notes ? ': ' + notes : ''}`;
+        const { error: timelineErr } = await supabase.from('make_order_updates').insert({
+            order_id: orderId,
+            status: 'Pending Admin Approval',
+            note: noteText,
+            updated_by: requester
+        });
+        if (timelineErr) console.error('[MakeOrderService] Failed to add production approval request to timeline:', timelineErr);
+
+        // Notify admins
+        try {
+            const { data: adminUsers } = await supabase
+                .from('users')
+                .select('id')
+                .in('role', ['admin', 'superadmin'])
+                .eq('is_active', 1);
+
+            if (adminUsers && adminUsers.length > 0) {
+                const balMsg = order.amount_due ? `৳${Number(order.amount_due).toLocaleString()}` : 'unpaid balance';
+                for (const adm of adminUsers) {
+                    await supabase.from('notifications').insert({
+                        title: 'Production Approval Requested',
+                        message: `${requester} requested production approval for Order ${order.order_number} ("${order.furniture_name}") with ${balMsg} due.${notes ? ' Note: ' + notes : ''}`,
+                        recipient_id: adm.id,
+                        sender_id: actorSession.userId,
+                        action_path: '/make/track',
+                        action_label: 'Review Approval Request',
+                        metadata: { type: 'make_production_approval_requested', order_id: orderId }
+                    });
+                }
+            }
+        } catch (notifErr) {
+            console.warn('[MakeOrderService] Error sending approval request notifications:', notifErr);
+        }
+
+        return { success: true, message: 'Production approval request submitted to Administrators.' };
+    }
+
+    /**
+     * Authoritatively decide (approve or reject) production release on a held order.
+     * Strictly restricted to Administrators and Superadmins.
+     */
+    public static async decideProductionApproval(
+        orderId: number,
+        decision: 'approved' | 'rejected',
+        notes: string | undefined,
+        actorSession: UserSession
+    ): Promise<{ success: boolean; decision?: 'approved' | 'rejected'; error?: string; message?: string }> {
+        const role = (actorSession.role || '').toLowerCase();
+        const isAdmin = role === 'admin' || role === 'superadmin';
+        const decisionPermission = actorSession.permissions?.['decide_make_production_approval'];
+        if (!isAdmin && decisionPermission !== true) {
+            return { success: false, error: 'Forbidden: Only Administrators can decide production approval.' };
+        }
+        if (!isAdmin && decisionPermission === false) {
+            return { success: false, error: 'Forbidden: your user group cannot decide production approval.' };
+        }
+
+        const { data: order, error: fetchErr } = await supabase
+            .from('make_orders')
+            .select('id, order_number, furniture_name, amount_due, production_hold, admin_approval_status, created_by')
+            .eq('id', orderId)
+            .maybeSingle();
+
+        if (fetchErr) return { success: false, error: `Failed to load order: ${fetchErr.message}` };
+        if (!order) return { success: false, error: 'Order not found.' };
+
+        const approver = actorSession.fullName || actorSession.username || 'Admin';
+        const nowIso = new Date().toISOString();
+        const isApproved = decision === 'approved';
+
+        const updatePayload: Record<string, any> = {
+            admin_approval_status: decision,
+            admin_approval_decision_by: approver,
+            admin_approval_decision_at: nowIso,
+            admin_approval_notes: notes || null,
+            // If approved, release the production hold override; if rejected, keep production hold active
+            production_hold: !isApproved,
+            updated_at: nowIso
+        };
+
+        const { error: updErr } = await supabase
+            .from('make_orders')
+            .update(updatePayload)
+            .eq('id', orderId);
+
+        if (updErr) {
+            return { success: false, error: `Failed to record approval decision: ${updErr.message}` };
+        }
+
+        const actionText = isApproved ? 'APPROVED' : 'REJECTED';
+        const noteText = `Production release ${actionText} by ${approver}${notes ? ': ' + notes : ''}${isApproved ? ' (Production hold override active)' : ''}`;
+
+        await supabase.from('make_order_updates').insert({
+            order_id: orderId,
+            status: isApproved ? 'Approved for Production' : 'Hold Confirmed',
+            note: noteText,
+            updated_by: approver
+        });
+
+        // Notify order creator if available
+        if (order.created_by) {
+            try {
+                await supabase.from('notifications').insert({
+                    title: `Production Approval ${actionText}`,
+                    message: `Production release for Order ${order.order_number} ("${order.furniture_name}") was ${actionText.toLowerCase()} by ${approver}.${notes ? ' Note: ' + notes : ''}`,
+                    recipient_id: order.created_by,
+                    sender_id: actorSession.userId,
+                    action_path: '/make/track',
+                    action_label: 'View Order',
+                    metadata: { type: 'make_production_approval_decision', order_id: orderId, decision }
+                });
+            } catch (notifErr) {
+                console.warn('[MakeOrderService] Error notifying creator:', notifErr);
+            }
+        }
+
+        return {
+            success: true,
+            decision,
+            message: `Production approval successfully ${decision}.`
+        };
+    }
+
+    /**
+     * Authoritatively record an order payment, update amount due, and evaluate production hold.
+     */
+    public static async recordOrderPayment(params: {
+        orderId: number;
+        amount: number;
+        paymentMethod?: string;
+        reference?: string;
+        notes?: string;
+        actorSession: UserSession;
+    }): Promise<{
+        success: boolean;
+        error?: string;
+        moneyReceived?: number;
+        amountDue?: number;
+        paymentStatus?: string;
+        productionHold?: boolean;
+    }> {
+        const { orderId, amount, paymentMethod, reference, notes, actorSession } = params;
+
+        if (typeof amount !== 'number' || isNaN(amount) || amount <= 0) {
+            return { success: false, error: 'Payment amount must be a positive number.' };
+        }
+
+        const { data: order, error: fetchErr } = await supabase
+            .from('make_orders')
+            .select('id, order_number, furniture_name, status, final_price, sale_price, money_received, amount_due, payment_status, production_hold, admin_approval_status')
+            .eq('id', orderId)
+            .maybeSingle();
+
+        if (fetchErr || !order) {
+            return { success: false, error: 'Order not found.' };
+        }
+
+        const totalOrderPrice = order.final_price !== null && order.final_price !== undefined
+            ? Number(order.final_price)
+            : Number(order.sale_price || 0);
+
+        const currentReceived = Number(order.money_received || 0);
+        const newReceived = Math.round((currentReceived + amount + Number.EPSILON) * 100) / 100;
+
+        if (totalOrderPrice > 0 && newReceived > totalOrderPrice + 0.01) {
+            return {
+                success: false,
+                error: `Total payments (৳${newReceived.toLocaleString()}) cannot exceed the order price (৳${totalOrderPrice.toLocaleString()}).`
+            };
+        }
+
+        const newAmountDue = Math.max(0, Math.round((totalOrderPrice - newReceived + Number.EPSILON) * 100) / 100);
+        const newPaymentStatus = newAmountDue <= 0 ? 'paid' : (newReceived > 0 ? 'partial' : 'unpaid');
+        // If balance cleared, hold is false; if still balance, hold is false only if admin approved
+        const newProductionHold = newAmountDue > 0 && order.admin_approval_status !== 'approved';
+        const receiver = actorSession.fullName || actorSession.username || 'Staff';
+
+        // 1. Insert payment record into make_order_payments
+        const { data: paymentRow, error: payErr } = await supabase.from('make_order_payments').insert({
+            order_id: orderId,
+            amount,
+            payment_method: paymentMethod || 'CASH',
+            reference: reference || null,
+            notes: notes || null,
+            received_by: receiver
+        }).select('id').single();
+
+        if (payErr) {
+            return { success: false, error: `Payment was not recorded in the payment ledger: ${payErr.message}` };
+        }
+
+        // 2. Update order header
+        const { error: updErr } = await supabase
+            .from('make_orders')
+            .update({
+                money_received: newReceived,
+                amount_due: newAmountDue,
+                payment_status: newPaymentStatus,
+                production_hold: newProductionHold,
+                hold_reason: newProductionHold ? `Outstanding balance of ৳${newAmountDue.toLocaleString()} due` : null,
+                updated_at: new Date().toISOString()
+            })
+            .eq('id', orderId);
+
+        if (updErr) {
+            if (paymentRow?.id) {
+                const { error: rollbackErr } = await supabase.from('make_order_payments').delete().eq('id', paymentRow.id);
+                if (rollbackErr) console.error('[MakeOrderService] Failed to remove payment ledger row after order update failure:', rollbackErr);
+            }
+            return { success: false, error: `Failed to update order financial status: ${updErr.message}` };
+        }
+
+        // 3. Add order timeline entry
+        const timelineMsg = `Payment of ৳${amount.toLocaleString()} received (${paymentMethod || 'CASH'}${reference ? ', Ref: ' + reference : ''}). Remaining balance: ৳${newAmountDue.toLocaleString()}${newProductionHold ? ' [HOLD ACTIVE]' : ' [HOLD RELEASED]'}`;
+        const { error: timelineErr } = await supabase.from('make_order_updates').insert({
+            order_id: orderId,
+            status: newProductionHold ? 'Production Hold' : (order.status || 'Payment Received'),
+            note: timelineMsg,
+            updated_by: receiver
+        });
+        if (timelineErr) console.error('[MakeOrderService] Failed to add payment timeline entry:', timelineErr);
+
+        return {
+            success: true,
+            moneyReceived: newReceived,
+            amountDue: newAmountDue,
+            paymentStatus: newPaymentStatus,
+            productionHold: newProductionHold
+        };
+    }
+
+    /**
+     * Remove a line item during the designer's initial review, before the
+     * salesperson approves the order. This avoids altering issued invoices,
+     * approved versions, or an order with received payments.
+     */
+    public static async removeOrderItem(params: {
+        orderId: number;
+        itemId: number;
+        actorSession: { userId: number; username: string; fullName: string; role: string };
+    }): Promise<{ success: boolean; error?: string }> {
+        const { orderId, itemId, actorSession } = params;
+        const role = (actorSession.role || '').toLowerCase().trim();
+        const isDesigner = ['furniture_designer', 'furniture designer', 'designer', 'make_designer'].includes(role);
+        const isAdmin = ['admin', 'superadmin', 'manager'].includes(role);
+        if (!isDesigner && !isAdmin) return { success: false, error: 'Only Furniture Designers or Administrators can remove an order item.' };
+
+        const { data: order, error: orderErr } = await supabase.from('make_orders')
+            .select('id, order_number, furniture_name, status, approval_status, bill_id, bill_item_id, money_received, custom_details')
+            .eq('id', orderId).maybeSingle();
+        if (orderErr) return { success: false, error: `Failed to load order: ${orderErr.message}` };
+        if (!order) return { success: false, error: 'Order not found.' };
+        if (order.approval_status !== 'awaiting_designer') {
+            return { success: false, error: 'Items can only be removed during the initial designer review, before Sales approval. Use the order alteration workflow for later changes.' };
+        }
+        if (order.bill_id || order.bill_item_id) return { success: false, error: 'This order is linked to a bill and its items cannot be removed here.' };
+        if (Number(order.money_received || 0) > 0) return { success: false, error: 'This order has received payment. Reconcile the payment before removing an item.' };
+
+        const { data: items, error: itemsErr } = await supabase.from('make_order_items')
+            .select('*').eq('order_id', orderId).order('id', { ascending: true });
+        if (itemsErr) return { success: false, error: `Failed to load order items: ${itemsErr.message}` };
+        const allItems = items || [];
+        const target = allItems.find((item: any) => String(item.id) === String(itemId));
+        if (!target) return { success: false, error: 'The selected item is no longer part of this order. Refresh Track Orders.' };
+        if (allItems.length <= 1) return { success: false, error: 'An order must keep at least one product. Cancel the entire order if it should not proceed.' };
+
+        const actorName = actorSession.fullName || actorSession.username || 'User';
+        const remaining = allItems.filter((item: any) => String(item.id) !== String(itemId));
+        const { error: auditErr } = await supabase.from('make_order_alteration_log').insert({
+            order_id: orderId,
+            order_number: order.order_number || '',
+            altered_by: actorName,
+            user_role: role,
+            action_type: 'product_removed_during_designer_review',
+            field_name: 'make_order_items',
+            old_value: `${target.product_name} (Qty: ${target.quantity})`,
+            new_value: 'Removed during designer review',
+            reason: 'Designer review before Sales approval',
+            altered_at: new Date().toISOString()
+        });
+        if (auditErr) return { success: false, error: `Could not record the item removal audit: ${auditErr.message}` };
+
+        const { data: deleted, error: deleteErr } = await supabase.from('make_order_items').delete()
+            .eq('id', itemId).eq('order_id', orderId).select('id').maybeSingle();
+        if (deleteErr) return { success: false, error: `Failed to remove order item: ${deleteErr.message}` };
+        if (!deleted) return { success: false, error: 'The item was not removed. Refresh Track Orders and try again.' };
+
+        const totalQuantity = remaining.reduce((sum: number, item: any) => sum + (Number(item.quantity) || 1), 0);
+        const updatedDetails = order.custom_details && typeof order.custom_details === 'object'
+            ? { ...order.custom_details, items: remaining }
+            : order.custom_details;
+        const { error: updateErr } = await supabase.from('make_orders').update({
+            quantity: totalQuantity,
+            furniture_name: remaining.length === 1 ? remaining[0].product_name : order.furniture_name,
+            custom_details: updatedDetails,
+            updated_at: new Date().toISOString()
+        }).eq('id', orderId);
+        if (updateErr) return { success: false, error: `Item was removed, but order summary could not be refreshed: ${updateErr.message}. Contact an administrator before approval.` };
+
+        const { error: timelineErr } = await supabase.from('make_order_updates').insert({
+            order_id: orderId,
+            status: order.status,
+            note: `Furniture Designer removed ${target.product_name} (Qty: ${target.quantity}) during initial review.`,
+            updated_by: `${actorName} (${role})`
+        });
+        if (timelineErr) console.error('[MakeOrderService] Failed to add item removal timeline entry:', timelineErr);
+        return { success: true };
+    }
+
+    public static async updateDesignerOrderItemQuantity(params: {
+        orderId: number;
+        itemId: number;
+        quantity: number;
+        actorSession: { userId: number; username: string; fullName: string; role: string };
+    }): Promise<{ success: boolean; error?: string }> {
+        const { orderId, itemId, quantity, actorSession } = params;
+        const role = (actorSession.role || '').toLowerCase().trim();
+        if (!['furniture_designer', 'furniture designer', 'designer', 'make_designer', 'admin', 'superadmin', 'manager'].includes(role)) {
+            return { success: false, error: 'Only Furniture Designers or Administrators can change item quantities during initial review.' };
+        }
+        if (!Number.isInteger(quantity) || quantity < 1) return { success: false, error: 'Quantity must be a positive whole number.' };
+
+        const { data: order, error: orderErr } = await supabase.from('make_orders')
+            .select('id, order_number, status, approval_status, bill_id, bill_item_id, money_received, custom_details')
+            .eq('id', orderId).maybeSingle();
+        if (orderErr) return { success: false, error: `Failed to load order: ${orderErr.message}` };
+        if (!order) return { success: false, error: 'Order not found.' };
+        if (order.approval_status !== 'awaiting_designer') return { success: false, error: 'Item quantities can only be changed during initial designer review, before Sales approval.' };
+        if (order.bill_id || order.bill_item_id) return { success: false, error: 'This order is linked to a bill and its items cannot be changed here.' };
+        if (Number(order.money_received || 0) > 0) return { success: false, error: 'This order has received payment. Reconcile the payment before changing item quantities.' };
+
+        const { data: items, error: itemsErr } = await supabase.from('make_order_items')
+            .select('*').eq('order_id', orderId).order('id', { ascending: true });
+        if (itemsErr) return { success: false, error: `Failed to load order items: ${itemsErr.message}` };
+        const allItems = items || [];
+        const target = allItems.find((item: any) => String(item.id) === String(itemId));
+        if (!target) return { success: false, error: 'The selected item is no longer part of this order. Refresh Track Orders.' };
+        const oldQuantity = Number(target.quantity) || 1;
+        if (oldQuantity === quantity) return { success: true };
+
+        const actorName = actorSession.fullName || actorSession.username || 'User';
+        const { error: auditErr } = await supabase.from('make_order_alteration_log').insert({
+            order_id: orderId,
+            order_number: order.order_number || '',
+            altered_by: actorName,
+            user_role: role,
+            action_type: 'quantity_change_during_designer_review',
+            field_name: `quantity (item #${itemId})`,
+            old_value: String(oldQuantity),
+            new_value: String(quantity),
+            reason: 'Designer review before Sales approval',
+            altered_at: new Date().toISOString()
+        });
+        if (auditErr) return { success: false, error: `Could not record the quantity-change audit: ${auditErr.message}` };
+
+        const { data: changedItem, error: itemErr } = await supabase.from('make_order_items')
+            .update({ quantity }).eq('id', itemId).eq('order_id', orderId).select('id').maybeSingle();
+        if (itemErr) return { success: false, error: `Failed to update item quantity: ${itemErr.message}` };
+        if (!changedItem) return { success: false, error: 'The item was not updated. Refresh Track Orders and try again.' };
+
+        const updatedItems = allItems.map((item: any) => String(item.id) === String(itemId) ? { ...item, quantity } : item);
+        const totalQuantity = updatedItems.reduce((sum: number, item: any) => sum + (Number(item.quantity) || 1), 0);
+        const updatedDetails = order.custom_details && typeof order.custom_details === 'object'
+            ? { ...order.custom_details, items: updatedItems }
+            : order.custom_details;
+        const { error: orderUpdateErr } = await supabase.from('make_orders').update({
+            quantity: totalQuantity,
+            custom_details: updatedDetails,
+            updated_at: new Date().toISOString()
+        }).eq('id', orderId);
+        if (orderUpdateErr) return { success: false, error: `Item quantity changed, but the order summary could not be refreshed: ${orderUpdateErr.message}. Contact an administrator before approval.` };
+
+        const { error: timelineErr } = await supabase.from('make_order_updates').insert({
+            order_id: orderId,
+            status: order.status,
+            note: `${target.product_name} quantity changed from ${oldQuantity} to ${quantity} during designer review.`,
+            updated_by: `${actorName} (${role})`
+        });
+        if (timelineErr) console.error('[MakeOrderService] Failed to add item quantity timeline entry:', timelineErr);
+        return { success: true };
+    }
+
+    /**
+     * Retrieve payment ledger history for an order.
+     */
+    public static async getOrderPayments(orderId: number): Promise<{ success: boolean; payments: any[]; error?: string }> {
+        try {
+            const { data, error } = await supabase
+                .from('make_order_payments')
+                .select('*')
+                .eq('order_id', orderId)
+                .order('created_at', { ascending: false });
+
+            if (error) {
+                console.warn('[MakeOrderService] getOrderPayments error:', error.message);
+                return { success: false, payments: [], error: error.message };
+            }
+
+            return { success: true, payments: data || [] };
+        } catch (err: any) {
+            return { success: false, payments: [], error: err.message || 'Failed to load payment history.' };
         }
     }
 }

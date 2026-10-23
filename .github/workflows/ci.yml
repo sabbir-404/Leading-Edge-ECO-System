@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main, staging]
+  push:
+    branches:
+      - main
+      - staging
+      - 'feat/**'
+      - 'fix/**'
+      - 'codex/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Isolated checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: >-
+      ${{ github.ref_name == 'staging' && 'staging'
+          || startsWith(github.ref_name, 'fix/') && 'debugging'
+          || (startsWith(github.ref_name, 'feat/') || startsWith(github.ref_name, 'codex/')) && 'development'
+          || 'testing' }}
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: lesoft_test
+          POSTGRES_USER: lesoft_test
+          POSTGRES_PASSWORD: test-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U lesoft_test -d lesoft_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: LE-SOFT
+    env:
+      CI: true
+      LE_SOFT_ENVIRONMENT: testing
+      LE_SOFT_TEST_PG_EXTERNAL: true
+      TEST_POSTGRES_URL: postgresql://lesoft_test:test-only-password@127.0.0.1:5432/lesoft_test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: LE-SOFT/package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Install Electron runtime
+        run: node node_modules/electron/install.js
+
+      - name: Build native SQLite binding for Node tests
+        run: npm rebuild better-sqlite3
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit and isolated security tests
+        run: npm test
+
+      - name: PostgreSQL integration tests (ephemeral CI database)
+        run: npm run test:pg
+
+      - name: Type-check and production renderer build
+        run: npm run build:check

@@ -27,10 +27,17 @@ export interface CartItemDraft {
   quantity: number;
   item_cost_price?: number | string;
   item_sale_price?: number | string | null;
+  max_discount_type?: 'percent' | 'amount' | null;
+  max_discount_value?: number | null;
+  discount_type?: 'percent' | 'amount' | null;
+  discount_value?: number | string | null;
+  discount_amount?: number | null;
+  final_item_price?: number | null;
   notes?: string;
   attachedFile?: {
     name: string;
     url?: string;
+    uploadId?: string;
     type: string;
     previewUrl?: string;
   } | null;
@@ -40,6 +47,9 @@ export interface PlaceOrderDraftData {
   priority?: string;
   targetDeliveryDate?: string;
   requestedDeliveryDate?: string;
+  targetDeliveryDays?: number | string | null;
+  requestedDeliveryDays?: number | string | null;
+  orderPlacementDate?: string | null;
   selectedSalesmanId?: string;
   
   // Customer & Delivery info
@@ -71,7 +81,7 @@ export interface PlaceOrderDraftData {
   itemCostPrice?: number | string;
   itemSalePrice?: number | string;
   itemRemarks?: string;
-  selectedItemAttachedFile?: { name: string; url?: string; type: string } | null;
+  selectedItemAttachedFile?: { name: string; url?: string; uploadId?: string; type: string } | null;
 
   // Custom size/spec/color toggles
   isCustomSize?: boolean;
@@ -95,7 +105,12 @@ export interface PlaceOrderDraftData {
 
   // Cart & Attachments
   cartItems?: CartItemDraft[];
-  invoiceAttachments?: { name: string; url: string }[];
+  invoiceAttachments?: { name: string; url: string; isPending?: boolean }[];
+
+  // Order Discount
+  discountType?: 'percent' | 'amount';
+  discountValue?: number | string;
+  moneyReceived?: number | string;
 
   updatedAt?: number;
 }
@@ -116,11 +131,45 @@ function getSavedPlaceOrderDraftsStorageKey(): string {
   );
 }
 
-function getPersistentAttachmentReference(url?: string | null): string | undefined {
+export function getPersistentAttachmentReference(url?: string | null): string | undefined {
   const value = typeof url === 'string' ? url.trim() : '';
   if (!value || /^(data:|blob:)/i.test(value)) return undefined;
-  if (/^(https?:\/\/|app-media:\/\/|file:\/\/)/i.test(value)) return value;
+
+  // Supabase storage URLs (signed or public) for make-order-files -> extract durable key
+  const sbMatch = value.match(/(?:supabase\.co|\/storage\/v1)\/object\/(?:sign|public)\/make-order-files\/([^?#]+)/i);
+  if (sbMatch) {
+    const rawKey = decodeURIComponent(sbMatch[1]).replace(/^\/+/, '');
+    return `make-order-files/${rawKey}`;
+  }
+
+  // Supabase URI scheme
+  if (/^supabase:\/\/make-order-files\//i.test(value)) {
+    const rawKey = value.replace(/^supabase:\/\/make-order-files\//i, '').split('?')[0].replace(/^\/+/, '');
+    return `make-order-files/${rawKey}`;
+  }
+
+  // Durable key
+  if (/^make-order-files\//i.test(value)) {
+    return value.split('?')[0];
+  }
+
+  // Confirmed TrueNAS URLs
+  if (/^https?:\/\/(storage\.lenas\.me|100\.88\.85\.6|192\.168\.1\.14)/i.test(value)) {
+    return value;
+  }
+
+  // If another HTTP URL with token= parameter is detected, strip query params to prevent persisting ephemeral tokens
+  if (/^https?:\/\//i.test(value)) {
+    if (value.includes('token=')) {
+      return value.split('?')[0];
+    }
+    return value;
+  }
+
+  if (/^(app-media:\/\/|file:\/\/)/i.test(value)) return value;
   if (/^[a-z]:[\\/]/i.test(value) || /^\/(?!\/)/.test(value)) return value;
+  if (/^upl_[0-9]+_[0-9a-f]+/i.test(value)) return value;
+
   return undefined;
 }
 
@@ -168,7 +217,8 @@ export function saveNamedPlaceOrderDraft(
           attachedFile: {
             name: item.attachedFile.name,
             type: item.attachedFile.type,
-            url
+            url,
+            uploadId: item.attachedFile.uploadId
           }
         };
       })
@@ -195,7 +245,8 @@ export function saveNamedPlaceOrderDraft(
       selectedItemAttachedFile = {
         name: selectedItemAttachedFile.name,
         type: selectedItemAttachedFile.type,
-        url
+        url,
+        uploadId: selectedItemAttachedFile.uploadId
       };
     }
   }
@@ -340,5 +391,6 @@ export function hasMeaningfulPlaceOrderDraft(draft?: PlaceOrderDraftData): boole
   if (Array.isArray(d.invoiceAttachments) && d.invoiceAttachments.length > 0) return true;
   if (d.selectedProduct || d.customItemName) return true;
   if (d.targetDeliveryDate && d.targetDeliveryDate.trim().length > 0) return true;
+  if (d.discountValue !== undefined && d.discountValue !== null && String(d.discountValue).trim().length > 0) return true;
   return false;
 }

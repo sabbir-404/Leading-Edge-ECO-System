@@ -22,6 +22,10 @@ export interface ProductFormDraft {
   inlineNewAttrType?: 'category' | 'spec' | 'size' | 'color' | null;
   inlineAttrName?: string;
   inlineAttrExtra?: string;
+  cost_price?: number | string | null;
+  sale_price?: number | string | null;
+  max_discount_type?: 'percent' | 'amount' | null;
+  max_discount_value?: number | string | null;
 }
 
 export interface ProductCatalogDraftData {
@@ -139,6 +143,9 @@ export function hasMeaningfulDraftContent(draft?: ProductCatalogDraftData): bool
     if (Array.isArray(pf.selectedSizeIds) && pf.selectedSizeIds.length > 0) return true;
     if (Array.isArray(pf.selectedColorIds) && pf.selectedColorIds.length > 0) return true;
     if (pf.inlineAttrName && pf.inlineAttrName.trim().length > 0) return true;
+    if (pf.cost_price !== undefined && pf.cost_price !== null && String(pf.cost_price).trim().length > 0) return true;
+    if (pf.sale_price !== undefined && pf.sale_price !== null && String(pf.sale_price).trim().length > 0) return true;
+    if (pf.max_discount_value !== undefined && pf.max_discount_value !== null && String(pf.max_discount_value).trim().length > 0) return true;
   }
 
   return false;

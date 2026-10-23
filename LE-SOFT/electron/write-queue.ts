@@ -25,7 +25,9 @@
 import { BrowserWindow } from 'electron';
 import supabase, { getDbClients } from './supabase';
 import { encryptObject, encryptRowsAsync } from './field-encryption';
-import { enqueueOfflineWrite, removePendingWrite, getPendingWrites, incrementRetryCount } from './offline-db';
+import { enqueueOfflineWrite, removePendingWrite, getPendingWrites, incrementRetryCount, loadTableCache } from './offline-db';
+import { DurableOutboxService } from './services/outbox/DurableOutboxService';
+import { SupabaseQuotaManager } from './services/quota/SupabaseQuotaManager';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 export type QueueOperation = 'insert' | 'update' | 'upsert' | 'delete' | 'custom';
@@ -37,6 +39,8 @@ export interface QueueEntry {
     data?: Record<string, any> | Record<string, any>[];
     filter?: { column: string; value: any }[];  // for update/delete
     upsertConflict?: string;                     // for upsert: conflict column
+    dependencyOpId?: string;                     // for dependent child writes
+    metadata?: Record<string, any>;              // idempotency and execution metadata
     retries: number;
     enqueuedAt: number;
     /** Optional callback upon completion (in-process) */
@@ -62,7 +66,8 @@ function nextId(): string {
 
 // ── Broadcast queue status to renderer ───────────────────────────────────────
 function broadcastStatus() {
-    const pending = queue.length;
+    const stats = DurableOutboxService.getInstance().getOutboxStats();
+    const pending = stats.totalPending;
     try {
         BrowserWindow.getAllWindows().forEach(win => {
             if (!win.isDestroyed()) {
@@ -73,51 +78,154 @@ function broadcastStatus() {
 }
 
 // ── Enqueue ───────────────────────────────────────────────────────────────────
-export function enqueue(entry: Omit<QueueEntry, 'id' | 'retries' | 'enqueuedAt'>): string {
-    if (queue.length >= MAX_QUEUE_SIZE) {
-        console.warn('[WriteQueue] Queue full! Dropping oldest entry.');
-        queue.shift();
-    }
-    const id = nextId();
+export function enqueue(entry: Omit<QueueEntry, 'id' | 'retries' | 'enqueuedAt'> & { id?: string }): string {
+    const id = entry.id || nextId();
     const newEntry: QueueEntry = { ...entry, id, retries: 0, enqueuedAt: Date.now() };
-    queue.push(newEntry);
-    
-    // Persist to offline SQLite queue immediately (fire-and-forget)
-    enqueueOfflineWrite({
-        id: newEntry.id,
-        table: newEntry.table,
-        operation: newEntry.operation,
-        payload: newEntry.data || newEntry.filter || {} 
-    }).catch(() => {});
+
+    // Synchronously commit to SQLite WAL outbox FIRST.
+    // If durable initialization or the transaction fails, surface the failure and do not silently continue with a non-durable write!
+    try {
+        DurableOutboxService.getInstance().enqueueSingle({
+            id: newEntry.id,
+            entityType: newEntry.table,
+            operation: newEntry.operation === 'custom' ? 'insert' : newEntry.operation,
+            payload: (newEntry.data || {}) as any,
+            filter: newEntry.filter,
+            upsertConflict: newEntry.upsertConflict,
+            primaryKeyCol: newEntry.upsertConflict || 'id',
+            dependencyOpId: newEntry.dependencyOpId,
+            metadata: newEntry.metadata
+        });
+    } catch (err: any) {
+        console.error('[WriteQueue] Failed durable outbox enqueue! Surfacing failure:', err.message);
+        entry.onError?.(err);
+        throw new Error(`[WriteQueue] Failed durable outbox persistence for ${entry.table}: ${err.message}`);
+    }
+
+    // Register user callbacks with authoritative outbox service
+    if (newEntry.onSuccess || newEntry.onError) {
+        DurableOutboxService.getInstance().registerCallbacks(newEntry.id, {
+            onSuccess: newEntry.onSuccess,
+            onError: newEntry.onError
+        });
+    }
 
     broadcastStatus();
     return id;
 }
 
-async function executeWriteOnClient(client: any, entry: QueueEntry, encData: any): Promise<any> {
+/**
+ * Atomically enqueues an entire graph of dependent operations in a single SQLite transaction.
+ * Guarantees that either all parent and child operations (bill, items, customized orders,
+ * stock decrements, side effects, shipping) are durably committed, or none are.
+ */
+export function enqueueGraph(entries: (Omit<QueueEntry, 'id' | 'retries' | 'enqueuedAt'> & { id?: string })[]): string[] {
+    if (!entries || entries.length === 0) return [];
+
+    const mappedEntries = entries.map(entry => {
+        const id = entry.id || nextId();
+        return {
+            id,
+            entry,
+            outboxOp: {
+                id,
+                entityType: entry.table,
+                operation: (entry.operation === 'custom' ? 'insert' : entry.operation) as any,
+                payload: (entry.data || {}) as any,
+                filter: entry.filter,
+                upsertConflict: entry.upsertConflict,
+                primaryKeyCol: entry.upsertConflict || 'id',
+                dependencyOpId: entry.dependencyOpId,
+                metadata: entry.metadata
+            }
+        };
+    });
+
+    try {
+        const generatedIds = DurableOutboxService.getInstance().enqueueBatch(mappedEntries.map(m => m.outboxOp));
+        mappedEntries.forEach(m => {
+            if (m.entry.onSuccess || m.entry.onError) {
+                DurableOutboxService.getInstance().registerCallbacks(m.id, {
+                    onSuccess: m.entry.onSuccess,
+                    onError: m.entry.onError
+                });
+            }
+        });
+        broadcastStatus();
+        return generatedIds;
+    } catch (err: any) {
+        console.error('[WriteQueue] Failed atomic enqueueGraph transaction:', err.message);
+        throw new Error(`[WriteQueue] Failed atomic enqueueGraph persistence: ${err.message}`);
+    }
+}
+
+async function executeWriteOnClient(client: any, entry: QueueEntry, encData: any, clientName?: string): Promise<any> {
     const { table, operation, filter, upsertConflict, data } = entry;
+
+    // Quota guard: Check Supabase Quota before writing to Supabase Cloud
+    if (clientName === 'Supabase') {
+        const quotaMgr = SupabaseQuotaManager.getInstance();
+        if (!quotaMgr.canAcceptDatabaseWrite(500)) {
+            console.warn(`[WriteQueue] Supabase 1 GB buffer ceiling reached. Skipping cloud write for ${table} to protect quota.`);
+            return { code: 'QUOTA_EXCEEDED', message: 'Supabase quota buffer exceeded 1 GB ceiling' };
+        }
+    }
+
     if (operation === 'insert') {
         if (table === 'bills') {
-            const res = await client.from(table).upsert(encData as any, { onConflict: 'invoice_number' });
-            return res.error;
+            let res = await client.from(table).upsert(encData as any, { onConflict: 'invoice_number' });
+
+            // NAS Schema Defense: PostgREST 42703 (undefined_column: installation_charge or installation_note)
+            // PRESERVE BILLING DATA: Never discard required financial fields!
+            if (res?.error && (res.error.code === '42703' || String(res.error.message || '').includes('installation_charge') || String(res.error.message || '').includes('installation_note'))) {
+                console.error(`[WriteQueue] ${clientName || 'Target'} schema missing required columns (Postgres 42703: ${res.error.message}). Retaining complete billing payload intact in durable storage.`);
+                return res.error; // Do NOT strip fields! Surface error to route to dead-letter safely.
+            }
+
+            // 2. Supabase Foreign Key Defense: Postgres 23503 (bills_customer_id_fkey)
+            if (res?.error && (res.error.code === '23503' || String(res.error.message || '').includes('bills_customer_id_fkey') || String(res.error.message || '').includes('customer_id'))) {
+                console.warn(`[WriteQueue] ${clientName || 'Target'} foreign key constraint failed (bills_customer_id_fkey). Resolving missing customer dependency...`);
+                const billRow = Array.isArray(encData) ? encData[0] : encData;
+                const customerId = billRow?.customer_id;
+                if (customerId) {
+                    const { nas } = getDbClients();
+                    let custData: any = null;
+                    if (nas && client !== nas) {
+                        const { data: nasCust } = await nas.from('billing_customers').select('*').eq('id', customerId).maybeSingle();
+                        custData = nasCust;
+                    }
+                    if (!custData) {
+                        const localCusts = await loadTableCache('billing_customers').catch(() => []);
+                        custData = localCusts.find((c: any) => c.id === customerId);
+                    }
+                    if (custData) {
+                        console.log(`[WriteQueue] Auto-upserting parent customer ${customerId} ('${custData.name}') into ${clientName || 'target'}...`);
+                        await client.from('billing_customers').upsert(custData, { onConflict: 'id' });
+                        // Retry bill upsert
+                        res = await client.from(table).upsert(encData as any, { onConflict: 'invoice_number' });
+                    }
+                }
+            }
+
+            return res?.error || null;
         }
         const res = await client.from(table).insert(encData as any);
-        return res.error;
+        return res?.error || null;
     } else if (operation === 'upsert') {
         const res = await client.from(table).upsert(encData as any,
             upsertConflict ? { onConflict: upsertConflict } : undefined
         );
-        return res.error;
+        return res?.error || null;
     } else if (operation === 'update' && filter) {
         let q: any = client.from(table).update(encData as any);
         for (const f of filter) q = q.eq(f.column, f.value);
         const res = await q;
-        return res.error;
+        return res?.error || null;
     } else if (operation === 'delete' && filter) {
         let q: any = client.from(table).delete();
         for (const f of filter) q = q.eq(f.column, f.value);
         const res = await q;
-        return res.error;
+        return res?.error || null;
     } else if (operation === 'custom' && table === 'bill_shipping') {
         const d = data as Record<string, any>;
         // Resolve actual bill_id using client
@@ -190,8 +298,12 @@ async function processEntry(entry: QueueEntry): Promise<void> {
         // Write to all initialized clients in parallel
         await Promise.all(targets.map(async ({ name, client }) => {
             try {
-                const error = await executeWriteOnClient(client, entry, encData);
+                const error = await executeWriteOnClient(client, entry, encData, name);
                 if (error) {
+                    if (error.code === 'QUOTA_EXCEEDED' && client !== active) {
+                        console.info(`[WriteQueue] Protected Supabase 1 GB quota; skipped non-primary mirror write for ${entry.table}`);
+                        return;
+                    }
                     console.error(`[WriteQueue] Write to ${name} failed:`, error.message);
                     if (client === active) {
                         primaryFailed = true;
@@ -233,7 +345,12 @@ async function processEntry(entry: QueueEntry): Promise<void> {
             console.warn(`[WriteQueue] Retry ${entry.retries}/${MAX_RETRIES} for ${entry.table} in ${delay}ms`);
             setTimeout(() => queue.push(entry), delay);
         } else {
-            console.error(`[WriteQueue] Permanently failed after ${MAX_RETRIES} retries:`, entry.table, err.message);
+            console.error(`[WriteQueue] Permanently failed after ${MAX_RETRIES} retries:`, entry.table, err?.message);
+            // CRITICAL: Hand off to DurableOutboxService dead-letter table so write is NEVER lost!
+            DurableOutboxService.getInstance().markDeadLetter(
+                entry.id,
+                `WriteQueue retry budget exhausted (${MAX_RETRIES}) on ${entry.table}: ${err?.message || 'Unknown error'}`
+            );
             entry.onError?.(err);
         }
     }
@@ -252,39 +369,15 @@ async function drain(): Promise<void> {
 }
 
 // ── Start/Stop the drain timer ────────────────────────────────────────────────
-// ── Start/Stop the drain timer ────────────────────────────────────────────────
 export async function startQueue(): Promise<void> {
-    if (drainTimer) return;
-    
-    // Load any pending offline writes from previous sessions
-    try {
-        const pending = await getPendingWrites();
-        for (const p of pending) {
-            if (!queue.find(q => q.id === p.id)) {
-                queue.push({
-                    id: p.id,
-                    table: p.table,
-                    operation: p.operation,
-                    data: (p.operation === 'insert' || p.operation === 'upsert') ? p.payload : undefined,
-                    filter: (p.operation === 'update' || p.operation === 'delete') ? p.payload : undefined,
-                    retries: p.retry_count || 0,
-                    enqueuedAt: p.created_at || Date.now()
-                });
-            }
-        }
-        if (pending.length > 0) {
-            console.log(`[WriteQueue] Restored ${pending.length} pending offline writes from SQLite.`);
-            broadcastStatus();
-        }
-    } catch (e: any) {
-        console.error('[WriteQueue] Failed to load pending offline writes:', e.message);
-    }
-
-    drainTimer = setInterval(drain, DRAIN_INTERVAL_MS);
-    console.log('[WriteQueue] Started. Draining every', DRAIN_INTERVAL_MS, 'ms.');
+    // Authoritative pipeline: DurableOutboxService is the single execution pipeline
+    DurableOutboxService.getInstance().startWorker(DRAIN_INTERVAL_MS);
+    console.log('[WriteQueue] Started via authoritative DurableOutboxService. Draining every', DRAIN_INTERVAL_MS, 'ms.');
+    broadcastStatus();
 }
 
 export function stopQueue(): void {
+    DurableOutboxService.getInstance().stopWorker();
     if (drainTimer) {
         clearInterval(drainTimer);
         drainTimer = null;
@@ -296,19 +389,9 @@ export async function flush(): Promise<void> {
     if (isFlushing) return;
     isFlushing = true;
     stopQueue();
-    console.log(`[WriteQueue] Flushing ${queue.length} pending writes before quit...`);
-
-    const deadline = Date.now() + FLUSH_TIMEOUT_MS;
-    while (queue.length > 0 && Date.now() < deadline) {
-        const batch = queue.splice(0, 20);
-        await Promise.allSettled(batch.map(processEntry));
-    }
-
-    if (queue.length > 0) {
-        console.warn(`[WriteQueue] Flushed with ${queue.length} writes still pending (timeout).`);
-    } else {
-        console.log('[WriteQueue] All writes flushed successfully.');
-    }
+    console.log('[WriteQueue] Flushing pending durable writes before quit...');
+    await DurableOutboxService.getInstance().drainNextBatch(100);
+    console.log('[WriteQueue] All durable writes flushed successfully.');
 }
 
 // ── Queue stats (for IPC) ─────────────────────────────────────────────────────

@@ -3,6 +3,8 @@ import { SessionManager } from '../../electron/session-manager';
 import { MakeCadService } from '../../electron/services/make/MakeCadService';
 import { MakeOrderService } from '../../electron/services/make/MakeOrderService';
 import { supabase } from '../../electron/supabase';
+import { canModifyMakeOrder, isAllowedAttachmentReference } from '../../electron/ipc/handlers/make';
+import { DeleteOrderPdfSchema, DeleteItemPdfSchema } from '../../electron/ipc/schemas/make.schema';
 
 vi.mock('../../electron/supabase', () => {
     return {
@@ -485,5 +487,115 @@ describe('MAKE V1 — Security & Hardened Boundary Tests', () => {
             expect(canManageCatalog({ role: 'designer', permissions: { manage_catalog: true } })).toBe(true);
         });
     });
-});
 
+    describe('9. Attachment Deletion Authorization & Schema Hardening Gates (v1.8.12)', () => {
+        describe('canModifyMakeOrder Authorization Rules', () => {
+            it('rejects unauthenticated (null or undefined) session', () => {
+                expect(canModifyMakeOrder(null)).toBe(false);
+                expect(canModifyMakeOrder(undefined)).toBe(false);
+            });
+
+            it('rejects read-only and unauthorized roles without modification permissions', () => {
+                expect(canModifyMakeOrder({ userId: 1, username: 'op', fullName: 'Operator', role: 'operator', permissions: {}, loginTime: '' })).toBe(false);
+                expect(canModifyMakeOrder({ userId: 2, username: 'audit', fullName: 'Auditor', role: 'guest', permissions: { make_view: true }, loginTime: '' })).toBe(false);
+                expect(canModifyMakeOrder({ userId: 3, username: 'sales', fullName: 'Salesperson', role: 'salesperson', permissions: { make_view: true }, loginTime: '' })).toBe(false);
+                expect(canModifyMakeOrder({ userId: 4, username: 'fac', fullName: 'Factory Mgr', role: 'factory_manager', permissions: { make_production: true }, loginTime: '' })).toBe(false);
+            });
+
+            it('authorizes Furniture Designers on orders not yet in post-production', () => {
+                const designer = { userId: 10, username: 'lead_des', fullName: 'Lead Designer', role: 'furniture_designer', permissions: {}, loginTime: '' };
+                expect(canModifyMakeOrder(designer)).toBe(true);
+                expect(canModifyMakeOrder(designer, { status: 'Draft' })).toBe(true);
+                expect(canModifyMakeOrder(designer, { status: 'Pending Approval' })).toBe(true);
+                expect(canModifyMakeOrder(designer, { status: 'Approved' })).toBe(true);
+            });
+
+            it('rejects Furniture Designers once order has reached or passed production stage', () => {
+                const designer = { userId: 10, username: 'lead_des', fullName: 'Lead Designer', role: 'furniture_designer', permissions: {}, loginTime: '' };
+                expect(canModifyMakeOrder(designer, { status: 'Production On Going' })).toBe(false);
+                expect(canModifyMakeOrder(designer, { status: 'Finishing' })).toBe(false);
+                expect(canModifyMakeOrder(designer, { status: 'Packaging' })).toBe(false);
+                expect(canModifyMakeOrder(designer, { status: 'Delivered' })).toBe(false);
+                expect(canModifyMakeOrder(designer, { status: 'Ready to Ship' })).toBe(false);
+            });
+
+            it('authorizes Administrators across all order stages including post-production', () => {
+                const admin = { userId: 1, username: 'admin', fullName: 'Super Admin', role: 'admin', permissions: {}, loginTime: '' };
+                expect(canModifyMakeOrder(admin)).toBe(true);
+                expect(canModifyMakeOrder(admin, { status: 'Production On Going' })).toBe(true);
+                expect(canModifyMakeOrder(admin, { status: 'Delivered' })).toBe(true);
+            });
+
+            it('authorizes users with explicit modification permissions', () => {
+                const clerkWithEdit = { userId: 5, username: 'clerk', fullName: 'Clerk', role: 'salesperson', permissions: { make_edit: true }, loginTime: '' };
+                const clerkWithWrite = { userId: 6, username: 'clerk2', fullName: 'Clerk 2', role: 'salesperson', permissions: { write_make: true }, loginTime: '' };
+                const clerkWithDelete = { userId: 7, username: 'clerk3', fullName: 'Clerk 3', role: 'salesperson', permissions: { delete_make_order: true }, loginTime: '' };
+                expect(canModifyMakeOrder(clerkWithEdit)).toBe(true);
+                expect(canModifyMakeOrder(clerkWithWrite)).toBe(true);
+                expect(canModifyMakeOrder(clerkWithDelete)).toBe(true);
+            });
+        });
+
+        describe('DeleteOrderPdfSchema & DeleteItemPdfSchema Validation', () => {
+            it('rejects invalid or non-positive order and item IDs', () => {
+                expect(() => DeleteOrderPdfSchema.parse({ orderId: -1, storagePath: 'test.pdf' })).toThrow();
+                expect(() => DeleteOrderPdfSchema.parse({ orderId: 0, storagePath: 'test.pdf' })).toThrow();
+                expect(() => DeleteOrderPdfSchema.parse({ orderId: 'abc', storagePath: 'test.pdf' })).toThrow();
+                expect(() => DeleteOrderPdfSchema.parse({ orderId: 1.5, storagePath: 'test.pdf' })).toThrow();
+                expect(() => DeleteItemPdfSchema.parse({ itemId: -1, storagePath: 'test.pdf' })).toThrow();
+            });
+
+            it('rejects empty, whitespace-only, or missing storagePath', () => {
+                expect(() => DeleteOrderPdfSchema.parse({ orderId: 101, storagePath: '' })).toThrow();
+                expect(() => DeleteOrderPdfSchema.parse({ orderId: 101, storagePath: '   ' })).toThrow();
+                expect(() => DeleteOrderPdfSchema.parse({ orderId: 101 } as any)).toThrow();
+            });
+
+            it('rejects directory traversal and encoded traversal sequences', () => {
+                expect(() => DeleteOrderPdfSchema.parse({ orderId: 101, storagePath: '../etc/passwd' })).toThrow();
+                expect(() => DeleteOrderPdfSchema.parse({ orderId: 101, storagePath: '..\\Windows\\System32\\cmd.exe' })).toThrow();
+                expect(() => DeleteOrderPdfSchema.parse({ orderId: 101, storagePath: '%2e%2e/secret.pdf' })).toThrow();
+                expect(() => DeleteOrderPdfSchema.parse({ orderId: 101, storagePath: '%252e%252e%252fsecret.pdf' })).toThrow();
+            });
+
+            it('rejects null-byte encodings in storagePath', () => {
+                expect(() => DeleteOrderPdfSchema.parse({ orderId: 101, storagePath: 'test.pdf\0malicious' })).toThrow();
+                expect(() => DeleteOrderPdfSchema.parse({ orderId: 101, storagePath: 'test.pdf%00malicious' })).toThrow();
+            });
+
+            it('rejects unsupported or dangerous protocol schemes', () => {
+                expect(() => DeleteOrderPdfSchema.parse({ orderId: 101, storagePath: 'javascript:alert(1)' })).toThrow();
+                expect(() => DeleteOrderPdfSchema.parse({ orderId: 101, storagePath: 'file:///etc/passwd' })).toThrow();
+                expect(() => DeleteOrderPdfSchema.parse({ orderId: 101, storagePath: 'data:text/plain;base64,AAAA' })).toThrow();
+                expect(() => DeleteOrderPdfSchema.parse({ orderId: 101, storagePath: 'ftp://evil.com/doc.pdf' })).toThrow();
+            });
+
+            it('accepts valid order and item deletion payloads', () => {
+                const parsedOrder = DeleteOrderPdfSchema.parse({ orderId: 101, storagePath: 'make-order-files/101/blueprint.pdf' });
+                expect(parsedOrder.orderId).toBe(101);
+                expect(parsedOrder.storagePath).toBe('make-order-files/101/blueprint.pdf');
+
+                const parsedItem = DeleteItemPdfSchema.parse({ itemId: 42, orderId: 101, storagePath: 'make-order-files/101/items/42/cad.dwg' });
+                expect(parsedItem.itemId).toBe(42);
+                expect(parsedItem.orderId).toBe(101);
+            });
+        });
+
+        describe('isAllowedAttachmentReference Strict Reference Check', () => {
+            it('rejects untrusted external hosts, arbitrary schemes, and traversal', () => {
+                expect(isAllowedAttachmentReference('http://evil.com/malicious.pdf')).toBe(false);
+                expect(isAllowedAttachmentReference('https://untrusted-site.org/foo.pdf')).toBe(false);
+                expect(isAllowedAttachmentReference('javascript:alert(1)')).toBe(false);
+                expect(isAllowedAttachmentReference('file:///c:/secret.txt')).toBe(false);
+                expect(isAllowedAttachmentReference('../secret.pdf')).toBe(false);
+            });
+
+            it('approves legitimate TrueNAS URLs, Supabase storage keys, and relative object paths', () => {
+                expect(isAllowedAttachmentReference('https://storage.lenas.me/files/make-order-files/101/drawing.pdf')).toBe(true);
+                expect(isAllowedAttachmentReference('http://100.88.85.6:8081/files/make-order-files/101/drawing.pdf')).toBe(true);
+                expect(isAllowedAttachmentReference('make-order-files/101/drawing.pdf')).toBe(true);
+                expect(isAllowedAttachmentReference('drawing.pdf')).toBe(true);
+            });
+        });
+    });
+});

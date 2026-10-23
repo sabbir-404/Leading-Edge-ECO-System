@@ -1,4 +1,5 @@
 import { eventBus } from './events/eventBus';
+import { isAllowedNonProductionEndpoint, isNonProductionEnvironment } from './runtime-environment';
 
 /**
  * nats-client.ts — NATS High-Speed Pub/Sub Event Adapter for TrueNAS
@@ -8,7 +9,10 @@ import { eventBus } from './events/eventBus';
 export class NatsEventAdapter {
     private static isConnected = false;
 
-    static connect(serverUrl = 'nats://100.88.85.6:4222') {
+    static connect(serverUrl = isNonProductionEnvironment() ? 'nats://127.0.0.1:4222' : 'nats://100.88.85.6:4222') {
+        if (isNonProductionEnvironment() && !isAllowedNonProductionEndpoint(serverUrl)) {
+            throw new Error('Refusing to connect to a non-isolated NATS endpoint in this environment.');
+        }
         if (this.isConnected) return;
 
         console.log(`[NATS] Connecting to TrueNAS NATS Event Highway at: ${serverUrl}`);

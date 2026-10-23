@@ -1,24 +1,29 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY } from '../../electron/credentials';
 import { loadConfig, getDbClients, reinitSupabaseClients } from '../../electron/supabase';
+import { isLoopbackEndpoint } from '../../electron/runtime-environment';
 
-describe('Final Read-Only Database Reconciliation', () => {
+// Only run against an explicitly configured local Supabase stack. Production
+// reconciliation is never part of the software test environment.
+describe.skipIf(process.env.RUN_LOCAL_DB_RECONCILIATION !== '1')('Local Database Reconciliation', () => {
     let supabaseClient: SupabaseClient;
     let nasClient: SupabaseClient | null = null;
     let nasUrl: string | null = null;
 
     beforeAll(async () => {
-        // 1. Initialize Supabase Cloud client with public anon credentials
-        supabaseClient = createClient(PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY);
-
-        // 2. Load runtime config to check NAS endpoints
+        // Load environment-scoped endpoints and refuse remote targets.
         const config = loadConfig();
+        if (!isLoopbackEndpoint(config.url)) throw new Error('Local reconciliation requires a loopback Supabase API endpoint.');
+        if (!config.anonKey) throw new Error('Local reconciliation requires a configured local Supabase anon key.');
+        supabaseClient = createClient(config.url, config.anonKey);
         const candidateUrls = [
-            config.nasLocalUrl || 'http://192.168.1.14:3001',
-            config.nasTunnelUrl || 'https://db.lenas.me',
-            config.nasUrl || 'http://100.88.85.6:3001'
-        ];
+            config.nasLocalUrl,
+            config.nasTunnelUrl,
+            config.nasUrl
+        ].filter((value): value is string => Boolean(value));
+        candidateUrls.forEach((url) => {
+            if (!isLoopbackEndpoint(url)) throw new Error('Local reconciliation refuses non-loopback NAS endpoints.');
+        });
 
         const cfHeaders: Record<string, string> = {};
         if (config.cfAccessClientId && config.cfAccessClientSecret) {
@@ -56,10 +61,10 @@ describe('Final Read-Only Database Reconciliation', () => {
     });
 
     it('1. Authoritative Architecture Verification', () => {
-        expect(PUBLIC_SUPABASE_URL).toBeDefined();
         console.log('\n[ARCH] Verifying database routing architecture:');
-        console.log('  NAS Master Candidate URL:', nasUrl || 'None responding (offline)');
-        console.log('  Supabase Cloud Project:', PUBLIC_SUPABASE_URL.replace(/https:\/\/(.*?)\..*/, '$1'));
+        console.log('  Test database: isolated local Supabase');
+        console.log('  Downstream Pull Mirror: NAS Candidate URL:', nasUrl || 'None responding (offline)');
+        console.log('  Contract: Business writes commit to Supabase primary first; TrueNAS replicates downstream.');
     });
 
     it('2. NAS Database Verification (READ-ONLY)', async () => {
@@ -68,7 +73,7 @@ describe('Final Read-Only Database Reconciliation', () => {
             return;
         }
 
-        console.log('\n[NAS] Reconciling NAS MAKE V1.2 Schema (Operational Master)...');
+        console.log('\n[NAS] Reconciling TrueNAS Downstream Replica Schema...');
 
         // Check make_product_categories
         const { data: categories, count: catCount, error: catErr } = await nasClient
@@ -126,7 +131,7 @@ describe('Final Read-Only Database Reconciliation', () => {
             .select('id, name, code', { count: 'exact' })
             .limit(5);
         statusMap['make_product_categories'] = !catErr;
-        console.log('  • make_product_categories:', !catErr ? `PRESENT (rows: ${catCount})` : 'MISSING (' + catErr.message + ')');
+        console.log('  • make_product_categories:', !catErr ? `PRESENT (rows visible to unauthenticated probe: ${catCount} — note: production rows governed by RLS)` : 'MISSING (' + catErr.message + ')');
 
         // 2. make_products.category and category_id
         const { data: products, error: prodErr } = await supabaseClient
@@ -187,7 +192,7 @@ describe('Final Read-Only Database Reconciliation', () => {
         }
 
         console.log(`\n▶ DEFINITIVE MIGRATION 063 STATUS ON SUPABASE CLOUD: ${migration063Status}`);
-    });
+    }, 30000);
 
     it('5. Application Compatibility Read-Only Suite', async () => {
         console.log('\n[COMPATIBILITY] Running minimum read-only application checks...');
@@ -198,14 +203,15 @@ describe('Final Read-Only Database Reconciliation', () => {
             .select('id, product_code, product_name, category_id')
             .limit(10);
         expect(prodErr).toBeNull();
-        console.log('  ✓ MAKE catalog read: PASS (retrieved ' + products?.length + ' products)');
+        console.log('  ✓ MAKE catalog read: PASS (retrieved ' + products?.length + ' products; unauthenticated read governed by RLS)');
 
         // 5.2 Category read
         const { data: categories, error: catErr } = await supabaseClient
             .from('make_product_categories')
             .select('id, name')
             .limit(10);
-        console.log('  ✓ Category read: ' + (!catErr ? `PASS (retrieved ${categories?.length} categories)` : 'FAIL (' + catErr?.message + ')'));
+        expect(catErr).toBeNull();
+        console.log('  ✓ Category read: PASS (retrieved ' + categories?.length + ' categories; unauthenticated read governed by RLS)');
 
         // 5.3 Whole-catalog search
         const { data: searchResults, error: searchErr } = await supabaseClient
@@ -224,24 +230,36 @@ describe('Final Read-Only Database Reconciliation', () => {
         expect(custErr).toBeNull();
         console.log('  ✓ Customer ledger read: PASS (retrieved ' + customers?.length + ' customers)');
 
-        const { data: ledger, error: ledgErr } = await supabaseClient
-            .from('customer_ledger')
-            .select('id, amount, balance')
-            .limit(5);
-        console.log('  ✓ Customer ledger transactions: ' + (!ledgErr ? `PASS (retrieved ${ledger?.length} entries)` : 'FAIL (' + ledgErr?.message + ')'));
+        // Customer payment rows are private. Validate only the ledger schema here
+        // using a HEAD request, so this anonymous probe never fetches financial data.
+        const { error: baseTableErr } = await supabaseClient
+            .from('customer_payments')
+            .select('id', { head: true })
+            .limit(1);
+        expect(baseTableErr).toBeNull();
+
+        // Migration 072 introduces payment_type and payment_method while preserving legacy payment_mode
+        const { error: ledgErr } = await supabaseClient
+            .from('customer_payments')
+            .select('id, payment_type, payment_method, payment_mode', { head: true })
+            .limit(1);
+        expect(ledgErr).toBeNull();
+        console.log('  ✓ Customer ledger schema: PASS (verified payment_type, payment_method, and legacy payment_mode without fetching rows)');
 
         // 5.5 Production stage read
         const { data: stages, error: stageErr } = await supabaseClient
             .from('make_orders')
             .select('id, order_number, current_stage')
             .limit(5);
-        console.log('  ✓ Production stage read: ' + (!stageErr ? `PASS (retrieved ${stages?.length} orders)` : 'FAIL (' + stageErr.message + ')'));
+        expect(stageErr).toBeNull();
+        console.log('  ✓ Production stage read: PASS (retrieved ' + stages?.length + ' orders)');
 
         // 5.6 Invoice attachment metadata read
         const { data: invoices, error: invErr } = await supabaseClient
             .from('make_orders')
             .select('id, invoice_attachment_urls')
             .limit(5);
-        console.log('  ✓ Invoice attachment metadata read: ' + (!invErr ? `PASS (retrieved ${invoices?.length} orders)` : 'FAIL (' + invErr.message + ')'));
-    });
+        expect(invErr).toBeNull();
+        console.log('  ✓ Invoice attachment metadata read: PASS (retrieved ' + invoices?.length + ' orders)');
+    }, 30000);
 });

@@ -31,6 +31,7 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { app, BrowserWindow } from 'electron';
 import fs from 'fs';
 import path from 'path';
+import { getRuntimeEnvironment, isAllowedNonProductionEndpoint, isNonProductionEnvironment } from '../runtime-environment';
 
 export type DatabaseTarget = 'nas' | 'supabase';
 export type CircuitBreakerState = 'healthy' | 'degraded' | 'recovering' | 'offline';
@@ -72,6 +73,8 @@ export interface DatabaseStatus {
     connectionTier: ConnectionTier;
     activeNasUrl: string | null;
     isNasReachable: boolean;
+    /** The NAS API answered, but rejected the configured database credential. */
+    nasAuthorizationError: string | null;
     consecutiveFailures: number;
     pendingReconciliationCount: number;
     pendingMirrorRetriesCount: number;
@@ -123,6 +126,7 @@ export class DatabaseFailoverEngine {
     private connectionStatePath: string;
 
     private isNasReachable = false;
+    private nasAuthorizationError: string | null = null;
     private consecutiveFailures = 0;
     private readonly MAX_CONSECUTIVE_FAILURES = 2; // Require 2 consecutive failures before degrading to avoid false-positive on single transient timeout
 
@@ -248,23 +252,31 @@ export class DatabaseFailoverEngine {
     }
 
     public getActiveClient(): SupabaseClient {
-        const inCooldown = Date.now() < this.cooldownUntil;
-        // If degraded, offline, or during cooldown, return Supabase fallback immediately without stalling
-        if (this.circuitState === 'degraded' || this.circuitState === 'offline' || inCooldown) {
-            if (this.supabaseClient) {
-                return this.supabaseClient;
-            }
-        }
-        if ((this.circuitState === 'healthy' || this.circuitState === 'recovering') && this.nasClient) {
-            return this.nasClient;
-        }
+        // Architecture invariant: Supabase is the primary write target and source of truth.
+        // The NAS is a pull/replication destination, not the first-write authority.
         if (this.supabaseClient) {
             return this.supabaseClient;
+        }
+        if (this.supabaseAdmin) {
+            return this.supabaseAdmin;
         }
         if (this.nasClient) {
             return this.nasClient;
         }
         throw new Error('No database client available.');
+    }
+
+    /**
+     * Redacts tokens, connection strings, passwords, and sensitive keys from error strings
+     */
+    public static sanitizeError(err: any): string {
+        if (!err) return 'unknown';
+        const msg = typeof err === 'string' ? err : err.message || JSON.stringify(err);
+        return msg
+            .replace(/(Bearer\s+)[A-Za-z0-9\-_.]+/gi, '$1[REDACTED]')
+            .replace(/(apikey[:=]\s*)[A-Za-z0-9\-_.]+/gi, '$1[REDACTED]')
+            .replace(/(postgres:\/\/[^:]+:)[^@]+(@)/gi, '$1[REDACTED]$2')
+            .replace(/(password[:=]\s*)[^&\s]+/gi, '$1[REDACTED]');
     }
 
     public logDiagnostic(payload: {
@@ -281,7 +293,9 @@ export class DatabaseFailoverEngine {
     }): void {
         const cleanPayload = {
             timestamp: new Date().toISOString(),
-            ...payload
+            ...payload,
+            reason: payload.reason ? DatabaseFailoverEngine.sanitizeError(payload.reason) : undefined,
+            error: payload.error ? DatabaseFailoverEngine.sanitizeError(payload.error) : undefined
         };
         console.log(`[DB:DIAGNOSTIC] ${JSON.stringify(cleanPayload)}`);
 
@@ -327,6 +341,7 @@ export class DatabaseFailoverEngine {
             connectionTier: this.connectionTier,
             activeNasUrl: this.activeNasUrl,
             isNasReachable: this.isNasReachable,
+            nasAuthorizationError: this.nasAuthorizationError,
             consecutiveFailures: this.consecutiveFailures,
             pendingReconciliationCount: this.getPendingJournalEntries().length,
             pendingMirrorRetriesCount: this.mirrorRetryEntries.length,
@@ -371,18 +386,24 @@ export class DatabaseFailoverEngine {
      * Pings a specific URL with a bounded timeout using HEAD to avoid downloading schema bodies.
      */
     private async pingUrl(url: string, timeoutMs = 1200, headers: Record<string, string> = {}): Promise<boolean> {
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
         try {
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+            timeoutId = setTimeout(() => controller.abort(), timeoutMs);
             const res = await fetch(url, {
                 method: 'HEAD',
                 signal: controller.signal,
                 headers
             });
-            clearTimeout(timeoutId);
-            return res.ok;
+            // Any HTTP response proves that the endpoint is reachable. In particular,
+            // PostgREST 401/403 means the NAS is online but this client lacks access.
+            const contentType = res.headers?.get?.('content-type') || '';
+            if (res.status === 403 && contentType.toLowerCase().includes('text/html')) return false;
+            return true;
         } catch {
             return false;
+        } finally {
+            if (timeoutId) clearTimeout(timeoutId);
         }
     }
 
@@ -400,12 +421,18 @@ export class DatabaseFailoverEngine {
         this.isProbing = true;
 
         const cfHeaders = candidates.cfHeaders || {};
-        const local = candidates.localUrl || 'http://192.168.1.14:3001';
-        const pub = candidates.publicUrl || 'http://100.88.85.6:3001';
+        const local = candidates.localUrl || (isNonProductionEnvironment() ? 'http://127.0.0.1:3001' : 'http://192.168.1.14:3001');
+        const pub = candidates.publicUrl || (isNonProductionEnvironment() ? 'http://127.0.0.1:3001' : 'http://100.88.85.6:3001');
         const tunnel = candidates.tunnelUrl;
 
+        if (isNonProductionEnvironment() && [local, pub, tunnel].some(endpoint => endpoint && !isAllowedNonProductionEndpoint(endpoint))) {
+            console.error(`[DB:SAFETY] Refusing production NAS endpoint from ${getRuntimeEnvironment()} health check configuration.`);
+            this.isProbing = false;
+            return false;
+        }
+
         // 1. Fast check: If last working URL is known, test it first with tight timeout (800ms)
-        if (this.lastWorkingNasUrl) {
+        if (this.lastWorkingNasUrl && !(isNonProductionEnvironment() && !isAllowedNonProductionEndpoint(this.lastWorkingNasUrl))) {
             const headers = this.lastWorkingNasUrl.startsWith('https://') ? cfHeaders : {};
             const t0 = Date.now();
             const alive = await this.pingUrl(this.lastWorkingNasUrl, 800, headers);
@@ -539,6 +566,9 @@ export class DatabaseFailoverEngine {
 
             if (!success) {
                 console.warn('[DB:RECOVERY] NAS real query failed:', queryError?.message || 'unknown error');
+                if (DatabaseFailoverEngine.isAuthorizationError(queryError)) {
+                    this.recordNasAuthorizationFailure(queryError);
+                }
                 return false;
             }
 
@@ -624,6 +654,10 @@ export class DatabaseFailoverEngine {
 
     // ── Circuit Breaker Actions ──────────────────────────────────────────────────
     public recordNasFailure(err: any): void {
+        if (DatabaseFailoverEngine.isAuthorizationError(err)) {
+            this.recordNasAuthorizationFailure(err);
+            return;
+        }
         // GUARD: Background bootstrap reads must not degrade primary NAS health
         if (this.isBackgroundBootstrap) {
             console.warn('[DB:FAILOVER] Ignoring NAS failure during background bootstrap (not penalizing primary health):', err?.message || 'unknown');
@@ -638,7 +672,6 @@ export class DatabaseFailoverEngine {
             err.message.includes('ECONNREFUSED') ||
             err.message.includes('HTML response') ||
             err.message.includes('proxy/gateway') ||
-            err.message.includes('authorization rejected') ||
             err.message.includes('502') ||
             err.message.includes('503') ||
             err.message.includes('504')
@@ -696,8 +729,32 @@ export class DatabaseFailoverEngine {
         }
     }
 
+    private static isAuthorizationError(err: any): boolean {
+        const status = Number(err?.status ?? err?.statusCode ?? err?.response?.status);
+        const message = String(err?.message || err || '').toLowerCase();
+        if (/html response|proxy\/gateway|proxy\/access blocked|unexpected html/.test(message)) return false;
+        return status === 401 || status === 403 ||
+            /database authorization rejected|postgrest authentication error|jwt (?:expired|invalid)|invalid jwt|permission denied|not authorized|unauthorized|forbidden/.test(message);
+    }
+
+    private recordNasAuthorizationFailure(err: any): void {
+        this.isNasReachable = true;
+        this.nasAuthorizationError = DatabaseFailoverEngine.sanitizeError(err);
+        this.metrics.failedNasQueries++;
+        this.lastHealthCheckTime = Date.now();
+        this.consecutiveFailures = 0;
+        this.cooldownUntil = 0;
+        this.circuitState = 'degraded';
+        this.activeTarget = 'supabase';
+        // Keep the known endpoint/tier: authorization failure is not a connectivity failure.
+        this.broadcastStatus();
+        console.warn('[DB:FAILOVER] NAS is reachable but rejected database authorization. Routing database operations to Supabase until credentials are corrected.');
+    }
+
     public recordNasSuccess(durationMs?: number): void {
         this.consecutiveFailures = 0;
+        this.isNasReachable = true;
+        this.nasAuthorizationError = null;
         this.cooldownUntil = 0;
         this.cooldownDurationMs = 30_000;
 
@@ -752,12 +809,15 @@ export class DatabaseFailoverEngine {
                     return { data: res.data, error: null, databaseUsed: 'nas' };
                 }
 
-                // If it's a data-level query error (e.g. invalid column/filter, not connection/timeout), return directly
-                if (res.error?.code && !['ECONNREFUSED', 'ETIMEDOUT', 'PGRST000'].includes(res.error.code)) {
-                    return { data: res.data, error: res.error, databaseUsed: 'nas' };
+                if (DatabaseFailoverEngine.isAuthorizationError(res.error)) {
+                    this.recordNasAuthorizationFailure(res.error);
+                } else {
+                    // If it's a data-level query error (e.g. invalid column/filter), return directly.
+                    if (res.error?.code && !['ECONNREFUSED', 'ETIMEDOUT', 'PGRST000'].includes(res.error.code)) {
+                        return { data: res.data, error: res.error, databaseUsed: 'nas' };
+                    }
+                    this.recordNasFailure(res.error);
                 }
-
-                this.recordNasFailure(res.error);
             } catch (err: any) {
                 this.recordNasFailure(err);
             }
@@ -818,29 +878,31 @@ export class DatabaseFailoverEngine {
 
                 res = await Promise.race([writeFn(this.nasClient), timeoutPromise]);
             } catch (err: any) {
-                this.recordNasFailure(err);
+                if (DatabaseFailoverEngine.isAuthorizationError(err)) {
+                    // PostgREST rejects unauthorized requests before SQL execution, so this
+                    // mutation is safe to retry exactly once through the cloud fallback.
+                    this.recordNasAuthorizationFailure(err);
+                    res = { data: null, error: err };
+                } else {
+                    this.recordNasFailure(err);
 
-                // AMBIGUOUS TIMEOUT GUARD:
-                // Write was dispatched to NAS, but response was lost or timed out (>3000ms).
-                // The database server MAY have committed the transaction!
-                // To avoid duplicate product/order creation (split-brain duplicate writes),
-                // we must NEVER autonomously replay this write to Supabase Cloud.
-                console.error(`[DB:FAILOVER] Ambiguous write timeout on NAS for ${writeDesc} (${metadata.table}). Preventing duplicate replay to Supabase.`);
-                
-                // Durable record of ambiguous write for verification upon reconnection
-                this.journalWrite({
-                    table: metadata.table,
-                    operation: metadata.operation,
-                    primaryKey: metadata.primaryKey,
-                    data: metadata.data,
-                    filter: metadata.filter
-                });
+                    // AMBIGUOUS TIMEOUT GUARD: the database may have committed the write.
+                    // Journal for verification, but never replay an uncertain mutation.
+                    console.error(`[DB:FAILOVER] Ambiguous write failure on NAS for ${writeDesc} (${metadata.table}). Preventing duplicate replay to Supabase.`);
+                    this.journalWrite({
+                        table: metadata.table,
+                        operation: metadata.operation,
+                        primaryKey: metadata.primaryKey,
+                        data: metadata.data,
+                        filter: metadata.filter
+                    });
 
-                return {
-                    data: null,
-                    error: new Error(`NAS write timeout on ${writeDesc}: operation sent to primary database but response timed out. Replay halted to prevent duplicate mutations.`),
-                    databaseUsed: 'nas'
-                };
+                    return {
+                        data: null,
+                        error: new Error(`NAS write timeout on ${writeDesc}: operation sent to primary database but response timed out. Replay halted to prevent duplicate mutations.`),
+                        databaseUsed: 'nas'
+                    };
+                }
             }
 
             const duration = Date.now() - t0;
@@ -865,20 +927,26 @@ export class DatabaseFailoverEngine {
                 return { data: res.data, error: null, databaseUsed: 'nas' };
             }
 
-            // If NAS returned an application-level SQL error (e.g. constraint violation, schema error),
-            // do not fail over to Supabase — return the database error to the caller.
-            const isPgError = res.error?.code || res.error?.details || res.error?.hint;
-            if (isPgError) {
-                return { data: null, error: res.error, databaseUsed: 'nas' };
-            }
+            if (DatabaseFailoverEngine.isAuthorizationError(res.error)) {
+                // PostgREST rejects unauthorized requests before executing SQL, so replaying
+                // this operation once against the fallback cannot duplicate a NAS mutation.
+                this.recordNasAuthorizationFailure(res.error);
+            } else {
+                // If NAS returned an application-level SQL error (e.g. constraint violation,
+                // schema error), do not fail over to Supabase — return the database error.
+                const isPgError = res.error?.code || res.error?.details || res.error?.hint;
+                if (isPgError) {
+                    return { data: null, error: res.error, databaseUsed: 'nas' };
+                }
 
-            // For non-timeout transport errors returned in res.error
-            this.recordNasFailure(res.error);
-            return {
-                data: null,
-                error: res.error,
-                databaseUsed: 'nas'
-            };
+                // For non-timeout transport errors returned in res.error
+                this.recordNasFailure(res.error);
+                return {
+                    data: null,
+                    error: res.error,
+                    databaseUsed: 'nas'
+                };
+            }
         }
 
         // 2. Fallback path: Write to Supabase Cloud + Journal for reconciliation
@@ -940,10 +1008,10 @@ export class DatabaseFailoverEngine {
                 throw new Error(`Table client for "${table}" does not support delete.`);
             }
             if (meta.primaryKey) {
-                const { error } = await tableClient.delete().eq(meta.primaryKey.name, meta.primaryKey.value);
+                const { error } = await (tableClient as any).delete().eq(meta.primaryKey.name, meta.primaryKey.value);
                 if (error) throw error;
             } else if (meta.filter && meta.filter.length > 0) {
-                let q = tableClient.delete();
+                let q = (tableClient as any).delete();
                 for (const f of meta.filter) {
                     q = q.eq(f.column, f.value);
                 }
@@ -1019,19 +1087,68 @@ export class DatabaseFailoverEngine {
         return [...this.mirrorRetryEntries];
     }
 
-    public async processPendingMirrorRetries(): Promise<{ succeeded: number; failed: number }> {
+    /**
+     * A cloud mirror retry is only valid while its source row still exists on the
+     * authoritative NAS. This also removes stale journal entries after an order
+     * or catalog purge, instead of retrying a guaranteed FK failure forever.
+     * If the NAS cannot be queried, keep the retry: absence must be confirmed.
+     */
+    private async keepOnlyExistingNasRows(item: DurableMirrorRetryEntry): Promise<boolean> {
+        if (item.operation === 'delete' || !this.nasClient) return true;
+
+        const rows = Array.isArray(item.data) ? item.data : [item.data];
+        const keyName = (rows.length === 1 ? item.primaryKey?.name : undefined) ||
+            (rows.every(row => row && row.id !== undefined) ? 'id' : undefined);
+        if (!keyName || rows.length === 0) return rows.length !== 0;
+
+        const keys = rows.map(row => (rows.length === 1 ? item.primaryKey?.value : undefined) ?? row?.[keyName])
+            .filter(value => value !== undefined && value !== null);
+        if (keys.length !== rows.length) return true;
+
+        try {
+            let query = (this.nasClient as any).from(item.table).select(keyName);
+            query = keys.length === 1 ? query.eq(keyName, keys[0]) : query.in(keyName, keys);
+            const { data, error } = keys.length === 1 && typeof query.maybeSingle === 'function'
+                ? await query.maybeSingle()
+                : await query;
+            if (error || data === undefined) return true;
+
+            const existingKeys = new Set((Array.isArray(data) ? data : data ? [data] : [])
+                .map((row: any) => row?.[keyName]));
+            const survivingRows = rows.filter((_row, index) => existingKeys.has(keys[index]));
+            if (survivingRows.length === 0) {
+                console.info(`[DB:SYNC] Dropping stale cloud mirror retry for deleted NAS row(s) in ${item.table}.`);
+                return false;
+            }
+            if (survivingRows.length !== rows.length) {
+                item.data = Array.isArray(item.data) ? survivingRows : survivingRows[0];
+            }
+            return true;
+        } catch {
+            // A failed source check is inconclusive, so preserve the durable retry.
+            return true;
+        }
+    }
+
+    public async processPendingMirrorRetries(): Promise<{ succeeded: number; failed: number; discarded: number }> {
         const client = this.supabaseAdmin || this.supabaseClient;
         if (!client || this.mirrorRetryEntries.length === 0 || this.isRetryingMirror) {
-            return { succeeded: 0, failed: 0 };
+            return { succeeded: 0, failed: 0, discarded: 0 };
         }
 
         this.isRetryingMirror = true;
         let succeeded = 0;
         let failed = 0;
+        let discarded = 0;
         const remaining: DurableMirrorRetryEntry[] = [];
 
         for (const item of this.mirrorRetryEntries) {
             try {
+                if (!await this.keepOnlyExistingNasRows(item)) {
+                    // The NAS source row was deleted; this retry is intentionally retired.
+                    discarded++;
+                    continue;
+                }
                 await this.mirrorWriteToCloud(client, item, item.data);
                 succeeded++;
             } catch (err: any) {
@@ -1046,7 +1163,7 @@ export class DatabaseFailoverEngine {
         this.persistMirrorJournal();
         this.isRetryingMirror = false;
         this.broadcastStatus();
-        return { succeeded, failed };
+        return { succeeded, failed, discarded };
     }
 
     // ── Freshness & Bootstrap Engine ─────────────────────────────────────────────

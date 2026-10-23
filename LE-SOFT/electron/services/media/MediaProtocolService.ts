@@ -18,7 +18,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { pathToFileURL } from 'url';
-import { getCfAccessHeaders, getNasStorageCandidates, getNasStorageUrl } from '../../supabase';
+import { getCfAccessHeaders, getNasStorageAuthHeaders, getNasStorageCandidates, getNasStorageUrl } from '../../supabase';
 
 export interface SafeImageDiagnostic {
     sourceType: 'local_file' | 'nas_storage' | 'supabase_storage' | 'remote_http' | 'data_url' | 'unknown';
@@ -220,6 +220,7 @@ export class MediaProtocolService {
             const candidates = typeof getNasStorageCandidates === 'function' ? getNasStorageCandidates() : ['http://100.88.85.6:8081', 'https://storage.lenas.me'];
             const encodedSubPath = encodeURI(cleanSubPath);
             const cfHeaders = typeof getCfAccessHeaders === 'function' ? getCfAccessHeaders() : {};
+            const storageAuthHeaders = typeof getNasStorageAuthHeaders === 'function' ? getNasStorageAuthHeaders() : {};
 
             let lastStatus = 502;
             let lastErrorMsg = 'NAS storage unreachable';
@@ -227,7 +228,7 @@ export class MediaProtocolService {
             for (const base of candidates) {
                 const candidateUrl = `${base.replace(/\/$/, '')}/${encodedSubPath}`;
                 const isTunnel = candidateUrl.includes('storage.lenas.me');
-                const fetchHeaders: Record<string, string> = isTunnel ? { ...cfHeaders } : {};
+                const fetchHeaders: Record<string, string> = { ...storageAuthHeaders, ...(isTunnel ? cfHeaders : {}) };
 
                 try {
                     const controller = new AbortController();
@@ -359,6 +360,7 @@ export class MediaProtocolService {
                     const candidates = typeof getNasStorageCandidates === 'function' ? getNasStorageCandidates() : ['http://100.88.85.6:8081', 'https://storage.lenas.me'];
                     const encodedSub = encodeURI(cleanSub);
                     const cfHeaders = typeof getCfAccessHeaders === 'function' ? getCfAccessHeaders() : {};
+                    const storageAuthHeaders = typeof getNasStorageAuthHeaders === 'function' ? getNasStorageAuthHeaders() : {};
 
                     for (const base of candidates) {
                         const candidateUrl = `${base.replace(/\/$/, '')}/${encodedSub}`;
@@ -366,7 +368,7 @@ export class MediaProtocolService {
                             const isTunnel = candidateUrl.includes('storage.lenas.me');
                             const res = await net.fetch(candidateUrl, {
                                 method: 'HEAD',
-                                headers: isTunnel ? { ...cfHeaders } : {}
+                                headers: { ...storageAuthHeaders, ...(isTunnel ? cfHeaders : {}) }
                             });
                             if (res.ok && res.status === 200) {
                                 return {
