@@ -14,6 +14,8 @@
 - Public WordPress MAKE portal returned HTTP 200. Anonymous access to its protected status endpoint returned HTTP 401 as expected.
 - The 1.8.14 installer was installed into a path containing spaces, launched successfully, initialized its offline database and background services, and uninstalled cleanly. `resources/icon.ico` is packaged and is the Leading Edge icon. The installer reports ProductVersion 1.8.14.0.
 - Supabase MAKE file buckets remain private. WordPress package `release/le-make-sales-portal-1.8.15.zip` includes the portal plugin and generated CAD viewer assets.
+- Updated production dependency locks to remove the critical DOMPurify advisory and high-severity Axios, Sharp, and transitive advisories. `npm audit --omit=dev` now reports 0 critical, 0 high, and 4 moderate advisories; clearing the remaining findings requires major-version dependency changes.
+- Rebuilt the Windows installer with the updated dependencies. All four bounded installer cases passed (no-space path, path with spaces, fresh install, uninstall/reinstall). A packaged app process remained running after startup for 12 seconds in an isolated test profile.
 
 ## Release limitations
 
@@ -22,6 +24,7 @@
 - Production WordPress PHP runtime and authenticated designer/salesperson/factory-manager workflows were not exercised. The protected API authorization guard and public portal were checked, but full website deployment should follow the staging role matrix in the release report.
 - Supabase signed-in cloud table reads/writes and automatic failover under NAS outage were not stress-tested in this run. The Supabase Auth health endpoint and previously recorded rollback transaction passed. No anonymous RLS access was introduced.
 - Stress testing was read-only and modest (10 VUs for 70 seconds); it is a smoke/load check, not a capacity limit certification.
+- The complete dependency tree still reports development dependency advisories. Production-only audit findings are limited to four moderate issues in React Router and the ExcelJS dependency tree; forcing the available major upgrades requires a separate compatibility pass.
 
 ## Operator follow-up
 

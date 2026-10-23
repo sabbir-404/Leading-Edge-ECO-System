@@ -28,6 +28,7 @@ An earlier 10-user run had one NAS health response taking 5.87 seconds, above th
 - Packaged Windows app: installed into a path with spaces, launched, initialized local storage and background services, and uninstalled cleanly. Packaged executable and installer version: 1.8.14.0. Leading Edge icon resource present.
 - WordPress public portal: HTTP 200. Unauthenticated protected status endpoint: HTTP 401, expected.
 - Supabase Auth health: HTTP 200. Authenticated Supabase transaction check was previously rolled back; anonymous protected-table access remains denied.
+- Production dependency audit/fix: removed the critical DOMPurify finding and high Axios/Sharp/transitive advisories. `npm audit --omit=dev` now reports 0 critical, 0 high, and 4 moderate findings. Those remaining issues have only breaking major-upgrade fixes available and are documented as follow-up.
 
 ## Limits
 
