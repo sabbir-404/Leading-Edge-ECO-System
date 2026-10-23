@@ -45,19 +45,23 @@ describe('Migration 070 Real PostgreSQL Staging Integration Suite', () => {
 
         await pgClient.connect();
 
-        // Ensure 'authenticated', 'anon', and 'service_role' roles exist for testing
-        const rolesCheck = await pgClient.query("SELECT rolname FROM pg_roles WHERE rolname IN ('authenticated', 'anon', 'service_role')");
-        const existingRoles = new Set(rolesCheck.rows.map(r => r.rolname));
-        for (const role of ['authenticated', 'anon', 'service_role']) {
-            if (!existingRoles.has(role)) {
-                await pgClient.query(`CREATE ROLE ${role}`);
+        // Both PostgreSQL integration suites share one disposable DB. Serialize
+        // bootstrap so their role checks cannot race with duplicate CREATE ROLE.
+        await pgClient.query('SELECT pg_advisory_lock(690201014, 701)');
+        try {
+            const rolesCheck = await pgClient.query("SELECT rolname FROM pg_roles WHERE rolname IN ('authenticated', 'anon', 'service_role')");
+            const existingRoles = new Set(rolesCheck.rows.map(r => r.rolname));
+            for (const role of ['authenticated', 'anon', 'service_role']) {
+                if (!existingRoles.has(role)) {
+                    await pgClient.query(`CREATE ROLE ${role} NOLOGIN`);
+                }
             }
-        }
+            await pgClient.query('GRANT USAGE ON SCHEMA public TO authenticated, anon, service_role');
 
-        const schemaCheck = await pgClient.query("SELECT 1 FROM information_schema.schemata WHERE schema_name = 'auth'");
-        if (schemaCheck.rows.length === 0) {
-            await pgClient.query('CREATE SCHEMA auth');
-            await pgClient.query(`
+            const schemaCheck = await pgClient.query("SELECT 1 FROM information_schema.schemata WHERE schema_name = 'auth'");
+            if (schemaCheck.rows.length === 0) {
+                await pgClient.query('CREATE SCHEMA auth');
+                await pgClient.query(`
                 CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb LANGUAGE plpgsql STABLE AS $$
                 BEGIN
                     RETURN COALESCE(current_setting('request.jwt.claims', true)::jsonb, '{}'::jsonb);
@@ -66,7 +70,7 @@ describe('Migration 070 Real PostgreSQL Staging Integration Suite', () => {
                 END;
                 $$;
             `);
-            await pgClient.query(`
+                await pgClient.query(`
                 CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE plpgsql STABLE AS $$
                 BEGIN
                     RETURN (auth.jwt() ->> 'sub')::uuid;
@@ -75,12 +79,16 @@ describe('Migration 070 Real PostgreSQL Staging Integration Suite', () => {
                 END;
                 $$;
             `);
-        }
+            }
+            await pgClient.query('GRANT USAGE ON SCHEMA auth TO authenticated, anon, service_role');
 
-        // Apply actual Migration 070 SQL
-        const migrationPath = path.join(process.cwd(), 'supabase', 'migrations', '070_supabase_buffer_quota_reservations.sql');
-        const migrationSql = fs.readFileSync(migrationPath, 'utf-8');
-        await pgClient.query(migrationSql);
+            // Apply actual Migration 070 SQL only to the guarded disposable DB.
+            const migrationPath = path.join(process.cwd(), 'supabase', 'migrations', '070_supabase_buffer_quota_reservations.sql');
+            const migrationSql = fs.readFileSync(migrationPath, 'utf-8');
+            await pgClient.query(migrationSql);
+        } finally {
+            await pgClient.query('SELECT pg_advisory_unlock(690201014, 701)');
+        }
     });
 
     beforeEach(async () => {
@@ -114,21 +122,33 @@ describe('Migration 070 Real PostgreSQL Staging Integration Suite', () => {
         const client = pgClient!;
         const testResId = `test_res_${Date.now()}`;
 
-        // Single item exceeding 50 MB rejected
-        const resOver = await client.query(
-            "SELECT public.reserve_buffer_capacity($1, $2, 'storage', $3) AS result",
-            [testResId, 'client_pg_1', 55000000]
-        );
-        expect(resOver.rows[0].result.success).toBe(false);
-        expect(resOver.rows[0].result.reason).toBe('INVALID_BYTE_COUNT');
+        // Set the same authenticated desktop-client claims the RPC accepts in
+        // production before checking byte limits.
+        await client.query('BEGIN');
+        try {
+            await client.query('SET LOCAL ROLE authenticated');
+            await client.query(`SET LOCAL "request.jwt.claims" = '{"role":"authenticated"}'`);
 
-        // Valid 10 MB reservation succeeds
-        const resValid = await client.query(
-            "SELECT public.reserve_buffer_capacity($1, $2, 'storage', $3) AS result",
-            [testResId, 'client_pg_1', 10000000]
-        );
-        expect(resValid.rows[0].result.success).toBe(true);
-        expect(Number(resValid.rows[0].result.allocated_bytes)).toBe(10000000);
+            // Single item exceeding 50 MB rejected
+            const resOver = await client.query(
+                "SELECT public.reserve_buffer_capacity($1, $2, 'storage', $3) AS result",
+                [testResId, 'client_pg_1', 55000000]
+            );
+            expect(resOver.rows[0].result.success).toBe(false);
+            expect(resOver.rows[0].result.reason).toBe('INVALID_BYTE_COUNT');
+
+            // Valid 10 MB reservation succeeds
+            const resValid = await client.query(
+                "SELECT public.reserve_buffer_capacity($1, $2, 'storage', $3) AS result",
+                [testResId, 'client_pg_1', 10000000]
+            );
+            expect(resValid.rows[0].result.success).toBe(true);
+            expect(Number(resValid.rows[0].result.allocated_bytes)).toBe(10000000);
+            await client.query('COMMIT');
+        } catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        }
 
         // Verify row was actually persisted to table (Regression check for PL/pgSQL FOUND bug)
         const rowInDb = await client.query(
@@ -261,7 +281,7 @@ describe('Migration 070 Real PostgreSQL Staging Integration Suite', () => {
     it.runIf(isTestDatabaseAvailable)('5. Concurrent reservations from multiple independent clients at the ceiling limit', async () => {
         // Multi-client concurrent reservation test using Promise.all
         const pool = new pg.Pool({
-            connectionString: stagingUrl,
+            connectionString: testDatabaseUrl,
             max: 5,
             statement_timeout: 10000
         });
@@ -377,7 +397,7 @@ describe('Migration 070 Real PostgreSQL Staging Integration Suite', () => {
 
     it.runIf(isTestDatabaseAvailable)('8. Concurrent multi-client reservations cannot exceed server-enforced quota ceiling', async () => {
         const pool = new pg.Pool({
-            connectionString: stagingUrl,
+            connectionString: testDatabaseUrl,
             max: 5,
             statement_timeout: 10000
         });
@@ -386,18 +406,25 @@ describe('Migration 070 Real PostgreSQL Staging Integration Suite', () => {
             // First, fill database capacity up to 240 MB using 6 x 40 MB committed reservations
             const setupClient = await pool.connect();
             try {
+                await setupClient.query('BEGIN');
+                await setupClient.query('SET LOCAL ROLE authenticated');
+                await setupClient.query(`SET LOCAL "request.jwt.claims" = '{"role":"authenticated"}'`);
                 for (let i = 0; i < 6; i++) {
                     const fillId = `race_fill_${Date.now()}_${i}`;
-                    await setupClient.query(
-                        "SELECT public.reserve_buffer_capacity($1, 'setup_user', 'database', 40000000)",
+                    const reserve = await setupClient.query(
+                        "SELECT public.reserve_buffer_capacity($1, 'setup_user', 'database', 40000000) AS result",
                         [fillId]
                     );
-                    await setupClient.query(
-                        "SELECT public.release_buffer_capacity($1, 'setup_user', 'committed', 40000000)",
+                    expect(reserve.rows[0].result.success).toBe(true);
+                    const commit = await setupClient.query(
+                        "SELECT public.release_buffer_capacity($1, 'setup_user', 'committed', 40000000) AS result",
                         [fillId]
                     );
+                    expect(commit.rows[0].result.success).toBe(true);
                 }
+                await setupClient.query('COMMIT');
             } finally {
+                try { await setupClient.query('ROLLBACK'); } catch {}
                 setupClient.release();
             }
 
@@ -474,13 +501,22 @@ describe('Migration 070 Real PostgreSQL Staging Integration Suite', () => {
         const client = pgClient!;
         const testResId = `test_atomic_ceil_${Date.now()}`;
 
-        // Single reservation request > 50 MB rejected
-        const itemOver = await client.query(
-            "SELECT public.reserve_buffer_capacity($1, 'client_1', 'storage', 51000000) AS result",
-            [testResId]
-        );
-        expect(itemOver.rows[0].result.success).toBe(false);
-        expect(itemOver.rows[0].result.reason).toBe('INVALID_BYTE_COUNT');
+        await client.query('BEGIN');
+        try {
+            await client.query('SET LOCAL ROLE authenticated');
+            await client.query(`SET LOCAL "request.jwt.claims" = '{"role":"authenticated"}'`);
+            // Single reservation request > 50 MB rejected
+            const itemOver = await client.query(
+                "SELECT public.reserve_buffer_capacity($1, 'client_1', 'storage', 51000000) AS result",
+                [testResId]
+            );
+            expect(itemOver.rows[0].result.success).toBe(false);
+            expect(itemOver.rows[0].result.reason).toBe('INVALID_BYTE_COUNT');
+            await client.query('COMMIT');
+        } catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        }
     });
 
     it.runIf(isTestDatabaseAvailable)('11. Security Boundary: Anonymous unauthenticated callers are strictly prohibited from reserving or releasing quota', async () => {

@@ -47,20 +47,22 @@ describe('Migration 071 Real PostgreSQL Tombstone Authorization & Security Suite
 
         await pgClient.connect();
 
-        // 1. Ensure required roles exist in disposable staging DB
-        const rolesCheck = await pgClient.query("SELECT rolname FROM pg_roles WHERE rolname IN ('authenticated', 'anon', 'service_role')");
-        const existingRoles = new Set(rolesCheck.rows.map(r => r.rolname));
-        for (const role of ['authenticated', 'anon', 'service_role']) {
-            if (!existingRoles.has(role)) {
-                await pgClient.query(`CREATE ROLE ${role} NOLOGIN`);
+        // The quota migration suite shares this disposable database. Serialize
+        // bootstrap so both suites cannot race while creating the test roles.
+        await pgClient.query('SELECT pg_advisory_lock(690201014, 701)');
+        try {
+            const rolesCheck = await pgClient.query("SELECT rolname FROM pg_roles WHERE rolname IN ('authenticated', 'anon', 'service_role')");
+            const existingRoles = new Set(rolesCheck.rows.map(r => r.rolname));
+            for (const role of ['authenticated', 'anon', 'service_role']) {
+                if (!existingRoles.has(role)) {
+                    await pgClient.query(`CREATE ROLE ${role} NOLOGIN`);
+                }
             }
-        }
 
-        // Ensure schema public usage
-        await pgClient.query('GRANT USAGE ON SCHEMA public TO authenticated, anon, service_role');
+            await pgClient.query('GRANT USAGE ON SCHEMA public TO authenticated, anon, service_role');
 
-        // 2. Setup base source tables if not present
-        await pgClient.query(`
+            // Set up the minimum source-table shape required by Migration 071.
+            await pgClient.query(`
             CREATE TABLE IF NOT EXISTS public.make_orders (
                 id BIGSERIAL PRIMARY KEY,
                 order_number TEXT NOT NULL DEFAULT '',
@@ -101,8 +103,7 @@ describe('Migration 071 Real PostgreSQL Tombstone Authorization & Security Suite
             );
         `);
 
-        // Grant normal application permissions on source tables to authenticated
-        await pgClient.query(`
+            await pgClient.query(`
             GRANT ALL ON public.make_orders TO authenticated, service_role;
             GRANT ALL ON public.make_order_updates TO authenticated, service_role;
             GRANT ALL ON public.make_product_specifications TO authenticated, service_role;
@@ -110,10 +111,12 @@ describe('Migration 071 Real PostgreSQL Tombstone Authorization & Security Suite
             GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO authenticated, service_role;
         `);
 
-        // 3. Apply Migration 071 SQL
-        const migrationPath = path.resolve(__dirname, '../../supabase/migrations/071_make_specs_and_colors_updated_at.sql');
-        const migrationSql = fs.readFileSync(migrationPath, 'utf8');
-        await pgClient.query(migrationSql);
+            const migrationPath = path.resolve(__dirname, '../../supabase/migrations/071_make_specs_and_colors_updated_at.sql');
+            const migrationSql = fs.readFileSync(migrationPath, 'utf8');
+            await pgClient.query(migrationSql);
+        } finally {
+            await pgClient.query('SELECT pg_advisory_unlock(690201014, 701)');
+        }
     });
 
     afterAll(async () => {
