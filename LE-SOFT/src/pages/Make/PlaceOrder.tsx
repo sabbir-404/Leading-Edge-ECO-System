@@ -34,6 +34,8 @@ import {
   calculateWorkingDaysBetween,
   getTodayYmd
 } from '../../utils/workingDays';
+import { resolveImageSrc, handleImageLoadError } from '../../utils/imageSrc';
+import './PlaceOrder.css';
 
 const PRIORITIES = ['Low', 'Normal', 'High', 'Urgent'];
 
@@ -208,6 +210,7 @@ const PlaceOrder: React.FC = () => {
   // Catalog data for item picker
   const [catalogProducts, setCatalogProducts] = useState<any[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<any | null>(() => initialDraft.selectedProduct || null);
+  const [selectedProductImageError, setSelectedProductImageError] = useState(false);
   const [selectedSpec, setSelectedSpec] = useState<any | null>(() => {
     if (initialDraft.selectedSpecId && initialDraft.selectedProduct?.specifications) {
       return initialDraft.selectedProduct.specifications.find((s: any) => s.id === initialDraft.selectedSpecId) || null;
@@ -430,26 +433,35 @@ const PlaceOrder: React.FC = () => {
 
   // Multi-item Cart
   const [cartItems, setCartItems] = useState<CartItem[]>(() => (Array.isArray(initialDraft.cartItems) ? initialDraft.cartItems : []) as any);
-  const loadedRequestionItemRef = React.useRef<number | null>(null);
+  const loadedRequestionItemRef = React.useRef<string | null>(null);
 
   useEffect(() => {
     const requestion = (location.state as any)?.requestion;
-    const requestItem = requestion?.item;
-    if (!requestItem?.id || loadedRequestionItemRef.current === Number(requestItem.id)) return;
-    loadedRequestionItemRef.current = Number(requestItem.id);
+    const requestItems = Array.isArray(requestion?.items) ? requestion.items : (requestion?.item ? [requestion.item] : []);
+    const requestKey = `${requestion?.request?.id || 'request'}:${requestItems.map((item: any) => item.id).join(',')}`;
+    if (!requestItems.length || loadedRequestionItemRef.current === requestKey) return;
+    loadedRequestionItemRef.current = requestKey;
     setCustomerName((current: string) => current || requestion.request?.customer_name || '');
     setCustomerPhone((current: string) => current || requestion.request?.customer_phone || '');
     setCartItems((current: CartItem[]) => {
-      if (current.some(item => item.requestion_item_id === Number(requestItem.id))) return current;
-      return [...current, {
-        _id: `requestion-${requestItem.id}-${Date.now()}`,
-        product_id: requestItem.product_id || undefined,
-        product_name: requestItem.product_name,
-        quantity: Number(requestItem.quantity) || 1,
-        item_sale_price: requestItem.sale_price ?? null,
-        requestion_item_id: Number(requestItem.id),
-        attachedFile: null
-      } as any];
+      const existing = new Set(current.map(item => Number(item.requestion_item_id)).filter(Boolean));
+      const incoming = requestItems.filter((item: any) => !existing.has(Number(item.id))).map((requestItem: any) => ({
+          _id: `requestion-${requestItem.id}-${Date.now()}`,
+          product_id: requestItem.product_id || undefined,
+          product_code: requestItem.product_code || '',
+          product_name: requestItem.product_name,
+          quantity: Number(requestItem.quantity) || 1,
+          item_sale_price: requestItem.sale_price ?? null,
+          requestion_item_id: Number(requestItem.id),
+          spec_name: Array.isArray(requestItem.specification) ? requestItem.specification.join(', ') : String(requestItem.specification || ''),
+          dimensions_text: Array.isArray(requestItem.sizes) ? requestItem.sizes.join(', ') : String(requestItem.size_label || ''),
+          color_name: Array.isArray(requestItem.colors) ? requestItem.colors.join(', ') : String(requestItem.color_name || ''),
+          max_discount_type: requestItem.max_discount_type || 'percent',
+          max_discount_value: requestItem.max_discount_value ?? 0,
+          notes: requestItem.notes || '',
+          attachedFile: null
+        } as CartItem));
+      return incoming.length ? [...current, ...incoming] : current;
     });
   }, [location.state]);
 
@@ -1155,6 +1167,7 @@ const PlaceOrder: React.FC = () => {
   const handleProductSelect = (productId: number, directProd?: any) => {
     const prod = directProd || searchResults.find(p => p.id === productId) || catalogProducts.find(p => p.id === productId) || null;
     setSelectedProduct(prod);
+    setSelectedProductImageError(false);
     setSelectedSpec(null);
     const activeSize = prod ? (prod.size || (prod.sizes && prod.sizes.length > 0 ? prod.sizes[0] : null)) : null;
     setSelectedSize(activeSize);
@@ -1621,9 +1634,10 @@ const PlaceOrder: React.FC = () => {
 
   return (
     <DashboardLayout title="Place Customized Furniture Order">
-      <div style={{ maxWidth: '1000px', margin: '1.5rem auto', padding: '0 1.5rem' }}>
+      <div className="make-place-order-shell" style={{ maxWidth: '1000px', margin: '1.5rem auto', padding: '0 1.5rem' }}>
         {!isDraftsView && <>
         <motion.div initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }}
+          className="make-place-order-card"
           style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '2rem', boxShadow: '0 4px 20px rgba(0,0,0,0.05)' }}>
 
           {/* Header */}
@@ -1748,10 +1762,10 @@ const PlaceOrder: React.FC = () => {
             )}
           </AnimatePresence>
 
-          <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+          <form onSubmit={handleSubmit} className="make-place-order-form" style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
 
             {/* ── 1. CUSTOMER & DELIVERY INFO ────────────────────────────── */}
-            <div data-tutorial="make-place-order">
+            <div className="make-place-order-section make-place-order-customer" data-tutorial="make-place-order">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '10px' }}>
                 <p style={{ ...sectionTitle, margin: 0, border: 'none', padding: 0 }}>
                   <User size={18} color="var(--accent-color)" /> Customer &amp; Delivery Logistics
@@ -1946,7 +1960,7 @@ const PlaceOrder: React.FC = () => {
             </div>
 
             {/* ── 2. PRODUCT CATALOG SELECTION (ITEM BUILDER) ────────────── */}
-            <div style={{ background: 'var(--bg-secondary, rgba(0,0,0,0.02))', padding: '20px', borderRadius: '14px', border: '1px solid var(--border-color)' }}>
+            <div className="make-place-order-section make-place-order-products" style={{ background: 'var(--bg-secondary, rgba(0,0,0,0.02))', padding: '20px', borderRadius: '14px', border: '1px solid var(--border-color)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
                 <p style={{ ...sectionTitle, margin: 0, border: 'none', padding: 0 }}>
                   <ShoppingBag size={18} color="var(--accent-color)" /> Add Products to Order
@@ -2140,6 +2154,37 @@ const PlaceOrder: React.FC = () => {
                       )}
                     </div>
                   </div>
+
+                  {selectedProduct && (
+                    <section className="make-place-order-selected-product" aria-label="Selected catalog product">
+                      <div className="make-place-order-product-image-wrap">
+                        {selectedProduct.main_image && !selectedProductImageError ? (
+                          <img
+                            src={resolveImageSrc(selectedProduct.main_image)}
+                            alt={selectedProduct.product_name || 'Selected product'}
+                            onError={event => {
+                              setSelectedProductImageError(true);
+                              handleImageLoadError(event, selectedProduct.main_image);
+                            }}
+                          />
+                        ) : (
+                          <div className="make-place-order-product-image-placeholder" aria-label="No product image available">
+                            <Box size={30} />
+                            <span>No image</span>
+                          </div>
+                        )}
+                      </div>
+                      <div className="make-place-order-product-overview">
+                        <div className="make-place-order-product-eyebrow">Selected catalog item</div>
+                        <h3>{selectedProduct.product_name}</h3>
+                        <div className="make-place-order-product-meta">
+                          {selectedProduct.product_code && <span>Code: {selectedProduct.product_code}</span>}
+                          {selectedProduct.category && <span>{selectedProduct.category}</span>}
+                        </div>
+                        <p>{selectedProduct.description || 'Product image and catalog details are ready for this order.'}</p>
+                      </div>
+                    </section>
+                  )}
 
                   {/* 3. Dimensions & Colors */}
                   {selectedProduct && (
@@ -3065,7 +3110,7 @@ const PlaceOrder: React.FC = () => {
             </div>
 
             {/* ── 3. ORDER METADATA & APPROVAL ASSIGNMENT ──────────────────── */}
-            <div>
+            <div className="make-place-order-section make-place-order-logistics">
               <p style={sectionTitle}><Tag size={18} color="var(--accent-color)" /> Order Logistics &amp; Assignment</p>
               <div className="make-responsive-grid-4" style={{ gap: '1rem' }}>
                 <div>
@@ -3141,7 +3186,7 @@ const PlaceOrder: React.FC = () => {
             </div>
 
             {/* ── 4. INVOICE ATTACHMENTS ─────────────────────────────────── */}
-            <div data-tutorial="make-invoice-attachments">
+            <div className="make-place-order-section make-place-order-attachments" data-tutorial="make-invoice-attachments">
               <p style={sectionTitle}><FileText size={18} color="var(--accent-color)" /> Invoice Attachments &amp; Documents</p>
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                 <button type="button" onClick={handlePickDesktopInvoice} disabled={uploadingInvoice} aria-busy={uploadingInvoice}

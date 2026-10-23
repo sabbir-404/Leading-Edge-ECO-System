@@ -304,6 +304,18 @@ export class MakeProductionService {
             };
         }
 
+        const normalizedRole = String(actorRole || '').trim().toLowerCase();
+        const isFactoryActor = ['factory_manager', 'factory manager', 'factory'].includes(normalizedRole);
+        const isStartingProduction = MakeProductionService.getStageIndex(order.status || order.current_stage) < 0 && targetStage === CANONICAL_PRODUCTION_STAGES[0];
+        if (isFactoryActor && isStartingProduction) {
+            if (order.approval_status !== 'sales_approved') {
+                return { success: false, stage: targetStage, photo_url: null, error: 'Salesperson approval is required before the factory can start production.' };
+            }
+            if (Number(order.amount_due || 0) > 0 && order.admin_approval_status !== 'approved') {
+                return { success: false, stage: targetStage, photo_url: null, error: `This order still has a due balance of ৳${Number(order.amount_due).toLocaleString()}. Payment or admin release approval is required before production.` };
+            }
+        }
+
         // 3. Validate transition
         const validation = this.validateTransition(order.status, targetStage, {
             productionHold: order.production_hold,

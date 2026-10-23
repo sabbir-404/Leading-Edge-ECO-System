@@ -36,6 +36,7 @@ import { BackgroundSyncEngine } from './sync-engine';
 import { SessionManager, UserSession } from './session-manager';
 import { registerMakeHandlers } from './ipc/handlers/make';
 import { NASConnectionManager } from './services/make/NASConnectionManager';
+import { MakeCadService } from './services/make/MakeCadService';
 import { WindowsNotificationService } from './services/WindowsNotificationService';
 import { WatchdogService } from './services/WatchdogService';
 import { generateLicenseForMachine } from './services/license-generation';
@@ -3575,15 +3576,45 @@ export function registerHandlers() {
         if (bf.locked) return { success: false, error: `Too many failed attempts. Try again in ${bf.remaining} minute(s).` };
 
         // 1. Format username to dummy email if no @ present
-        const emailToUse = username.includes('@') ? username : `${username}@lesoft.local`;
+        let emailToUse = username.includes('@') ? username : `${username}@lesoft.local`;
+        // Users provisioned with a real email must be able to sign in using their
+        // username as well. Resolve the configured email before trying Supabase Auth.
+        if (!username.includes('@')) {
+            try {
+                const profileDb = isNasOnline && nasClient ? nasClient : supabase;
+                const { data: loginProfile } = await profileDb.from('users').select('email').ilike('username', username).eq('is_active', 1).maybeSingle();
+                if (typeof loginProfile?.email === 'string' && loginProfile.email.includes('@')) emailToUse = loginProfile.email.trim();
+            } catch (profileLookupError: any) {
+                console.warn('[AUTH] Username email lookup failed; trying the legacy username address:', profileLookupError?.message || profileLookupError);
+            }
+        }
 
         // --- PRIMARY: Supabase Auth Login ---
-        const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-            email: emailToUse,
-            password: password
-        });
+        // Older installations may have provisioned Auth under the legacy local
+        // username address even after a real email was added to the user profile.
+        // Try both addresses with the same password before falling back to local
+        // bcrypt authentication so users remain able to sign in after migration.
+        const authEmails = Array.from(new Set([
+            emailToUse,
+            ...(!username.includes('@') ? [`${username}@lesoft.local`] : [])
+        ]));
+        let authData: any = null;
+        let authError: any = null;
+        for (const authEmail of authEmails) {
+            const attempt = await supabase.auth.signInWithPassword({ email: authEmail, password });
+            if (!attempt.error && attempt.data.user) {
+                authData = attempt.data;
+                emailToUse = authEmail;
+                authError = null;
+                break;
+            }
+            authError = attempt.error;
+            // A network outage makes another Auth request unlikely to help.
+            const message = String(attempt.error?.message || '').toLowerCase();
+            if (message.includes('fetch') || message.includes('network') || message.includes('offline')) break;
+        }
 
-        if (!authError && authData.user) {
+        if (!authError && authData?.user) {
             // Auth succeeded — fetch user profile
             let { data: row, error: dbErr } = await supabase.from('users').select(`*, user_groups (permissions,is_active)`).eq('auth_id', authData.user.id).maybeSingle();
 
@@ -4300,9 +4331,9 @@ export function registerHandlers() {
 
         const isSales = role === 'salesperson' || role === 'salesman' || role === 'sales';
         if (isSales && !session?.userId) return [];
-        const canSeeFactoryStagePhotos = !isSales;
         const isFactory = role === 'factory_manager' || role === 'factory manager' || role === 'factory';
         const isDesigner = role === 'furniture_designer' || role === 'furniture designer' || role === 'designer' || role === 'make_designer';
+        const canSeeFactoryStagePhotos = isAdmin || isDesigner;
         const canViewCost = isAdmin || isSales || isFactory || isDesigner || !!session?.permissions?.view_product_cost_price;
         const canViewSale = isAdmin || isDesigner || (!isSales && !isFactory && !!session?.permissions?.view_product_sale_price);
         const canViewBalance = isAdmin || isSales || isDesigner;
@@ -4368,6 +4399,11 @@ export function registerHandlers() {
                     copy.custom_details = restDetails;
                 }
             }
+            if (isFactory) {
+                // Factory staff need manufacturing inputs and stage state, not sales
+                // contacts, payment data, or customer delivery details.
+                for (const field of ['customer_name', 'customer_phone', 'customer_email', 'shipping_address', 'delivery_address', 'location_landmark', 'receiver_name', 'receiver_phone', 'amount_due', 'payment_status', 'money_received', 'bill_id', 'bill_item_id']) delete copy[field];
+            }
             return copy;
         };
 
@@ -4376,7 +4412,8 @@ export function registerHandlers() {
             if (isSales && session?.userId) orderQuery = orderQuery.eq('salesman_id', session.userId) as any;
             const { data, error } = await orderQuery;
             if (!error && data) {
-                return decryptRows(data).map((o: any) => sanitizeOrder({
+                const visibleOrders = isFactory ? data.filter((order: any) => order.approval_status === 'sales_approved' && (!Number(order.amount_due || 0) || order.admin_approval_status === 'approved')) : data;
+                return decryptRows(visibleOrders).map((o: any) => sanitizeOrder({
                     ...o, 
                     salesman_name: o.salesman?.full_name || 'Unassigned',
                     bill_invoice_number: o.bill?.invoice_number || null
@@ -4393,7 +4430,8 @@ export function registerHandlers() {
         if (isSales && session?.userId) baseQuery = baseQuery.eq('salesman_id', session.userId) as any;
         const { data: baseData, error: baseErr } = await baseQuery;
         if (baseErr) throw baseErr;
-        return decryptRows(baseData || []).map((o: any) => sanitizeOrder({
+        const visibleOrders = isFactory ? (baseData || []).filter((order: any) => order.approval_status === 'sales_approved' && (!Number(order.amount_due || 0) || order.admin_approval_status === 'approved')) : (baseData || []);
+        return decryptRows(visibleOrders).map((o: any) => sanitizeOrder({
             ...o, 
             salesman_name: o.salesman?.full_name || 'Unassigned',
             bill_invoice_number: null
@@ -4576,7 +4614,7 @@ export function registerHandlers() {
         const { data, error } = await supabase.from('make_order_updates').select('*').eq('order_id', orderId).order('created_at');
         if (error) throw error;
         const rows = decryptRows(data || []);
-        if (['salesperson', 'salesman', 'sales'].includes(role)) {
+        if (['salesperson', 'salesman', 'sales', 'factory_manager', 'factory manager', 'factory'].includes(role)) {
             return rows.map((update: any) => { const { photo_url: _photo, image_url: _image, ...safe } = update; return safe; });
         }
         return rows;
@@ -4713,16 +4751,21 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('get-all-shipments', async (_e, { status }: any = {}) => {
-        let q = supabase.from('bill_shipping').select('*, bill:bills(invoice_number,grand_total,created_at,customer:billing_customers(name,phone))').order('created_at', { ascending: false });
+        const session = requireSession();
+        const role = (session.role || '').toLowerCase().trim();
+        const shippingRoles = ['admin', 'superadmin', 'manager', 'accounts_manager', 'store_manager', 'logistics'];
+        if (!shippingRoles.includes(role) && session.permissions?.manage_shipping !== true) throw new Error('Forbidden: shipping access is required.');
+        let q = supabase.from('bill_shipping').select('*, bill:bills(invoice_number,grand_total,created_at,customer:billing_customers(name,phone)), make_order:make_orders!bill_shipping_make_order_id_fkey(order_number,sale_price,created_at,customer_name,customer_phone)').order('created_at', { ascending: false });
         if (status) q = q.eq('status', status);
         const { data, error } = await q;
         if (error) throw error;
         return (data || []).map((s: any) => ({ 
             ...decryptObject(s), 
-            invoice_number: decryptField(s.bill?.invoice_number) || s.bill?.invoice_number, 
-            bill_date: s.bill?.created_at, 
-            customer_name: decryptField(s.bill?.customer?.name) || s.bill?.customer?.name, 
-            customer_phone: decryptField(s.bill?.customer?.phone) || s.bill?.customer?.phone 
+            invoice_number: decryptField(s.bill?.invoice_number) || s.bill?.invoice_number || s.make_order?.order_number || (s.make_order_id ? `MAKE-${s.make_order_id}` : ''),
+            grand_total: s.bill?.grand_total ?? s.make_order?.sale_price ?? null,
+            bill_date: s.bill?.created_at || s.make_order?.created_at,
+            customer_name: decryptField(s.bill?.customer?.name) || s.bill?.customer?.name || s.make_order?.customer_name || s.ship_to_name,
+            customer_phone: decryptField(s.bill?.customer?.phone) || s.bill?.customer?.phone || s.make_order?.customer_phone || s.ship_to_phone
         }));
     });
 
@@ -4731,15 +4774,55 @@ export function registerHandlers() {
         return decryptRows(data || []);
     });
 
-    ipcMain.handle('update-shipment-status', async (_e, { shipmentId, billId, status, note, imagePath }: any) => {
+    ipcMain.handle('update-shipment-status', async (_e, { shipmentId, billId, makeOrderId, status, note, imageBase64 }: any) => {
         const session = requireSession();
         const actor = session.fullName || session.username;
         const actorRole = session.role;
+        const role = String(session.role || '').toLowerCase().trim();
+        const allowedByRole: Record<string, string[]> = {
+            accounts_manager: ['paid'],
+            store_manager: ['packaging', 'ready_to_ship'],
+            logistics: ['out_for_delivery', 'delivered'],
+            admin: ['paid', 'packaging', 'ready_to_ship', 'out_for_delivery', 'delivered'],
+            superadmin: ['paid', 'packaging', 'ready_to_ship', 'out_for_delivery', 'delivered'],
+            manager: ['paid', 'packaging', 'ready_to_ship', 'out_for_delivery', 'delivered']
+        };
+        if (!(allowedByRole[role] || []).includes(status) && session.permissions?.manage_shipping !== true) throw new Error('Forbidden: your user group cannot update this shipment stage.');
+        const { data: shipment, error: shipmentError } = await supabase.from('bill_shipping').select('id,bill_id,make_order_id,status').eq('id', shipmentId).maybeSingle();
+        if (shipmentError || !shipment) throw shipmentError || new Error('Shipment not found.');
+        const validNext: Record<string, string[]> = {
+            pending_payment: ['paid'], paid: ['packaging'], packaging: ['ready_to_ship'],
+            ready_to_ship: ['out_for_delivery'], out_for_delivery: ['delivered'], delivered: []
+        };
+        if (!(validNext[shipment.status] || []).includes(status)) throw new Error(`Invalid shipping transition from ${shipment.status} to ${status}.`);
+        let imagePath: string | null = null;
+        if (imageBase64) {
+            const matches = String(imageBase64).match(/^data:(image\/[A-Za-z0-9.+-]+);base64,(.+)$/);
+            if (!matches) throw new Error('Shipment evidence must be a valid image.');
+            const imageBuffer = Buffer.from(matches[2], 'base64');
+            if (!imageBuffer.length || imageBuffer.length > 15 * 1024 * 1024) throw new Error('Shipment image must be 15 MB or smaller.');
+            const magic = MakeCadService.validateBufferMagicBytes(imageBuffer, matches[1].split('/')[1]);
+            if (!magic.isValid) throw new Error(magic.error || 'Shipment image failed validation.');
+            imagePath = await uploadOptimizedImage(imageBuffer, `ship_${shipmentId}_${status}`);
+        }
         const upd: any = { status, updated_by: actor, updated_at: new Date().toISOString() };
         if (imagePath) upd.packaging_image_path = imagePath;
         if (note) upd.delivery_note = note;
-        await supabase.from('bill_shipping').update(upd).eq('id', shipmentId);
-        await supabase.from('shipping_status_log').insert({ shipment_id: shipmentId, bill_id: billId, status, note: note || '', image_path: imagePath || null, updated_by: actor, updated_by_role: actorRole });
+        const { error: updateError } = await supabase.from('bill_shipping').update(upd).eq('id', shipmentId);
+        if (updateError) throw updateError;
+        const effectiveMakeOrderId = makeOrderId || shipment.make_order_id || null;
+        const effectiveBillId = billId || shipment.bill_id || null;
+        const { error: logError } = await supabase.from('shipping_status_log').insert({ shipment_id: shipmentId, bill_id: effectiveBillId, make_order_id: effectiveMakeOrderId, status, note: note || '', image_path: imagePath, updated_by: actor, updated_by_role: actorRole });
+        if (logError) throw logError;
+        if (effectiveMakeOrderId && ['out_for_delivery', 'delivered'].includes(status)) {
+            const orderStage = status === 'delivered' ? 'Delivered' : 'Dispatched';
+            const orderUpdate: any = { status: orderStage, current_stage: orderStage, updated_at: new Date().toISOString() };
+            if (imagePath) orderUpdate.current_stage_photo = imagePath;
+            const { error: makeUpdateError } = await supabase.from('make_orders').update(orderUpdate).eq('id', effectiveMakeOrderId);
+            if (makeUpdateError) throw makeUpdateError;
+            const { error: timelineError } = await supabase.from('make_order_updates').insert({ order_id: effectiveMakeOrderId, status: orderStage, note: note || (status === 'delivered' ? 'Logistics marked shipment delivered.' : 'Logistics dispatched the order.'), photo_url: imagePath, photo_urls: imagePath ? [imagePath] : [], updated_by: `${actor} (${actorRole})` });
+            if (timelineError) console.warn('[MAKE Shipping] Failed to mirror logistics update to the order timeline:', timelineError.message);
+        }
         await writeAuditLog({ module: 'Shipping', action: 'SHIPPING_STATUS_UPDATED', entity_type: 'shipment', entity_id: shipmentId, description: `Status → "${status}" by ${actor}`, new_value: { status, note }, performed_by: actor });
         return { success: true };
     });

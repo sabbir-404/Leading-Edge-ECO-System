@@ -53,6 +53,9 @@ describe('MAKE V1 — Immutable Order Versioning & Audit Trail', () => {
             }
             if (table === 'make_order_versions') {
                 return {
+                    select: vi.fn().mockReturnThis(),
+                    eq: vi.fn().mockReturnThis(),
+                    maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
                     insert: vi.fn().mockImplementation((payload: any) => {
                         insertedVersionData = payload;
                         return Promise.resolve({ error: null });
@@ -122,6 +125,9 @@ describe('MAKE V1 — Immutable Order Versioning & Audit Trail', () => {
             }
             if (table === 'make_order_versions') {
                 return {
+                    select: vi.fn().mockReturnThis(),
+                    eq: vi.fn().mockReturnThis(),
+                    maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
                     insert: vi.fn().mockImplementation((payload: any) => {
                         insertedPayload = payload;
                         return Promise.resolve({ error: null });

@@ -1524,6 +1524,39 @@ export function registerMakeHandlers(): void {
                 actorUserId: session.userId
             });
 
+            if (result.success && ['ready to ship', 'ready for dispatch'].includes(String(parsed.stage || '').trim().toLowerCase())) {
+                const { data: order, error: orderError } = await failoverEngine.executeRead(async client => await client.from('make_orders').select('id,bill_id,order_number,customer_name,customer_phone,shipping_address,delivery_address,amount_due').eq('id', parsed.orderId).maybeSingle(), 'load-make-order-for-shipping');
+                if (orderError || !order) {
+                    console.warn('[MAKE Shipping] Production completed, but shipping handoff could not load the order:', orderError?.message || 'Order not found');
+                } else {
+                    const { data: existingShipment, error: existingShipmentError } = await failoverEngine.executeRead(async client => await client.from('bill_shipping').select('id').eq('make_order_id', parsed.orderId).maybeSingle(), 'check-make-shipment-exists');
+                    if (existingShipmentError) {
+                        console.warn('[MAKE Shipping] Could not check for an existing shipment:', existingShipmentError.message);
+                    } else if (!existingShipment) {
+                        const handoff = await failoverEngine.executeWrite(async client => await client.from('bill_shipping').insert({
+                            bill_id: order.bill_id || null,
+                            make_order_id: order.id,
+                            ship_to_name: order.customer_name || 'Customer',
+                            ship_to_address: order.shipping_address || order.delivery_address || null,
+                            ship_to_phone: order.customer_phone || null,
+                            shipping_charge: 0,
+                            status: 'ready_to_ship',
+                            delivery_note: 'Transferred from MAKE production; logistics to arrange dispatch.'
+                        }).select('id').single(), { table: 'bill_shipping', operation: 'insert' }, 'create-make-shipment-handoff');
+                        if (handoff.error) console.warn('[MAKE Shipping] Could not create shipping handoff:', handoff.error.message);
+                        else await failoverEngine.executeWrite(async client => await client.from('shipping_status_log').insert({
+                            shipment_id: handoff.data.id,
+                            bill_id: order.bill_id || null,
+                            make_order_id: order.id,
+                            status: 'ready_to_ship',
+                            note: 'Order received from MAKE production and is ready for dispatch.',
+                            updated_by: session.fullName || session.username,
+                            updated_by_role: session.role
+                        }), { table: 'shipping_status_log', operation: 'insert' }, 'log-make-shipment-handoff');
+                    }
+                }
+            }
+
             return result;
         } catch (err: any) {
             console.error('[MAKE IPC] make-update-production-stage error:', err);
@@ -2721,10 +2754,22 @@ export function registerMakeHandlers(): void {
 
         if (error) throw error;
         const decrypted = decryptRows(data || []);
+        const sessionRole = (session.role || '').toLowerCase().trim();
+        const isFactory = ['factory_manager', 'factory manager', 'factory'].includes(sessionRole);
+        let blueprintsByProduct = new Map<string, string>();
+        if (isFactory) {
+            const productIds = Array.from(new Set(decrypted.map((item: any) => Number(item.product_id)).filter((id: number) => Number.isInteger(id) && id > 0)));
+            if (productIds.length) {
+                const { data: products, error: productError } = await supabase.from('make_products').select('id,blueprint_url').in('id', productIds);
+                if (productError) throw productError;
+                blueprintsByProduct = new Map((products || []).filter((product: any) => product.blueprint_url).map((product: any) => [String(product.id), product.blueprint_url]));
+            }
+        }
 
         const itemsWithDrawings = await Promise.all(decrypted.map(async (item: any) => {
-            const rawPaths: string[] = Array.isArray(item.pdf_urls) ? item.pdf_urls : [];
-            if (item.technical_drawing_url && !rawPaths.includes(item.technical_drawing_url)) {
+            const blueprint = isFactory ? blueprintsByProduct.get(String(item.product_id)) : null;
+            const rawPaths: string[] = isFactory ? (blueprint ? [blueprint] : []) : (Array.isArray(item.pdf_urls) ? item.pdf_urls : []);
+            if (!isFactory && item.technical_drawing_url && !rawPaths.includes(item.technical_drawing_url)) {
                 rawPaths.unshift(item.technical_drawing_url);
             }
 
@@ -2732,10 +2777,26 @@ export function registerMakeHandlers(): void {
                 return await resolveAttachmentUrl(p);
             }));
 
-            return {
-                ...item,
-                drawings: drawings.filter(d => d.url || d.isPending)
-            };
+            const resolvedDrawings = drawings.filter(d => d.url || d.isPending);
+            if (isFactory) {
+                // Factory users must not receive customer attachments, product
+                // drawings, sale prices, or designer notes, even as hidden fields.
+                return {
+                    id: item.id,
+                    order_id: item.order_id,
+                    product_id: item.product_id,
+                    product_name: item.product_name,
+                    product_code: item.product_code,
+                    quantity: item.quantity,
+                    spec_name: item.spec_name,
+                    size_label: item.size_label,
+                    color_name: item.color_name,
+                    item_cost_price: item.item_cost_price,
+                    production_blueprint_url: blueprint || null,
+                    drawings: resolvedDrawings
+                };
+            }
+            return { ...item, drawings: resolvedDrawings };
         }));
 
         const canViewCost = canViewCostPriceSession(session);
@@ -3608,7 +3669,7 @@ export function registerMakeHandlers(): void {
     const isCostingRequester = (session: UserSession) => ['salesperson', 'salesman', 'sales'].includes(requestRole(session));
     const isFactoryRole = (session: UserSession) => ['factory_manager', 'factory manager', 'factory'].includes(requestRole(session));
 
-    ipcMain.handle('make-create-costing-request', async (_e, payload: any) => {
+    ipcMain.handle('make-create-costing-request', async (event, payload: any) => {
         try {
             const session = requireSession();
             if (!canCreateCostingRequest(session)) throw new Error('Forbidden: your user group cannot create costing requests.');
@@ -3629,6 +3690,12 @@ export function registerMakeHandlers(): void {
             const allFiles = [...requestFiles, ...itemsWithFiles.flatMap((item: any) => item.files)];
             const totalFileBytes = allFiles.reduce((total: number, file: any) => total + (Number(file?.buffer?.byteLength ?? file?.buffer?.length) || 0), 0);
             if (totalFileBytes > 50 * 1024 * 1024) return { success: false, error: 'Reference files must total 50 MB or less per request.' };
+            const uploadOperationId = String(payload?.uploadOperationId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 100);
+            let completedBytes = 0;
+            const reportProgress = (fileName: string, phase = 'uploading') => {
+                if (!uploadOperationId || event.sender.isDestroyed()) return;
+                event.sender.send('make-upload-progress', { operationId: uploadOperationId, fileName, phase, uploadedBytes: completedBytes, totalBytes: totalFileBytes, percent: totalFileBytes ? Math.min(100, Math.floor(completedBytes / totalFileBytes * 100)) : 100 });
+            };
             const requesterName = String(session.fullName || session.username || 'MAKE user').slice(0, 255);
             const insert = await failoverEngine.executeWrite(
                 async client => await client.from('make_costing_requests').insert({
@@ -3657,7 +3724,7 @@ export function registerMakeHandlers(): void {
                 throw itemInsert.error || new Error('Request item rows were not saved.');
             }
             const attachmentWarnings: string[] = [];
-            const uploadAndAssociate = async (file: any, entityType: 'make_costing_requests' | 'make_costing_request_items', entityId: number, currentRefs: string[]) => {
+            const uploadFile = async (file: any, entityType: 'make_costing_requests' | 'make_costing_request_items', entityId: number) => {
                 const name = String(file?.name || 'attachment').slice(0, 255);
                 try {
                     const rawBuffer = file?.buffer;
@@ -3668,24 +3735,33 @@ export function registerMakeHandlers(): void {
                     const uploaded = await MakeCadService.uploadValidatedBuffer(validation.fileBuffer, validation.sanitizedFileName, validation.mimeType || String(file?.mimeType || 'application/octet-stream'), `make-order-files/requestions/${request.id}/${entityType === 'make_costing_request_items' ? entityId : 'request'}`, { entityType, entityId, fieldName: 'file_urls' });
                     const ref = uploaded.durableKey || uploaded.publicUrl;
                     if ((!uploaded.success && !uploaded.isPendingUpload) || !ref) throw new Error(uploaded.error || 'File upload failed.');
-                    const nextRefs = Array.from(new Set([...currentRefs, ref]));
-                    const write = await failoverEngine.executeWrite(async client => await client.from(entityType).update({ file_urls: nextRefs, updated_at: new Date().toISOString() }).eq('id', entityId), { table: entityType, operation: 'update', primaryKey: { name: 'id', value: entityId } }, 'attach-costing-request-create-file');
-                    if (write.error) throw write.error;
-                    return nextRefs;
+                    completedBytes += buffer.length;
+                    reportProgress(name);
+                    return ref;
                 } catch (err: any) {
                     attachmentWarnings.push(`${name}: ${err.message || 'upload failed'}`);
-                    return currentRefs;
+                    return null;
                 }
             };
-            let requestRefs: string[] = [];
-            for (const file of requestFiles) requestRefs = await uploadAndAssociate(file, 'make_costing_requests', Number(request.id), requestRefs);
+            const uploadAndAssociateFiles = async (files: any[], entityType: 'make_costing_requests' | 'make_costing_request_items', entityId: number) => {
+                const refs: string[] = [];
+                for (let start = 0; start < files.length; start += 3) {
+                    const batch = await Promise.all(files.slice(start, start + 3).map(file => uploadFile(file, entityType, entityId)));
+                    refs.push(...batch.filter((ref): ref is string => !!ref));
+                }
+                if (refs.length) {
+                    const write = await failoverEngine.executeWrite(async client => await client.from(entityType).update({ file_urls: refs, updated_at: new Date().toISOString() }).eq('id', entityId), { table: entityType, operation: 'update', primaryKey: { name: 'id', value: entityId } }, 'attach-costing-request-create-files');
+                    if (write.error) throw write.error;
+                }
+            };
+            await uploadAndAssociateFiles(requestFiles, 'make_costing_requests', Number(request.id));
             const insertedItems: any[] = itemInsert.data as any[];
             for (let index = 0; index < itemsWithFiles.length; index++) {
                 const row = insertedItems[index];
                 if (!row) continue;
-                let itemRefs: string[] = [];
-                for (const file of itemsWithFiles[index].files) itemRefs = await uploadAndAssociate(file, 'make_costing_request_items', Number(row.id), itemRefs);
+                await uploadAndAssociateFiles(itemsWithFiles[index].files, 'make_costing_request_items', Number(row.id));
             }
+            reportProgress('', attachmentWarnings.length ? 'completed_with_errors' : 'complete');
             return { success: true, request: numbered.data || { ...request, request_number: `RQ-${String(request.id).padStart(6, '0')}` }, items: itemInsert.data, warning: attachmentWarnings.length ? attachmentWarnings.join('; ') : undefined };
         } catch (err: any) {
             console.error('[MAKE IPC] make-create-costing-request error:', err);
@@ -3845,26 +3921,79 @@ export function registerMakeHandlers(): void {
             const blueprint = String(payload?.blueprint_url || '').trim();
             const productDrawing = String(payload?.product_drawing_url || '').trim();
             const image = String(payload?.product_image || '').trim();
+            const normalizeList = (value: unknown) => Array.isArray(value) ? [...new Set(value.map(v => String(v || '').trim()).filter(Boolean))].slice(0, 30) : [];
+            const requestedSpecifications = normalizeList(payload?.specifications);
+            const requestedSizes = normalizeList(payload?.sizes);
+            const requestedColors = normalizeList(payload?.colors);
+            const categoryProvided = Object.prototype.hasOwnProperty.call(payload || {}, 'category_id');
+            const maxDiscountType = payload?.max_discount_type === 'amount' ? 'amount' : 'percent';
+            const maxDiscountValue = payload?.max_discount_value == null || payload?.max_discount_value === '' ? null : Number(payload.max_discount_value);
             if (!Number.isInteger(itemId) || itemId < 1 || !productName || !productCode || costRaw == null || String(costRaw).trim() === '' || !Number.isFinite(cost) || cost < 0 || saleRaw == null || String(saleRaw).trim() === '' || !Number.isFinite(sale) || sale < 0) {
                 throw new Error('Enter product name, product code, and valid cost and sale prices. Product image and blueprint are optional.');
+            }
+            if (maxDiscountValue !== null && (!Number.isFinite(maxDiscountValue) || maxDiscountValue < 0 || (maxDiscountType === 'percent' && maxDiscountValue > 100) || (maxDiscountType === 'amount' && maxDiscountValue > sale))) {
+                throw new Error(maxDiscountType === 'percent' ? 'Maximum discount must be between 0 and 100%.' : 'Maximum discount cannot exceed the sale price.');
             }
             const { data: item, error: itemErr } = await failoverEngine.executeRead(async client => await client.from('make_costing_request_items').select('*,request:make_costing_requests!inner(id,request_number,requested_by,requester_name,status)').eq('id', itemId).maybeSingle(), 'get-costing-request-item-for-pricing');
             if (itemErr || !item) throw itemErr || new Error('Request item not found.');
             const itemRow: any = item;
             const request = Array.isArray(itemRow.request) ? itemRow.request[0] : itemRow.request;
+            const categoryId = categoryProvided
+                ? (payload.category_id == null || payload.category_id === '' ? null : Number(payload.category_id))
+                : (Number(itemRow.category_id) || null);
+            if (categoryId !== null && (!Number.isInteger(categoryId) || categoryId < 1)) throw new Error('Choose a valid global product category.');
+            let categoryName: string | null = null;
+            if (categoryId !== null) {
+                const { data: category, error: categoryError } = await failoverEngine.executeRead(async client => await client.from('make_product_categories').select('id,name,is_active').eq('id', categoryId).maybeSingle(), 'validate-costing-category');
+                if (categoryError || !category || category.is_active === false) throw categoryError || new Error('The selected global category is unavailable. Refresh the options and try again.');
+                categoryName = String(category.name || '').trim();
+                if (!categoryName) throw new Error('The selected global category does not have a name.');
+            }
+            const validateGlobalAttributeValues = async (table: string, column: string, values: string[], operation: string) => {
+                if (!values.length) return [] as any[];
+                const { data, error } = await failoverEngine.executeRead(async client => await client.from(table).select('*').is('product_id', null).in(column, values), operation);
+                if (error) throw error;
+                const activeRows = (data || []).filter((row: any) => row.is_active !== false);
+                const rowsByValue = new Map(activeRows.map((row: any) => [String(row[column] || '').trim(), row]));
+                if (values.some(value => !rowsByValue.has(value))) throw new Error(`Choose ${column.replace('_', ' ')} values from the active global attributes.`);
+                return values.map(value => rowsByValue.get(value));
+            };
+            const globalSpecifications = await validateGlobalAttributeValues('make_product_specifications', 'spec_name', requestedSpecifications, 'validate-costing-global-specifications');
+            const globalSizes = await validateGlobalAttributeValues('make_product_sizes', 'size_label', requestedSizes, 'validate-costing-global-sizes');
+            const globalColors = await validateGlobalAttributeValues('make_product_colors', 'color_name', requestedColors, 'validate-costing-global-colors');
+            const specifications = globalSpecifications.map((row: any) => String(row.spec_name));
+            const sizes = globalSizes.map((row: any) => String(row.size_label));
+            const colors = globalColors.map((row: any) => String(row.color_name));
             if (!itemRow.product_id) {
                 const { data: existingProduct } = await failoverEngine.executeRead(async client => await client.from('make_products').select('id').eq('requestion_item_id', itemId).maybeSingle(), 'find-existing-requestion-product');
                 if ((existingProduct as any)?.id) itemRow.product_id = (existingProduct as any).id;
             }
             if (itemRow.product_id) {
-                const updateProduct = await failoverEngine.executeWrite(async client => await client.from('make_products').update({ product_code: productCode, product_name: productName, cost_price: cost, sale_price: sale, main_image: image || null, blueprint_url: blueprint || null, product_drawing_url: productDrawing || null, updated_at: new Date().toISOString() }).eq('id', itemRow.product_id).select().single(), { table: 'make_products', operation: 'update', primaryKey: { name: 'id', value: itemRow.product_id } }, 'update-requestion-product');
+                const productUpdate: any = { product_code: productCode, product_name: productName, cost_price: cost, sale_price: sale, max_discount_type: maxDiscountType, max_discount_value: maxDiscountValue, main_image: image || null, blueprint_url: blueprint || null, product_drawing_url: productDrawing || null, updated_at: new Date().toISOString() };
+                if (categoryProvided || categoryId) { productUpdate.category_id = categoryId; productUpdate.category = categoryName; }
+                const updateProduct = await failoverEngine.executeWrite(async client => await client.from('make_products').update(productUpdate).eq('id', itemRow.product_id).select().single(), { table: 'make_products', operation: 'update', primaryKey: { name: 'id', value: itemRow.product_id } }, 'update-requestion-product');
                 if (updateProduct.error) throw updateProduct.error;
             } else {
-                const product = await failoverEngine.executeWrite(async client => await client.from('make_products').insert({ product_code: productCode, product_name: productName, description: `Created from costing request ${request.request_number || request.id}`, main_image: image || null, blueprint_url: blueprint || null, product_drawing_url: productDrawing || null, cost_price: cost, sale_price: sale, is_active: true, requestion_item_id: itemId, created_by: session.fullName || session.username }).select().single(), { table: 'make_products', operation: 'insert' }, 'create-requestion-catalog-product');
+                const productPayload: any = { product_code: productCode, product_name: productName, description: `Created from costing request ${request.request_number || request.id}`, main_image: image || null, blueprint_url: blueprint || null, product_drawing_url: productDrawing || null, cost_price: cost, sale_price: sale, max_discount_type: maxDiscountType, max_discount_value: maxDiscountValue, is_active: true, requestion_item_id: itemId, created_by: session.fullName || session.username };
+                if (categoryId) { productPayload.category_id = categoryId; productPayload.category = categoryName; }
+                const product = await failoverEngine.executeWrite(async client => await client.from('make_products').insert(productPayload).select().single(), { table: 'make_products', operation: 'insert' }, 'create-requestion-catalog-product');
                 if (product.error || !product.data) throw product.error || new Error('Product could not be added to the catalog.');
                 itemRow.product_id = (product.data as any).id;
             }
-            const itemUpdate = await failoverEngine.executeWrite(async client => await client.from('make_costing_request_items').update({ product_name: productName, product_code: productCode, cost_price: cost, sale_price: sale, blueprint_url: blueprint || null, product_drawing_url: productDrawing || null, product_image: image || null, product_id: itemRow.product_id, status: 'priced', designer_notes: String(payload?.designer_notes || '').trim().slice(0, 5000) || null, updated_at: new Date().toISOString() }).eq('id', itemId).select().single(), { table: 'make_costing_request_items', operation: 'update', primaryKey: { name: 'id', value: itemId } }, 'complete-costing-request-item');
+            const productId = Number(itemRow.product_id);
+            const replaceProductAttributes = async (table: string, rows: any[], operation: string) => {
+                const deletion = await failoverEngine.executeWrite(async client => await client.from(table).delete().eq('product_id', productId), { table, operation: 'delete', primaryKey: { name: 'product_id', value: productId } }, `${operation}-clear`);
+                if (deletion.error) throw deletion.error;
+                if (!rows.length) return;
+                const insertion = await failoverEngine.executeWrite(async client => await client.from(table).insert(rows), { table, operation: 'insert', data: rows }, operation);
+                if (insertion.error) throw insertion.error;
+            };
+            await replaceProductAttributes('make_product_specifications', globalSpecifications.map((row: any, index: number) => ({ product_id: productId, spec_code: `${productCode}-S${index + 1}`, spec_name: row.spec_name, spec_details: row.spec_details || null, image_url: row.image_url || null, is_active: true })), 'save-requestion-specifications');
+            await replaceProductAttributes('make_product_sizes', globalSizes.map((row: any) => ({ product_id: productId, size_label: row.size_label, length: row.length ?? null, width: row.width ?? null, height: row.height ?? null, diameter: row.diameter ?? null, unit: row.unit || 'mm', is_active: true })), 'save-requestion-sizes');
+            await replaceProductAttributes('make_product_colors', globalColors.map((row: any) => ({ product_id: productId, spec_id: row.spec_id ?? null, color_name: row.color_name, color_code: row.color_code || null, image_url: row.image_url || null, is_active: true })), 'save-requestion-colors');
+            const itemUpdatePayload: any = { product_name: productName, product_code: productCode, cost_price: cost, sale_price: sale, blueprint_url: blueprint || null, product_drawing_url: productDrawing || null, product_image: image || null, product_id: itemRow.product_id, specifications, sizes, colors, max_discount_type: maxDiscountType, max_discount_value: maxDiscountValue, status: 'priced', designer_notes: String(payload?.designer_notes || '').trim().slice(0, 5000) || null, updated_at: new Date().toISOString() };
+            if (categoryProvided || categoryId) itemUpdatePayload.category_id = categoryId;
+            const itemUpdate = await failoverEngine.executeWrite(async client => await client.from('make_costing_request_items').update(itemUpdatePayload).eq('id', itemId).select().single(), { table: 'make_costing_request_items', operation: 'update', primaryKey: { name: 'id', value: itemId } }, 'complete-costing-request-item');
             if (itemUpdate.error) throw itemUpdate.error;
             const { data: siblingItems } = await failoverEngine.executeRead(async client => await client.from('make_costing_request_items').select('status').eq('request_id', request.id), 'check-costing-request-items');
             const allPriced = (siblingItems || []).every((row: any) => row.status === 'priced' || row.status === 'ordered');
@@ -3882,21 +4011,31 @@ export function registerMakeHandlers(): void {
         }
     });
 
-    ipcMain.handle('make-order-from-costing-request', async (_e, itemId: number) => {
+    ipcMain.handle('make-order-from-costing-request', async (_e, rawPayload: number | { requestId?: number; itemId?: number }) => {
         try {
             const session = requireSession();
-            const id = Number(itemId);
-            const { data: item, error } = await failoverEngine.executeRead(async client => await client.from('make_costing_request_items').select('*,request:make_costing_requests!inner(id,request_number,requested_by,customer_name,customer_phone)').eq('id', id).maybeSingle(), 'get-costing-item-for-order');
-            if (error || !item) throw error || new Error('Priced request item was not found.');
-            const row: any = item;
-            const request = Array.isArray(row.request) ? row.request[0] : row.request;
+            const payload = typeof rawPayload === 'number' ? { itemId: rawPayload } : (rawPayload || {});
+            const { data: request, error: requestError } = await failoverEngine.executeRead(async client => {
+                let query: any = client.from('make_costing_requests').select('*');
+                query = payload.requestId ? query.eq('id', Number(payload.requestId)) : query.eq('id', -1);
+                return await query.maybeSingle();
+            }, 'get-costing-request-for-order');
+            if (requestError || !request) throw requestError || new Error('Costing request was not found.');
             const explicitOrderGrant = permissionOverride(session, 'place_order_from_costing_request');
             const canOrder = Number(request.requested_by) === Number(session.userId) || canApproveOrder(session) || explicitOrderGrant === true;
             if (explicitOrderGrant === false && !canApproveOrder(session)) throw new Error('Forbidden: your user group cannot place orders from costing requests.');
             if (!canOrder) throw new Error('Only the request owner or an order approver can place this order.');
-            if (row.status === 'ordered') throw new Error('An order has already been placed for this request item.');
-            if (row.status !== 'priced') throw new Error('The designer has not completed pricing for this item.');
-            return { success: true, request: { id: request.id, request_number: request.request_number, customer_name: request.customer_name, customer_phone: request.customer_phone }, item: { id: row.id, product_id: row.product_id, requestion_item_id: row.id, product_name: row.product_name || row.item_name, product_code: row.product_code, quantity: row.quantity, sale_price: row.sale_price, main_image: row.product_image, product_drawing_url: row.product_drawing_url } };
+            const { data: rows, error: itemsError } = await failoverEngine.executeRead(async client => {
+                let query: any = client.from('make_costing_request_items').select('*').eq('request_id', request.id).order('id');
+                if (payload.itemId) query = query.eq('id', Number(payload.itemId));
+                return await query;
+            }, 'get-costing-request-items-for-order');
+            if (itemsError) throw itemsError;
+            const pricedRows = (rows || []).filter((row: any) => row.status === 'priced');
+            if (!pricedRows.length) throw new Error('There are no priced items available to order.');
+            if (payload.itemId && pricedRows.length !== 1) throw new Error('The selected costing item is not priced yet.');
+            if (payload.requestId && pricedRows.length !== (rows || []).length) throw new Error('Finish pricing every item before placing the complete request as an order.');
+            return { success: true, request: { id: request.id, request_number: request.request_number, customer_name: request.customer_name, customer_phone: request.customer_phone, remarks: request.remarks }, items: pricedRows.map((row: any) => ({ id: row.id, product_id: row.product_id, requestion_item_id: row.id, product_name: row.product_name || row.item_name, product_code: row.product_code, quantity: row.quantity, sale_price: row.sale_price, main_image: row.product_image, product_drawing_url: row.product_drawing_url, specification: row.specifications || [], sizes: row.sizes || [], colors: row.colors || [], max_discount_type: row.max_discount_type, max_discount_value: row.max_discount_value, notes: row.remarks || '' })) };
         } catch (err: any) {
             return { success: false, error: err.message || 'Could not prepare order.' };
         }

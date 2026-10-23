@@ -9,7 +9,7 @@ on:
       version:
         description: 'Release version without leading v'
         required: true
-        default: '1.9.0'
+        default: '1.9.1'
 
 permissions:
   contents: write
@@ -51,7 +51,7 @@ jobs:
       - name: Publish macOS Release Assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_VERSION: ${{ github.event.inputs.version || '1.9.0' }}
+          RELEASE_VERSION: ${{ github.event.inputs.version || '1.9.1' }}
           RELEASE_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -129,7 +129,7 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_VERSION: ${{ github.event.inputs.version || '1.9.0' }}
+          RELEASE_VERSION: ${{ github.event.inputs.version || '1.9.1' }}
           RELEASE_REPO: ${{ github.repository }}
         run: |
           $ErrorActionPreference = 'Stop'

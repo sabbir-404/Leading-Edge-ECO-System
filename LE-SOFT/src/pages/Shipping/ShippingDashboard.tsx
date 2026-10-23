@@ -20,7 +20,7 @@ const STATUS_CONFIG: Record<string, {
     paid:             { label: 'Paid',             color: '#2563eb', bg: '#dbeafe', icon: <CheckCircle2 size={14} />, role: 'store_manager',    roleLabel: 'Store Manager' },
     packaging:        { label: 'Packaging',        color: '#7c3aed', bg: '#ede9fe', icon: <Package size={14} />,     role: 'store_manager',    roleLabel: 'Store Manager' },
     ready_to_ship:    { label: 'Ready to Ship',    color: '#0891b2', bg: '#cffafe', icon: <PackageCheck size={14} />,role: 'logistics',         roleLabel: 'Logistics' },
-    out_for_delivery: { label: 'Out for Delivery', color: '#ea580c', bg: '#ffedd5', icon: <Truck size={14} />,      role: 'logistics',         roleLabel: 'Logistics' },
+    out_for_delivery: { label: 'Dispatched',       color: '#ea580c', bg: '#ffedd5', icon: <Truck size={14} />,      role: 'logistics',         roleLabel: 'Logistics' },
     delivered:        { label: 'Delivered',        color: '#16a34a', bg: '#dcfce7', icon: <CheckCircle2 size={14} />,role: '',                  roleLabel: '' },
 };
 
@@ -145,6 +145,7 @@ const ShippingDashboard: React.FC = () => {
     const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
     const [imgPreview, setImgPreview] = useState<string | null>(null);
     const [imgFile, setImgFile] = useState<string | null>(null);
+    const [imageReadProgress, setImageReadProgress] = useState(0);
 
     const showMsg = (text: string, ok = true) => {
         setMsg({ text, ok });
@@ -181,6 +182,7 @@ const ShippingDashboard: React.FC = () => {
         setNote('');
         setImgPreview(null);
         setImgFile(null);
+        setImageReadProgress(0);
         loadHistory(s.id);
     };
 
@@ -194,26 +196,31 @@ const ShippingDashboard: React.FC = () => {
             await window.electron.updateShipmentStatus({
                 shipmentId: shipment.id,
                 billId: shipment.bill_id,
+                makeOrderId: shipment.make_order_id,
                 status: newStatus,
                 note,
+                imageBase64: imgFile,
                 updatedBy: userName,
                 userRole,
             });
             showMsg(`✓ Status updated to "${STATUS_CONFIG[newStatus]?.label}"`);
-            setNote('');
+            setNote(''); setImgPreview(null); setImgFile(null); setImageReadProgress(0);
             load();
             loadHistory(shipment.id);
-        } catch (e) { showMsg('Failed to update status.', false); }
+        } catch (e: any) { showMsg(e?.message || 'Failed to update status.', false); }
     };
 
     const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
         const reader = new FileReader();
+        setImageReadProgress(0);
+        reader.onprogress = event => { if (event.lengthComputable) setImageReadProgress(Math.min(99, Math.round(event.loaded / event.total * 100))); };
         reader.onload = (ev) => {
             const b64 = ev.target?.result as string;
             setImgPreview(b64);
             setImgFile(b64);
+            setImageReadProgress(100);
         };
         reader.readAsDataURL(file);
     };
@@ -429,6 +436,15 @@ const ShippingDashboard: React.FC = () => {
                                                                     placeholder="Add a note (optional)…"
                                                                     rows={2}
                                                                     style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--input-bg)', color: 'var(--text-primary)', fontSize: '0.88rem', resize: 'vertical', marginBottom: '0.75rem', boxSizing: 'border-box' }} />
+
+                                                                {(userRole === 'logistics' || userRole === 'admin' || userRole === 'superadmin' || userRole === 'manager') && ['ready_to_ship', 'out_for_delivery'].includes(s.status) && (
+                                                                    <div style={{ marginBottom: '0.75rem', padding: '0.75rem', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: '8px' }}>
+                                                                        <label style={{ display: 'block', marginBottom: '6px', fontWeight: 700, fontSize: '0.82rem', color: '#c2410c' }}><Upload size={12} style={{ verticalAlign: 'middle', marginRight: '4px' }} />Add dispatch or delivery evidence (optional)</label>
+                                                                        <input type="file" accept="image/*" onChange={handleImageUpload} style={{ fontSize: '0.82rem' }} />
+                                                                        {imgFile && <div style={{ marginTop: 5, fontSize: 12, color: 'var(--text-secondary)' }}>Image prepared: {imageReadProgress}%</div>}
+                                                                        {imgPreview && <img src={imgPreview} alt="Shipment evidence preview" style={{ marginTop: 8, width: '100%', maxHeight: 130, objectFit: 'cover', borderRadius: 8 }} />}
+                                                                    </div>
+                                                                )}
 
                                                                 {/* Packaging photo (store_manager at packaging stage only) */}
                                                                 {(userRole === 'store_manager' || userRole === 'admin') && s.status === 'packaging' && (

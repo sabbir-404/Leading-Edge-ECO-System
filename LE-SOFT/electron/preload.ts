@@ -337,13 +337,18 @@ contextBridge.exposeInMainWorld('electron', {
     makeRecordOrderPayment: (data: { orderId: number | string; amount: number; paymentMethod?: string; reference?: string; notes?: string }) => ipcRenderer.invoke('make-record-order-payment', data),
     makeGetOrderPayments: (orderId: number | string) => ipcRenderer.invoke('make-get-order-payments', orderId),
     makeCreateCostingRequest: (data: any) => ipcRenderer.invoke('make-create-costing-request', data),
+    onMakeUploadProgress: (callback: (progress: { operationId: string; fileName?: string; phase: string; uploadedBytes: number; totalBytes: number; percent: number }) => void) => {
+        const handler = (_event: Electron.IpcRendererEvent, progress: any) => callback(progress);
+        ipcRenderer.on('make-upload-progress', handler);
+        return () => ipcRenderer.removeListener('make-upload-progress', handler);
+    },
     makeGetCostingRequests: () => ipcRenderer.invoke('make-get-costing-requests'),
     makeUploadCostingRequestFile: (data: { requestId: number }) => ipcRenderer.invoke('make-upload-costing-request-file', data),
     makeUploadCostingRequestItemFile: (data: { requestId: number; itemId: number }) => ipcRenderer.invoke('make-upload-costing-request-item-file', data),
     makePickCostingProductAsset: (data: { kind: 'image' | 'blueprint' | 'product_drawing'; requestId: number; itemId: number }) => ipcRenderer.invoke('make-pick-costing-product-asset', data),
     makeCompleteCostingRequestItem: (data: any) => ipcRenderer.invoke('make-complete-costing-request-item', data),
     makeDeleteCostingRequest: (data: { requestId: number }) => ipcRenderer.invoke('make-delete-costing-request', data),
-    makeOrderFromCostingRequest: (itemId: number) => ipcRenderer.invoke('make-order-from-costing-request', itemId),
+    makeOrderFromCostingRequest: (payload: number | { requestId?: number; itemId?: number }) => ipcRenderer.invoke('make-order-from-costing-request', payload),
     // License — Cloud
     checkLicenseCloud: () => ipcRenderer.invoke('check-license-cloud'),
     activateLicenseCloud: (data: any) => ipcRenderer.invoke('activate-license-cloud', data),

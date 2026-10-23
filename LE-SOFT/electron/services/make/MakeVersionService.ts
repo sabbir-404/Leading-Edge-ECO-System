@@ -28,8 +28,29 @@ export class MakeVersionService {
         changeReason: string;
         actorName: string;
         actorRole: string;
+        snapshotOverride?: OrderSnapshot;
     }): Promise<{ success: boolean; versionNumber: number; error?: string }> {
-        const { orderId, versionNumber, changeReason, actorName, actorRole } = params;
+        const { orderId, versionNumber, changeReason, actorName, actorRole, snapshotOverride } = params;
+
+        const { data: existingVersion, error: existingVersionError } = await supabase.from('make_order_versions')
+            .select('id').eq('order_id', orderId).eq('version_number', versionNumber).maybeSingle();
+        if (existingVersionError) return { success: false, versionNumber, error: existingVersionError.message };
+        // A saved revision is immutable. Approval should reuse the designer's
+        // snapshot rather than trying to insert the same (order, version) twice.
+        if (existingVersion) return { success: true, versionNumber };
+
+        if (snapshotOverride) {
+            const { error: snapshotError } = await supabase.from('make_order_versions').insert({
+                order_id: orderId,
+                version_number: versionNumber,
+                snapshot: snapshotOverride,
+                created_by: actorName,
+                user_role: actorRole || 'Salesperson',
+                change_reason: changeReason || 'Order approved/modified snapshot'
+            });
+            if (snapshotError) return { success: false, versionNumber, error: snapshotError.message };
+            return { success: true, versionNumber };
+        }
 
         // 1. Fetch live order header
         const { data: order, error: orderErr } = await supabase

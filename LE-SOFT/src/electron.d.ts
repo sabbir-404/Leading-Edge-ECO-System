@@ -456,13 +456,14 @@ export interface ElectronAPI {
     makeRecordOrderPayment?: (data: { orderId: number | string; amount: number; paymentMethod?: string; reference?: string; notes?: string }) => Promise<{ success: boolean; error?: string; moneyReceived?: number; amountDue?: number; paymentStatus?: string; productionHold?: boolean }>;
     makeGetOrderPayments?: (orderId: number | string) => Promise<{ success: boolean; payments: any[]; error?: string }>;
     makeCreateCostingRequest?: (data: any) => Promise<any>;
+    onMakeUploadProgress?: (callback: (progress: { operationId: string; fileName?: string; phase: string; uploadedBytes: number; totalBytes: number; percent: number }) => void) => () => void;
     makeGetCostingRequests?: () => Promise<any>;
     makeUploadCostingRequestFile?: (data: { requestId: number }) => Promise<any>;
     makeUploadCostingRequestItemFile?: (data: { requestId: number; itemId: number }) => Promise<any>;
     makePickCostingProductAsset?: (data: { kind: 'image' | 'blueprint' | 'product_drawing'; requestId: number; itemId: number }) => Promise<any>;
     makeCompleteCostingRequestItem?: (data: any) => Promise<any>;
     makeDeleteCostingRequest?: (data: { requestId: number }) => Promise<any>;
-    makeOrderFromCostingRequest?: (itemId: number) => Promise<any>;
+    makeOrderFromCostingRequest?: (payload: number | { requestId?: number; itemId?: number }) => Promise<any>;
 
     // Window Controls
     setTheme: (theme: string) => Promise<void>;

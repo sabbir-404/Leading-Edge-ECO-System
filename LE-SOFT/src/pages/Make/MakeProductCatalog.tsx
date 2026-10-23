@@ -18,6 +18,7 @@ import { ProductCreateModal } from './components/ProductCreateModal';
 import { resolveImageSrc, handleImageLoadError } from '../../utils/imageSrc';
 import { formatSizeDisplay } from '../../utils/formatSize';
 import { MakeDrawingPreview } from '../../components/MakeDrawingPreview';
+import './MakeProductCatalog.css';
 
 interface Size {
   id?: number;
@@ -135,6 +136,16 @@ const MakeProductCatalog: React.FC = () => {
 
   // Track image load failures to gracefully show initials fallback
   const [imageErrors, setImageErrors] = useState<Record<number, boolean>>({});
+  const [imagePreview, setImagePreview] = useState<{ src: string; title: string } | null>(null);
+
+  useEffect(() => {
+    if (!imagePreview) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setImagePreview(null);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [imagePreview]);
 
   // Modals
   const [showProductModal, setShowProductModal] = useState(!!initialDraft.productForm?.isOpen);
@@ -852,7 +863,17 @@ const MakeProductCatalog: React.FC = () => {
                           const resolvedType = resolved.startsWith('app-media://nas/') ? 'nas_storage' : resolved.startsWith('app-media://local/') ? 'local_file' : resolved.startsWith('data:') ? 'data_url' : resolved.startsWith('http') ? 'remote_http' : 'other';
                           const startTime = performance.now();
                           return (
-                            <img 
+                            <button
+                              type="button"
+                              className="make-catalog-image-preview-trigger"
+                              aria-label={`View full-size image of ${p.product_name}`}
+                              title="View full-size image"
+                              onClick={event => {
+                                event.stopPropagation();
+                                setImagePreview({ src: resolved, title: `${p.product_name}${p.product_code ? ` · ${p.product_code}` : ''}` });
+                              }}
+                            >
+                            <img
                               src={resolved} 
                               alt={p.product_name} 
                               data-diagnostic-product-id={p.id}
@@ -874,6 +895,7 @@ const MakeProductCatalog: React.FC = () => {
                               }} 
                               style={{ width: '42px', height: '42px', borderRadius: '6px', objectFit: 'cover', border: '1px solid var(--border-color)' }} 
                             />
+                            </button>
                           );
                         })() : (
                           <div 
@@ -935,7 +957,13 @@ const MakeProductCatalog: React.FC = () => {
                         const resolvedType = resolved.startsWith('app-media://nas/') ? 'nas_storage' : resolved.startsWith('app-media://local/') ? 'local_file' : resolved.startsWith('data:') ? 'data_url' : resolved.startsWith('http') ? 'remote_http' : 'other';
                         const startTime = performance.now();
                         return (
-                          <div style={{ position: 'relative', flexShrink: 0 }}>
+                          <button
+                            type="button"
+                            className="make-catalog-image-preview-trigger make-catalog-image-preview-trigger-large"
+                            aria-label={`View full-size image of ${selectedProduct.product_name}`}
+                            title="View full-size image"
+                            onClick={() => setImagePreview({ src: resolved, title: `${selectedProduct.product_name}${selectedProduct.product_code ? ` · ${selectedProduct.product_code}` : ''}` })}
+                          >
                             <img 
                               src={resolved} 
                               alt={selectedProduct.product_name} 
@@ -958,7 +986,7 @@ const MakeProductCatalog: React.FC = () => {
                               }} 
                               style={{ width: '80px', height: '80px', borderRadius: '10px', objectFit: 'cover', border: '1px solid var(--border-color)', boxShadow: '0 4px 10px rgba(0,0,0,0.1)' }} 
                             />
-                          </div>
+                          </button>
                         );
                       })() : (
                         <div 
@@ -2039,6 +2067,39 @@ const MakeProductCatalog: React.FC = () => {
             </div>
           </div>
         )}
+
+        <AnimatePresence>
+          {imagePreview && (
+            <motion.div
+              className="make-catalog-image-preview-backdrop"
+              role="dialog"
+              aria-modal="true"
+              aria-label={`Image preview: ${imagePreview.title}`}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onMouseDown={event => {
+                if (event.target === event.currentTarget) setImagePreview(null);
+              }}
+            >
+              <motion.div
+                className="make-catalog-image-preview-dialog"
+                initial={{ opacity: 0, scale: 0.96, y: 8 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.98, y: 6 }}
+              >
+                <div className="make-catalog-image-preview-header">
+                  <span>{imagePreview.title}</span>
+                  <button type="button" onClick={() => setImagePreview(null)} aria-label="Close image preview" title="Close preview">
+                    <X size={19} />
+                  </button>
+                </div>
+                <img src={imagePreview.src} alt={imagePreview.title} />
+                <p>Click outside the image or press Escape to close.</p>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
       </div>
     </DashboardLayout>

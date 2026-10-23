@@ -1,0 +1,193 @@
+.make-place-order-shell {
+  width: 100%;
+  max-width: 1200px !important;
+  padding: 0 clamp(12px, 2vw, 28px) !important;
+  box-sizing: border-box;
+}
+
+.make-place-order-card {
+  padding: clamp(16px, 2.5vw, 32px) !important;
+  border-radius: 18px !important;
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.08) !important;
+}
+
+.make-place-order-form {
+  gap: 18px !important;
+}
+
+.make-place-order-section {
+  min-width: 0;
+  padding: clamp(14px, 1.8vw, 22px);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  background: var(--card-bg);
+  box-sizing: border-box;
+}
+
+.make-place-order-products {
+  background: var(--card-bg) !important;
+  padding: clamp(14px, 1.8vw, 22px) !important;
+}
+
+.make-place-order-section > p {
+  margin-top: 0;
+}
+
+.make-place-order-form label {
+  letter-spacing: 0.035em;
+  line-height: 1.4;
+}
+
+.make-place-order-form input:not([type="file"]),
+.make-place-order-form select,
+.make-place-order-form textarea {
+  min-height: 40px;
+  border-radius: 8px !important;
+  box-sizing: border-box;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.make-place-order-form input:not([type="file"]):focus,
+.make-place-order-form select:focus,
+.make-place-order-form textarea:focus {
+  border-color: var(--accent-color) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-color) 16%, transparent);
+  outline: none;
+}
+
+.make-place-order-selected-product {
+  display: grid;
+  grid-template-columns: 156px minmax(0, 1fr);
+  gap: 18px;
+  align-items: center;
+  padding: 16px;
+  border: 1px solid var(--border-color);
+  border-left: 4px solid var(--accent-color);
+  border-radius: 12px;
+  background: var(--bg-secondary);
+}
+
+.make-place-order-product-image-wrap {
+  width: 156px;
+  height: 132px;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--card-bg);
+}
+
+.make-place-order-product-image-wrap img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.make-place-order-product-image-placeholder {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 7px;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.make-place-order-product-overview {
+  min-width: 0;
+}
+
+.make-place-order-product-eyebrow {
+  color: var(--accent-color);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.make-place-order-product-overview h3 {
+  margin: 5px 0 8px;
+  color: var(--text-primary);
+  font-size: 1.08rem;
+  line-height: 1.35;
+}
+
+.make-place-order-product-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.make-place-order-product-meta span {
+  padding: 4px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  background: var(--card-bg);
+  font-size: 0.74rem;
+  font-weight: 650;
+}
+
+.make-place-order-product-overview p {
+  margin: 9px 0 0;
+  color: var(--text-secondary);
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.make-place-order-products table {
+  border: 1px solid var(--border-color);
+}
+
+.make-place-order-products th {
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.make-place-order-attachments {
+  background: var(--bg-secondary);
+}
+
+@media (max-width: 680px) {
+  .make-place-order-shell {
+    margin: 12px auto !important;
+  }
+
+  .make-place-order-selected-product {
+    grid-template-columns: 96px minmax(0, 1fr);
+    gap: 12px;
+    padding: 12px;
+  }
+
+  .make-place-order-product-image-wrap {
+    width: 96px;
+    height: 96px;
+  }
+
+  .make-place-order-product-overview h3 {
+    font-size: 0.96rem;
+  }
+}
+
+@media (max-width: 420px) {
+  .make-place-order-selected-product {
+    grid-template-columns: 1fr;
+  }
+
+  .make-place-order-product-image-wrap {
+    width: 100%;
+    height: 180px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .make-place-order-form input,
+  .make-place-order-form select,
+  .make-place-order-form textarea {
+    transition: none;
+  }
+}

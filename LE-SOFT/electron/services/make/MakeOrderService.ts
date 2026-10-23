@@ -825,11 +825,12 @@ export class MakeOrderService {
 
         const actorName = actorSession.fullName || actorSession.username;
         const actorRole = actorSession.role;
+        const approvalVersion = Math.max(1, Number(order.current_version) || 1);
 
-        // 3. Create immutable Version 1 snapshot in make_order_versions
+        // 3. Create or reuse the exact pending revision snapshot.
         const versionResult = await MakeVersionService.createSnapshot({
             orderId,
-            versionNumber: 1,
+            versionNumber: approvalVersion,
             changeReason: override?.overrideReason
                 ? `Initial approval (Loss override: ${override.overrideReason})`
                 : 'Initial order approval by salesperson',
@@ -844,7 +845,7 @@ export class MakeOrderService {
         // 4. Record formal approval in make_order_approvals
         const approvalAudit = await MakeVersionService.recordApprovalAudit({
             orderId,
-            versionNumber: 1,
+            versionNumber: approvalVersion,
             action: 'approved',
             actedBy: actorName,
             userRole: actorRole,
@@ -861,7 +862,7 @@ export class MakeOrderService {
                 status: 'Placed',
                 approval_status: 'sales_approved',
                 is_approved: true,
-                approved_version: 1,
+                approved_version: approvalVersion,
                 approved_by: actorName,
                 approved_at: new Date().toISOString(),
                 updated_at: new Date().toISOString()
@@ -981,26 +982,16 @@ export class MakeOrderService {
             }
         }
 
-        const isReModification = current.approved_version !== null &&
-            (current.approval_status === 'sales_approved' || current.status === 'Placed');
+        const isReModification = Number(current.approved_version || 0) > 0 ||
+            current.approval_status === 'sales_approved' || String(current.status || '').trim().toLowerCase() === 'placed';
         const nextVersion = isReModification ? (current.current_version || 1) + 1 : (current.current_version || 1);
 
         const actorName = actorSession.fullName || actorSession.username;
         const actorRole = actorSession.role;
 
-        // 3. Snapshot previous version if modifying an already-approved order
+        // 3. Audit approved-order modifications. The immutable vN+1 snapshot is
+        // written after item updates so the version reflects the designer's new data.
         if (isReModification) {
-            const snapshotResult = await MakeVersionService.createSnapshot({
-                orderId,
-                versionNumber: current.current_version || 1,
-                changeReason: modificationReason || 'Designer modified product specifications/pricing after approval',
-                actorName,
-                actorRole
-            });
-            if (!snapshotResult.success) {
-                return { success: false, error: `Could not save the prior order version: ${snapshotResult.error || 'snapshot failed'}` };
-            }
-
             const { error: auditErr } = await supabase.from('make_order_alteration_log').insert({
                 order_id: orderId,
                 altered_by: actorName,
@@ -1038,6 +1029,32 @@ export class MakeOrderService {
             if (!updatedItem) {
                 return { success: false, error: `Order item ${item.id} was not updated. Refresh Track Orders and try again.` };
             }
+        }
+
+        if (isReModification) {
+            const { data: latestItems, error: latestItemsError } = await supabase.from('make_order_items').select('*').eq('order_id', orderId).order('id', { ascending: true });
+            if (latestItemsError) return { success: false, error: `Could not read the revised order items: ${latestItemsError.message}` };
+            const snapshotOrder = {
+                ...current,
+                cost_price: finalCostPrice,
+                sale_price: finalSalePrice,
+                current_version: nextVersion,
+                approved_version: null,
+                approval_status: 'modification_pending_approval',
+                status: 'Modification Pending Approval',
+                is_approved: false,
+                rejection_reason: null,
+                updated_at: new Date().toISOString()
+            };
+            const snapshotResult = await MakeVersionService.createSnapshot({
+                orderId,
+                versionNumber: nextVersion,
+                changeReason: modificationReason || `Designer submitted revised order v${nextVersion}; salesperson re-approval required`,
+                actorName,
+                actorRole,
+                snapshotOverride: { order: snapshotOrder, items: latestItems || [], timestamp: new Date().toISOString() }
+            });
+            if (!snapshotResult.success) return { success: false, error: `Could not save revised order v${nextVersion}: ${snapshotResult.error || 'snapshot failed'}` };
         }
 
         // 4. Update make_orders table
@@ -1467,6 +1484,44 @@ export class MakeOrderService {
             return { success: true, message: 'No changes detected', order_number: current.order_number };
         }
 
+        const designerRevisingApprovedOrder = isDesigner && (
+            Number(current.approved_version || 0) > 0 ||
+            current.approval_status === 'sales_approved' ||
+            String(current.status || '').trim().toLowerCase() === 'placed'
+        );
+        if (designerRevisingApprovedOrder) {
+            const currentVersion = Math.max(1, Number(current.current_version) || 1);
+            const nextVersion = currentVersion + 1;
+            filteredOrderChanges.current_version = nextVersion;
+            filteredOrderChanges.approved_version = null;
+            filteredOrderChanges.approval_status = 'modification_pending_approval';
+            filteredOrderChanges.status = 'Modification Pending Approval';
+            filteredOrderChanges.is_approved = false;
+            filteredOrderChanges.rejection_reason = null;
+            const { data: latestItems, error: latestItemsError } = await supabase.from('make_order_items').select('*').eq('order_id', orderId).order('id', { ascending: true });
+            if (latestItemsError) return { success: false, error: `Could not read the revised order items: ${latestItemsError.message}` };
+            const projectedOrder = { ...current, ...filteredOrderChanges, updated_at: new Date().toISOString() };
+            const snapshot = await MakeVersionService.createSnapshot({
+                orderId,
+                versionNumber: nextVersion,
+                changeReason: reason?.trim() || `Designer submitted revised order v${nextVersion}; salesperson re-approval is required.`,
+                actorName,
+                actorRole,
+                snapshotOverride: { order: projectedOrder, items: latestItems || [], timestamp: new Date().toISOString() }
+            });
+            if (!snapshot.success) return { success: false, error: `Could not save revised order v${nextVersion}: ${snapshot.error || 'snapshot failed'}` };
+            auditRows.push({
+                order_id: orderId,
+                altered_by: actorName,
+                user_role: actorRole,
+                field_name: 'order_version',
+                old_value: `v${currentVersion}`,
+                new_value: `v${nextVersion}`,
+                reason: reason?.trim() || 'Designer modification requires salesperson re-approval',
+                altered_at: new Date().toISOString()
+            });
+        }
+
         // 6. Save audit rows
         if (auditRows.length > 0) {
             await supabase.from('make_order_alteration_log').insert(auditRows);
@@ -1481,6 +1536,17 @@ export class MakeOrderService {
                 .eq('id', orderId);
 
             if (updateErr) return { success: false, error: updateErr.message };
+        }
+
+        if (designerRevisingApprovedOrder) {
+            const nextVersion = Math.max(1, Number(current.current_version) || 1) + 1;
+            const { error: timelineError } = await supabase.from('make_order_updates').insert({
+                order_id: orderId,
+                status: 'Modification Pending Approval',
+                note: `Designer submitted v${nextVersion}; salesperson approval is required before production continues.`,
+                updated_by: `${actorName} (${actorRole})`
+            });
+            if (timelineError) console.warn('[MakeOrderService] Failed to write version timeline update:', timelineError.message);
         }
 
         return {
