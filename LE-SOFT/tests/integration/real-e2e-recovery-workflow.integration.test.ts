@@ -33,38 +33,17 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { SupabaseQuotaManager } from '../../electron/services/quota/SupabaseQuotaManager';
 import { DurableUploadService } from '../../electron/services/media/DurableUploadService';
 import { DurableOutboxService } from '../../electron/services/outbox/DurableOutboxService';
+import { assertIsolatedTestPostgresUrl, isLoopbackEndpoint } from '../../electron/runtime-environment';
 const { reconcileReservation } = require('../../scripts/server-reconciliation-daemon.cjs');
 
-const pgUrl = process.env.SUPABASE_STAGING_DB_URL || 'postgresql://postgres:postgres@127.0.0.1:54322/postgres';
+const pgUrl = process.env.TEST_POSTGRES_URL || '';
 const apiUrl = process.env.SUPABASE_LOCAL_API_URL || 'http://127.0.0.1:54321';
 const anonKey = process.env.SUPABASE_ANON_KEY || 'sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH';
-const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-const isApproved = process.env.ALLOW_DISPOSABLE_STAGING_TESTS === 'true' && Boolean(serviceRoleKey);
+const serviceRoleKey = process.env.LOCAL_SUPABASE_SERVICE_ROLE_KEY || '';
+const isApproved = process.env.LE_RUN_LOCAL_SUPABASE_E2E === '1' && Boolean(pgUrl && serviceRoleKey);
 
-// Production safety guard: strictly reject non-local / production targets
-function assertApprovedDisposableUrl(url: string): void {
-    const lower = url.toLowerCase();
-    if (
-        lower.includes('production') ||
-        lower.includes('prod') ||
-        lower.includes('lenas.me') ||
-        lower.includes('100.88.85.6') ||
-        lower.includes('leadingedge.com') ||
-        lower.includes('live')
-    ) {
-        throw new Error(`[SAFETY GUARD] URL points to a production or NAS instance: ${url}. Aborting tests.`);
-    }
-
-    const isApprovedTarget =
-        lower.includes('staging') ||
-        lower.includes('test') ||
-        lower.includes('disposable') ||
-        lower.includes('localhost') ||
-        lower.includes('127.0.0.1');
-
-    if (!isApprovedTarget) {
-        throw new Error(`[SAFETY GUARD] URL must explicitly contain 'staging', 'test', 'disposable', or 'localhost'. Got: ${url}.`);
-    }
+function assertApprovedLocalService(url: string): void {
+    if (!isLoopbackEndpoint(url)) throw new Error('Local Supabase integration tests only accept loopback services.');
 }
 
 describe('PR #41 Real-Engine E2E Recovery & Reconciliation Integration Suite', () => {
@@ -79,12 +58,12 @@ describe('PR #41 Real-Engine E2E Recovery & Reconciliation Integration Suite', (
 
     beforeAll(async () => {
         if (!isApproved) {
-            console.log('\n[NOTICE - Real E2E]: ALLOW_DISPOSABLE_STAGING_TESTS is not true. Skipping real-service E2E tests.\n');
+            console.log('\n[NOTICE - Real E2E]: local Supabase E2E opt-in and local service credentials are not configured; skipping.\n');
             return;
         }
 
-        assertApprovedDisposableUrl(pgUrl);
-        assertApprovedDisposableUrl(apiUrl);
+        assertIsolatedTestPostgresUrl(pgUrl);
+        assertApprovedLocalService(apiUrl);
 
         tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lesoft-e2e-recovery-'));
         process.env.APPDATA = tempDir;

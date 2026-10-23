@@ -1,26 +1,29 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY } from '../../electron/credentials';
 import { loadConfig, getDbClients, reinitSupabaseClients } from '../../electron/supabase';
+import { isLoopbackEndpoint } from '../../electron/runtime-environment';
 
-// Live production probes are intentionally opt-in. Anonymous access was removed
-// during security hardening; authenticated integration checks are run separately.
-describe.skipIf(process.env.RUN_LIVE_DB_RECONCILIATION !== '1')('Final Read-Only Database Reconciliation', () => {
+// Only run against an explicitly configured local Supabase stack. Production
+// reconciliation is never part of the software test environment.
+describe.skipIf(process.env.RUN_LOCAL_DB_RECONCILIATION !== '1')('Local Database Reconciliation', () => {
     let supabaseClient: SupabaseClient;
     let nasClient: SupabaseClient | null = null;
     let nasUrl: string | null = null;
 
     beforeAll(async () => {
-        // 1. Initialize Supabase Cloud client with public anon credentials
-        supabaseClient = createClient(PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY);
-
-        // 2. Load runtime config to check NAS endpoints
+        // Load environment-scoped endpoints and refuse remote targets.
         const config = loadConfig();
+        if (!isLoopbackEndpoint(config.url)) throw new Error('Local reconciliation requires a loopback Supabase API endpoint.');
+        if (!config.anonKey) throw new Error('Local reconciliation requires a configured local Supabase anon key.');
+        supabaseClient = createClient(config.url, config.anonKey);
         const candidateUrls = [
-            config.nasLocalUrl || 'http://192.168.1.14:3001',
-            config.nasTunnelUrl || 'https://db.lenas.me',
-            config.nasUrl || 'http://100.88.85.6:3001'
-        ];
+            config.nasLocalUrl,
+            config.nasTunnelUrl,
+            config.nasUrl
+        ].filter((value): value is string => Boolean(value));
+        candidateUrls.forEach((url) => {
+            if (!isLoopbackEndpoint(url)) throw new Error('Local reconciliation refuses non-loopback NAS endpoints.');
+        });
 
         const cfHeaders: Record<string, string> = {};
         if (config.cfAccessClientId && config.cfAccessClientSecret) {
@@ -58,9 +61,8 @@ describe.skipIf(process.env.RUN_LIVE_DB_RECONCILIATION !== '1')('Final Read-Only
     });
 
     it('1. Authoritative Architecture Verification', () => {
-        expect(PUBLIC_SUPABASE_URL).toBeDefined();
         console.log('\n[ARCH] Verifying database routing architecture:');
-        console.log('  Primary Write Destination (Source of Truth): Supabase Cloud Project', PUBLIC_SUPABASE_URL.replace(/https:\/\/(.*?)\..*/, '$1'));
+        console.log('  Test database: isolated local Supabase');
         console.log('  Downstream Pull Mirror: NAS Candidate URL:', nasUrl || 'None responding (offline)');
         console.log('  Contract: Business writes commit to Supabase primary first; TrueNAS replicates downstream.');
     });

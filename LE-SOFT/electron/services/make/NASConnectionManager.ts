@@ -20,6 +20,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { loadConfig, getCfAccessHeaders } from '../../supabase';
+import { isAllowedNonProductionEndpoint, isNonProductionEnvironment } from '../../runtime-environment';
 
 export type SafeConnectionStatus = 'Connected' | 'Reconnecting' | 'Degraded' | 'Offline';
 
@@ -129,12 +130,19 @@ export class NASConnectionManager {
     private getHeartbeatCandidates(): string[] {
         // Dedicated test endpoint override (for isolated staging/test harness only)
         // Strictly prevents fall-through to production NAS during outage recovery tests.
-        if (process.env.LE_TEST_HEARTBEAT_URL) {
+        if (process.env.LE_TEST_HEARTBEAT_URL && (!isNonProductionEnvironment() || isAllowedNonProductionEndpoint(process.env.LE_TEST_HEARTBEAT_URL))) {
             return [process.env.LE_TEST_HEARTBEAT_URL];
         }
 
         const config = loadConfig();
         const baseCandidates: string[] = [];
+
+        if (isNonProductionEnvironment()) {
+            if ((config as any).nasHeartbeatUrl && isAllowedNonProductionEndpoint((config as any).nasHeartbeatUrl)) baseCandidates.push((config as any).nasHeartbeatUrl);
+            if (config.nasUrl && isAllowedNonProductionEndpoint(config.nasUrl)) baseCandidates.push(config.nasUrl.replace(':3001', ':8085'));
+            if (config.nasLocalUrl && isAllowedNonProductionEndpoint(config.nasLocalUrl)) baseCandidates.push(config.nasLocalUrl.replace(':3001', ':8085'));
+            return Array.from(new Set(baseCandidates.filter(Boolean)));
+        }
 
         // 1. Dedicated heartbeat endpoints if defined
         if ((config as any).nasHeartbeatUrl) baseCandidates.push((config as any).nasHeartbeatUrl);

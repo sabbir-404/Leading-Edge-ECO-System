@@ -13,6 +13,7 @@ import {
     isSafeStorageAvailable,
 } from './secure-storage';
 import { isLicensed } from './license-manager';
+import { assertNonProductionEndpoints, getRuntimeEnvironment, isAllowedNonProductionEndpoint, isNonProductionEnvironment } from './runtime-environment';
 
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -22,6 +23,8 @@ import { isLicensed } from './license-manager';
 // ─────────────────────────────────────────────────────────────────────────────
 function getConfigPath(): string {
     const defaultPath = path.join(app?.getPath ? app.getPath('userData') : path.join(process.env.APPDATA || process.cwd(), 'le-soft'), 'supabase-config.json');
+    // Dev, test and staging must never inherit the installed production config.
+    if (isNonProductionEnvironment()) return defaultPath;
     if (fs.existsSync(defaultPath)) return defaultPath;
 
     const candidates = [
@@ -48,7 +51,7 @@ let nasJwtDecryptWarningLogged = false;
  * immediately re-encrypted by this Electron process and saved to config.
  */
 function getDevelopmentNasJwtToken(): string {
-    if (app?.isPackaged) return '';
+    if (app?.isPackaged || isNonProductionEnvironment()) return '';
     const candidates = [
         path.join(process.cwd(), '.env.local'),
         path.join(__dirname, '..', '.env.local')
@@ -116,26 +119,44 @@ interface SupabaseConfig {
 // SECURITY: No credentials are hardcoded here.
 // All keys must come from the on-disk config file written during first-time setup or environment variables.
 // If the config file is absent, the app redirects to /setup via hasSupabaseConfig().
+const NON_PRODUCTION = isNonProductionEnvironment();
+const localSupabaseUrl = 'http://127.0.0.1:54321';
+const localNasUrl = 'http://127.0.0.1:3001';
+const configuredSupabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '';
+const configuredSupabaseKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || '';
+const endpointFromEnvironment = (value: string | undefined, fallback: string): string => {
+    if (!value) return fallback;
+    return !NON_PRODUCTION || isAllowedNonProductionEndpoint(value) ? value : fallback;
+};
+const safeConfiguredSupabaseUrl = configuredSupabaseUrl && isAllowedNonProductionEndpoint(configuredSupabaseUrl)
+    ? configuredSupabaseUrl
+    : '';
+const safeConfiguredNasUrl = process.env.NAS_URL && isAllowedNonProductionEndpoint(process.env.NAS_URL)
+    ? process.env.NAS_URL
+    : '';
+
 const EMPTY_DEFAULTS: SupabaseConfig = {
-    url: process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || PUBLIC_SUPABASE_URL || '',
-    anonKey: process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || PUBLIC_SUPABASE_ANON_KEY || '',
+    url: NON_PRODUCTION ? (safeConfiguredSupabaseUrl || localSupabaseUrl) : (configuredSupabaseUrl || PUBLIC_SUPABASE_URL || ''),
+    anonKey: NON_PRODUCTION ? configuredSupabaseKey : (configuredSupabaseKey || PUBLIC_SUPABASE_ANON_KEY || ''),
     serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || '',
-    nasUrl: process.env.NAS_URL || 'http://100.88.85.6:3001',
-    nasAnonKey: process.env.NAS_ANON_KEY || PUBLIC_SUPABASE_ANON_KEY || '',
-    nasJwtToken: process.env.NAS_JWT_TOKEN || '',
-    nasStorageUrl: process.env.NAS_STORAGE_URL || 'http://100.88.85.6:8081',
-    nasLocalUrl: process.env.NAS_LOCAL_URL || 'http://192.168.1.14:3001',
-    nasLocalStorageUrl: process.env.NAS_LOCAL_STORAGE_URL || 'http://192.168.1.14:8081',
-    nasTunnelUrl: process.env.NAS_TUNNEL_URL || 'https://db.lenas.me',
-    nasTunnelStorageUrl: process.env.NAS_TUNNEL_STORAGE_URL || 'https://storage.lenas.me',
+    nasUrl: NON_PRODUCTION ? (safeConfiguredNasUrl || localNasUrl) : (process.env.NAS_URL || 'http://100.88.85.6:3001'),
+    nasAnonKey: process.env.NAS_ANON_KEY || (NON_PRODUCTION ? configuredSupabaseKey : PUBLIC_SUPABASE_ANON_KEY) || '',
+    nasJwtToken: NON_PRODUCTION && getRuntimeEnvironment() !== 'staging' ? '' : (process.env.NAS_JWT_TOKEN || ''),
+    nasStorageUrl: NON_PRODUCTION ? endpointFromEnvironment(process.env.NAS_STORAGE_URL, 'http://127.0.0.1:8081') : (process.env.NAS_STORAGE_URL || 'http://100.88.85.6:8081'),
+    nasLocalUrl: NON_PRODUCTION ? endpointFromEnvironment(process.env.NAS_LOCAL_URL, localNasUrl) : (process.env.NAS_LOCAL_URL || 'http://192.168.1.14:3001'),
+    nasLocalStorageUrl: NON_PRODUCTION ? endpointFromEnvironment(process.env.NAS_LOCAL_STORAGE_URL, 'http://127.0.0.1:8081') : (process.env.NAS_LOCAL_STORAGE_URL || 'http://192.168.1.14:8081'),
+    nasTunnelUrl: NON_PRODUCTION ? (getRuntimeEnvironment() === 'staging' ? endpointFromEnvironment(process.env.NAS_TUNNEL_URL, '') : '') : (process.env.NAS_TUNNEL_URL || 'https://db.lenas.me'),
+    nasTunnelStorageUrl: NON_PRODUCTION ? (getRuntimeEnvironment() === 'staging' ? endpointFromEnvironment(process.env.NAS_TUNNEL_STORAGE_URL, '') : '') : (process.env.NAS_TUNNEL_STORAGE_URL || 'https://storage.lenas.me'),
     cfAccessClientId: process.env.CF_ACCESS_CLIENT_ID || '',
     cfAccessClientSecret: process.env.CF_ACCESS_CLIENT_SECRET || ''
 };
+const clientPlaceholderKey = NON_PRODUCTION ? 'local-development-key' : 'placeholder';
 
 export function loadConfig(): SupabaseConfig {
     const configPath = getConfigPath();
     try {
         if (!fs.existsSync(configPath)) {
+            if (isNonProductionEnvironment()) return EMPTY_DEFAULTS;
             // Option B: If machine already has an active license, auto-bootstrap public client configuration
             try {
                 const lic = isLicensed();
@@ -170,6 +191,22 @@ export function loadConfig(): SupabaseConfig {
             const raw = fs.readFileSync(configPath, 'utf-8');
             const parsed = JSON.parse(raw);
             const cfg: SupabaseConfig = { ...EMPTY_DEFAULTS, ...parsed };
+
+            // Refuse copied/old production endpoints in dev, testing, and staging.
+            try {
+                assertNonProductionEndpoints({
+                    supabaseUrl: cfg.url,
+                    nasUrl: cfg.nasUrl,
+                    nasStorageUrl: cfg.nasStorageUrl,
+                    nasLocalUrl: cfg.nasLocalUrl,
+                    nasLocalStorageUrl: cfg.nasLocalStorageUrl,
+                    nasTunnelUrl: cfg.nasTunnelUrl,
+                    nasTunnelStorageUrl: cfg.nasTunnelStorageUrl,
+                });
+            } catch (error: any) {
+                console.error('[SUPABASE] Ignoring production endpoint configuration in non-production runtime:', error.message);
+                return EMPTY_DEFAULTS;
+            }
 
             let needsMigration = false;
 
@@ -332,11 +369,9 @@ export function loadConfig(): SupabaseConfig {
  */
 export function hasSupabaseConfig(): boolean {
     try {
-        const configPath = getConfigPath();
-        if (fs.existsSync(configPath)) {
-            const cfg = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-            return !!(cfg.url && cfg.anonKey);
-        }
+        const cfg = loadConfig();
+        if (cfg.url && cfg.anonKey) return true;
+        if (isNonProductionEnvironment()) return false;
         // If config file is missing but machine has a verified license, auto-bootstrap
         try {
             const lic = isLicensed();
@@ -354,6 +389,15 @@ export function saveSupabaseConfig(config: Partial<SupabaseConfig>): void {
     // Merge with any existing config so partial saves don't wipe other keys
     const existing = loadConfig();
     const merged = { ...existing, ...config };
+    assertNonProductionEndpoints({
+        supabaseUrl: merged.url,
+        nasUrl: merged.nasUrl,
+        nasStorageUrl: merged.nasStorageUrl,
+        nasLocalUrl: merged.nasLocalUrl,
+        nasLocalStorageUrl: merged.nasLocalStorageUrl,
+        nasTunnelUrl: merged.nasTunnelUrl,
+        nasTunnelStorageUrl: merged.nasTunnelStorageUrl,
+    });
 
     // Prepare disk payload with encrypted privileged credentials
     const diskPayload: Record<string, any> = { ...merged };
@@ -409,10 +453,15 @@ export function saveSupabaseConfig(config: Partial<SupabaseConfig>): void {
 export function bootstrapPublicClientConfig(): boolean {
     try {
         const configPath = getConfigPath();
-        const url = PUBLIC_SUPABASE_URL;
-        const anonKey = PUBLIC_SUPABASE_ANON_KEY;
+        const url = NON_PRODUCTION ? EMPTY_DEFAULTS.url : PUBLIC_SUPABASE_URL;
+        const anonKey = NON_PRODUCTION ? EMPTY_DEFAULTS.anonKey : PUBLIC_SUPABASE_ANON_KEY;
 
-        if (!url || !anonKey || !url.startsWith('https://') || !anonKey.startsWith('eyJ')) {
+        if (NON_PRODUCTION && (!url || !anonKey || !isAllowedNonProductionEndpoint(url))) {
+            console.warn(`[CONFIG] ${getRuntimeEnvironment()} setup requires an explicitly configured local/staging Supabase URL and anon key.`);
+            return false;
+        }
+
+        if (!url || !anonKey || (!NON_PRODUCTION && (!url.startsWith('https://') || !anonKey.startsWith('eyJ')))) {
             console.error('[CONFIG] Public Supabase client configuration is invalid or missing.');
             return false;
         }
@@ -462,6 +511,7 @@ export function bootstrapPublicClientConfig(): boolean {
  * @returns true if decryption succeeded and config was saved, false on error
  */
 export function decryptEmbeddedCredentials(): boolean {
+    if (isNonProductionEnvironment()) return false;
     // 1. Try public configuration bootstrap first (no secret required)
     if (PUBLIC_SUPABASE_URL && PUBLIC_SUPABASE_ANON_KEY) {
         return bootstrapPublicClientConfig();
@@ -596,18 +646,18 @@ export function getNasStorageUrl(): string | null {
         
         // Tier 1: Local LAN storage
         if (connectionState === 'nas_local') {
-            return config.nasLocalStorageUrl || 'http://192.168.1.14:8081';
+            return config.nasLocalStorageUrl || (NON_PRODUCTION ? 'http://127.0.0.1:8081' : 'http://192.168.1.14:8081');
         }
         // Tier 2: Cloudflare Tunnel storage
         if (connectionState === 'nas_tunnel') {
-            return config.nasTunnelStorageUrl || 'https://storage.lenas.me';
+            return config.nasTunnelStorageUrl || (NON_PRODUCTION ? null : 'https://storage.lenas.me');
         }
         // Legacy Tailscale fallback (nas_public)
         if (connectionState === 'nas_public') {
-            return config.nasStorageUrl || config.nasUrl?.replace(':3001', ':8081') || 'http://100.88.85.6:8081';
+            return config.nasStorageUrl || config.nasUrl?.replace(':3001', ':8081') || (NON_PRODUCTION ? 'http://127.0.0.1:8081' : 'http://100.88.85.6:8081');
         }
         // Fallback: If NAS is configured, prefer tunnel or local LAN storage
-        return config.nasTunnelStorageUrl || config.nasLocalStorageUrl || config.nasStorageUrl || 'https://storage.lenas.me';
+        return config.nasTunnelStorageUrl || config.nasLocalStorageUrl || config.nasStorageUrl || (NON_PRODUCTION ? 'http://127.0.0.1:8081' : 'https://storage.lenas.me');
     } catch {
         return null;
     }
@@ -641,7 +691,7 @@ function recreateNasClient(url: string) {
             // If an auth request ever reaches nasFetch, bypass NAS completely and forward directly
             // to the authoritative Supabase Cloud Auth service endpoint without modifying headers or recording NAS failure.
             if (relativePath.includes('/auth/v1/')) {
-                const authTargetBase = config.url || 'https://ildkkgjrolcjijwfokek.supabase.co';
+                const authTargetBase = config.url || EMPTY_DEFAULTS.url;
                 const cleanAuthPath = relativePath.startsWith('/') ? relativePath : '/' + relativePath;
                 const targetAuthUrl = new URL(cleanAuthPath, authTargetBase).toString();
 
@@ -672,7 +722,7 @@ function recreateNasClient(url: string) {
 
             // The public anon key identifies this PostgREST project; NAS JWT authorizes the database role.
             // Never use a Supabase service-role key as the NAS bearer token.
-            const nasDbKey = config.nasAnonKey || config.anonKey || PUBLIC_SUPABASE_ANON_KEY;
+            const nasDbKey = config.nasAnonKey || config.anonKey || (NON_PRODUCTION ? clientPlaceholderKey : PUBLIC_SUPABASE_ANON_KEY);
             headers.set('apikey', nasDbKey);
             headers.set('Authorization', `Bearer ${config.nasJwtToken || nasDbKey}`);
 
@@ -745,7 +795,7 @@ function recreateNasClient(url: string) {
             }
         };
 
-        const nasKey = config.nasAnonKey || config.anonKey || PUBLIC_SUPABASE_ANON_KEY;
+        const nasKey = config.nasAnonKey || config.anonKey || (NON_PRODUCTION ? clientPlaceholderKey : PUBLIC_SUPABASE_ANON_KEY);
         nasClient = createClient(url, nasKey, {
             auth: {
                 persistSession: false,
@@ -792,7 +842,7 @@ export function reinitSupabaseClients(): void {
         failoverEngine.stopBackgroundMonitoring();
         
         // Initialize Supabase Client
-        supabaseClient = createClient(config.url || PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co', config.anonKey || PUBLIC_SUPABASE_ANON_KEY || 'placeholder', {
+        supabaseClient = createClient(config.url || EMPTY_DEFAULTS.url || 'http://127.0.0.1:54321', config.anonKey || (NON_PRODUCTION ? clientPlaceholderKey : PUBLIC_SUPABASE_ANON_KEY || 'placeholder'), {
             auth: {
                 persistSession: false,
                 autoRefreshToken: true,
@@ -819,7 +869,9 @@ export function reinitSupabaseClients(): void {
         const isLastWorkingValid = lastWorking && (!lastWorking.startsWith('https://') || hasCf);
 
         let defaultNasCandidate: string;
-        if (isLastWorkingValid) {
+        if (NON_PRODUCTION) {
+            defaultNasCandidate = config.nasUrl || config.nasLocalUrl || localNasUrl;
+        } else if (isLastWorkingValid) {
             defaultNasCandidate = lastWorking;
         } else if (config.nasUrl) {
             defaultNasCandidate = config.nasUrl;
@@ -850,9 +902,9 @@ export function reinitSupabaseClients(): void {
         const getCandidates = () => {
             const hasCfAccess = Boolean(config.cfAccessClientId && config.cfAccessClientSecret);
             return {
-                localUrl: config.nasLocalUrl || 'http://192.168.1.14:3001',
-                publicUrl: config.nasUrl || 'http://100.88.85.6:3001',
-                tunnelUrl: hasCfAccess ? (config.nasTunnelUrl || 'https://db.lenas.me') : undefined,
+                localUrl: config.nasLocalUrl || (NON_PRODUCTION ? localNasUrl : 'http://192.168.1.14:3001'),
+                publicUrl: config.nasUrl || (NON_PRODUCTION ? localNasUrl : 'http://100.88.85.6:3001'),
+                tunnelUrl: !NON_PRODUCTION && hasCfAccess ? (config.nasTunnelUrl || 'https://db.lenas.me') : undefined,
                 cfHeaders: getCfAccessHeaders()
             };
         };
@@ -926,12 +978,18 @@ if (typeof app?.whenReady === 'function' && app?.isReady?.() === false) {
  */
 export function getNasStorageCandidates(): string[] {
     const config = loadConfig();
+    const nonProduction = isNonProductionEnvironment();
     const candidates = [
-        config.nasStorageUrl || 'http://100.88.85.6:8081',
-        config.nasLocalStorageUrl || 'http://192.168.1.14:8081',
-        config.nasTunnelStorageUrl || 'https://storage.lenas.me'
+        config.nasStorageUrl || (nonProduction ? 'http://127.0.0.1:8081' : 'http://100.88.85.6:8081'),
+        config.nasLocalStorageUrl || (nonProduction ? 'http://127.0.0.1:8081' : 'http://192.168.1.14:8081'),
+        config.nasTunnelStorageUrl || (nonProduction ? '' : 'https://storage.lenas.me'),
+        process.env.NAS_STORAGE_URL,
+        process.env.NAS_LOCAL_STORAGE_URL,
+        process.env.NAS_TUNNEL_STORAGE_URL
     ].filter(Boolean);
-    return Array.from(new Set(candidates));
+    return Array.from(new Set(candidates.filter((candidate): candidate is string =>
+        typeof candidate === 'string' && (!nonProduction || isAllowedNonProductionEndpoint(candidate))
+    )));
 }
 
 export default supabase;

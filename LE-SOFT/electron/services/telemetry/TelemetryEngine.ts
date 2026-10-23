@@ -25,6 +25,7 @@ import crypto from 'crypto';
 import { SupabaseClient, createClient } from '@supabase/supabase-js';
 import { TelemetrySanitizer } from './TelemetrySanitizer';
 import { PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY } from '../../credentials';
+import { isNonProductionEnvironment } from '../../runtime-environment';
 
 export type ErrorSeverity = 'info' | 'warning' | 'error' | 'fatal';
 export type ErrorSource = 'renderer' | 'main' | 'database' | 'startup' | 'ipc' | 'sync' | 'unknown';
@@ -624,6 +625,7 @@ export class TelemetryEngine {
         if (this.supabaseClient) {
             return this.supabaseClient;
         }
+        if (isNonProductionEnvironment()) return null;
         // Lazily instantiate anonymous fallback client using public anon parameters
         if (!this.fallbackAnonClient && PUBLIC_SUPABASE_URL && PUBLIC_SUPABASE_ANON_KEY) {
             try {

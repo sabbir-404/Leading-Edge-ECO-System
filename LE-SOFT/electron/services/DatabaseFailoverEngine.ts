@@ -31,6 +31,7 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { app, BrowserWindow } from 'electron';
 import fs from 'fs';
 import path from 'path';
+import { getRuntimeEnvironment, isAllowedNonProductionEndpoint, isNonProductionEnvironment } from '../runtime-environment';
 
 export type DatabaseTarget = 'nas' | 'supabase';
 export type CircuitBreakerState = 'healthy' | 'degraded' | 'recovering' | 'offline';
@@ -420,12 +421,18 @@ export class DatabaseFailoverEngine {
         this.isProbing = true;
 
         const cfHeaders = candidates.cfHeaders || {};
-        const local = candidates.localUrl || 'http://192.168.1.14:3001';
-        const pub = candidates.publicUrl || 'http://100.88.85.6:3001';
+        const local = candidates.localUrl || (isNonProductionEnvironment() ? 'http://127.0.0.1:3001' : 'http://192.168.1.14:3001');
+        const pub = candidates.publicUrl || (isNonProductionEnvironment() ? 'http://127.0.0.1:3001' : 'http://100.88.85.6:3001');
         const tunnel = candidates.tunnelUrl;
 
+        if (isNonProductionEnvironment() && [local, pub, tunnel].some(endpoint => endpoint && !isAllowedNonProductionEndpoint(endpoint))) {
+            console.error(`[DB:SAFETY] Refusing production NAS endpoint from ${getRuntimeEnvironment()} health check configuration.`);
+            this.isProbing = false;
+            return false;
+        }
+
         // 1. Fast check: If last working URL is known, test it first with tight timeout (800ms)
-        if (this.lastWorkingNasUrl) {
+        if (this.lastWorkingNasUrl && !(isNonProductionEnvironment() && !isAllowedNonProductionEndpoint(this.lastWorkingNasUrl))) {
             const headers = this.lastWorkingNasUrl.startsWith('https://') ? cfHeaders : {};
             const t0 = Date.now();
             const alive = await this.pingUrl(this.lastWorkingNasUrl, 800, headers);

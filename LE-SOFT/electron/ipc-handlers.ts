@@ -40,6 +40,7 @@ import { MakeCadService } from './services/make/MakeCadService';
 import { WindowsNotificationService } from './services/WindowsNotificationService';
 import { WatchdogService } from './services/WatchdogService';
 import { generateLicenseForMachine } from './services/license-generation';
+import { isNonProductionEnvironment } from './runtime-environment';
 
 const BCRYPT_ROUNDS = 12;
 const HOSTINGER_UPLOAD_URL = process.env.HOSTINGER_UPLOAD_URL || 'https://leadingedge.com.bd/api/upload_image.php';
@@ -80,6 +81,7 @@ async function optimizeImageBuffer(buffer: Buffer): Promise<Buffer> {
 
 export function toPublicStorageUrl(url: string | null | undefined): string {
     if (!url) return '';
+    if (isNonProductionEnvironment()) return url;
     return url
         .replace(/^http:\/\/192\.168\.\d+\.\d+:8081/i, 'https://storage.lenas.me')
         .replace(/^http:\/\/100\.\d+\.\d+\.\d+:8081/i, 'https://storage.lenas.me')
@@ -103,7 +105,7 @@ async function uploadOptimizedImage(buffer: Buffer, filenamePrefix: string): Pro
 
         const result = await DurableUploadService.getInstance().dispatchUpload(staged.id);
         if (result.success || result.status === 'buffered_supabase') {
-            return result.activeUrl || `https://storage.lenas.me/files/product-images/${finalFilename}`;
+            return result.activeUrl || `${getNasStorageUrl() || 'http://127.0.0.1:8081'}/files/product-images/${finalFilename}`;
         }
         if (result.status === 'staged_local') {
             return `file://${staged.localPath}`;
@@ -133,7 +135,7 @@ async function uploadOptimizedImage(buffer: Buffer, filenamePrefix: string): Pro
                 if (response.ok) {
                     const data = await response.json();
                     if (data.success) {
-                        return `https://storage.lenas.me/files/product-images/${finalFilename}`;
+                        return `${candidateUrl.replace(/\/$/, '')}/files/product-images/${finalFilename}`;
                     }
                 }
             } catch {}
@@ -156,7 +158,7 @@ async function uploadOptimizedImage(buffer: Buffer, filenamePrefix: string): Pro
     } catch {}
 
     // Upload to Hostinger (legacy fallback only if secret configured)
-    if (HOSTINGER_UPLOAD_SECRET) {
+    if (HOSTINGER_UPLOAD_SECRET && !isNonProductionEnvironment()) {
         try {
             const formData = new FormData();
             formData.append('secret_key', HOSTINGER_UPLOAD_SECRET);

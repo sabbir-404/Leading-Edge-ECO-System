@@ -18,6 +18,7 @@ import { PDFDocument, StandardFonts, rgb, degrees } from 'pdf-lib';
 import { supabase, getCfAccessHeaders, getNasStorageAuthHeaders } from '../../supabase';
 import { SupabaseQuotaManager } from '../quota/SupabaseQuotaManager';
 import { DurableUploadService } from '../media/DurableUploadService';
+import { isAllowedNonProductionEndpoint, isNonProductionEnvironment } from '../../runtime-environment';
 
 export interface FileValidationResult {
     isValid: boolean;
@@ -99,12 +100,12 @@ export class MakeCadService {
             const configPath = path.join(app?.getPath ? app.getPath('userData') : process.cwd(), 'supabase-config.json');
             if (fs.existsSync(configPath)) {
                 const cfg = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-                if (cfg.storageUrl) return cfg.storageUrl;
-                if (cfg.nasStorageUrl) return cfg.nasStorageUrl;
+                const configured = cfg.storageUrl || cfg.nasStorageUrl;
+                if (configured && (!isNonProductionEnvironment() || isAllowedNonProductionEndpoint(configured))) return configured;
             }
         } catch { }
-        if (process.env.NAS_STORAGE_URL) return process.env.NAS_STORAGE_URL;
-        return 'http://100.88.85.6:8081';
+        if (process.env.NAS_STORAGE_URL && (!isNonProductionEnvironment() || isAllowedNonProductionEndpoint(process.env.NAS_STORAGE_URL))) return process.env.NAS_STORAGE_URL;
+        return isNonProductionEnvironment() ? 'http://127.0.0.1:8081' : 'http://100.88.85.6:8081';
     }
 
     /**

@@ -12,7 +12,7 @@ import {
     LICENSE_VERIFICATION_PUBLIC_KEY,
     VERIFICATION_SALT
 } from '../../electron/license-manager';
-import supabase, {
+import {
     decryptEmbeddedCredentials,
     bootstrapPublicClientConfig,
     loadConfig,
@@ -21,7 +21,6 @@ import supabase, {
     reinitSupabaseClients,
     getDbClients
 } from '../../electron/supabase';
-import { PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY } from '../../electron/credentials';
 import {
     encryptPrivilegedSecret,
     isSafeStorageAvailable,
@@ -111,7 +110,7 @@ describe('Fresh Customer Installation & Credential Bootstrap Audit (Option B)', 
         } catch {}
     });
 
-    it('1. Clean install with no LE_GENERATION_SECRET → Supabase bootstrap succeeds', () => {
+    it('1. Clean test install fails closed without local Supabase credentials', () => {
         // Strip developer secrets completely
         delete process.env.LE_GENERATION_SECRET;
         delete process.env.LE_LICENSE_SIGNING_PRIVATE_KEY;
@@ -124,23 +123,18 @@ describe('Fresh Customer Installation & Credential Bootstrap Audit (Option B)', 
         // Before bootstrap / license: hasSupabaseConfig is false
         expect(hasSupabaseConfig()).toBe(false);
 
-        // Bootstrap public client configuration (Option B)
+        // Test mode must not bootstrap the production project.
         const result = bootstrapPublicClientConfig();
-        expect(result).toBe(true);
+        expect(result).toBe(false);
 
-        // Config file was created on disk
-        expect(fs.existsSync(configPath)).toBe(true);
+        expect(fs.existsSync(configPath)).toBe(false);
 
-        // Has valid public credentials
-        expect(hasSupabaseConfig()).toBe(true);
+        expect(hasSupabaseConfig()).toBe(false);
         const config = loadConfig();
-        expect(config.url).toBe(PUBLIC_SUPABASE_URL);
-        expect(config.anonKey).toBe(PUBLIC_SUPABASE_ANON_KEY);
-        expect(config.url.startsWith('https://')).toBe(true);
-        expect(config.anonKey.startsWith('eyJ')).toBe(true);
+        expect(config.url).toBe('http://127.0.0.1:54321');
+        expect(config.anonKey).toBe('');
 
-        // Legacy wrapper also succeeds via fallback
-        expect(decryptEmbeddedCredentials()).toBe(true);
+        expect(decryptEmbeddedCredentials()).toBe(false);
     });
 
     it('2. V2 license activation → succeeds without developer secrets', () => {
@@ -162,35 +156,21 @@ describe('Fresh Customer Installation & Credential Bootstrap Audit (Option B)', 
         expect(status.valid).toBe(true);
         expect(status.version).toBe(2);
 
-        // After activation, bootstrap initializes public configuration
-        expect(bootstrapPublicClientConfig()).toBe(true);
-        expect(hasSupabaseConfig()).toBe(true);
+        // A valid license must never make test mode point to production.
+        expect(bootstrapPublicClientConfig()).toBe(false);
+        expect(hasSupabaseConfig()).toBe(false);
     });
 
-    it('3. Supabase login on clean install → succeeds', async () => {
+    it('3. Local test install does not contact production Supabase Auth', async () => {
         delete process.env.LE_GENERATION_SECRET;
         delete process.env.LE_LICENSE_SIGNING_PRIVATE_KEY;
 
-        // Fresh install bootstrap
-        expect(bootstrapPublicClientConfig()).toBe(true);
+        expect(bootstrapPublicClientConfig()).toBe(false);
         reinitSupabaseClients();
 
-        // Check Supabase client is initialized with canonical public credentials
         const clients = getDbClients();
         expect(clients.supabase).toBeDefined();
-
-        // Verify Supabase Auth service is reachable with public anon client credentials
-        // An invalid-credential test verifies the auth endpoint is live and validates the client key
-        const authRes = await supabase.auth.signInWithPassword({
-            email: 'clean_install_audit_nonexistent@lesoft.local',
-            password: 'NonExistentPassword_12345!'
-        });
-
-        // Supabase Auth returns standard error from the server (e.g. invalid credentials)
-        // rather than network failure or uninitialized client error
-        expect(authRes.data.user).toBeNull();
-        expect(authRes.error).toBeDefined();
-        expect(authRes.error?.message).toMatch(/Invalid login credentials|Email not confirmed/i);
+        expect(clients.supabase?.supabaseUrl).toBe('http://127.0.0.1:54321');
     });
 
     it('4. Existing encrypted configuration → still loads and is not overwritten', () => {
@@ -204,18 +184,16 @@ describe('Fresh Customer Installation & Credential Bootstrap Audit (Option B)', 
 
         fs.writeFileSync(configPath, JSON.stringify(customConfig, null, 2), 'utf-8');
 
-        // loadConfig must preserve existing custom settings
+        // A non-production process must ignore remote endpoints copied into its profile.
         const loaded = loadConfig();
-        expect(loaded.url).toBe(customConfig.url);
-        expect(loaded.anonKey).toBe(customConfig.anonKey);
-        expect(loaded.nasTunnelUrl).toBe(customConfig.nasTunnelUrl);
-        expect(loaded.nasLocalUrl).toBe(customConfig.nasLocalUrl);
+        expect(loaded.url).toBe('http://127.0.0.1:54321');
+        expect(loaded.anonKey).toBe('');
+        expect(loaded.nasUrl).toBe('http://127.0.0.1:3001');
 
-        // bootstrapPublicClientConfig must NOT overwrite valid existing configuration
-        expect(bootstrapPublicClientConfig()).toBe(true);
+        expect(bootstrapPublicClientConfig()).toBe(false);
         const reloaded = loadConfig();
-        expect(reloaded.url).toBe(customConfig.url);
-        expect(reloaded.anonKey).toBe(customConfig.anonKey);
+        expect(reloaded.url).toBe('http://127.0.0.1:54321');
+        expect(JSON.parse(fs.readFileSync(configPath, 'utf-8'))).toEqual(customConfig);
     });
 
     it('5. Privileged credentials remain safeStorage-protected', () => {
@@ -225,8 +203,8 @@ describe('Fresh Customer Installation & Credential Bootstrap Audit (Option B)', 
         const dummyCfSecret = '1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef';
 
         saveSupabaseConfig({
-            url: PUBLIC_SUPABASE_URL,
-            anonKey: PUBLIC_SUPABASE_ANON_KEY,
+            url: 'http://127.0.0.1:54321',
+            anonKey: 'local-test-anon-key',
             serviceRoleKey: dummyServiceKey,
             cfAccessClientSecret: dummyCfSecret
         });

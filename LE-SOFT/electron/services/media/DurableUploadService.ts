@@ -23,6 +23,7 @@ import crypto from 'crypto';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { SupabaseQuotaManager } from '../quota/SupabaseQuotaManager';
 import { getCfAccessHeaders, getNasStorageAuthHeaders, getNasStorageCandidates } from '../../supabase';
+import { isAllowedNonProductionEndpoint, isNonProductionEnvironment } from '../../runtime-environment';
 
 export type UploadStatus = 
     | 'staged_local'
@@ -961,6 +962,9 @@ export class DurableUploadService {
     }
 
     public async verifyRemoteObject(url: string, expectedSha256?: string): Promise<{ verified: boolean; sha256?: string; error?: string }> {
+        if (isNonProductionEnvironment() && !isAllowedNonProductionEndpoint(url)) {
+            return { verified: false, error: 'Remote verification refused a non-isolated storage endpoint.' };
+        }
         const cfHeaders = getCfAccessHeaders();
         const isTunnel = url.startsWith('https://');
         const controller = new AbortController();

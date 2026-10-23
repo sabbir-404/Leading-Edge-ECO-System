@@ -21,6 +21,7 @@ import { MakeOrderService } from '../../services/make/MakeOrderService';
 import { MakePricingService } from '../../services/make/MakePricingService';
 import { MakeProductionService } from '../../services/make/MakeProductionService';
 import { MakeVersionService } from '../../services/make/MakeVersionService';
+import { isAllowedNonProductionEndpoint, isLoopbackEndpoint, isNonProductionEnvironment } from '../../runtime-environment';
 import { MakeCadService } from '../../services/make/MakeCadService';
 import { MakeSearchService } from '../../services/make/MakeSearchService';
 import { DurableUploadService } from '../../services/media/DurableUploadService';
@@ -61,6 +62,7 @@ export interface ValidatedDownloadUrlResult {
 export function isApprovedNasHost(hostname: string, port?: string): boolean {
     if (!hostname || typeof hostname !== 'string') return false;
     const lowerHost = hostname.toLowerCase();
+    if (isNonProductionEnvironment() && ['storage.lenas.me', '100.88.85.6', '192.168.1.14'].includes(lowerHost)) return false;
 
     const runtimeCandidates = typeof getNasStorageCandidates === 'function'
         ? getNasStorageCandidates()
@@ -90,6 +92,7 @@ export function isApprovedNasHost(hostname: string, port?: string): boolean {
  */
 export function isApprovedNasPort(hostname: string, port?: string): boolean {
     const lowerHost = (hostname || '').toLowerCase();
+    if (isNonProductionEnvironment() && ['storage.lenas.me', '100.88.85.6', '192.168.1.14'].includes(lowerHost)) return false;
 
     const runtimeCandidates = typeof getNasStorageCandidates === 'function'
         ? getNasStorageCandidates()
@@ -109,6 +112,17 @@ export function isApprovedNasPort(hostname: string, port?: string): boolean {
             } catch {}
         }
         return false;
+    }
+
+    if (port === '8080' && isLoopbackEndpoint(`http://${lowerHost}`)) {
+        return runtimeCandidates.some(candidate => {
+            try {
+                const url = new URL(candidate);
+                return url.hostname.toLowerCase() === lowerHost
+                    && url.protocol === 'http:'
+                    && (url.port || '80') === '8081';
+            } catch { return false; }
+        });
     }
 
     // Explicit port rules for configured candidate hosts (reject arbitrary ports)
@@ -286,8 +300,12 @@ export function validateAndNormalizeDownloadUrl(rawUrl: string): ValidatedDownlo
             return cand.protocol.toLowerCase() === parsedUrl.protocol.toLowerCase() &&
                    candPort === effectivePort;
         });
+        const legacyLoopbackPort = isLoopbackEndpoint(`${parsedUrl.protocol}//${parsedUrl.hostname}`)
+            && parsedUrl.protocol === 'http:'
+            && parsedUrl.port === '8080'
+            && matchingCandidates.some(cand => cand.protocol === 'http:' && (cand.port || '80') === '8081');
 
-        if (!matches) {
+        if (!matches && !legacyLoopbackPort) {
             return { isValid: false, error: `Unapproved endpoint: ${parsedUrl.protocol}//${parsedUrl.host}`, candidates: [] };
         }
     }
@@ -374,11 +392,15 @@ export function validateAndNormalizeRedirect(redirectUrlStr: string, currentUrlS
     // Ensure redirects cannot bypass legacy :8080 normalization.
     // Either reject those redirects or safely normalize them through approved candidates; do not request port 8080 directly.
     if (redirectParsed.port === '8080') {
-        if (lowerHost === '100.88.85.6' || lowerHost === '192.168.1.14') {
+        if (lowerHost === '100.88.85.6' || lowerHost === '192.168.1.14' || isLoopbackEndpoint(`${redirectParsed.protocol}//${redirectParsed.hostname}`)) {
             redirectParsed.port = '8081';
         } else {
             throw new Error(`Unapproved port 8080 on host "${redirectParsed.hostname}"`);
         }
+    }
+
+    if (isNonProductionEnvironment() && !isAllowedNonProductionEndpoint(redirectParsed.href)) {
+        throw new Error('Redirect to a non-isolated endpoint was blocked');
     }
 
     const runtimeCandidates = typeof getNasStorageCandidates === 'function'

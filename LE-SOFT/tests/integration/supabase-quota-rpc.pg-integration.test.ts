@@ -19,52 +19,26 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import pg from 'pg';
+import { assertIsolatedTestPostgresUrl } from '../../electron/runtime-environment';
 
-const stagingUrl = process.env.SUPABASE_STAGING_DB_URL || process.env.TEST_POSTGRES_URL;
+const testDatabaseUrl = process.env.TEST_POSTGRES_URL;
 const isExplicitlyApproved = process.env.ALLOW_DISPOSABLE_STAGING_TESTS === 'true';
-const isStagingAvailable = Boolean(stagingUrl && stagingUrl.trim().length > 0 && isExplicitlyApproved);
-
-// Production Safety Guard: Reject any URLs pointing to production or non-staging systems
-function assertApprovedDisposableStagingUrl(url: string): void {
-    const lower = url.toLowerCase();
-    if (
-        lower.includes('production') ||
-        lower.includes('prod') ||
-        lower.includes('lenas.me') ||
-        lower.includes('100.88.85.6') ||
-        lower.includes('leadingedge.com') ||
-        lower.includes('live')
-    ) {
-        throw new Error(`[SAFETY GUARD] Staging URL points to a production or NAS instance: ${url}. Aborting live integration tests.`);
-    }
-
-    // Must explicitly identify as staging, test, or localhost
-    const isApprovedTarget =
-        lower.includes('staging') ||
-        lower.includes('test') ||
-        lower.includes('disposable') ||
-        lower.includes('localhost') ||
-        lower.includes('127.0.0.1');
-
-    if (!isApprovedTarget) {
-        throw new Error(`[SAFETY GUARD] Staging URL must explicitly contain 'staging', 'test', 'disposable', or 'localhost'. Got: ${url}.`);
-    }
-}
+const isTestDatabaseAvailable = Boolean(testDatabaseUrl && testDatabaseUrl.trim().length > 0 && isExplicitlyApproved);
 
 describe('Migration 070 Real PostgreSQL Staging Integration Suite', () => {
     let pgClient: pg.Client | null = null;
 
     beforeAll(async () => {
-        if (!isStagingAvailable) {
-            console.log('\n[NOTICE - P1 Quota Testing]: SUPABASE_STAGING_DB_URL is not set or ALLOW_DISPOSABLE_STAGING_TESTS !== "true".');
-            console.log('Skipping live PostgreSQL staging integration tests. Unit simulations ran in supabase-quota-rpc.integration.test.ts.\n');
+        if (!isTestDatabaseAvailable) {
+            console.log('\n[NOTICE - P1 Quota Testing]: TEST_POSTGRES_URL is not set or ALLOW_DISPOSABLE_STAGING_TESTS !== "true".');
+            console.log('Skipping isolated local PostgreSQL integration tests. Unit simulations ran in supabase-quota-rpc.integration.test.ts.\n');
             return;
         }
 
-        assertApprovedDisposableStagingUrl(stagingUrl!);
+        assertIsolatedTestPostgresUrl(testDatabaseUrl!);
 
         pgClient = new pg.Client({
-            connectionString: stagingUrl,
+            connectionString: testDatabaseUrl,
             statement_timeout: 10000,
             query_timeout: 10000
         });
@@ -128,15 +102,15 @@ describe('Migration 070 Real PostgreSQL Staging Integration Suite', () => {
     });
 
     it('Environment Check: Reports staging availability truthfully without false claims', () => {
-        if (!isStagingAvailable) {
-            expect(isStagingAvailable).toBe(false);
+        if (!isTestDatabaseAvailable) {
+            expect(isTestDatabaseAvailable).toBe(false);
             console.log('[EVIDENCE]: Live staging instance unavailable in local CI/offline test runner (ALLOW_DISPOSABLE_STAGING_TESTS not set). Live integration skipped safely.');
         } else {
             expect(pgClient).not.toBeNull();
         }
     });
 
-    it.runIf(isStagingAvailable)('1. Applies Migration 070 and executes reserve_buffer_capacity with authoritative ceilings', async () => {
+    it.runIf(isTestDatabaseAvailable)('1. Applies Migration 070 and executes reserve_buffer_capacity with authoritative ceilings', async () => {
         const client = pgClient!;
         const testResId = `test_res_${Date.now()}`;
 
@@ -168,7 +142,7 @@ describe('Migration 070 Real PostgreSQL Staging Integration Suite', () => {
         expect(rowInDb.rows[0].status).toBe('active');
     });
 
-    it.runIf(isStagingAvailable)('2. Enforces client ownership against different authenticated callers', async () => {
+    it.runIf(isTestDatabaseAvailable)('2. Enforces client ownership against different authenticated callers', async () => {
         const client = pgClient!;
         const testResId = `test_owner_${Date.now()}`;
         const userAUuid = '00000000-0000-0000-0000-000000000001';
@@ -198,7 +172,7 @@ describe('Migration 070 Real PostgreSQL Staging Integration Suite', () => {
         expect(resB.rows[0].result.reason).toBe('UNAUTHORIZED_CLIENT_MISMATCH');
     });
 
-    it.runIf(isStagingAvailable)('3. Enforces committed quota retention and blocks direct client pruning', async () => {
+    it.runIf(isTestDatabaseAvailable)('3. Enforces committed quota retention and blocks direct client pruning', async () => {
         const client = pgClient!;
         const testResId = `test_prune_${Date.now()}`;
         const userUuid = '00000000-0000-0000-0000-000000000003';
@@ -237,7 +211,7 @@ describe('Migration 070 Real PostgreSQL Staging Integration Suite', () => {
         expect(pruneAttempt.rows[0].result.reason).toBe('UNAUTHORIZED_PRUNING_DENIED');
     });
 
-    it.runIf(isStagingAvailable)('4. Regression Test: commit -> same-ID reserve -> release cannot free committed quota', async () => {
+    it.runIf(isTestDatabaseAvailable)('4. Regression Test: commit -> same-ID reserve -> release cannot free committed quota', async () => {
         const client = pgClient!;
         const exploitId = `exploit_pg_${Date.now()}`;
         const userUuid = '00000000-0000-0000-0000-000000000004';
@@ -284,7 +258,7 @@ describe('Migration 070 Real PostgreSQL Staging Integration Suite', () => {
         expect(releaseAttempt.rows[0].result.reason).toBe('COMMITTED_QUOTA_CAN_ONLY_BE_PRUNED');
     });
 
-    it.runIf(isStagingAvailable)('5. Concurrent reservations from multiple independent clients at the ceiling limit', async () => {
+    it.runIf(isTestDatabaseAvailable)('5. Concurrent reservations from multiple independent clients at the ceiling limit', async () => {
         // Multi-client concurrent reservation test using Promise.all
         const pool = new pg.Pool({
             connectionString: stagingUrl,
@@ -327,7 +301,7 @@ describe('Migration 070 Real PostgreSQL Staging Integration Suite', () => {
         }
     }, 15000);
 
-    it.runIf(isStagingAvailable)('6. Rejects reuse of closed reservation IDs (released, pruned, expired)', async () => {
+    it.runIf(isTestDatabaseAvailable)('6. Rejects reuse of closed reservation IDs (released, pruned, expired)', async () => {
         const client = pgClient!;
         const closedResId = `test_closed_${Date.now()}`;
         const userUuid = '00000000-0000-0000-0000-000000000006';
@@ -359,7 +333,7 @@ describe('Migration 070 Real PostgreSQL Staging Integration Suite', () => {
         expect(reuseAttempt.rows[0].result.reason).toBe('RESERVATION_ALREADY_CLOSED');
     });
 
-    it.runIf(isStagingAvailable)('7. Rejects altering resource type and ownership on retry', async () => {
+    it.runIf(isTestDatabaseAvailable)('7. Rejects altering resource type and ownership on retry', async () => {
         const client = pgClient!;
         const typeResId = `test_type_${Date.now()}`;
         const ownerUuid = '00000000-0000-0000-0000-000000000007';
@@ -401,7 +375,7 @@ describe('Migration 070 Real PostgreSQL Staging Integration Suite', () => {
         expect(typeChangeAttempt.rows[0].result.reason).toBe('RESOURCE_TYPE_MISMATCH');
     });
 
-    it.runIf(isStagingAvailable)('8. Concurrent multi-client reservations cannot exceed server-enforced quota ceiling', async () => {
+    it.runIf(isTestDatabaseAvailable)('8. Concurrent multi-client reservations cannot exceed server-enforced quota ceiling', async () => {
         const pool = new pg.Pool({
             connectionString: stagingUrl,
             max: 5,
@@ -462,7 +436,7 @@ describe('Migration 070 Real PostgreSQL Staging Integration Suite', () => {
         }
     }, 15000);
 
-    it.runIf(isStagingAvailable)('9. Authorized reconciliation operator and service_role are permitted to prune committed reservations', async () => {
+    it.runIf(isTestDatabaseAvailable)('9. Authorized reconciliation operator and service_role are permitted to prune committed reservations', async () => {
         const client = pgClient!;
         const testResId = `test_recon_prune_${Date.now()}`;
         const userUuid = '00000000-0000-0000-0000-000000000030';
@@ -496,7 +470,7 @@ describe('Migration 070 Real PostgreSQL Staging Integration Suite', () => {
         expect(pruneOp.rows[0].result.status).toBe('pruned');
     });
 
-    it.runIf(isStagingAvailable)('10. Atomic server partition ceilings: Storage and Database quotas are strictly enforced separately', async () => {
+    it.runIf(isTestDatabaseAvailable)('10. Atomic server partition ceilings: Storage and Database quotas are strictly enforced separately', async () => {
         const client = pgClient!;
         const testResId = `test_atomic_ceil_${Date.now()}`;
 
@@ -509,7 +483,7 @@ describe('Migration 070 Real PostgreSQL Staging Integration Suite', () => {
         expect(itemOver.rows[0].result.reason).toBe('INVALID_BYTE_COUNT');
     });
 
-    it.runIf(isStagingAvailable)('11. Security Boundary: Anonymous unauthenticated callers are strictly prohibited from reserving or releasing quota', async () => {
+    it.runIf(isTestDatabaseAvailable)('11. Security Boundary: Anonymous unauthenticated callers are strictly prohibited from reserving or releasing quota', async () => {
         const client = pgClient!;
         const testResId = `test_anon_${Date.now()}`;
 
@@ -559,7 +533,7 @@ describe('Migration 070 Real PostgreSQL Staging Integration Suite', () => {
         expect(anonReleaseRejected).toBe(true);
     });
 
-    it.runIf(isStagingAvailable)('12. Quota Telemetry RPC: get_buffer_quota_status provides telemetry to authenticated roles and rejects anonymous callers', async () => {
+    it.runIf(isTestDatabaseAvailable)('12. Quota Telemetry RPC: get_buffer_quota_status provides telemetry to authenticated roles and rejects anonymous callers', async () => {
         const client = pgClient!;
 
         // 1. Authenticated user can query telemetry

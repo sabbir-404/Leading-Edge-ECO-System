@@ -1,5 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { DurableUploadService } from '../../electron/services/media/DurableUploadService';
+
+afterEach(() => vi.restoreAllMocks());
 
 describe('TrueNAS Storage URL Normalization & Regression Suite', () => {
     const normalize = DurableUploadService.normalizeNasStorageUrl;
@@ -71,7 +73,8 @@ describe('TrueNAS Storage URL Normalization & Regression Suite', () => {
 
     it('9. Rejects unverified remote objects when HTTP read-back fails or returns non-200', async () => {
         const service = DurableUploadService.getInstance();
-        const res = await service.verifyRemoteObject('http://100.88.85.6:8081/files/nonexistent_canary_404.png', 'SOME_EXPECTED_SHA256');
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('Not Found', { status: 404, statusText: 'Not Found' }));
+        const res = await service.verifyRemoteObject('http://127.0.0.1:8081/files/nonexistent_canary_404.png', 'SOME_EXPECTED_SHA256');
 
         expect(res.verified).toBe(false);
         expect(res.error).toMatch(/HTTP 404|fetch failed|timeout/);
@@ -79,10 +82,20 @@ describe('TrueNAS Storage URL Normalization & Regression Suite', () => {
 
     it('10. Rejects remote objects when SHA-256 digest does not match expected hash', async () => {
         const service = DurableUploadService.getInstance();
-        // Probe an existing endpoint or read-back with deliberately mismatched hash
-        const res = await service.verifyRemoteObject('http://100.88.85.6:8081/health', 'DEADBEEF00000000000000000000000000000000000000000000000000000000');
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('isolated test bytes', { status: 200 }));
+        const res = await service.verifyRemoteObject('http://127.0.0.1:8081/health', 'DEADBEEF00000000000000000000000000000000000000000000000000000000');
 
         expect(res.verified).toBe(false);
         expect(res.error).toContain('Remote digest mismatch');
+    });
+
+    it('11. Refuses production storage verification from isolated test mode', async () => {
+        const service = DurableUploadService.getInstance();
+        const fetchSpy = vi.spyOn(globalThis, 'fetch');
+        const res = await service.verifyRemoteObject('http://100.88.85.6:8081/files/live-record.png');
+
+        expect(res.verified).toBe(false);
+        expect(res.error).toContain('non-isolated storage endpoint');
+        expect(fetchSpy).not.toHaveBeenCalled();
     });
 });

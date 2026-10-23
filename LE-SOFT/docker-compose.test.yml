@@ -1,0 +1,14 @@
+services:
+  postgres-test:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: lesoft_test
+      POSTGRES_USER: lesoft_test
+      POSTGRES_PASSWORD: test-only-password
+    ports:
+      - "127.0.0.1:55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lesoft_test -d lesoft_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 30

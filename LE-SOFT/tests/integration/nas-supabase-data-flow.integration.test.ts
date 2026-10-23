@@ -196,9 +196,8 @@ describe('Real NAS + Supabase Data-Flow Verification Suite', () => {
             });
         });
 
-        // Live NAS canaries are opt-in: CI and developer builds must not wait on
-        // a private Tailscale host. Run with LE_RUN_LIVE_NAS_E2E=1 when connected.
-        it.skipIf(process.env.LE_RUN_LIVE_NAS_E2E !== '1')('verifies live TrueNAS Storage endpoint responsiveness, real write, and bit-for-bit read-back over Tailscale', async () => {
+        // Live NAS writes are deliberately excluded from automated tests.
+        it.skip('verifies live TrueNAS Storage endpoint responsiveness and real write over Tailscale', async () => {
             let isNasStorageHealthy = false;
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 4000);

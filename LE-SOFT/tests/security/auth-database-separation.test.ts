@@ -10,7 +10,8 @@ import {
     failoverEngine
 } from '../../electron/supabase';
 import { SessionManager } from '../../electron/session-manager';
-import { PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY } from '../../electron/credentials';
+const TEST_SUPABASE_URL = 'http://127.0.0.1:54321';
+const TEST_SUPABASE_ANON_KEY = 'local-development-key';
 
 describe('Auth & Database Transport Separation Suite (Tests A - I)', () => {
     // Generate a valid mock Supabase Auth JWT token for tests
@@ -87,7 +88,7 @@ describe('Auth & Database Transport Separation Suite (Tests A - I)', () => {
         const authCalls = contactedUrls.filter(u => u.includes('/auth/v1/'));
         expect(authCalls.length).toBeGreaterThan(0);
         authCalls.forEach(url => {
-            expect(url).toContain(PUBLIC_SUPABASE_URL);
+            expect(url).toContain(TEST_SUPABASE_URL);
             expect(url).not.toContain(':3001');
             expect(url).not.toContain('100.88.85.6');
         });
@@ -117,7 +118,7 @@ describe('Auth & Database Transport Separation Suite (Tests A - I)', () => {
 
         // Ensure NAS port 3001 was never contacted
         expect(contactedUrls.some(u => u.includes(':3001'))).toBe(false);
-        expect(contactedUrls.every(u => u.startsWith(PUBLIC_SUPABASE_URL))).toBe(true);
+        expect(contactedUrls.every(u => u.startsWith(TEST_SUPABASE_URL))).toBe(true);
     });
 
     it('Test C: MAKE database GET uses DatabaseFailoverEngine/NAS primary when available', async () => {
@@ -170,7 +171,7 @@ describe('Auth & Database Transport Separation Suite (Tests A - I)', () => {
             }
 
             // Supabase Cloud database fallback succeeds
-            if (urlStr.includes('supabase.co')) {
+            if (urlStr.startsWith(TEST_SUPABASE_URL)) {
                 return new Response(JSON.stringify([{ id: 201, model_code: 'CLOUD-FALLBACK-CHAIR' }]), {
                     status: 200,
                     headers: { 'Content-Type': 'application/json' }
@@ -298,7 +299,7 @@ describe('Auth & Database Transport Separation Suite (Tests A - I)', () => {
 
         // NAS must not be contacted during token refresh
         expect(contactedUrls.some(u => u.includes(':3001'))).toBe(false);
-        expect(contactedUrls.every(u => u.includes(PUBLIC_SUPABASE_URL))).toBe(true);
+        expect(contactedUrls.every(u => u.includes(TEST_SUPABASE_URL))).toBe(true);
     });
 
     it('Test H: Application restart: session restoration succeeds and MAKE database loads normally', async () => {
@@ -422,10 +423,10 @@ describe('Auth & Database Transport Separation Suite (Tests A - I)', () => {
         const authHeader = capturedNasHeaders!.get('Authorization');
         expect(authHeader).toBeDefined();
         expect(authHeader).not.toBe(`Bearer ${mockAccessToken}`);
-        expect(authHeader).toBe(`Bearer ${PUBLIC_SUPABASE_ANON_KEY}`);
+        expect(authHeader).toBe(`Bearer ${TEST_SUPABASE_ANON_KEY}`);
 
         const apiKeyHeader = capturedNasHeaders!.get('apikey');
-        expect(apiKeyHeader).toBe(PUBLIC_SUPABASE_ANON_KEY);
+        expect(apiKeyHeader).toBe(TEST_SUPABASE_ANON_KEY);
     });
 
     it('Test K: verifyAndRecoverNas succeeds and sends NAS database credential even with active user session', async () => {
@@ -468,7 +469,7 @@ describe('Auth & Database Transport Separation Suite (Tests A - I)', () => {
 
         const recovered = await failoverEngine.verifyAndRecoverNas();
         expect(recovered).toBe(true);
-        expect(capturedProbeAuth).toBe(`Bearer ${PUBLIC_SUPABASE_ANON_KEY}`);
+        expect(capturedProbeAuth).toBe(`Bearer ${TEST_SUPABASE_ANON_KEY}`);
         expect(capturedProbeAuth).not.toBe(`Bearer ${mockAccessToken}`);
     });
 });

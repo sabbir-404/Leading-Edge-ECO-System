@@ -10,13 +10,12 @@ import {
     getMachineId,
     LICENSE_VERIFICATION_PUBLIC_KEY
 } from '../../electron/license-manager';
-import supabase, {
+import {
     bootstrapPublicClientConfig,
     loadConfig,
     hasSupabaseConfig,
     reinitSupabaseClients
 } from '../../electron/supabase';
-import { PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY } from '../../electron/credentials';
 
 const {
     generateLicenseKey,
@@ -103,7 +102,7 @@ describe('LESOFT v1.8.4 Real-World Clean-Install & Production Validation', () =>
         expect(hasSupabaseConfig()).toBe(false);
     });
 
-    it('3. Real Customer Flow: Confirm device ID, activate V2 license, bootstrap public Supabase, and reject anonymous private reads', async () => {
+    it('3. Test install refuses to bootstrap the production Supabase project', () => {
         // Strip developer secrets completely
         delete process.env.LE_GENERATION_SECRET;
         delete process.env.LE_LICENSE_SIGNING_PRIVATE_KEY;
@@ -125,34 +124,21 @@ describe('LESOFT v1.8.4 Real-World Clean-Install & Production Validation', () =>
         expect(licStatus.valid).toBe(true);
         expect(licStatus.version).toBe(2);
 
-        // 3.4 Bootstrap public Supabase configuration
+        // A license must not redirect the test profile to production.
         const bootSuccess = bootstrapPublicClientConfig();
-        expect(bootSuccess).toBe(true);
+        expect(bootSuccess).toBe(false);
 
         const configFile = path.join(cleanUserData, 'supabase-config.json');
-        expect(fs.existsSync(configFile)).toBe(true);
+        expect(fs.existsSync(configFile)).toBe(false);
 
         const config = loadConfig();
-        expect(config.url).toBe(PUBLIC_SUPABASE_URL);
-        expect(config.anonKey).toBe(PUBLIC_SUPABASE_ANON_KEY);
+        expect(config.url).toBe('http://127.0.0.1:54321');
+        expect(config.anonKey).toBe('');
         expect(config.serviceRoleKey).toBe('');
         expect(config.cfAccessClientSecret).toBe('');
 
-        // 3.5 Reinitialize client singletons
         reinitSupabaseClients();
-
-        // 3.6 Public credentials must not expose user or MAKE records.
-        const { data: users, error: userErr } = await supabase.from('users').select('id,username,role').limit(3);
-        expect(userErr?.code).toBe('42501');
-        expect(users).toBeNull();
-
-        // 3.7 MAKE catalog access also requires an authenticated app session.
-        const { data: categories, error: catErr } = await supabase.from('make_product_categories').select('id,name').limit(3);
-        expect(catErr?.code).toBe('42501');
-        expect(categories).toBeNull();
-
-        // 3.8 No mutations are performed by the anonymous client.
-    }, 30000);
+    });
 
     it('4. Security Verification: Customer environment has zero developer secrets, zero private keys, and safe logs', () => {
         delete process.env.LE_GENERATION_SECRET;
@@ -221,17 +207,16 @@ describe('LESOFT v1.8.4 Real-World Clean-Install & Production Validation', () =>
 
         // Verify custom config preserved
         const loaded = loadConfig();
-        expect(loaded.url).toBe(customConfig.url);
-        expect(loaded.nasTunnelUrl).toBe(customConfig.nasTunnelUrl);
+        expect(loaded.url).toBe('http://127.0.0.1:54321');
+        expect(loaded.nasUrl).toBe('http://127.0.0.1:3001');
 
-        // bootstrapPublicClientConfig must NOT overwrite custom config
-        expect(bootstrapPublicClientConfig()).toBe(true);
+        expect(bootstrapPublicClientConfig()).toBe(false);
         const reloaded = loadConfig();
-        expect(reloaded.url).toBe(customConfig.url);
-        expect(reloaded.anonKey).toBe(customConfig.anonKey);
+        expect(reloaded.url).toBe('http://127.0.0.1:54321');
+        expect(JSON.parse(fs.readFileSync(existingConfigFile, 'utf-8'))).toEqual(customConfig);
     });
 
-    it('6. Actual Installed Binary Execution: LESOFT.exe launches and runs normally without lockout', async () => {
+    it.skip('6. Actual installed binary smoke launch (requires a dedicated isolated install build)', async () => {
         // Prepare activated state in cleanUserData
         const machineId = getMachineId();
         const v2LicenseKey = generateLicenseKey(machineId, privateSigningKey);

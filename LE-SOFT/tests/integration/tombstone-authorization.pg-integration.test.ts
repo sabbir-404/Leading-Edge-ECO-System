@@ -21,52 +21,26 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import pg from 'pg';
+import { assertIsolatedTestPostgresUrl } from '../../electron/runtime-environment';
 
-const stagingUrl = process.env.SUPABASE_STAGING_DB_URL || process.env.TEST_POSTGRES_URL;
+const testDatabaseUrl = process.env.TEST_POSTGRES_URL;
 const isExplicitlyApproved = process.env.ALLOW_DISPOSABLE_STAGING_TESTS === 'true';
-const isStagingAvailable = Boolean(stagingUrl && stagingUrl.trim().length > 0 && isExplicitlyApproved);
-
-// Production Safety Guard: Reject any URLs pointing to production or non-staging systems
-function assertApprovedDisposableStagingUrl(url: string): void {
-    const lower = url.toLowerCase();
-    if (
-        lower.includes('production') ||
-        lower.includes('prod') ||
-        lower.includes('lenas.me') ||
-        lower.includes('100.88.85.6') ||
-        lower.includes('leadingedge.com') ||
-        lower.includes('live')
-    ) {
-        throw new Error(`[SAFETY GUARD] Staging URL points to a production or NAS instance: ${url}. Aborting live integration tests.`);
-    }
-
-    // Must explicitly identify as staging, test, or localhost
-    const isApprovedTarget =
-        lower.includes('staging') ||
-        lower.includes('test') ||
-        lower.includes('disposable') ||
-        lower.includes('localhost') ||
-        lower.includes('127.0.0.1');
-
-    if (!isApprovedTarget) {
-        throw new Error(`[SAFETY GUARD] Staging URL must explicitly contain 'staging', 'test', 'disposable', or 'localhost'. Got: ${url}.`);
-    }
-}
+const isTestDatabaseAvailable = Boolean(testDatabaseUrl && testDatabaseUrl.trim().length > 0 && isExplicitlyApproved);
 
 describe('Migration 071 Real PostgreSQL Tombstone Authorization & Security Suite', () => {
     let pgClient: pg.Client | null = null;
 
     beforeAll(async () => {
-        if (!isStagingAvailable) {
-            console.log('\n[NOTICE - P0 Tombstone Authorization]: SUPABASE_STAGING_DB_URL is not set or ALLOW_DISPOSABLE_STAGING_TESTS !== "true".');
-            console.log('Skipping live PostgreSQL staging integration tests.\n');
+        if (!isTestDatabaseAvailable) {
+            console.log('\n[NOTICE - P0 Tombstone Authorization]: TEST_POSTGRES_URL is not set or ALLOW_DISPOSABLE_STAGING_TESTS !== "true".');
+            console.log('Skipping isolated local PostgreSQL integration tests.\n');
             return;
         }
 
-        assertApprovedDisposableStagingUrl(stagingUrl!);
+        assertIsolatedTestPostgresUrl(testDatabaseUrl!);
 
         pgClient = new pg.Client({
-            connectionString: stagingUrl,
+            connectionString: testDatabaseUrl,
             statement_timeout: 10000,
             query_timeout: 10000
         });
@@ -158,8 +132,8 @@ describe('Migration 071 Real PostgreSQL Tombstone Authorization & Security Suite
         }
     });
 
-    it('1. Ordinary authenticated role CANNOT insert directly into replication_tombstones (forgery prevented)', async () => {
-        if (!isStagingAvailable || !pgClient) return;
+    it.runIf(isTestDatabaseAvailable)('1. Ordinary authenticated role CANNOT insert directly into replication_tombstones (forgery prevented)', async () => {
+        if (!isTestDatabaseAvailable || !pgClient) return;
 
         // Try direct insert as 'authenticated'
         await pgClient.query('BEGIN');
@@ -183,8 +157,8 @@ describe('Migration 071 Real PostgreSQL Tombstone Authorization & Security Suite
         expect(insertError.message).toContain('permission denied for table replication_tombstones');
     });
 
-    it('2. Ordinary authenticated role CANNOT update or delete replication_tombstones', async () => {
-        if (!isStagingAvailable || !pgClient) return;
+    it.runIf(isTestDatabaseAvailable)('2. Ordinary authenticated role CANNOT update or delete replication_tombstones', async () => {
+        if (!isTestDatabaseAvailable || !pgClient) return;
 
         // Try UPDATE as 'authenticated'
         await pgClient.query('BEGIN');
@@ -223,8 +197,8 @@ describe('Migration 071 Real PostgreSQL Tombstone Authorization & Security Suite
         expect(deleteError.code).toBe('42501');
     });
 
-    it('3. Ordinary authenticated role CANNOT select or read replication_tombstones directly', async () => {
-        if (!isStagingAvailable || !pgClient) return;
+    it.runIf(isTestDatabaseAvailable)('3. Ordinary authenticated role CANNOT select or read replication_tombstones directly', async () => {
+        if (!isTestDatabaseAvailable || !pgClient) return;
 
         await pgClient.query('BEGIN');
         await pgClient.query('SET LOCAL ROLE authenticated');
@@ -242,8 +216,8 @@ describe('Migration 071 Real PostgreSQL Tombstone Authorization & Security Suite
         expect(selectError.code).toBe('42501');
     });
 
-    it('4. Anon role CANNOT insert, update, delete, or select replication_tombstones', async () => {
-        if (!isStagingAvailable || !pgClient) return;
+    it.runIf(isTestDatabaseAvailable)('4. Anon role CANNOT insert, update, delete, or select replication_tombstones', async () => {
+        if (!isTestDatabaseAvailable || !pgClient) return;
 
         let anonInsertError: any = null;
         let anonSelectError: any = null;
@@ -279,8 +253,8 @@ describe('Migration 071 Real PostgreSQL Tombstone Authorization & Security Suite
         expect(anonSelectError.code).toBe('42501');
     });
 
-    it('5. Legitimate source-table deletion by authenticated role safely records tombstone via SECURITY DEFINER trigger', async () => {
-        if (!isStagingAvailable || !pgClient) return;
+    it.runIf(isTestDatabaseAvailable)('5. Legitimate source-table deletion by authenticated role safely records tombstone via SECURITY DEFINER trigger', async () => {
+        if (!isTestDatabaseAvailable || !pgClient) return;
 
         // Step 1: Create a legitimate specification as 'authenticated'
         await pgClient.query('BEGIN');
@@ -310,8 +284,8 @@ describe('Migration 071 Real PostgreSQL Tombstone Authorization & Security Suite
         expect(tomb.deleted_at).toBeDefined();
     });
 
-    it('6. Deletion triggers safely record tombstones for make_orders, make_order_updates, and make_product_colors', async () => {
-        if (!isStagingAvailable || !pgClient) return;
+    it.runIf(isTestDatabaseAvailable)('6. Deletion triggers safely record tombstones for make_orders, make_order_updates, and make_product_colors', async () => {
+        if (!isTestDatabaseAvailable || !pgClient) return;
 
         // Insert order, update, color
         await pgClient.query(`
@@ -352,8 +326,8 @@ describe('Migration 071 Real PostgreSQL Tombstone Authorization & Security Suite
         expect(checkColors.rows.length).toBe(1);
     });
 
-    it('7. service_role has authorized access to SELECT and manage replication_tombstones', async () => {
-        if (!isStagingAvailable || !pgClient) return;
+    it.runIf(isTestDatabaseAvailable)('7. service_role has authorized access to SELECT and manage replication_tombstones', async () => {
+        if (!isTestDatabaseAvailable || !pgClient) return;
 
         await pgClient.query('BEGIN');
         await pgClient.query('SET LOCAL ROLE service_role');
@@ -369,8 +343,8 @@ describe('Migration 071 Real PostgreSQL Tombstone Authorization & Security Suite
         expect(Array.isArray(selectRes.rows)).toBe(true);
     });
 
-    it('8. Safe search_path on trigger functions prevents search_path hijacking', async () => {
-        if (!isStagingAvailable || !pgClient) return;
+    it.runIf(isTestDatabaseAvailable)('8. Safe search_path on trigger functions prevents search_path hijacking', async () => {
+        if (!isTestDatabaseAvailable || !pgClient) return;
 
         // Inspect function configuration from pg_proc
         const funcRes = await pgClient.query(`

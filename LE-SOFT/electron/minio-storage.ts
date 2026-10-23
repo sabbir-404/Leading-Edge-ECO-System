@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import { isAllowedNonProductionEndpoint, isNonProductionEnvironment } from './runtime-environment';
 
 /**
  * minio-storage.ts — MinIO S3 Object Storage Adapter for TrueNAS
@@ -17,9 +18,13 @@ export interface MinioConfig {
     bucketName: string;
 }
 
+function allowedEndpoint(config: MinioConfig): boolean {
+    return !isNonProductionEnvironment() || isAllowedNonProductionEndpoint(`${config.useSSL ? 'https' : 'http'}://${config.endpoint}:${config.port}`);
+}
+
 export class MinioStorageAdapter {
     private static defaultConfig: MinioConfig = {
-        endpoint: process.env.MINIO_ENDPOINT || '100.88.85.6',
+        endpoint: process.env.MINIO_ENDPOINT || (isNonProductionEnvironment() ? '127.0.0.1' : '100.88.85.6'),
         port: Number(process.env.MINIO_PORT) || 8081,
         useSSL: process.env.MINIO_USE_SSL === 'true',
         accessKey: process.env.MINIO_ACCESS_KEY || '',
@@ -32,6 +37,7 @@ export class MinioStorageAdapter {
      */
     static getObjectUrl(objectName: string, config: Partial<MinioConfig> = {}): string {
         const cfg = { ...this.defaultConfig, ...config };
+        if (!allowedEndpoint(cfg)) throw new Error('Refusing to use a non-isolated MinIO endpoint in this environment.');
         const protocol = cfg.useSSL ? 'https' : 'http';
         return `${protocol}://${cfg.endpoint}:${cfg.port}/${cfg.bucketName}/${objectName}`;
     }
@@ -45,6 +51,7 @@ export class MinioStorageAdapter {
         config: Partial<MinioConfig> = {}
     ): Promise<{ success: boolean; url: string }> {
         const cfg = { ...this.defaultConfig, ...config };
+        if (!allowedEndpoint(cfg)) return { success: false, url: '' };
         const fileUrl = this.getObjectUrl(objectName, cfg);
 
         try {

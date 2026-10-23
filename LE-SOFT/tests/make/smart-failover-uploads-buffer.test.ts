@@ -519,7 +519,7 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
             arrayBuffer: async () => sliceArrayBuffer
         } as any);
 
-        const verifyRes = await uploadService.verifyRemoteObject('https://storage.lenas.me/files/test.webp', staged.sha256);
+        const verifyRes = await uploadService.verifyRemoteObject('http://127.0.0.1:8081/files/test.webp', staged.sha256);
         expect(verifyRes.verified).toBe(true);
         expect(verifyRes.sha256).toBe(staged.sha256);
     });
@@ -2210,6 +2210,10 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
 
     // ── 46. (Section 5.8) MakeProductionService Foreign Key Defenses ─────────────
     it('Scenario 46: MakeProductionService foreign key validation: production update for non-existent parent order is rejected fail-closed, or deferred in outbox if parent order is pending', async () => {
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('[]', {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' }
+        }));
         const outbox = DurableOutboxService.getInstance();
         const nonExistentId = 999999;
 

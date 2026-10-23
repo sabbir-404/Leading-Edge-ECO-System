@@ -79,7 +79,7 @@ describe('DatabaseFailoverEngine — Dual Database Architecture & Reliability', 
 
     it('probes candidate endpoints and selects the fastest responding NAS url', async () => {
       const fetchMock = vi.fn().mockImplementation((url: string) => {
-        if (url.includes('100.88.85.6')) {
+        if (url.includes(':3002')) {
           return Promise.resolve({ ok: true, status: 200 });
         }
         return Promise.reject(new Error('Connection refused'));
@@ -87,21 +87,21 @@ describe('DatabaseFailoverEngine — Dual Database Architecture & Reliability', 
       global.fetch = fetchMock as any;
 
       const online = await engine.checkNasConnectivity({
-        localUrl: 'http://192.168.1.14:3001',
-        tunnelUrl: 'https://db.lenas.me',
-        publicUrl: 'http://100.88.85.6:3001'
+        localUrl: 'http://127.0.0.1:3001',
+        tunnelUrl: 'http://127.0.0.1:3003',
+        publicUrl: 'http://127.0.0.1:3002'
       });
 
       expect(online).toBe(true);
       const status = engine.getStatus();
       expect(status.isNasReachable).toBe(true);
-      expect(status.activeNasUrl).toBe('http://100.88.85.6:3001');
+      expect(status.activeNasUrl).toBe('http://127.0.0.1:3002');
       expect(status.connectionTier).toBe('nas_public');
     });
 
     it('prioritizes the last known working NAS URL on subsequent checks', async () => {
       const fetchMock = vi.fn().mockImplementation((url: string) => {
-        if (url === 'https://db.lenas.me') {
+        if (url === 'http://127.0.0.1:3003') {
           return Promise.resolve({ ok: true, status: 200 });
         }
         return Promise.reject(new Error('Offline'));
@@ -109,18 +109,18 @@ describe('DatabaseFailoverEngine — Dual Database Architecture & Reliability', 
       global.fetch = fetchMock as any;
 
       await engine.checkNasConnectivity({
-        tunnelUrl: 'https://db.lenas.me'
+        tunnelUrl: 'http://127.0.0.1:3003'
       });
-      expect(engine.getStatus().activeNasUrl).toBe('https://db.lenas.me');
+      expect(engine.getStatus().activeNasUrl).toBe('http://127.0.0.1:3003');
 
       fetchMock.mockClear();
 
       await engine.checkNasConnectivity({
-        tunnelUrl: 'https://db.lenas.me',
-        publicUrl: 'http://100.88.85.6:3001'
+        tunnelUrl: 'http://127.0.0.1:3003',
+        publicUrl: 'http://127.0.0.1:3002'
       });
 
-      expect(fetchMock).toHaveBeenCalledWith('https://db.lenas.me', expect.objectContaining({ method: 'HEAD' }));
+      expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:3003', expect.objectContaining({ method: 'HEAD' }));
     });
 
     it('treats a PostgREST authorization response as reachable but ignores an HTML gateway denial', async () => {
