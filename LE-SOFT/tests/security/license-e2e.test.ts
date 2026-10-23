@@ -16,7 +16,14 @@ const {
     verifySigningKey
 } = require('../../tools/generate-license.cjs');
 
-describe('LE-SOFT Asymmetric License Verification & Security Architecture', () => {
+// This suite exercises internal protected license-generation credentials. CI
+// never receives production signing material; key-independent cases are covered
+// by license-generation.test.ts with ephemeral keys.
+const licenseE2EDescribe = process.env.CI === 'true'
+    ? describe.skip
+    : describe;
+
+licenseE2EDescribe('LE-SOFT Asymmetric License Verification & Security Architecture', () => {
     let privateSigningKey: string;
     let legacyGenerationSecret: string;
     const testMachineA = 'LE-4D99-8523-A984';
