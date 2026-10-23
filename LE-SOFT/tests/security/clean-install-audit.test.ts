@@ -35,6 +35,10 @@ const {
     resolveGenerationSecret
 } = require('../../tools/generate-license.cjs');
 
+const hasProtectedSigningKey = (() => {
+    try { return Boolean(resolveSigningPrivateKey().privateKey); } catch { return false; }
+})();
+
 function createMockSafeStorage() {
     const mockKey = crypto.randomBytes(32);
     let available = true;
@@ -137,7 +141,7 @@ describe('Fresh Customer Installation & Credential Bootstrap Audit (Option B)', 
         expect(decryptEmbeddedCredentials()).toBe(false);
     });
 
-    it('2. V2 license activation → succeeds without developer secrets', () => {
+    it.skipIf(!hasProtectedSigningKey)('2. V2 license activation → succeeds without developer secrets', () => {
         delete process.env.LE_GENERATION_SECRET;
         delete process.env.LE_LICENSE_SIGNING_PRIVATE_KEY;
 
@@ -225,8 +229,6 @@ describe('Fresh Customer Installation & Credential Bootstrap Audit (Option B)', 
     });
 
     it('6. Customer build contains no LE_GENERATION_SECRET', () => {
-        if (!canonicalGenSecret) return;
-
         const customerFiles = [
             path.join(__dirname, '../../electron/credentials.ts'),
             path.join(__dirname, '../../electron/supabase.ts'),
@@ -239,14 +241,12 @@ describe('Fresh Customer Installation & Credential Bootstrap Audit (Option B)', 
         for (const file of customerFiles) {
             if (fs.existsSync(file)) {
                 const content = fs.readFileSync(file, 'utf-8');
-                expect(content.includes(canonicalGenSecret)).toBe(false);
+                if (canonicalGenSecret) expect(content.includes(canonicalGenSecret)).toBe(false);
             }
         }
     });
 
     it('7. Customer build contains no Ed25519 private key', () => {
-        if (!privateSigningKey) return;
-
         const customerFiles = [
             path.join(__dirname, '../../electron/credentials.ts'),
             path.join(__dirname, '../../electron/supabase.ts'),
@@ -260,7 +260,7 @@ describe('Fresh Customer Installation & Credential Bootstrap Audit (Option B)', 
                 const content = fs.readFileSync(file, 'utf-8');
                 expect(content.includes('BEGIN PRIVATE KEY')).toBe(false);
                 expect(content.includes('BEGIN EC PRIVATE KEY')).toBe(false);
-                expect(content.includes(privateSigningKey)).toBe(false);
+                if (privateSigningKey) expect(content.includes(privateSigningKey)).toBe(false);
             }
         }
 
@@ -268,7 +268,7 @@ describe('Fresh Customer Installation & Credential Bootstrap Audit (Option B)', 
         expect(LICENSE_VERIFICATION_PUBLIC_KEY).toContain('BEGIN PUBLIC KEY');
     });
 
-    it('8. Wrong or forged license is rejected', () => {
+    it.skipIf(!hasProtectedSigningKey)('8. Wrong or forged license is rejected', () => {
         delete process.env.LE_GENERATION_SECRET;
         delete process.env.LE_LICENSE_SIGNING_PRIVATE_KEY;
 
