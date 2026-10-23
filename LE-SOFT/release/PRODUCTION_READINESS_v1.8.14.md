@@ -16,6 +16,7 @@
 - Supabase MAKE file buckets remain private. WordPress package `release/le-make-sales-portal-1.8.15.zip` includes the portal plugin and generated CAD viewer assets.
 - Updated production dependency locks to remove the critical DOMPurify advisory and high-severity Axios, Sharp, and transitive advisories. `npm audit --omit=dev` now reports 0 critical, 0 high, and 4 moderate advisories; clearing the remaining findings requires major-version dependency changes.
 - Rebuilt the Windows installer with the updated dependencies. All four bounded installer cases passed (no-space path, path with spaces, fresh install, uninstall/reinstall). A packaged app process remained running after startup for 12 seconds in an isolated test profile.
+- GitHub stable release `v1.8.14` is published (not draft). Windows installer, `.blockmap`, `latest.yml`, and macOS arm64 assets are uploaded. The public `latest.yml` returns HTTP 200 and declares version 1.8.14, so desktop auto-update metadata is present. Windows CI built and implicitly uploaded its assets successfully; its redundant final publish step then failed trying to create the already-existing tagged release (HTTP 422). That duplicate-create logic has been removed from the branch for future releases.
 
 ## Release limitations
 

@@ -29,6 +29,7 @@ An earlier 10-user run had one NAS health response taking 5.87 seconds, above th
 - WordPress public portal: HTTP 200. Unauthenticated protected status endpoint: HTTP 401, expected.
 - Supabase Auth health: HTTP 200. Authenticated Supabase transaction check was previously rolled back; anonymous protected-table access remains denied.
 - Production dependency audit/fix: removed the critical DOMPurify finding and high Axios/Sharp/transitive advisories. `npm audit --omit=dev` now reports 0 critical, 0 high, and 4 moderate findings. Those remaining issues have only breaking major-upgrade fixes available and are documented as follow-up.
+- GitHub release `v1.8.14` is published, with Windows and macOS arm64 assets and versioned updater metadata uploaded. The Windows build itself succeeded and uploaded the installer and metadata; a redundant workflow step failed on an HTTP 422 duplicate-release creation attempt. The workflow was corrected on the pushed branch for subsequent releases.
 
 ## Limits
 
