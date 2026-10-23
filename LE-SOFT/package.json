@@ -158,7 +158,8 @@
     "publish": {
       "provider": "github",
       "owner": "sabbir-404",
-      "repo": "Leading-Edge-ECO-System"
+      "repo": "Leading-Edge-ECO-System",
+      "releaseType": "release"
     }
   }
 }
