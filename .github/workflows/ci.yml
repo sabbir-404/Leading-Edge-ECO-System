@@ -24,7 +24,11 @@ jobs:
     name: Isolated checks
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    environment: ${{ github.ref_name == 'staging' && 'staging' || (startsWith(github.ref_name, 'feat/') || startsWith(github.ref_name, 'fix/') || startsWith(github.ref_name, 'codex/')) && 'development' || 'testing' }}
+    environment: >-
+      ${{ github.ref_name == 'staging' && 'staging'
+          || startsWith(github.ref_name, 'fix/') && 'debugging'
+          || (startsWith(github.ref_name, 'feat/') || startsWith(github.ref_name, 'codex/')) && 'development'
+          || 'testing' }}
     services:
       postgres:
         image: postgres:17-alpine

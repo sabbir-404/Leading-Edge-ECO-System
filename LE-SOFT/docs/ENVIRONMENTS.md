@@ -6,6 +6,7 @@ connect to production NAS or Supabase services.
 | Environment | Purpose | Database and service boundary |
 | --- | --- | --- |
 | `development` | Developer desktop and Vite work | Local loopback endpoints only (`127.0.0.1`) |
+| `debugging` | GitHub checks for `fix/*` branches | Same disposable CI PostgreSQL instance; no production or staging credentials |
 | `testing` | Vitest and database integration tests | Disposable local PostgreSQL database named `lesoft_test`; no NAS or cloud credentials |
 | `staging` | Pre-release checks against a separate staging deployment | Explicit non-production endpoints from `.env.staging.local`; no production endpoints |
 | `production` | Installed customer software | Production configuration and credentials, isolated in the normal application profile |
@@ -22,7 +23,7 @@ Never put production credentials in `.env.development.local`, `.env.staging.loca
 
 ## GitHub Actions
 
-The repository has `development`, `testing`, `staging`, and `production` GitHub environments. CI runs against a fresh PostgreSQL 17 service database named `lesoft_test` for every workflow run. Its only credentials are disposable test values defined in the workflow; it does not use production or staging secrets. The `staging` GitHub environment is selected only for the `staging` branch; other CI runs use `testing`.
+The repository has `development`, `debugging`, `testing`, `staging`, and `production` GitHub environments. `feat/*` and `codex/*` use `development`; `fix/*` uses `debugging`; the `staging` branch uses `staging`; remaining checks use `testing`. Every CI run uses a fresh PostgreSQL 17 service database named `lesoft_test` with disposable values defined in the workflow. It does not use production or staging database credentials.
 
 The production environment should hold production deployment credentials only when an explicit release/deployment workflow is added. The current CI workflow does not deploy and does not need production secrets. Keep required reviewers and branch restrictions enabled for staging/production.
 
