@@ -18,7 +18,7 @@ import '../Accounting/Masters/Masters.css';
 
 type SettingsTab = 'profile' | 'system_hardware' | 'payment_methods' | 'database_api' | 'policy' | 'about' | 'license_generator' | 'versions' | 'diagnostics';
 
-const TAB_LIST: { id: SettingsTab; label: string; icon: React.ReactNode; adminOnly?: boolean }[] = [
+const TAB_LIST: { id: SettingsTab; label: string; icon: React.ReactNode; adminOnly?: boolean; superadminOnly?: boolean }[] = [
     { id: 'profile',            label: 'Profile',             icon: <User size={18} />       },
     { id: 'versions',           label: 'App Versions & Devices', icon: <MonitorPlay size={18} />, adminOnly: true },
     { id: 'diagnostics',        label: 'System Diagnostics',  icon: <AlertTriangle size={18} />, adminOnly: true },
@@ -26,7 +26,7 @@ const TAB_LIST: { id: SettingsTab; label: string; icon: React.ReactNode; adminOn
     { id: 'policy',             label: 'Policy',              icon: <Lock size={18} />, adminOnly: true },
     { id: 'payment_methods',    label: 'Payment Methods',      icon: <DollarSign size={18} />, adminOnly: true },
     { id: 'database_api',       label: 'Database & API',      icon: <Database size={18} />   },
-    { id: 'license_generator',  label: 'License Generator',   icon: <Key size={18} />, adminOnly: true },
+    { id: 'license_generator',  label: 'License Generator',   icon: <Key size={18} />, superadminOnly: true },
     { id: 'about',              label: 'About',               icon: <Info size={18} />       },
 ];
 
@@ -531,12 +531,16 @@ const Settings: React.FC = () => {
                     {TAB_LIST.filter(t => {
                         const role = (localStorage.getItem('user_role') || '').toLowerCase();
                         if (t.id === 'diagnostics') return role === 'admin' || role === 'superadmin';
+                        if (t.superadminOnly) return role === 'superadmin';
                         if (!t.adminOnly) return true;
                         return role === 'superadmin';
                     }).map(tab => (
                         <button
                             key={tab.id}
-                            onClick={() => setActiveTab(tab.id)}
+                            onClick={() => {
+                                if (tab.superadminOnly && !isSuperadmin()) return;
+                                setActiveTab(tab.id);
+                            }}
                             style={{
                                 display: 'flex', alignItems: 'center', gap: '0.5rem',
                                 padding: '0.6rem 1.2rem', borderRadius: '9px', border: 'none',
@@ -1373,7 +1377,7 @@ const Settings: React.FC = () => {
                         )}
 
                         {/* ── LICENSE GENERATOR TAB ──────────────────────────────── */}
-                        {activeTab === 'license_generator' && (
+                        {activeTab === 'license_generator' && isSuperadmin() && (
                             <>
                                 <div style={card}>
                                     <div style={cardHeader}>
@@ -1410,8 +1414,7 @@ const Settings: React.FC = () => {
                                             onClick={async () => {
                                                 setGenLoading(true); setGenResult(''); setGenError('');
                                                 try {
-                                                    const role = localStorage.getItem('user_role') || '';
-                                                    const res = await (window.electron as any).generateLicenseKey?.({ machineId: genMachineId.trim(), requestedBy: role });
+                                                    const res = await (window.electron as any).generateLicenseKey?.({ machineId: genMachineId.trim() });
                                                     if (res?.success) setGenResult(res.key);
                                                     else setGenError(res?.error || 'Generation failed');
                                                 } catch (e: any) { setGenError(e.message || 'Unknown error'); }

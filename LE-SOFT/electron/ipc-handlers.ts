@@ -38,6 +38,7 @@ import { registerMakeHandlers } from './ipc/handlers/make';
 import { NASConnectionManager } from './services/make/NASConnectionManager';
 import { WindowsNotificationService } from './services/WindowsNotificationService';
 import { WatchdogService } from './services/WatchdogService';
+import { generateLicenseForMachine } from './services/license-generation';
 
 const BCRYPT_ROUNDS = 12;
 const HOSTINGER_UPLOAD_URL = process.env.HOSTINGER_UPLOAD_URL || 'https://leadingedge.com.bd/api/upload_image.php';
@@ -5947,41 +5948,19 @@ export function registerHandlers() {
     });
 
     // ═══ LICENSE KEY GENERATOR (Superadmin only) ══════════════════════════════
-    // Ports the same crypto algorithm as tools/generate-license.cjs.
-    // GENERATION_SECRET lives HERE only — never sent to the renderer.
-    ipcMain.handle('generate-license-key', async (_e, { machineId }: { machineId: string; requestedBy?: string }) => {
+    // Signs V2 keys with a developer key from the local protected key store.
+    // The private key never enters the renderer or the application package.
+    ipcMain.handle('generate-license-key', async (_e, { machineId }: { machineId: string }) => {
         // Security gate: only verified superadmin session in Main Process may generate keys
         const session = requireSession();
         if (!isSessionSuperadmin(session)) {
             return { success: false, error: 'Unauthorized: superadmin access required' };
         }
-        if (!machineId || typeof machineId !== 'string' || !machineId.trim().startsWith('LE-')) {
-            return { success: false, error: 'Invalid Machine ID — must start with "LE-"' };
+        try {
+            return { success: true, key: generateLicenseForMachine(machineId) };
+        } catch (error: any) {
+            return { success: false, error: error?.message || 'License generation failed.' };
         }
-
-        const GENERATION_SECRET = process.env.LE_GENERATION_SECRET || '';
-        if (!GENERATION_SECRET) {
-            return { success: false, error: 'License generation secret not configured in environment' };
-        }
-        const VERIFICATION_SALT = 'LE-SOFT-2026-VERIFY-SALT-xK9mQ2';
-        const id = machineId.trim();
-
-        const prefix = crypto
-            .createHmac('sha256', VERIFICATION_SALT)
-            .update(id)
-            .digest('hex')
-            .substring(0, 8)
-            .toUpperCase();
-
-        const body = crypto
-            .createHmac('sha256', GENERATION_SECRET)
-            .update(id)
-            .digest('hex')
-            .substring(0, 24)
-            .toUpperCase();
-
-        const formatted = (prefix + body).match(/.{1,4}/g)!.join('-');
-        return { success: true, key: formatted };
     });
 
 

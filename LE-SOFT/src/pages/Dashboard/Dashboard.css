@@ -177,9 +177,7 @@
     min-width: 0;
     flex: 1;
     overflow: hidden;
-    /* The custom Electron caption buttons overlay the upper edge of web contents.
-       Keep the page name and breadcrumb below that reserved caption strip. */
-    transform: translateY(8px);
+    align-self: center;
 }
 
 .window-controls {
@@ -262,7 +260,7 @@
 }
 
 .top-bar-right {
-    transform: translateY(8px);
+    align-self: center;
 }
 
 .notification-preview-modal {

@@ -1,6 +1,7 @@
 import { beforeAll, describe, it, expect, vi, beforeEach } from 'vitest';
 import { ipcMain } from 'electron';
 import { SessionManager } from '../../electron/session-manager';
+import { verifyLicense } from '../../electron/license-manager';
 import { isSuperadmin } from '../../src/utils/permissions';
 
 // Capture handlers registered via ipcMain.handle
@@ -382,7 +383,6 @@ describe('Security Audit Phase 1 — IPC Authentication & Authorization Boundari
         });
 
         it('should authorize superadmin session', async () => {
-            process.env.LE_GENERATION_SECRET = 'TEST-SECRET-1234567890';
             const handler = ipcHandlers.get('generate-license-key');
             expect(handler).toBeDefined();
 
@@ -393,8 +393,13 @@ describe('Security Audit Phase 1 — IPC Authentication & Authorization Boundari
             });
 
             const res = await handler!({}, { machineId: 'LE-VALID-MACHINE-1234' });
-            expect(res.success).toBe(true);
-            expect(res.key).toBeDefined();
+            if (res.success) {
+                expect(res.key).toMatch(/^LE2\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+                expect(verifyLicense('LE-VALID-MACHINE-1234', res.key)).toMatchObject({ valid: true, version: 2 });
+            } else {
+                // CI environments must not bundle or require the developer's signing key.
+                expect(res.error).toMatch(/signing key is not available/i);
+            }
         });
     });
 

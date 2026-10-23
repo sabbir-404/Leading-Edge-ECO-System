@@ -2119,7 +2119,7 @@ const PlaceOrder: React.FC = () => {
                           onChange={e => handleSpecSelect(Number(e.target.value))} 
                           disabled={!selectedProduct || (selectedProduct.specifications || []).length === 0}
                           style={{ ...inputStyle, opacity: !selectedProduct ? 0.6 : 1 }}>
-                          <option value="">{selectedProduct.specifications?.length ? '-- Standard / Choose Specification --' : 'Not available'}</option>
+                          <option value="">{selectedProduct?.specifications?.length ? '-- Standard / Choose Specification --' : 'Not available'}</option>
                           {(selectedProduct?.specifications || []).map((s: any) => (
                             <option key={s.id} value={s.id}>{s.spec_code ? `[${s.spec_code}] ` : ''}{s.spec_name}</option>
                           ))}
