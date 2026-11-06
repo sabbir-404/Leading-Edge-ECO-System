@@ -625,16 +625,19 @@ export class DatabaseFailoverEngine {
         this.healthProbeTimer = setInterval(() => {
             this.checkNasConnectivity(getCandidates()).catch(() => {});
         }, 10000);
+        this.healthProbeTimer.unref?.();
 
         // Process durable mirror retries every 20 seconds
         this.mirrorRetryTimer = setInterval(() => {
             this.processPendingMirrorRetries().catch(() => {});
         }, 20000);
+        this.mirrorRetryTimer.unref?.();
 
         // Run Supabase ~1 GB retention maintenance once every 6 hours
         this.retentionTimer = setInterval(() => {
             this.maintainSupabaseRetention().catch(() => {});
         }, 6 * 3600 * 1000);
+        this.retentionTimer.unref?.();
 
         console.log('[DB:FAILOVER] Background health monitor & durability timers started.');
     }
