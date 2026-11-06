@@ -43,9 +43,11 @@ LE-SOFT/
 
 The outbox stock-decrement operation now calls `public.apply_inventory_decrement(operation_id, product_id, quantity)`. The function uses a unique operation ID and a product-row lock in one PostgreSQL transaction, so a retry after an ambiguous network acknowledgement cannot decrement stock twice. The operation ledger is RLS-enabled and not directly granted to client roles; only the RPC is executable by the appropriate authenticated role.
 
-* **Supabase Cloud**: apply `supabase/migrations/20261106163000_inventory_decrement_idempotency.sql` with `supabase db push` (or the SQL editor).
+* **Supabase Cloud**: apply `supabase/migrations/20261106163000_inventory_decrement_idempotency.sql` and `supabase/migrations/20261106164500_make_orders_outbox_idempotency.sql` with `supabase db push` (or the SQL editor).
 * **TrueNAS**: after confirming migration 070 created `nas_authenticated`, back up `lesoft` and apply `database/truenas/migrations/093_inventory_decrement_idempotency.sql` and `094_make_orders_outbox_idempotency.sql` with `psql`.
-* **Do not deploy the app update until both databases expose the RPC**. Older schema versions will return a missing-function error and stock operations will remain in the outbox rather than falling back to a non-idempotent decrement.
+* **Do not deploy the app update until both databases expose the stock RPC and the unique MAKE-order outbox index.** Older schemas will fail closed rather than falling back to non-idempotent writes.
+
+The MAKE-order migration adds a nullable `outbox_operation_id` column and a unique partial index. Pending `make_orders` operations created by older application versions do not yet have this key stored; reconcile or review any such pending items before rolling out the new client.
 
 ### Target 2: TrueNAS Authoritative PostgreSQL
 * **Engine**: PostgreSQL 14+ on TrueNAS Core/SCALE (`100.88.85.6:5432`, database: `lesoft`).
