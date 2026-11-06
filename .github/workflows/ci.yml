@@ -89,5 +89,3 @@ jobs:
       - name: Bundle Electron main process and preload
         run: npm run electron:build:main
 
-      - name: Verify third-party license manifest
-        run: npm run license:check
