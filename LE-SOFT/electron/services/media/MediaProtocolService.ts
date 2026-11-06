@@ -174,7 +174,8 @@ export class MediaProtocolService {
         if (isNas) {
             rawPath = urlObj.pathname.replace(/^\//, '');
         } else {
-            // URLSearchParams has already decoded the query value; decoding again can corrupt '%' filenames.\n            targetUrl = urlObj.searchParams.get('url') || '';
+            // URLSearchParams already decodes query values; do not decode them twice.
+            targetUrl = urlObj.searchParams.get('url') || '';
             if (targetUrl.includes('storage.lenas.me') || /:[0-9]+\/files\//i.test(targetUrl)) {
                 isNas = true;
                 try {
@@ -191,7 +192,7 @@ export class MediaProtocolService {
         }
 
         // Clean and normalize the subpath (decoding spaces / percent-encoded characters)
-        const cleanSubPath = isNas ? decodeURIComponent(rawPath).replace(/^\//, '') : '';
+        const cleanSubPath = isNas ? decodePathSegments(rawPath).replace(/^\/+/, '') : '';
         const ext = path.extname(isNas ? cleanSubPath : new URL(targetUrl).pathname).toLowerCase() || '.webp';
 
         // 1. Check local disk cache (keyed by clean subpath for NAS, or targetUrl for other remote URLs)
@@ -340,7 +341,7 @@ export class MediaProtocolService {
                 if (u.hostname === 'local') {
                     return this.diagnoseImage(u.pathname);
                 } else if (u.hostname === 'nas') {
-                    const cleanSub = decodeURIComponent(u.pathname).replace(/^\//, '');
+                    const cleanSub = decodePathSegments(u.pathname).replace(/^\/+/, '');
                     const cacheKey = `nas:${cleanSub}`;
                     const ext = path.extname(cleanSub).toLowerCase() || '.webp';
                     const cacheHash = crypto.createHash('sha256').update(cacheKey).digest('hex').slice(0, 32);
@@ -398,8 +399,8 @@ export class MediaProtocolService {
         if (/^https?:\/\//i.test(trimmed)) {
             if (trimmed.includes(':8080')) {
                 const subPath = trimmed.replace(/^https?:\/\/[^\/]+:(?:8080|8081)\/?/i, '');
-                const cleanSub = decodeURIComponent(subPath).replace(/^\//, '');
-                return this.diagnoseImage(`app-media://nas/${encodeURI(cleanSub)}`);
+                const cleanSub = decodePathSegments(subPath).replace(/^\/+/, '');
+                return this.diagnoseImage(`app-media://nas/${encodePathSegments(cleanSub)}`);
             }
             const isNas = trimmed.includes('storage.lenas.me') || trimmed.includes(':8081');
             const isSupabase = trimmed.includes('.supabase.co/storage');
@@ -438,7 +439,7 @@ export class MediaProtocolService {
         // 4. Local File Path
         let localPath = trimmed;
         if (localPath.startsWith('file://')) {
-            localPath = decodeURIComponent(localPath.replace(/^file:\/\/\/?/i, ''));
+            localPath = decodePathSegments(localPath.replace(/^file:\/\/\/?/i, ''));
         }
         if (process.platform === 'win32' && /^\/[a-zA-Z]:/.test(localPath)) {
             localPath = localPath.slice(1);
