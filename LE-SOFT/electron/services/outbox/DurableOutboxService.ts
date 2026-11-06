@@ -310,6 +310,7 @@ export class DurableOutboxService {
     public startWorker(intervalMs = 500): void {
         if (this.drainTimer) return;
         this.drainTimer = setInterval(() => this.drainNextBatch().catch(() => {}), intervalMs);
+        this.drainTimer.unref?.();
         console.log(`[DurableOutbox] Background outbox worker started (interval: ${intervalMs}ms).`);
     }
 
