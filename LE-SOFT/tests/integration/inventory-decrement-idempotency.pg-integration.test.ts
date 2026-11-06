@@ -2,13 +2,14 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Client } from 'pg';
 import fs from 'fs';
 import path from 'path';
+import { assertIsolatedTestPostgresUrl } from '../../electron/runtime-environment';
 
 const connectionString = process.env.TEST_POSTGRES_URL;
-const postgresDescribe = connectionString ? describe : describe.skip;
+const explicitlyApproved = process.env.ALLOW_DISPOSABLE_STAGING_TESTS === 'true';
+const postgresDescribe = connectionString && explicitlyApproved ? describe : describe.skip;
 
 postgresDescribe('inventory decrement idempotency RPC (PostgreSQL)', () => {
     let admin: Client;
-    let secondary: Client;
 
     const migrationPath = path.join(
         process.cwd(),
@@ -16,35 +17,39 @@ postgresDescribe('inventory decrement idempotency RPC (PostgreSQL)', () => {
     );
 
     beforeAll(async () => {
-        admin = new Client({ connectionString });
+        assertIsolatedTestPostgresUrl(connectionString!);
+        admin = new Client({ connectionString: connectionString! });
         await admin.connect();
 
-        await admin.query(`
-            DO $roles$
-            BEGIN
-                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
-                    CREATE ROLE anon NOLOGIN;
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
-                    CREATE ROLE authenticated NOLOGIN;
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
-                    CREATE ROLE service_role NOLOGIN;
-                END IF;
-            END
-            $roles$;
-
-            CREATE TABLE IF NOT EXISTS public.products (
-                id BIGINT PRIMARY KEY,
-                quantity INTEGER NOT NULL DEFAULT 0
+        // Coordinate role/bootstrap setup with the other PostgreSQL suites using
+        // this same disposable database.
+        await admin.query('SELECT pg_advisory_lock(690201014, 701)');
+        try {
+            const rolesResult = await admin.query(
+                "SELECT rolname FROM pg_roles WHERE rolname IN ('anon', 'authenticated', 'service_role')"
             );
+            const roles = new Set(rolesResult.rows.map(row => row.rolname));
+            for (const role of ['anon', 'authenticated', 'service_role']) {
+                if (!roles.has(role)) {
+                    await admin.query('CREATE ROLE ' + role + ' NOLOGIN');
+                }
+            }
 
-            DROP FUNCTION IF EXISTS public.apply_inventory_decrement(TEXT, BIGINT, INTEGER);
-            DROP TABLE IF EXISTS public.inventory_decrement_operations CASCADE;
-        `);
+            await admin.query(`
+                CREATE TABLE IF NOT EXISTS public.products (
+                    id BIGINT PRIMARY KEY,
+                    quantity INTEGER NOT NULL DEFAULT 0
+                );
 
-        const migration = fs.readFileSync(migrationPath, 'utf-8');
-        await admin.query(migration);
+                DROP FUNCTION IF EXISTS public.apply_inventory_decrement(TEXT, BIGINT, INTEGER);
+                DROP TABLE IF EXISTS public.inventory_decrement_operations CASCADE;
+            `);
+
+            const migration = fs.readFileSync(migrationPath, 'utf-8');
+            await admin.query(migration);
+        } finally {
+            await admin.query('SELECT pg_advisory_unlock(690201014, 701)');
+        }
     });
 
     beforeEach(async () => {
@@ -58,7 +63,6 @@ postgresDescribe('inventory decrement idempotency RPC (PostgreSQL)', () => {
     });
 
     afterAll(async () => {
-        if (secondary) await secondary.end();
         if (admin) await admin.end();
     });
 
