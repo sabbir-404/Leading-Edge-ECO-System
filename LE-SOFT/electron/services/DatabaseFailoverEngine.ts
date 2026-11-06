@@ -1040,7 +1040,9 @@ export class DatabaseFailoverEngine {
 
         try {
             fileDescriptor = fs.openSync(tempPath, 'wx', 0o600);
-            fs.writeFileSync(fileDescriptor, JSON.stringify(value, null, 2) + '\n', { encoding: 'utf-8' });
+            const serialized = JSON.stringify(value, null, 2);
+            if (serialized === undefined) throw new Error('Journal payload is not JSON-serializable.');
+            fs.writeFileSync(fileDescriptor, serialized + '\n', { encoding: 'utf-8' });
             fs.fsyncSync(fileDescriptor);
             fs.closeSync(fileDescriptor);
             fileDescriptor = null;
