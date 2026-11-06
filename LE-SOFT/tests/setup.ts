@@ -176,7 +176,7 @@ vi.mock('better-sqlite3', async (importOriginal) => {
             if (r) { r.status = 'completed'; r.last_error = null; r.updated_at = args[0]; r.next_attempt_at = 0; }
           } else if (lower.includes("status = 'pending'")) {
             for (const r of rows) {
-              if (r.status === 'blocked_dependency') r.status = 'pending';
+              if (r.status === 'blocked_dependency') { r.status = 'pending'; r.next_attempt_at = 0; }
               if (r.status === 'dead_letter' && (!args[1] || r.id === args[1])) {
                 r.status = 'pending';
                 r.last_error = null;
@@ -195,7 +195,7 @@ vi.mock('better-sqlite3', async (importOriginal) => {
           } else if (lower.includes('status = ?')) {
             const status = args[0];
             const err = args[1] !== undefined ? args[1] : null;
-            const id = args[3];
+            const id = args[4];
             const r = rows.find(x => x.id === id);
             if (r) { r.status = status; r.last_error = err; r.next_attempt_at = args[3] || 0; }
           }
