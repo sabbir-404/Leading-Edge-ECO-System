@@ -134,11 +134,10 @@ export class DurableOutboxService {
                     target TEXT DEFAULT 'both',
                     status TEXT NOT NULL DEFAULT 'pending',
                     retry_count INTEGER DEFAULT 0,
-                    next_attempt_at INTEGER NOT NULL DEFAULT 0,
                     max_retries INTEGER DEFAULT 10,
                     last_error TEXT,
                     created_at INTEGER NOT NULL,
-                    updated_at INTEGER NOT NULL
+                    updated_at INTEGER NOT NULL,
                     next_attempt_at INTEGER NOT NULL DEFAULT 0
                 );
 
