@@ -397,24 +397,22 @@ export class MediaProtocolService {
 
         // 3. Remote URL (http / https)
         if (/^https?:\/\//i.test(trimmed)) {
-            if (trimmed.includes(':8080')) {
-                const subPath = trimmed.replace(/^https?:\/\/[^\/]+:(?:8080|8081)\/?/i, '');
-                const cleanSub = decodePathSegments(subPath).replace(/^\/+/, '');
+            const remoteUrl = new URL(trimmed);
+            const isIPv4Host = /^\\d{1,3}(?:\\.\\d{1,3}){3}$/.test(remoteUrl.hostname);
+            const isLegacyNas = isIPv4Host && (remoteUrl.port === '8080' || remoteUrl.port === '8081');
+            if (isIPv4Host && remoteUrl.port === '8080') {
+                const cleanSub = decodePathSegments(remoteUrl.pathname).replace(/^\\/+/, '');
                 return this.diagnoseImage(`app-media://nas/${encodePathSegments(cleanSub)}`);
             }
-            const isNas = trimmed.includes('storage.lenas.me') || trimmed.includes(':8081');
-            const isSupabase = trimmed.includes('.supabase.co/storage');
+            const isNas = remoteUrl.hostname.toLowerCase() === 'storage.lenas.me' || isLegacyNas;
+            const isSupabase = remoteUrl.hostname.toLowerCase().endsWith('.supabase.co') && remoteUrl.pathname.includes('/storage/');
             const sourceType = isNas ? 'nas_storage' : (isSupabase ? 'supabase_storage' : 'remote_http');
 
             // Sanitize URL for safe logging (removes tokens/queries)
-            let safeUrl = trimmed;
-            try {
-                const u = new URL(trimmed);
-                safeUrl = `${u.origin}${u.pathname}`;
-            } catch {}
+            const safeUrl = `${remoteUrl.origin}${remoteUrl.pathname}`;
 
             try {
-                const cfHeaders = isNas && typeof getCfAccessHeaders === 'function' ? getCfAccessHeaders() : {};
+                const cfHeaders = remoteUrl.hostname.toLowerCase() === 'storage.lenas.me' && typeof getCfAccessHeaders === 'function' ? getCfAccessHeaders() : {};
                 const res = await net.fetch(trimmed, { method: 'HEAD', headers: cfHeaders });
                 const duration = Date.now() - t0;
                 return {
@@ -434,8 +432,6 @@ export class MediaProtocolService {
                     failureReason: err.message || 'fetch_failed'
                 };
             }
-        }
-
         // 4. Local File Path
         let localPath = trimmed;
         if (localPath.startsWith('file://')) {
