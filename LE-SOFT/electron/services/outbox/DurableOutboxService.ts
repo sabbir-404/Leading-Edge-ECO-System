@@ -690,9 +690,11 @@ export class DurableOutboxService {
     ): Promise<{ success: boolean; resolvedId?: string; error?: any; affectedRows?: number }> {
         try {
             // Restore field-level encryption for object or array of objects
-            const encData = Array.isArray(payload)
-                ? await encryptRowsAsync(payload, 100)
-                : (payload && typeof payload === 'object') ? encryptObject(payload) : payload;
+            const encData = table === 'inventory_decrement'
+                ? payload
+                : Array.isArray(payload)
+                    ? await encryptRowsAsync(payload, 100)
+                    : (payload && typeof payload === 'object') ? encryptObject(payload) : payload;
 
             if (table === 'inventory_decrement') {
                 // Use the original payload here: string quantities may be field-encrypted by encryptObject.
