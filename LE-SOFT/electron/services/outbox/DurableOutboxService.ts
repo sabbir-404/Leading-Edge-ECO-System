@@ -899,7 +899,7 @@ export class DurableOutboxService {
                     const resolvedId = rows.length > 0 ? String(rows[0][primaryKeyCol]) : undefined;
                     return { success: true, resolvedId, affectedRows: rows.length };
                 } else {
-                    const res = await client.from(table).upsert(encData, conflictOption).select(primaryKeyCol).maybeSingle();
+                    const res = await client.from(table).upsert(writeData, conflictOption).select(primaryKeyCol).maybeSingle();
                     if (res.error) return { success: false, error: res.error };
                     const resolvedId = res.data ? String((res.data as any)[primaryKeyCol]) : undefined;
                     return { success: true, resolvedId, affectedRows: res.data ? 1 : 0 };
