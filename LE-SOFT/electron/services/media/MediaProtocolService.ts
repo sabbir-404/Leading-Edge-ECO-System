@@ -172,17 +172,26 @@ export class MediaProtocolService {
         let targetUrl = '';
 
         if (isNas) {
-            rawPath = urlObj.pathname.replace(/^\//, '');
+            rawPath = urlObj.pathname.replace(/^\/+/, '');
         } else {
             // URLSearchParams already decodes query values; do not decode them twice.
             targetUrl = urlObj.searchParams.get('url') || '';
-            if (targetUrl.includes('storage.lenas.me') || /:[0-9]+\/files\//i.test(targetUrl)) {
-                isNas = true;
+            if (targetUrl) {
+                let parsed: URL;
                 try {
-                    const parsed = new URL(targetUrl);
-                    rawPath = parsed.pathname.replace(/^\//, '');
+                    parsed = new URL(targetUrl);
                 } catch {
-                    rawPath = targetUrl.replace(/^https?:\/\/[^\/]+\/?/, '');
+                    return new Response('Invalid remote URL', { status: 400 });
+                }
+
+                const isExactNasHost = parsed.hostname.toLowerCase() === 'storage.lenas.me';
+                const isLegacyNasHost =
+                    /^\d{1,3}(?:\.\d{1,3}){3}$/.test(parsed.hostname) &&
+                    (parsed.port === '8080' || parsed.port === '8081');
+
+                if (isExactNasHost || isLegacyNasHost) {
+                    isNas = true;
+                    rawPath = parsed.pathname.replace(/^\/+/, '');
                 }
             }
         }
@@ -397,31 +406,50 @@ export class MediaProtocolService {
 
         // 3. Remote URL (http / https)
         if (/^https?:\/\//i.test(trimmed)) {
-            const remoteUrl = new URL(trimmed);
-            const isIPv4Host = /^\\d{1,3}(?:\\.\\d{1,3}){3}$/.test(remoteUrl.hostname);
+            let remoteUrl: URL;
+            try {
+                remoteUrl = new URL(trimmed);
+            } catch {
+                return {
+                    sourceType: 'unknown',
+                    normalizedSource: '',
+                    exists: false,
+                    loadDurationMs: Date.now() - t0,
+                    failureReason: 'invalid_url'
+                };
+            }
+
+            const isIPv4Host = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(remoteUrl.hostname);
             const isLegacyNas = isIPv4Host && (remoteUrl.port === '8080' || remoteUrl.port === '8081');
             if (isIPv4Host && remoteUrl.port === '8080') {
-                const cleanSub = decodePathSegments(remoteUrl.pathname).replace(/^\\/+/, '');
-                return this.diagnoseImage(`app-media://nas/${encodePathSegments(cleanSub)}`);
+                const cleanSub = decodePathSegments(remoteUrl.pathname).replace(/^\/+/, '');
+                return this.diagnoseImage('app-media://nas/' + encodePathSegments(cleanSub));
             }
+
             const isNas = remoteUrl.hostname.toLowerCase() === 'storage.lenas.me' || isLegacyNas;
-            const isSupabase = remoteUrl.hostname.toLowerCase().endsWith('.supabase.co') && remoteUrl.pathname.includes('/storage/');
+            const isSupabase =
+                remoteUrl.hostname.toLowerCase().endsWith('.supabase.co') &&
+                remoteUrl.pathname.includes('/storage/');
             const sourceType = isNas ? 'nas_storage' : (isSupabase ? 'supabase_storage' : 'remote_http');
 
-            // Sanitize URL for safe logging (removes tokens/queries)
-            const safeUrl = `${remoteUrl.origin}${remoteUrl.pathname}`;
+            // Exclude query parameters so access tokens are never written to diagnostics.
+            const safeUrl = remoteUrl.origin + remoteUrl.pathname;
 
             try {
-                const cfHeaders = remoteUrl.hostname.toLowerCase() === 'storage.lenas.me' && typeof getCfAccessHeaders === 'function' ? getCfAccessHeaders() : {};
+                // Cloudflare Access credentials are sent only to the exact trusted host.
+                const cfHeaders =
+                    remoteUrl.hostname.toLowerCase() === 'storage.lenas.me' &&
+                    typeof getCfAccessHeaders === 'function'
+                        ? getCfAccessHeaders()
+                        : {};
                 const res = await net.fetch(trimmed, { method: 'HEAD', headers: cfHeaders });
-                const duration = Date.now() - t0;
                 return {
                     sourceType,
                     normalizedSource: safeUrl,
                     exists: res.ok,
                     httpStatus: res.status,
-                    loadDurationMs: duration,
-                    failureReason: res.ok ? undefined : `HTTP_${res.status}`
+                    loadDurationMs: Date.now() - t0,
+                    failureReason: res.ok ? undefined : 'HTTP_' + res.status
                 };
             } catch (err: any) {
                 return {
@@ -432,6 +460,8 @@ export class MediaProtocolService {
                     failureReason: err.message || 'fetch_failed'
                 };
             }
+        }
+
         // 4. Local File Path
         let localPath = trimmed;
         if (localPath.startsWith('file://')) {
