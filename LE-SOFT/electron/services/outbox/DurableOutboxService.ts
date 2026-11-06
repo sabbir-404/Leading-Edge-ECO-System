@@ -695,7 +695,8 @@ export class DurableOutboxService {
                 : (payload && typeof payload === 'object') ? encryptObject(payload) : payload;
 
             if (table === 'inventory_decrement') {
-                const d = encData as Record<string, any>;
+                // Use the original payload here: string quantities may be field-encrypted by encryptObject.
+                const d = payload as Record<string, any>;
                 const pId = Number(d.product_id);
                 const qty = Number(d.quantity);
                 const operationId = String(
@@ -819,7 +820,8 @@ export class DurableOutboxService {
                 }
 
                 if (table === 'make_orders') {
-                    const d = encData as Record<string, any>;
+                    // Lookup keys must use plaintext values; encryptObject uses random IVs for protected text fields.
+                    const d = payload as Record<string, any>;
                     if (d.bill_id && d.description) {
                         try {
                             const query = client.from('make_orders');
