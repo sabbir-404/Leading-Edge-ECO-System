@@ -180,5 +180,10 @@ describe('Durable outbox data-integrity regressions', () => {
         expect(row.retry_count).toBe(1);
         expect(row.next_attempt_at).toBeGreaterThanOrEqual(before + 1000);
         expect(row.next_attempt_at).toBeLessThanOrEqual(before + 1500);
+
+        const eligible = (outbox as any).db.prepare(
+            "SELECT * FROM outbox_operations WHERE status IN ('pending', 'buffered_supabase', 'cleanup_pending') AND next_attempt_at <= ? ORDER BY created_at ASC LIMIT ?"
+        ).all(Date.now(), 100);
+        expect(eligible.some((item: any) => item.id === id)).toBe(false);
     });
 });
