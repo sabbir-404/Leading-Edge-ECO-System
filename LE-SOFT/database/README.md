@@ -10,13 +10,15 @@ LE-SOFT/
 │       ├── ...
 │       ├── 075_supabase_buffer_quota_3gb.sql
 │       ├── 076_reconcile_make_orders_schema.sql
-│       └── 20261106163000_inventory_decrement_idempotency.sql
+│       ├── 20261106163000_inventory_decrement_idempotency.sql
+│       └── 20261106164500_make_orders_outbox_idempotency.sql
 │
 └── database/
     ├── truenas/
     │   ├── migrations/                  # Target: TrueNAS Authoritative PostgreSQL (lesoft on port 5432)
     │   │   ├── 092_add_category_to_make_costing_request_items.sql
-│   │   └── 093_inventory_decrement_idempotency.sql
+│   │   ├── 093_inventory_decrement_idempotency.sql
+│   │   └── 094_make_orders_outbox_idempotency.sql
     │   └── rollback/                    # ⚠️ PROHIBITED IN PRODUCTION: Destructive Manual Rollback Scripts
     │       └── 069_nas_schema_synchronization_rollback.sql
     │
@@ -85,8 +87,8 @@ The MAKE-order migration adds a nullable `outbox_operation_id` column and a uniq
 When promoting changes across environments, migrations must be executed in this strict sequence:
 
 1. **Step 1 — TrueNAS Master Forward Migration**:
-   Ensure the existing forward migrations through `092_add_category_to_make_costing_request_items.sql` are applied, then back up `lesoft` and apply `093_inventory_decrement_idempotency.sql`. Confirm the `apply_inventory_decrement` function exists and is executable by `nas_authenticated` before releasing the client.
+   Ensure the existing forward migrations through `092_add_category_to_make_costing_request_items.sql` are applied, then back up `lesoft` and apply `093_inventory_decrement_idempotency.sql` and `094_make_orders_outbox_idempotency.sql`. Confirm the stock RPC and unique MAKE-order outbox index are present before releasing the client.
 2. **Step 2 — Supabase Cloud Migrations**:
-   Confirm the quota/schema migrations through `076_reconcile_make_orders_schema.sql` are applied, then apply `supabase/migrations/20261106163000_inventory_decrement_idempotency.sql` to Supabase Cloud PostgreSQL.
+   Confirm the quota/schema migrations through `076_reconcile_make_orders_schema.sql` are applied, then apply `supabase/migrations/20261106163000_inventory_decrement_idempotency.sql` and `20261106164500_make_orders_outbox_idempotency.sql` to Supabase Cloud PostgreSQL.
 3. **Step 3 — MySQL Idempotency DDL**:
    Apply `database/mysql/migrations/mysql_001_stock_sync_idempotency.sql` to remote MySQL destination.
