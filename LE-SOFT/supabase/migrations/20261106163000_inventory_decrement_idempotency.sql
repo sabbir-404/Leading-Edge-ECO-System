@@ -30,8 +30,15 @@ DECLARE
     v_existing public.inventory_decrement_operations%ROWTYPE;
     v_current_quantity INTEGER;
     v_quantity_after INTEGER;
+    v_request_role TEXT;
 BEGIN
-    IF COALESCE(auth.role(), '') NOT IN ('authenticated', 'service_role') THEN
+    v_request_role := COALESCE(
+        NULLIF(current_setting('request.jwt.claim.role', TRUE), ''),
+        NULLIF(current_setting('request.jwt.claims', TRUE)::JSONB ->> 'role', ''),
+        ''
+    );
+
+    IF v_request_role NOT IN ('authenticated', 'service_role') THEN
         RAISE EXCEPTION 'Inventory decrement requires an authenticated application session.'
             USING ERRCODE = '42501';
     END IF;
