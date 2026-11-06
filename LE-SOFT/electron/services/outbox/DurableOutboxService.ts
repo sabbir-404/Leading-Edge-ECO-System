@@ -525,7 +525,8 @@ export class DurableOutboxService {
                     nasPayload,
                     record.primaryKeyCol,
                     record.filter,
-                    record.upsertConflict
+                    record.upsertConflict,
+                    record.id
                 );
                 if (result.success) {
                     nasSuccess = true;
@@ -683,7 +684,8 @@ export class DurableOutboxService {
         payload: any,
         primaryKeyCol: string = 'id',
         filter?: { column: string; value: any }[] | null,
-        upsertConflict?: string | null
+        upsertConflict?: string | null,
+        idempotencyKey?: string | null
     ): Promise<{ success: boolean; resolvedId?: string; error?: any; affectedRows?: number }> {
         try {
             // Restore field-level encryption for object or array of objects
@@ -694,19 +696,47 @@ export class DurableOutboxService {
             if (table === 'inventory_decrement') {
                 const d = encData as Record<string, any>;
                 const pId = Number(d.product_id);
-                const qty = Number(d.quantity || 0);
-                if (!pId || !qty) return { success: true, affectedRows: 0 };
+                const qty = Number(d.quantity);
+                const operationId = String(
+                    idempotencyKey || d.idempotency_key || d.operation_id || ''
+                ).trim();
 
-                const { data: prod, error: pErr } = await client.from('products').select('quantity').eq('id', pId).maybeSingle();
-                if (pErr) return { success: false, error: pErr };
-
-                if (prod) {
-                    const currentQty = Number(prod.quantity || 0);
-                    const newQty = Math.max(0, currentQty - qty);
-                    const { error: updErr } = await client.from('products').update({ quantity: newQty }).eq('id', pId);
-                    if (updErr) return { success: false, error: updErr };
+                if (!Number.isSafeInteger(pId) || pId <= 0) {
+                    return { success: false, error: new Error('Inventory decrement requires a positive integer product_id.') };
                 }
-                return { success: true, resolvedId: `dec_${pId}_${qty}`, affectedRows: 1 };
+                if (!Number.isSafeInteger(qty) || qty <= 0) {
+                    return { success: false, error: new Error('Inventory decrement requires a positive integer quantity.') };
+                }
+                if (!operationId || operationId.length > 200) {
+                    return { success: false, error: new Error('Inventory decrement requires a valid durable outbox operation ID.') };
+                }
+                if (typeof (client as any).rpc !== 'function') {
+                    return { success: false, error: new Error('Database client does not support the inventory idempotency RPC.') };
+                }
+
+                // The database function records the operation key and decrements the
+                // stock row in one transaction. A lost HTTP acknowledgement can then
+                // be retried without applying the same decrement twice.
+                const { data, error } = await (client as any).rpc('apply_inventory_decrement', {
+                    p_operation_id: operationId,
+                    p_product_id: pId,
+                    p_quantity: qty
+                });
+                if (error) return { success: false, error };
+
+                const result = Array.isArray(data) ? data[0] : data;
+                if (!result || result.success !== true) {
+                    return {
+                        success: false,
+                        error: new Error('Inventory decrement RPC returned an unexpected response.')
+                    };
+                }
+
+                return {
+                    success: true,
+                    resolvedId: 'dec_' + operationId,
+                    affectedRows: result.already_applied === true ? 0 : 1
+                };
             }
 
             if (table === 'bill_shipping' && (op === 'insert' || op === 'upsert')) {
