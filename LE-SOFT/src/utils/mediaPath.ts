@@ -7,10 +7,13 @@
 
 export function decodePathSegments(value: string): string {
     return value.split('/').map((segment) => {
+        // Escape only stray '%' characters first. Valid %HH sequences can then
+        // be decoded without letting one malformed escape poison the whole segment.
+        const sanitized = segment.replace(/%(?![0-9a-fA-F]{2})/g, '%25');
         try {
-            return decodeURIComponent(segment);
+            return decodeURIComponent(sanitized);
         } catch {
-            // Treat malformed percent sequences as literal filename characters.
+            // Invalid UTF-8 or other malformed escapes remain literal.
             return segment;
         }
     }).join('/');
