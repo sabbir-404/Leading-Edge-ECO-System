@@ -810,12 +810,17 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
 
         const mockClient: any = {
             from: vi.fn().mockImplementation(() => ({
+                // The outbox first checks whether a prior ambiguous attempt inserted
+                // these bill rows; this fixture starts with no existing child rows.
+                select: vi.fn(() => ({
+                    eq: vi.fn().mockResolvedValue({ data: [], error: null })
+                })),
                 insert: vi.fn().mockImplementation((data: any) => {
                     insertArgs = data;
                     return {
                         select: vi.fn().mockImplementation(() => {
                             selectChainCalled = true;
-                            // Multi-row insert returns array of inserted records without calling maybeSingle!
+                            // Multi-row insert returns an array; it must not call maybeSingle.
                             return Promise.resolve({
                                 data: [{ id: 1 }, { id: 2 }],
                                 error: null
@@ -1066,30 +1071,78 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
         }).toThrow(/UNIQUE constraint failed/);
     });
 
-    it('Scenario 27: Idempotent inventory decrement decrements stock safely on database client', async () => {
+    it('Scenario 27: Inventory decrements are idempotent after an ambiguous acknowledgement', async () => {
         const outbox = DurableOutboxService.getInstance();
         let storedQty = 50;
-
+        const appliedOperations = new Map<string, { productId: number; quantity: number }>();
         const mockClient: any = {
-            from: vi.fn((table: string) => ({
-                select: vi.fn(() => ({
-                    eq: vi.fn(() => ({
-                        maybeSingle: vi.fn().mockResolvedValue({ data: { id: 10, quantity: storedQty }, error: null })
-                    }))
-                })),
-                update: vi.fn((payload: any) => ({
-                    eq: vi.fn(async () => {
-                        storedQty = payload.quantity;
-                        return { data: { id: 10, quantity: storedQty }, error: null };
-                    })
-                }))
-            }))
+            rpc: vi.fn().mockImplementation(async (name: string, args: any) => {
+                expect(name).toBe('apply_inventory_decrement');
+                const previous = appliedOperations.get(args.p_operation_id);
+                if (previous) {
+                    if (previous.productId !== args.p_product_id || previous.quantity !== args.p_quantity) {
+                        return { data: null, error: new Error('idempotency_key_reused_with_different_parameters') };
+                    }
+                    return {
+                        data: { success: true, already_applied: true, quantity_after: storedQty },
+                        error: null
+                    };
+                }
+
+                storedQty = Math.max(0, storedQty - args.p_quantity);
+                appliedOperations.set(args.p_operation_id, {
+                    productId: args.p_product_id,
+                    quantity: args.p_quantity
+                });
+                return {
+                    data: { success: true, already_applied: false, quantity_after: storedQty },
+                    error: null
+                };
+            })
         };
 
-        const res = await outbox.executeOnClient(mockClient, 'inventory_decrement', 'custom', { product_id: 10, quantity: 5 });
-        expect(res.success).toBe(true);
-        expect(res.affectedRows).toBe(1);
+        const operationId = `stock_dec_scenario_27_${Date.now()}`;
+        const execute = () => outbox.executeOnClient(
+            mockClient,
+            'inventory_decrement',
+            'custom',
+            { product_id: '10', quantity: '5' },
+            'id',
+            null,
+            null,
+            operationId
+        );
+
+        const first = await execute();
+        expect(first.success).toBe(true);
+        expect(first.affectedRows).toBe(1);
         expect(storedQty).toBe(45);
+
+        // Simulate an HTTP acknowledgement being lost and the same outbox op retried.
+        const retry = await execute();
+        expect(retry.success).toBe(true);
+        expect(retry.affectedRows).toBe(0);
+        expect(storedQty).toBe(45);
+
+        // Reusing the key for a different decrement is rejected.
+        const conflict = await outbox.executeOnClient(
+            mockClient,
+            'inventory_decrement',
+            'custom',
+            { product_id: '10', quantity: '6' },
+            'id',
+            null,
+            null,
+            operationId
+        );
+        expect(conflict.success).toBe(false);
+        expect(storedQty).toBe(45);
+
+        const migrationPath = path.join(process.cwd(), 'supabase/migrations/20261106163000_inventory_decrement_idempotency.sql');
+        const migration = fs.readFileSync(migrationPath, 'utf-8');
+        expect(migration).toContain('ON CONFLICT (operation_id) DO NOTHING');
+        expect(migration).toContain('FOR UPDATE');
+        expect(migration).toContain('SECURITY DEFINER');
     });
 
     it('Scenario 28: Idempotent image retry reuses established remote URL after failed metadata update without re-upload', async () => {
@@ -1450,9 +1503,10 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
         const mockClientWithOrder: any = {
             from: (table: string) => ({
                 select: () => ({
-                    eq: () => ({
-                        eq: () => ({
-                            maybeSingle: () => Promise.resolve({ data: { id: 701 }, error: null })
+                    eq: (column: string, value: string) => ({
+                        maybeSingle: () => Promise.resolve({
+                            data: column === 'outbox_operation_id' && value === 'dedup_make_order_701' ? { id: 701 } : null,
+                            error: null
                         })
                     })
                 }),
@@ -1464,7 +1518,11 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
             mockClientWithOrder,
             'make_orders',
             'insert',
-            { bill_id: 999, description: `Customized order linked to Invoice ${testInvoice}. Attributes: Color: Oak` }
+            { bill_id: 999, description: `Customized order linked to Invoice ${testInvoice}. Attributes: Color: Oak` },
+            'id',
+            null,
+            null,
+            'dedup_make_order_701'
         );
         expect(dedupOrderResult.success).toBe(true);
         expect(dedupOrderResult.resolvedId).toBe('701');
@@ -1884,6 +1942,11 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
         // 1. Text/Business write when NAS is offline
         const mockSupabaseDb: any = {
             from: vi.fn(() => ({
+                select: vi.fn(() => ({
+                    eq: vi.fn(() => ({
+                        maybeSingle: vi.fn(() => Promise.resolve({ data: null, error: null }))
+                    }))
+                })),
                 insert: vi.fn(() => ({
                     select: vi.fn(() => ({
                         maybeSingle: vi.fn(() => Promise.resolve({ data: { id: 101, furniture_name: 'Executive Chair' }, error: null })),
@@ -1894,6 +1957,14 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
         };
         const mockFailingNasDb: any = {
             from: vi.fn(() => ({
+                select: vi.fn(() => ({
+                    eq: vi.fn(() => ({
+                        maybeSingle: vi.fn(() => Promise.resolve({
+                            data: null,
+                            error: new Error('NAS network timeout (100.88.85.6:3001 unreachable)')
+                        }))
+                    }))
+                })),
                 insert: vi.fn(() => ({
                     select: vi.fn(() => ({
                         maybeSingle: vi.fn(() => Promise.reject(new Error('NAS network timeout (100.88.85.6:3001 unreachable)'))),
@@ -1975,6 +2046,11 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
         let nasInserted = false;
         const mockRecoveredNasDb: any = {
             from: vi.fn(() => ({
+                select: vi.fn(() => ({
+                    eq: vi.fn(() => ({
+                        maybeSingle: vi.fn(() => Promise.resolve({ data: null, error: null }))
+                    }))
+                })),
                 insert: vi.fn(() => {
                     nasInserted = true;
                     return {
@@ -2081,6 +2157,11 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
 
         const mockSupabase: any = {
             from: vi.fn((table: string) => ({
+                select: vi.fn(() => ({
+                    eq: vi.fn(() => ({
+                        maybeSingle: vi.fn(() => Promise.resolve({ data: null, error: null }))
+                    }))
+                })),
                 insert: vi.fn((payload: any) => {
                     if (table === 'make_orders') {
                         ordersInserted++;

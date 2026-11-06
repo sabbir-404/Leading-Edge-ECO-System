@@ -1547,7 +1547,15 @@ export function registerMakeHandlers(): void {
             });
 
             if (result.success && ['ready to ship', 'ready for dispatch'].includes(String(parsed.stage || '').trim().toLowerCase())) {
-                const { data: order, error: orderError } = await failoverEngine.executeRead(async client => await client.from('make_orders').select('id,bill_id,order_number,customer_name,customer_phone,shipping_address,delivery_address,amount_due').eq('id', parsed.orderId).maybeSingle(), 'load-make-order-for-shipping');
+                const { data: orderData, error: orderError } = await failoverEngine.executeRead(async client => await client.from('make_orders').select('id,bill_id,order_number,customer_name,customer_phone,shipping_address,delivery_address,amount_due').eq('id', parsed.orderId).maybeSingle(), 'load-make-order-for-shipping');
+                const order = orderData as {
+                    id: number;
+                    bill_id: number | null;
+                    customer_name?: string | null;
+                    customer_phone?: string | null;
+                    shipping_address?: string | null;
+                    delivery_address?: string | null;
+                } | null;
                 if (orderError || !order) {
                     console.warn('[MAKE Shipping] Production completed, but shipping handoff could not load the order:', orderError?.message || 'Order not found');
                 } else {
@@ -1565,9 +1573,11 @@ export function registerMakeHandlers(): void {
                             status: 'ready_to_ship',
                             delivery_note: 'Transferred from MAKE production; logistics to arrange dispatch.'
                         }).select('id').single(), { table: 'bill_shipping', operation: 'insert' }, 'create-make-shipment-handoff');
+                        const handoffRow = handoff.data as { id: number } | null;
                         if (handoff.error) console.warn('[MAKE Shipping] Could not create shipping handoff:', handoff.error.message);
+                        else if (!handoffRow) console.warn('[MAKE Shipping] Shipping handoff returned no record ID.');
                         else await failoverEngine.executeWrite(async client => await client.from('shipping_status_log').insert({
-                            shipment_id: handoff.data.id,
+                            shipment_id: handoffRow.id,
                             bill_id: order.bill_id || null,
                             make_order_id: order.id,
                             status: 'ready_to_ship',
@@ -3966,7 +3976,8 @@ export function registerMakeHandlers(): void {
             if (categoryId !== null && (!Number.isInteger(categoryId) || categoryId < 1)) throw new Error('Choose a valid global product category.');
             let categoryName: string | null = null;
             if (categoryId !== null) {
-                const { data: category, error: categoryError } = await failoverEngine.executeRead(async client => await client.from('make_product_categories').select('id,name,is_active').eq('id', categoryId).maybeSingle(), 'validate-costing-category');
+                const { data: categoryData, error: categoryError } = await failoverEngine.executeRead(async client => await client.from('make_product_categories').select('id,name,is_active').eq('id', categoryId).maybeSingle(), 'validate-costing-category');
+                const category = categoryData as { id: number; name: string | null; is_active: boolean | null } | null;
                 if (categoryError || !category || category.is_active === false) throw categoryError || new Error('The selected global category is unavailable. Refresh the options and try again.');
                 categoryName = String(category.name || '').trim();
                 if (!categoryName) throw new Error('The selected global category does not have a name.');
@@ -4037,23 +4048,25 @@ export function registerMakeHandlers(): void {
         try {
             const session = requireSession();
             const payload = typeof rawPayload === 'number' ? { itemId: rawPayload } : (rawPayload || {});
-            const { data: request, error: requestError } = await failoverEngine.executeRead(async client => {
+            const { data: requestData, error: requestError } = await failoverEngine.executeRead(async client => {
                 let query: any = client.from('make_costing_requests').select('*');
                 query = payload.requestId ? query.eq('id', Number(payload.requestId)) : query.eq('id', -1);
                 return await query.maybeSingle();
             }, 'get-costing-request-for-order');
+            const request = requestData as Record<string, any> | null;
             if (requestError || !request) throw requestError || new Error('Costing request was not found.');
             const explicitOrderGrant = permissionOverride(session, 'place_order_from_costing_request');
             const canOrder = Number(request.requested_by) === Number(session.userId) || canApproveOrder(session) || explicitOrderGrant === true;
             if (explicitOrderGrant === false && !canApproveOrder(session)) throw new Error('Forbidden: your user group cannot place orders from costing requests.');
             if (!canOrder) throw new Error('Only the request owner or an order approver can place this order.');
-            const { data: rows, error: itemsError } = await failoverEngine.executeRead(async client => {
+            const { data: rowsData, error: itemsError } = await failoverEngine.executeRead(async client => {
                 let query: any = client.from('make_costing_request_items').select('*').eq('request_id', request.id).order('id');
                 if (payload.itemId) query = query.eq('id', Number(payload.itemId));
                 return await query;
             }, 'get-costing-request-items-for-order');
             if (itemsError) throw itemsError;
-            const pricedRows = (rows || []).filter((row: any) => row.status === 'priced');
+            const rows = (rowsData || []) as Record<string, any>[];
+            const pricedRows = rows.filter((row: any) => row.status === 'priced');
             if (!pricedRows.length) throw new Error('There are no priced items available to order.');
             if (payload.itemId && pricedRows.length !== 1) throw new Error('The selected costing item is not priced yet.');
             if (payload.requestId && pricedRows.length !== (rows || []).length) throw new Error('Finish pricing every item before placing the complete request as an order.');

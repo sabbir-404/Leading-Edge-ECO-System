@@ -59,6 +59,7 @@ const vitest = path.join(root, 'node_modules', 'vitest', 'vitest.mjs');
         'run',
         'tests/integration/tombstone-authorization.pg-integration.test.ts',
         'tests/integration/supabase-quota-rpc.pg-integration.test.ts',
+        'tests/integration/inventory-decrement-idempotency.pg-integration.test.ts',
         ...process.argv.slice(2),
     ], { cwd: root, env, stdio: 'inherit', windowsHide: true });
     const code = await new Promise((resolve) => {

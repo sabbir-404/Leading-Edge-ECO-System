@@ -177,6 +177,7 @@ export class NASConnectionManager {
                 this.performHeartbeat();
             }
         }, this.HEARTBEAT_INTERVAL_MS);
+        this.heartbeatTimer.unref?.();
     }
 
     /**
@@ -322,6 +323,7 @@ export class NASConnectionManager {
             this.isReconnecting = false;
             await this.performHeartbeat();
         }, totalDelay);
+        this.reconnectTimer.unref?.();
     }
 
     /**

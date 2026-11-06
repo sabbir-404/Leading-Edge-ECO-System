@@ -45,6 +45,9 @@ vi.mock('electron', () => ({
     openExternal: vi.fn(),
     openPath: vi.fn(),
   },
+  net: {
+    fetch: vi.fn(),
+  },
 }));
 
 // In-memory mock for better-sqlite3 to run flawlessly in Vitest without ABI rebuild conflicts
@@ -96,6 +99,7 @@ vi.mock('better-sqlite3', async (importOriginal) => {
               last_error: null,
               created_at: args[13] || Date.now(),
               updated_at: args[14] || Date.now(),
+              next_attempt_at: 0,
             });
           } else {
             rows.push({
@@ -172,26 +176,31 @@ vi.mock('better-sqlite3', async (importOriginal) => {
           if (lower.includes("status = 'completed'")) {
             const id = args[1];
             const r = rows.find(x => x.id === id);
-            if (r) { r.status = 'completed'; r.last_error = null; r.updated_at = args[0]; }
+            if (r) { r.status = 'completed'; r.last_error = null; r.updated_at = args[0]; r.next_attempt_at = 0; }
           } else if (lower.includes("status = 'pending'")) {
             for (const r of rows) {
-              if (r.status === 'blocked_dependency') r.status = 'pending';
+              if (r.status === 'blocked_dependency') { r.status = 'pending'; r.next_attempt_at = 0; }
               if (r.status === 'dead_letter' && (!args[1] || r.id === args[1])) {
                 r.status = 'pending';
                 r.last_error = null;
+                r.next_attempt_at = 0;
               }
             }
+          } else if (lower.includes('retry_count = ?')) {
+            const id = args[3];
+            const r = rows.find(x => x.id === id);
+            if (r) { r.retry_count = args[0]; r.updated_at = args[1]; r.next_attempt_at = args[2]; }
           } else if (lower.includes("status = 'dead_letter'")) {
             const id = args[args.length - 1];
             const err = args[0];
             const r = rows.find(x => x.id === id);
-            if (r) { r.status = 'dead_letter'; r.last_error = err; }
+            if (r) { r.status = 'dead_letter'; r.last_error = err; r.next_attempt_at = 0; }
           } else if (lower.includes('status = ?')) {
             const status = args[0];
             const err = args[1] !== undefined ? args[1] : null;
-            const id = args[3];
+            const id = args[4];
             const r = rows.find(x => x.id === id);
-            if (r) { r.status = status; r.last_error = err; }
+            if (r) { r.status = status; r.last_error = err; r.next_attempt_at = args[3] || 0; }
           }
         } else if (table === 'durable_uploads') {
           if (lower.includes('entity_type = ?')) {
@@ -367,7 +376,12 @@ vi.mock('better-sqlite3', async (importOriginal) => {
         return rows.filter(r => r.dependency_op_id === args[0]);
       }
       if (lower.includes("status in ('pending', 'buffered_supabase'")) {
-        return rows.filter(r => r.status === 'pending' || r.status === 'buffered_supabase' || r.status === 'cleanup_pending');
+        const eligibleAt = Number(args[0] || Date.now());
+        const limit = Number(args[1] || rows.length);
+        return rows
+          .filter(r => (r.status === 'pending' || r.status === 'buffered_supabase' || r.status === 'cleanup_pending') && (r.next_attempt_at || 0) <= eligibleAt)
+          .sort((a, b) => (a.created_at || 0) - (b.created_at || 0))
+          .slice(0, limit);
       }
       if (lower.includes("status in ('staged_local', 'buffered_supabase'")) {
         return rows.filter(r => r.status === 'staged_local' || r.status === 'buffered_supabase' || r.status === 'awaiting_association');

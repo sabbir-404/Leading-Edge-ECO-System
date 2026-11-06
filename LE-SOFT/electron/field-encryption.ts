@@ -314,7 +314,8 @@ const SKIP_KEYS = new Set([
     'type',
     'device_type',
     'employee_code',
-    'crm_state'
+    'crm_state',
+    'outbox_operation_id'
 ]);
 
 // ── Bulk object encrypt / decrypt ──────────────────────────────────────────────

@@ -158,6 +158,8 @@ export class DatabaseFailoverEngine {
 
     private journalEntries: FallbackJournalEntry[] = [];
     private mirrorRetryEntries: DurableMirrorRetryEntry[] = [];
+    private journalLoadFailed = false;
+    private mirrorJournalLoadFailed = false;
 
     private freshnessData: {
         lastSuccessfulMirrorTime: number | null;
@@ -623,16 +625,19 @@ export class DatabaseFailoverEngine {
         this.healthProbeTimer = setInterval(() => {
             this.checkNasConnectivity(getCandidates()).catch(() => {});
         }, 10000);
+        this.healthProbeTimer.unref?.();
 
         // Process durable mirror retries every 20 seconds
         this.mirrorRetryTimer = setInterval(() => {
             this.processPendingMirrorRetries().catch(() => {});
         }, 20000);
+        this.mirrorRetryTimer.unref?.();
 
         // Run Supabase ~1 GB retention maintenance once every 6 hours
         this.retentionTimer = setInterval(() => {
             this.maintainSupabaseRetention().catch(() => {});
         }, 6 * 3600 * 1000);
+        this.retentionTimer.unref?.();
 
         console.log('[DB:FAILOVER] Background health monitor & durability timers started.');
     }
@@ -1027,29 +1032,80 @@ export class DatabaseFailoverEngine {
         this.persistFreshness();
     }
 
+    // Atomically replace JSON journals: the previous durable file stays intact
+    // until the fully-written and fsynced replacement is ready to rename.
+    private writeJsonAtomically(filePath: string, value: unknown): void {
+        const directory = path.dirname(filePath);
+        fs.mkdirSync(directory, { recursive: true });
+        const tempPath = filePath + '.' + process.pid + '.' + Date.now() + '.' +
+            Math.random().toString(36).slice(2) + '.tmp';
+        let fileDescriptor: number | null = null;
+
+        try {
+            fileDescriptor = fs.openSync(tempPath, 'wx', 0o600);
+            const serialized = JSON.stringify(value, null, 2);
+            if (serialized === undefined) throw new Error('Journal payload is not JSON-serializable.');
+            fs.writeFileSync(fileDescriptor, serialized + '\n', { encoding: 'utf-8' });
+            fs.fsyncSync(fileDescriptor);
+            fs.closeSync(fileDescriptor);
+            fileDescriptor = null;
+
+            fs.renameSync(tempPath, filePath);
+
+            // Best-effort directory sync makes the rename durable on filesystems
+            // that support syncing directory handles (not all Windows versions do).
+            try {
+                const directoryDescriptor = fs.openSync(directory, 'r');
+                try { fs.fsyncSync(directoryDescriptor); } finally { fs.closeSync(directoryDescriptor); }
+            } catch {}
+        } catch (error) {
+            if (fileDescriptor !== null) {
+                try { fs.closeSync(fileDescriptor); } catch {}
+            }
+            try { if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath); } catch {}
+            throw error;
+        }
+    }
+
     // ── Durable Mirror Retry Journal (NAS -> Supabase) ───────────────────────────
     private loadMirrorJournal(): void {
+        this.mirrorJournalLoadFailed = false;
         try {
             if (fs.existsSync(this.mirrorJournalPath)) {
-                this.mirrorRetryEntries = JSON.parse(fs.readFileSync(this.mirrorJournalPath, 'utf-8'));
+                const parsed = JSON.parse(fs.readFileSync(this.mirrorJournalPath, 'utf-8'));
+                if (!Array.isArray(parsed)) throw new Error('Journal root must be an array.');
+                this.mirrorRetryEntries = parsed;
             } else {
                 this.mirrorRetryEntries = [];
             }
         } catch (e: any) {
             this.mirrorRetryEntries = [];
+            this.mirrorJournalLoadFailed = true;
+            console.error('[DB:JOURNAL] Mirror retry journal could not be parsed; preserving the file and disabling journal writes:', e.message);
         }
     }
 
     private persistMirrorJournal(): void {
+        if (this.mirrorJournalLoadFailed) {
+            throw new Error('Mirror retry journal could not be loaded safely; refusing to overwrite it.');
+        }
         try {
-            fs.mkdirSync(path.dirname(this.mirrorJournalPath), { recursive: true });
-            fs.writeFileSync(this.mirrorJournalPath, JSON.stringify(this.mirrorRetryEntries, null, 2), { encoding: 'utf-8', mode: 0o600 });
+            this.writeJsonAtomically(this.mirrorJournalPath, this.mirrorRetryEntries);
         } catch (e: any) {
             console.error('[DB:JOURNAL] Failed to persist mirror retry journal:', e.message);
+            throw e;
         }
     }
 
     public journalMirrorRetry(entry: Omit<DurableMirrorRetryEntry, 'id' | 'timestamp' | 'retryCount'>): void {
+        if (this.mirrorJournalLoadFailed) {
+            throw new Error('Mirror retry journal could not be loaded safely; refusing to accept an unjournaled retry.');
+        }
+        const previousEntries = this.mirrorRetryEntries.map(item => ({ ...item }));
+        const persistWithRollback = () => {
+            try { this.persistMirrorJournal(); }
+            catch (error) { this.mirrorRetryEntries = previousEntries; throw error; }
+        };
         const pkField = entry.primaryKey?.name || (entry.data?.id ? 'id' : (entry.data?.product_code ? 'product_code' : null));
         const pkValue = entry.primaryKey?.value || (pkField && entry.data ? entry.data[pkField] : null);
 
@@ -1066,7 +1122,7 @@ export class DatabaseFailoverEngine {
                 existing.filter = entry.filter;
                 existing.primaryKey = entry.primaryKey || { name: pkField, value: pkValue };
                 existing.timestamp = Date.now();
-                this.persistMirrorJournal();
+                persistWithRollback();
                 this.broadcastStatus();
                 return;
             }
@@ -1079,7 +1135,7 @@ export class DatabaseFailoverEngine {
             ...entry
         };
         this.mirrorRetryEntries.push(item);
-        this.persistMirrorJournal();
+        persistWithRollback();
         this.broadcastStatus();
     }
 
@@ -1131,12 +1187,14 @@ export class DatabaseFailoverEngine {
     }
 
     public async processPendingMirrorRetries(): Promise<{ succeeded: number; failed: number; discarded: number }> {
+        if (this.mirrorJournalLoadFailed) return { succeeded: 0, failed: 1, discarded: 0 };
         const client = this.supabaseAdmin || this.supabaseClient;
         if (!client || this.mirrorRetryEntries.length === 0 || this.isRetryingMirror) {
             return { succeeded: 0, failed: 0, discarded: 0 };
         }
 
         this.isRetryingMirror = true;
+        const previousEntries = this.mirrorRetryEntries.map(item => ({ ...item }));
         let succeeded = 0;
         let failed = 0;
         let discarded = 0;
@@ -1160,7 +1218,15 @@ export class DatabaseFailoverEngine {
         }
 
         this.mirrorRetryEntries = remaining;
-        this.persistMirrorJournal();
+        try {
+            this.persistMirrorJournal();
+        } catch (error: any) {
+            this.mirrorRetryEntries = previousEntries;
+            this.isRetryingMirror = false;
+            this.broadcastStatus();
+            console.error('[DB:JOURNAL] Mirror retry results were not persisted; entries remain eligible for retry:', error.message);
+            return { succeeded: 0, failed: previousEntries.length, discarded: 0 };
+        }
         this.isRetryingMirror = false;
         this.broadcastStatus();
         return { succeeded, failed, discarded };
@@ -1331,27 +1397,38 @@ export class DatabaseFailoverEngine {
 
     // ── Fallback Write Journal & Reconciliation Engine (Supabase -> NAS) ─────────
     private loadJournal(): void {
+        this.journalLoadFailed = false;
         try {
             if (fs.existsSync(this.journalPath)) {
-                this.journalEntries = JSON.parse(fs.readFileSync(this.journalPath, 'utf-8'));
+                const parsed = JSON.parse(fs.readFileSync(this.journalPath, 'utf-8'));
+                if (!Array.isArray(parsed)) throw new Error('Journal root must be an array.');
+                this.journalEntries = parsed;
             } else {
                 this.journalEntries = [];
             }
         } catch (e: any) {
             this.journalEntries = [];
+            this.journalLoadFailed = true;
+            console.error('[DB:JOURNAL] Fallback write journal could not be parsed; preserving the file and disabling fallback journal writes:', e.message);
         }
     }
 
     private persistJournal(): void {
+        if (this.journalLoadFailed) {
+            throw new Error('Fallback write journal could not be loaded safely; refusing to overwrite it.');
+        }
         try {
-            fs.mkdirSync(path.dirname(this.journalPath), { recursive: true });
-            fs.writeFileSync(this.journalPath, JSON.stringify(this.journalEntries, null, 2), { encoding: 'utf-8', mode: 0o600 });
+            this.writeJsonAtomically(this.journalPath, this.journalEntries);
         } catch (e: any) {
             console.error('[DB:JOURNAL] Failed to persist fallback write journal:', e.message);
+            throw e;
         }
     }
 
     public journalWrite(entry: Omit<FallbackJournalEntry, 'id' | 'timestamp' | 'status' | 'retryCount'>): void {
+        if (this.journalLoadFailed) {
+            throw new Error('Fallback write journal could not be loaded safely; refusing to accept an unjournaled fallback write.');
+        }
         const newEntry: FallbackJournalEntry = {
             id: `fw-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
             timestamp: Date.now(),
@@ -1360,13 +1437,18 @@ export class DatabaseFailoverEngine {
             ...entry
         };
         this.journalEntries.push(newEntry);
-        this.persistJournal();
+        try {
+            this.persistJournal();
+        } catch (error) {
+            this.journalEntries.pop();
+            throw error;
+        }
         this.broadcastStatus();
         console.log(`[DB:JOURNAL] Recorded offline write for table "${entry.table}" (ID: ${newEntry.id}).`);
     }
 
     public getPendingJournalEntries(): FallbackJournalEntry[] {
-        return this.journalEntries.filter(e => e.status === 'pending');
+        return this.journalLoadFailed ? [] : this.journalEntries.filter(e => e.status === 'pending');
     }
 
     /**
@@ -1374,6 +1456,10 @@ export class DatabaseFailoverEngine {
      * Runs when NAS recovers from an outage.
      */
     public async reconcileFallbackWrites(): Promise<{ reconciled: number; failed: number }> {
+        if (this.journalLoadFailed) {
+            console.error('[DB:RECONCILE] Fallback journal is unreadable; refusing reconciliation that could silently lose queued writes.');
+            return { reconciled: 0, failed: 1 };
+        }
         if (!this.nasClient || !this.isNasReachable) {
             console.warn('[DB:RECONCILE] NAS is not reachable. Reconciliation deferred.');
             return { reconciled: 0, failed: 0 };
@@ -1385,6 +1471,7 @@ export class DatabaseFailoverEngine {
         }
 
         this.isReconciling = true;
+        const originalJournalEntries = this.journalEntries.map(entry => ({ ...entry }));
         const pending = this.getPendingJournalEntries();
         if (pending.length === 0) {
             console.log('[DB:RECONCILE] No pending fallback writes to reconcile.');
@@ -1536,7 +1623,15 @@ export class DatabaseFailoverEngine {
             this.journalEntries = this.journalEntries.filter(e => e.status !== 'reconciled' || (e.reconciledAt && e.reconciledAt > cutoff));
         }
 
-        this.persistJournal();
+        try {
+            this.persistJournal();
+        } catch (error: any) {
+            this.journalEntries = originalJournalEntries;
+            this.isReconciling = false;
+            this.broadcastStatus();
+            console.error('[DB:RECONCILE] Reconciliation outcome could not be durably recorded; pending entries were restored for safe retry:', error.message);
+            return { reconciled: 0, failed: pending.length };
+        }
         this.isReconciling = false;
 
         this.circuitState = 'healthy';

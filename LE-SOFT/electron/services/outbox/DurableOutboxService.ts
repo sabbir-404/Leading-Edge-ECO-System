@@ -35,7 +35,7 @@ export type OutboxStatus =
 export interface OutboxOperationInput {
     id?: string;
     entityType: string;
-    operation: 'insert' | 'update' | 'upsert' | 'delete';
+    operation: 'insert' | 'update' | 'upsert' | 'delete' | 'custom';
     payload: Record<string, any> | Record<string, any>[];
     filter?: { column: string; value: any }[];
     primaryKeyCol?: string;
@@ -51,7 +51,7 @@ export interface OutboxOperationInput {
 export interface OutboxRecord {
     id: string;
     entityType: string;
-    operation: 'insert' | 'update' | 'upsert' | 'delete';
+    operation: 'insert' | 'update' | 'upsert' | 'delete' | 'custom';
     payload: any;
     filter: { column: string; value: any }[] | null;
     primaryKeyCol: string;
@@ -117,7 +117,8 @@ export class DurableOutboxService {
             fs.mkdirSync(path.dirname(this.dbPath), { recursive: true });
             this.db = new Database(this.dbPath);
             this.db.pragma('journal_mode = WAL');
-            this.db.pragma('synchronous = NORMAL');
+            // The outbox is the last durable copy during a remote outage; prefer power-loss durability over marginal write throughput.
+            this.db.pragma('synchronous = FULL');
 
             this.db.exec(`
                 CREATE TABLE IF NOT EXISTS outbox_operations (
@@ -137,7 +138,8 @@ export class DurableOutboxService {
                     max_retries INTEGER DEFAULT 10,
                     last_error TEXT,
                     created_at INTEGER NOT NULL,
-                    updated_at INTEGER NOT NULL
+                    updated_at INTEGER NOT NULL,
+                    next_attempt_at INTEGER NOT NULL DEFAULT 0
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_outbox_status ON outbox_operations(status);
@@ -157,6 +159,7 @@ export class DurableOutboxService {
             try { this.db.exec("ALTER TABLE outbox_operations ADD COLUMN filter_json TEXT"); } catch {}
             try { this.db.exec("ALTER TABLE outbox_operations ADD COLUMN upsert_conflict TEXT"); } catch {}
             try { this.db.exec("ALTER TABLE outbox_operations ADD COLUMN metadata_json TEXT"); } catch {}
+            try { this.db.exec("ALTER TABLE outbox_operations ADD COLUMN next_attempt_at INTEGER NOT NULL DEFAULT 0"); } catch {}
 
             console.log('[DurableOutbox] Initialized SQLite outbox at:', this.dbPath);
         } catch (err: any) {
@@ -207,8 +210,8 @@ export class DurableOutboxService {
                 id, entity_type, operation, payload_json, filter_json,
                 primary_key_col, primary_key_val, upsert_conflict,
                 dependency_op_id, metadata_json, target, status,
-                retry_count, max_retries, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+                retry_count, max_retries, created_at, updated_at, next_attempt_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 0)
         `);
 
         const transaction = this.db.transaction((ops: OutboxOperationInput[]) => {
@@ -307,6 +310,7 @@ export class DurableOutboxService {
     public startWorker(intervalMs = 500): void {
         if (this.drainTimer) return;
         this.drainTimer = setInterval(() => this.drainNextBatch().catch(() => {}), intervalMs);
+        this.drainTimer.unref?.();
         console.log(`[DurableOutbox] Background outbox worker started (interval: ${intervalMs}ms).`);
     }
 
@@ -334,9 +338,10 @@ export class DurableOutboxService {
             const rows = this.db.prepare(`
                 SELECT * FROM outbox_operations
                 WHERE status IN ('pending', 'buffered_supabase', 'cleanup_pending')
+                  AND next_attempt_at <= ?
                 ORDER BY created_at ASC
                 LIMIT ?
-            `).all(batchSize) as any[];
+            `).all(Date.now(), batchSize) as any[];
 
             if (rows.length === 0) return 0;
 
@@ -381,7 +386,7 @@ export class DurableOutboxService {
             // Find blocked operations whose dependencies have completed, synced to NAS, buffered to Supabase, or have an ID mapped
             this.db.prepare(`
                 UPDATE outbox_operations
-                SET status = 'pending', updated_at = ?
+                SET status = 'pending', updated_at = ?, next_attempt_at = 0
                 WHERE status = 'blocked_dependency'
                   AND (
                       dependency_op_id IN (
@@ -472,7 +477,8 @@ export class DurableOutboxService {
                         sbPayload,
                         record.primaryKeyCol,
                         record.filter,
-                        record.upsertConflict
+                        record.upsertConflict,
+                        record.id
                     );
                     if (result.success) {
                         const committed = await quotaMgr.releaseDatabaseQuota(`db_${id}`, estBytes, 'committed');
@@ -521,7 +527,8 @@ export class DurableOutboxService {
                     nasPayload,
                     record.primaryKeyCol,
                     record.filter,
-                    record.upsertConflict
+                    record.upsertConflict,
+                    record.id
                 );
                 if (result.success) {
                     nasSuccess = true;
@@ -675,59 +682,129 @@ export class DurableOutboxService {
     public async executeOnClient(
         client: SupabaseClient,
         table: string,
-        op: 'insert' | 'update' | 'upsert' | 'delete',
+        op: 'insert' | 'update' | 'upsert' | 'delete' | 'custom',
         payload: any,
         primaryKeyCol: string = 'id',
         filter?: { column: string; value: any }[] | null,
-        upsertConflict?: string | null
+        upsertConflict?: string | null,
+        idempotencyKey?: string | null
     ): Promise<{ success: boolean; resolvedId?: string; error?: any; affectedRows?: number }> {
         try {
             // Restore field-level encryption for object or array of objects
-            const encData = Array.isArray(payload)
-                ? await encryptRowsAsync(payload, 100)
-                : (payload && typeof payload === 'object') ? encryptObject(payload) : payload;
+            const encData = table === 'inventory_decrement'
+                ? payload
+                : Array.isArray(payload)
+                    ? await encryptRowsAsync(payload, 100)
+                    : (payload && typeof payload === 'object') ? encryptObject(payload) : payload;
+            let writeData: any = encData;
+            let makeOrderOperationId: string | null = null;
 
             if (table === 'inventory_decrement') {
-                const d = encData as Record<string, any>;
+                // Use the original payload here: string quantities may be field-encrypted by encryptObject.
+                const d = payload as Record<string, any>;
                 const pId = Number(d.product_id);
-                const qty = Number(d.quantity || 0);
-                if (!pId || !qty) return { success: true, affectedRows: 0 };
+                const qty = Number(d.quantity);
+                const operationId = String(
+                    idempotencyKey || d.idempotency_key || d.operation_id || ''
+                ).trim();
 
-                const { data: prod, error: pErr } = await client.from('products').select('quantity').eq('id', pId).maybeSingle();
-                if (pErr) return { success: false, error: pErr };
-
-                if (prod) {
-                    const currentQty = Number(prod.quantity || 0);
-                    const newQty = Math.max(0, currentQty - qty);
-                    const { error: updErr } = await client.from('products').update({ quantity: newQty }).eq('id', pId);
-                    if (updErr) return { success: false, error: updErr };
+                if (!Number.isSafeInteger(pId) || pId <= 0) {
+                    return { success: false, error: new Error('Inventory decrement requires a positive integer product_id.') };
                 }
-                return { success: true, resolvedId: `dec_${pId}_${qty}`, affectedRows: 1 };
+                if (!Number.isSafeInteger(qty) || qty <= 0) {
+                    return { success: false, error: new Error('Inventory decrement requires a positive integer quantity.') };
+                }
+                if (!operationId || operationId.length > 200) {
+                    return { success: false, error: new Error('Inventory decrement requires a valid durable outbox operation ID.') };
+                }
+                if (typeof (client as any).rpc !== 'function') {
+                    return { success: false, error: new Error('Database client does not support the inventory idempotency RPC.') };
+                }
+
+                // The database function records the operation key and decrements the
+                // stock row in one transaction. A lost HTTP acknowledgement can then
+                // be retried without applying the same decrement twice.
+                const { data, error } = await (client as any).rpc('apply_inventory_decrement', {
+                    p_operation_id: operationId,
+                    p_product_id: pId,
+                    p_quantity: qty
+                });
+                if (error) return { success: false, error };
+
+                const result = Array.isArray(data) ? data[0] : data;
+                if (!result || result.success !== true) {
+                    return {
+                        success: false,
+                        error: new Error('Inventory decrement RPC returned an unexpected response.')
+                    };
+                }
+
+                return {
+                    success: true,
+                    resolvedId: 'dec_' + operationId,
+                    affectedRows: result.already_applied === true ? 0 : 1
+                };
             }
 
-            if (table === 'bill_shipping') {
-                const d = encData as Record<string, any>;
-                let realBillId = d.bill_id;
-                if (d.invoice_number && (!realBillId || realBillId === 0)) {
-                    const { data: b } = await client.from('bills').select('id').eq('invoice_number', d.invoice_number).maybeSingle();
-                    if (b?.id) realBillId = b.id;
+            if (table === 'make_orders' && (op === 'insert' || op === 'upsert')) {
+                const operationId = String(idempotencyKey || '').trim();
+                if (!operationId || operationId.length > 200) {
+                    return { success: false, error: new Error('MAKE order insert requires a valid durable outbox operation ID.') };
+                }
+                if (!encData || Array.isArray(encData) || typeof encData !== 'object') {
+                    return { success: false, error: new Error('MAKE order insert requires a single object payload.') };
                 }
 
-                const { data: sh, error: shErr } = await client.from('bill_shipping').upsert({ 
-                    bill_id: realBillId, 
-                    ship_to_name: d.ship_to_name, 
-                    ship_to_address: d.ship_to_address, 
-                    ship_to_phone: d.ship_to_phone || '', 
-                    ship_from_name: d.ship_from_name || '', 
-                    ship_from_address: d.ship_from_address || '', 
-                    shipping_charge: d.shipping_charge || 0, 
-                    updated_by: d.updated_by, 
-                    status: 'pending_payment' 
-                }, { onConflict: 'bill_id' }).select('id').maybeSingle();
-                
-                if (shErr) return { success: false, error: shErr };
-                const resolvedId = sh?.id ? String(sh.id) : undefined;
-                return { success: true, resolvedId, affectedRows: 1 };
+                // Do not deduplicate on description: field encryption randomizes the
+                // ciphertext, so the same description cannot be queried reliably.
+                const { data: existingOrder, error: existingOrderError } = await client
+                    .from('make_orders')
+                    .select('id')
+                    .eq('outbox_operation_id', operationId)
+                    .maybeSingle();
+
+                if (existingOrderError) return { success: false, error: existingOrderError };
+                if (existingOrder?.id) {
+                    return { success: true, resolvedId: String(existingOrder.id), affectedRows: 0 };
+                }
+
+                makeOrderOperationId = operationId;
+                writeData = { ...encData, outbox_operation_id: operationId };
+            }
+
+            if (table === 'bill_shipping' && (op === 'insert' || op === 'upsert')) {
+                const d = encData as Record<string, any>;
+                let realBillId = d.bill_id;
+
+                if (d.invoice_number && (!realBillId || realBillId === 0)) {
+                    const { data: bill, error: billError } = await client
+                        .from('bills')
+                        .select('id')
+                        .eq('invoice_number', d.invoice_number)
+                        .maybeSingle();
+                    if (billError) return { success: false, error: billError };
+                    if (bill?.id) realBillId = bill.id;
+                }
+
+                if (!realBillId) {
+                    return {
+                        success: false,
+                        error: new Error('Cannot write bill_shipping without a resolved bill_id.')
+                    };
+                }
+
+                // invoice_number is only a lookup hint; it is not a bill_shipping column.
+                const { invoice_number: _invoiceNumber, ...shippingFields } = d;
+                const shippingPayload = { ...shippingFields, bill_id: realBillId };
+                const { data: shipment, error: shippingError } = await client
+                    .from('bill_shipping')
+                    .upsert(shippingPayload, { onConflict: 'bill_id' })
+                    .select('id')
+                    .maybeSingle();
+
+                if (shippingError) return { success: false, error: shippingError };
+                const resolvedId = shipment?.id ? String(shipment.id) : undefined;
+                return { success: true, resolvedId, affectedRows: shipment ? 1 : 0 };
             }
 
             if (op === 'insert') {
@@ -743,73 +820,86 @@ export class DurableOutboxService {
                     const firstBillId = items[0]?.bill_id;
                     if (firstBillId) {
                         try {
-                            const query = client.from('bill_items');
-                            if (query && typeof query.select === 'function') {
-                                const sel = query.select('id');
-                                if (sel && typeof sel.eq === 'function') {
-                                    const { data: existing } = await sel.eq('bill_id', firstBillId);
-                                    if (existing && existing.length >= items.length) {
-                                        return { success: true, resolvedId: String(existing[0].id), affectedRows: existing.length };
-                                    }
-                                    if (existing && existing.length > 0 && typeof query.delete === 'function') {
-                                        const del = query.delete();
-                                        if (del && typeof del.eq === 'function') {
-                                            await del.eq('bill_id', firstBillId);
-                                        }
-                                    }
-                                }
+                            const { data: existing, error: existingError } = await client
+                                .from('bill_items')
+                                .select('id')
+                                .eq('bill_id', firstBillId);
+
+                            if (existingError) return { success: false, error: existingError };
+
+                            if (existing && existing.length === items.length) {
+                                // Existing rows may represent a prior successful request whose
+                                // acknowledgement was lost. Do not delete/reinsert them on retry.
+                                return { success: true, resolvedId: String(existing[0].id), affectedRows: existing.length };
                             }
-                        } catch {}
+
+                            if (existing && existing.length > 0) {
+                                // A partial set is ambiguous. Preserve existing accounting rows and
+                                // surface the conflict instead of deleting them before a new insert.
+                                return {
+                                    success: false,
+                                    affectedRows: existing.length,
+                                    error: new Error(
+                                        `Found ${existing.length} existing bill item(s) for bill ${firstBillId}; expected ${items.length}. Refusing destructive replacement.`
+                                    )
+                                };
+                            }
+                        } catch (error: any) {
+                            return { success: false, error };
+                        }
                     }
                 }
 
-                if (table === 'make_orders') {
-                    const d = encData as Record<string, any>;
-                    if (d.bill_id && d.description) {
-                        try {
-                            const query = client.from('make_orders');
-                            if (query && typeof query.select === 'function') {
-                                const sel = query.select('id');
-                                if (sel && typeof sel.eq === 'function') {
-                                    const eq1 = sel.eq('bill_id', d.bill_id);
-                                    if (eq1 && typeof eq1.eq === 'function') {
-                                        const eq2 = eq1.eq('description', d.description);
-                                        if (eq2 && typeof eq2.maybeSingle === 'function') {
-                                            const { data: existing } = await eq2.maybeSingle();
-                                            if (existing?.id) {
-                                                return { success: true, resolvedId: String(existing.id), affectedRows: 1 };
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        } catch {}
-                    }
-                }
 
                 if (Array.isArray(encData)) {
                     // Multi-row insert: DO NOT use maybeSingle()!
-                    const res = await client.from(table).insert(encData).select(primaryKeyCol);
-                    if (res.error) return { success: false, error: res.error };
+                    const res = await client.from(table).insert(writeData).select(primaryKeyCol);
+                    if (res.error) {
+                        if (table === 'make_orders' && makeOrderOperationId && res.error.code === '23505') {
+                            const { data: duplicate, error: duplicateError } = await client
+                                .from('make_orders')
+                                .select('id')
+                                .eq('outbox_operation_id', makeOrderOperationId)
+                                .maybeSingle();
+                            if (!duplicateError && duplicate?.id) {
+                                return { success: true, resolvedId: String(duplicate.id), affectedRows: 0 };
+                            }
+                        }
+                        return { success: false, error: res.error };
+                    }
                     const rows = (res.data || []) as any[];
                     const resolvedId = rows.length > 0 ? String(rows[0][primaryKeyCol]) : undefined;
                     return { success: true, resolvedId, affectedRows: rows.length };
                 } else {
-                    const res = await client.from(table).insert(encData).select(primaryKeyCol).maybeSingle();
-                    if (res.error) return { success: false, error: res.error };
+                    const res = await client.from(table).insert(writeData).select(primaryKeyCol).maybeSingle();
+                    if (res.error) {
+                        if (table === 'make_orders' && makeOrderOperationId && res.error.code === '23505') {
+                            const { data: duplicate, error: duplicateError } = await client
+                                .from('make_orders')
+                                .select('id')
+                                .eq('outbox_operation_id', makeOrderOperationId)
+                                .maybeSingle();
+                            if (!duplicateError && duplicate?.id) {
+                                return { success: true, resolvedId: String(duplicate.id), affectedRows: 0 };
+                            }
+                        }
+                        return { success: false, error: res.error };
+                    }
                     const resolvedId = res.data ? String((res.data as any)[primaryKeyCol]) : undefined;
                     return { success: true, resolvedId, affectedRows: res.data ? 1 : 0 };
                 }
             } else if (op === 'upsert') {
-                const conflictOption = upsertConflict ? { onConflict: upsertConflict } : (primaryKeyCol ? { onConflict: primaryKeyCol } : undefined);
+                const conflictOption = makeOrderOperationId
+                    ? { onConflict: 'outbox_operation_id' }
+                    : (upsertConflict ? { onConflict: upsertConflict } : (primaryKeyCol ? { onConflict: primaryKeyCol } : undefined));
                 if (Array.isArray(encData)) {
-                    const res = await client.from(table).upsert(encData, conflictOption).select(primaryKeyCol);
+                    const res = await client.from(table).upsert(writeData, conflictOption).select(primaryKeyCol);
                     if (res.error) return { success: false, error: res.error };
                     const rows = (res.data || []) as any[];
                     const resolvedId = rows.length > 0 ? String(rows[0][primaryKeyCol]) : undefined;
                     return { success: true, resolvedId, affectedRows: rows.length };
                 } else {
-                    const res = await client.from(table).upsert(encData, conflictOption).select(primaryKeyCol).maybeSingle();
+                    const res = await client.from(table).upsert(writeData, conflictOption).select(primaryKeyCol).maybeSingle();
                     if (res.error) return { success: false, error: res.error };
                     const resolvedId = res.data ? String((res.data as any)[primaryKeyCol]) : undefined;
                     return { success: true, resolvedId, affectedRows: res.data ? 1 : 0 };
@@ -882,7 +972,7 @@ export class DurableOutboxService {
             const row = this.db.prepare(`SELECT entity_type FROM outbox_operations WHERE id = ?`).get(id) as any;
             this.db.prepare(`
                 UPDATE outbox_operations
-                SET status = 'completed', last_error = NULL, updated_at = ?
+                SET status = 'completed', last_error = NULL, updated_at = ?, next_attempt_at = 0
                 WHERE id = ?
             `).run(Date.now(), id);
             this.invokeCallbacks(id, true, { success: true, id });
@@ -908,9 +998,9 @@ export class DurableOutboxService {
         try {
             this.db.prepare(`
                 UPDATE outbox_operations
-                SET status = ?, last_error = ?, updated_at = ?
+                SET status = ?, last_error = ?, updated_at = ?, next_attempt_at = ?
                 WHERE id = ?
-            `).run(status, errorMsg, Date.now(), id);
+            `).run(status, errorMsg, Date.now(), (status === 'buffered_supabase' || status === 'cleanup_pending') ? Date.now() + 15000 : 0, id);
             this.broadcastOutboxStatus();
         } catch {}
     }
@@ -920,7 +1010,7 @@ export class DurableOutboxService {
         try {
             this.db.prepare(`
                 UPDATE outbox_operations
-                SET status = 'dead_letter', last_error = ?, updated_at = ?
+                SET status = 'dead_letter', last_error = ?, updated_at = ?, next_attempt_at = 0
                 WHERE id = ?
             `).run(errorMsg, Date.now(), id);
             console.error(`[DurableOutbox] Operation ${id} moved to DEAD_LETTER:`, errorMsg);
@@ -936,11 +1026,14 @@ export class DurableOutboxService {
             if (nextCount >= maxRetries) {
                 this.markDeadLetter(id, `Exceeded max retry threshold (${maxRetries} attempts)`);
             } else {
+                const now = Date.now();
+                const baseDelay = Math.min(60000, 1000 * Math.pow(2, Math.max(0, nextCount - 1)));
+                const jitter = Math.floor(Math.random() * 500);
                 this.db.prepare(`
                     UPDATE outbox_operations
-                    SET retry_count = ?, updated_at = ?
+                    SET retry_count = ?, updated_at = ?, next_attempt_at = ?
                     WHERE id = ?
-                `).run(nextCount, Date.now(), id);
+                `).run(nextCount, now, now + baseDelay + jitter, id);
             }
         } catch {}
     }
@@ -1045,7 +1138,7 @@ export class DurableOutboxService {
         try {
             const res = this.db.prepare(`
                 UPDATE outbox_operations
-                SET status = 'pending', retry_count = 0, last_error = NULL, updated_at = ?
+                SET status = 'pending', retry_count = 0, last_error = NULL, updated_at = ?, next_attempt_at = 0
                 WHERE id = ? AND status = 'dead_letter'
             `).run(Date.now(), id);
             this.broadcastOutboxStatus();
@@ -1060,7 +1153,7 @@ export class DurableOutboxService {
         try {
             const res = this.db.prepare(`
                 UPDATE outbox_operations
-                SET status = 'pending', retry_count = 0, last_error = NULL, updated_at = ?
+                SET status = 'pending', retry_count = 0, last_error = NULL, updated_at = ?, next_attempt_at = 0
                 WHERE status = 'dead_letter'
             `).run(Date.now());
             this.broadcastOutboxStatus();
