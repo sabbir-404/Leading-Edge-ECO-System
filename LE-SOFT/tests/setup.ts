@@ -45,6 +45,9 @@ vi.mock('electron', () => ({
     openExternal: vi.fn(),
     openPath: vi.fn(),
   },
+  net: {
+    fetch: vi.fn(),
+  },
 }));
 
 // In-memory mock for better-sqlite3 to run flawlessly in Vitest without ABI rebuild conflicts
