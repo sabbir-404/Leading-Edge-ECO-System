@@ -118,46 +118,60 @@ describe('Durable outbox data-integrity regressions', () => {
         expect(insert).not.toHaveBeenCalled();
     });
 
-    it('uses plaintext order lookup keys while preserving encrypted insert payloads', async () => {
-        const existingOrder = { id: 99 };
-        const eq2: any = {
-            maybeSingle: vi.fn().mockResolvedValue({ data: existingOrder, error: null })
-        };
-        const eq1: any = {
+    it('deduplicates MAKE orders by the stable outbox operation ID, not encrypted description', async () => {
+        let storedOrder: { id: number; outbox_operation_id: string } | null = null;
+        let insertedPayload: any = null;
+        const duplicateLookup = vi.fn(() => ({
+            maybeSingle: vi.fn().mockResolvedValue({ data: storedOrder, error: null })
+        }));
+        const lookupSelection: any = {
             eq: vi.fn((column: string, value: any) => {
-                expect(column).toBe('description');
-                expect(value).toBe('Custom desk');
-                return eq2;
+                expect(column).toBe('outbox_operation_id');
+                expect(value).toBe('make-order-operation-17');
+                return duplicateLookup();
             })
         };
-        const selection: any = {
-            eq: vi.fn((column: string, value: any) => {
-                expect(column).toBe('bill_id');
-                expect(value).toBe(51);
-                return eq1;
+        const lookupBuilder: any = { select: vi.fn(() => lookupSelection) };
+        const insertBuilder: any = {
+            insert: vi.fn((payload: any) => {
+                insertedPayload = payload;
+                storedOrder = { id: 97, outbox_operation_id: payload.outbox_operation_id };
+                return {
+                    select: vi.fn(() => ({
+                        maybeSingle: vi.fn().mockResolvedValue({ data: { id: 97 }, error: null })
+                    }))
+                };
             })
         };
-        const query: any = { select: vi.fn(() => selection) };
-        const insert = vi.fn();
         const client: any = {
-            from: vi.fn(() => ({
-                ...query,
-                select: query.select,
-                insert
-            }))
+            from: vi.fn()
+                .mockReturnValueOnce(lookupBuilder)
+                .mockReturnValueOnce(insertBuilder)
+                .mockReturnValueOnce(lookupBuilder)
         };
 
-        const result = await outbox.executeOnClient(
+        const execute = () => outbox.executeOnClient(
             client,
             'make_orders',
             'insert',
             { bill_id: 51, description: 'Custom desk' },
-            'id'
+            'id',
+            null,
+            null,
+            'make-order-operation-17'
         );
 
-        expect(result.success).toBe(true);
-        expect(result.resolvedId).toBe('99');
-        expect(insert).not.toHaveBeenCalled();
+        const first = await execute();
+        expect(first.success).toBe(true);
+        expect(first.resolvedId).toBe('97');
+        expect(insertedPayload.outbox_operation_id).toBe('make-order-operation-17');
+
+        const retry = await execute();
+        expect(retry.success).toBe(true);
+        expect(retry.resolvedId).toBe('97');
+        expect(retry.affectedRows).toBe(0);
+        expect(insertBuilder.insert).toHaveBeenCalledTimes(1);
+        expect(duplicateLookup).toHaveBeenCalledTimes(2);
     });
 
     it('sets a future retry time with bounded exponential backoff', () => {
