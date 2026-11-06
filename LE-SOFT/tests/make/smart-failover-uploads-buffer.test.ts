@@ -810,12 +810,17 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
 
         const mockClient: any = {
             from: vi.fn().mockImplementation(() => ({
+                // The outbox first checks whether a prior ambiguous attempt inserted
+                // these bill rows; this fixture starts with no existing child rows.
+                select: vi.fn(() => ({
+                    eq: vi.fn().mockResolvedValue({ data: [], error: null })
+                })),
                 insert: vi.fn().mockImplementation((data: any) => {
                     insertArgs = data;
                     return {
                         select: vi.fn().mockImplementation(() => {
                             selectChainCalled = true;
-                            // Multi-row insert returns array of inserted records without calling maybeSingle!
+                            // Multi-row insert returns an array; it must not call maybeSingle.
                             return Promise.resolve({
                                 data: [{ id: 1 }, { id: 2 }],
                                 error: null
