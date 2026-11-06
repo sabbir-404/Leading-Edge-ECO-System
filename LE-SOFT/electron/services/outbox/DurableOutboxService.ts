@@ -117,7 +117,8 @@ export class DurableOutboxService {
             fs.mkdirSync(path.dirname(this.dbPath), { recursive: true });
             this.db = new Database(this.dbPath);
             this.db.pragma('journal_mode = WAL');
-            this.db.pragma('synchronous = NORMAL');
+            // The outbox is the last durable copy during a remote outage; prefer power-loss durability over marginal write throughput.
+            this.db.pragma('synchronous = FULL');
 
             this.db.exec(`
                 CREATE TABLE IF NOT EXISTS outbox_operations (
