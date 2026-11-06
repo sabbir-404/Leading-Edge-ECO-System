@@ -34,15 +34,6 @@ postgresDescribe('inventory decrement idempotency RPC (PostgreSQL)', () => {
             END
             $roles$;
 
-            CREATE SCHEMA IF NOT EXISTS auth;
-            CREATE OR REPLACE FUNCTION auth.role()
-            RETURNS TEXT
-            LANGUAGE SQL
-            STABLE
-            AS $role$
-                SELECT COALESCE(NULLIF(current_setting('request.jwt.claim.role', true), ''), 'authenticated')
-            $role$;
-
             CREATE TABLE IF NOT EXISTS public.products (
                 id BIGINT PRIMARY KEY,
                 quantity INTEGER NOT NULL DEFAULT 0
