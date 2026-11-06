@@ -1503,9 +1503,10 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
         const mockClientWithOrder: any = {
             from: (table: string) => ({
                 select: () => ({
-                    eq: () => ({
-                        eq: () => ({
-                            maybeSingle: () => Promise.resolve({ data: { id: 701 }, error: null })
+                    eq: (column: string, value: string) => ({
+                        maybeSingle: () => Promise.resolve({
+                            data: column === 'outbox_operation_id' && value === 'dedup_make_order_701' ? { id: 701 } : null,
+                            error: null
                         })
                     })
                 }),
@@ -1517,7 +1518,11 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
             mockClientWithOrder,
             'make_orders',
             'insert',
-            { bill_id: 999, description: `Customized order linked to Invoice ${testInvoice}. Attributes: Color: Oak` }
+            { bill_id: 999, description: `Customized order linked to Invoice ${testInvoice}. Attributes: Color: Oak` },
+            'id',
+            null,
+            null,
+            'dedup_make_order_701'
         );
         expect(dedupOrderResult.success).toBe(true);
         expect(dedupOrderResult.resolvedId).toBe('701');
@@ -1937,6 +1942,11 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
         // 1. Text/Business write when NAS is offline
         const mockSupabaseDb: any = {
             from: vi.fn(() => ({
+                select: vi.fn(() => ({
+                    eq: vi.fn(() => ({
+                        maybeSingle: vi.fn(() => Promise.resolve({ data: null, error: null }))
+                    }))
+                })),
                 insert: vi.fn(() => ({
                     select: vi.fn(() => ({
                         maybeSingle: vi.fn(() => Promise.resolve({ data: { id: 101, furniture_name: 'Executive Chair' }, error: null })),
@@ -1947,6 +1957,14 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
         };
         const mockFailingNasDb: any = {
             from: vi.fn(() => ({
+                select: vi.fn(() => ({
+                    eq: vi.fn(() => ({
+                        maybeSingle: vi.fn(() => Promise.resolve({
+                            data: null,
+                            error: new Error('NAS network timeout (100.88.85.6:3001 unreachable)')
+                        }))
+                    }))
+                })),
                 insert: vi.fn(() => ({
                     select: vi.fn(() => ({
                         maybeSingle: vi.fn(() => Promise.reject(new Error('NAS network timeout (100.88.85.6:3001 unreachable)'))),
@@ -2028,6 +2046,11 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
         let nasInserted = false;
         const mockRecoveredNasDb: any = {
             from: vi.fn(() => ({
+                select: vi.fn(() => ({
+                    eq: vi.fn(() => ({
+                        maybeSingle: vi.fn(() => Promise.resolve({ data: null, error: null }))
+                    }))
+                })),
                 insert: vi.fn(() => {
                     nasInserted = true;
                     return {
@@ -2134,6 +2157,11 @@ describe('LE-SOFT: Smart Database Failover, Reliable Image Uploads & 1 GB Buffer
 
         const mockSupabase: any = {
             from: vi.fn((table: string) => ({
+                select: vi.fn(() => ({
+                    eq: vi.fn(() => ({
+                        maybeSingle: vi.fn(() => Promise.resolve({ data: null, error: null }))
+                    }))
+                })),
                 insert: vi.fn((payload: any) => {
                     if (table === 'make_orders') {
                         ordersInserted++;
