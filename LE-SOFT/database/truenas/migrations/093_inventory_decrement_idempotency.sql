@@ -1,5 +1,6 @@
 -- Durable idempotency for stock decrements submitted through the local outbox.
--- Apply to both Supabase Cloud and the authoritative TrueNAS PostgreSQL database.
+-- Apply after the TrueNAS authenticated workflow grants (migration 070).
+-- The TrueNAS PostgREST role is nas_authenticated, not Supabase's authenticated role.
 
 CREATE TABLE IF NOT EXISTS public.inventory_decrement_operations (
     operation_id TEXT PRIMARY KEY,
@@ -13,7 +14,24 @@ CREATE INDEX IF NOT EXISTS idx_inventory_decrement_operations_product
     ON public.inventory_decrement_operations(product_id);
 
 ALTER TABLE public.inventory_decrement_operations ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON TABLE public.inventory_decrement_operations FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON TABLE public.inventory_decrement_operations FROM PUBLIC;
+
+DO $table_grants$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+        EXECUTE 'REVOKE ALL ON TABLE public.inventory_decrement_operations FROM anon';
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+        EXECUTE 'REVOKE ALL ON TABLE public.inventory_decrement_operations FROM authenticated';
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'nas_authenticated') THEN
+        EXECUTE 'REVOKE ALL ON TABLE public.inventory_decrement_operations FROM nas_authenticated';
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+        EXECUTE 'REVOKE ALL ON TABLE public.inventory_decrement_operations FROM service_role';
+    END IF;
+END
+$table_grants$;
 
 CREATE OR REPLACE FUNCTION public.apply_inventory_decrement(
     p_operation_id TEXT,
@@ -31,7 +49,7 @@ DECLARE
     v_current_quantity INTEGER;
     v_quantity_after INTEGER;
 BEGIN
-    IF COALESCE(auth.role(), '') NOT IN ('authenticated', 'service_role') THEN
+    IF COALESCE(auth.role(), '') NOT IN ('authenticated', 'nas_authenticated', 'service_role') THEN
         RAISE EXCEPTION 'Inventory decrement requires an authenticated application session.'
             USING ERRCODE = '42501';
     END IF;
@@ -51,7 +69,6 @@ BEGIN
             USING ERRCODE = '22023';
     END IF;
 
-    -- The primary key serializes concurrent attempts using the same operation ID.
     INSERT INTO public.inventory_decrement_operations (operation_id, product_id, quantity)
     VALUES (p_operation_id, p_product_id, p_quantity)
     ON CONFLICT (operation_id) DO NOTHING;
@@ -84,7 +101,7 @@ BEGIN
         );
     END IF;
 
-    -- Serialize different decrement operations for the same product row.
+    -- Row lock prevents two different operations from overwriting one another.
     SELECT quantity
       INTO v_current_quantity
       FROM public.products
@@ -116,8 +133,24 @@ BEGIN
 END;
 $function$;
 
-REVOKE ALL ON FUNCTION public.apply_inventory_decrement(TEXT, BIGINT, INTEGER) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.apply_inventory_decrement(TEXT, BIGINT, INTEGER) TO authenticated, service_role;
+REVOKE ALL ON FUNCTION public.apply_inventory_decrement(TEXT, BIGINT, INTEGER) FROM PUBLIC;
+
+DO $function_grants$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+        EXECUTE 'REVOKE ALL ON FUNCTION public.apply_inventory_decrement(TEXT, BIGINT, INTEGER) FROM anon';
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+        EXECUTE 'GRANT EXECUTE ON FUNCTION public.apply_inventory_decrement(TEXT, BIGINT, INTEGER) TO authenticated';
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'nas_authenticated') THEN
+        EXECUTE 'GRANT EXECUTE ON FUNCTION public.apply_inventory_decrement(TEXT, BIGINT, INTEGER) TO nas_authenticated';
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+        EXECUTE 'GRANT EXECUTE ON FUNCTION public.apply_inventory_decrement(TEXT, BIGINT, INTEGER) TO service_role';
+    END IF;
+END
+$function_grants$;
 
 COMMENT ON FUNCTION public.apply_inventory_decrement(TEXT, BIGINT, INTEGER) IS
     'Atomically decrements product stock once per durable outbox operation ID; safe to retry after ambiguous network acknowledgements.';
