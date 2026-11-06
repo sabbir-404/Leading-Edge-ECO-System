@@ -90,4 +90,33 @@ describe('media path segment encoding', () => {
             fetchSpy.mockRestore();
         }
     });
+
+    it('does not classify lookalike storage domains as NAS or send them Access headers', async () => {
+        const attackerUrl = 'https://storage.lenas.me.attacker.example/image-' + Date.now() + '.png';
+        const fetchSpy = vi.spyOn(net, 'fetch').mockResolvedValue(
+            new Response(Buffer.from('image-bytes'), {
+                status: 200,
+                headers: { 'content-type': 'image/png' }
+            }) as any
+        );
+
+        try {
+            const service = MediaProtocolService.getInstance();
+            const diagnostic = await service.diagnoseImage(attackerUrl);
+
+            expect(diagnostic.sourceType).toBe('remote_http');
+            expect(fetchSpy).toHaveBeenCalledWith(
+                attackerUrl,
+                expect.objectContaining({ method: 'HEAD', headers: {} })
+            );
+
+            const remoteRequest = new URL('app-media://remote?url=' + encodeURIComponent(attackerUrl));
+            const response = await (service as any).handleRemoteMedia(remoteRequest);
+            expect(response.status).toBe(200);
+            expect(fetchSpy).toHaveBeenLastCalledWith(attackerUrl);
+        } finally {
+            fetchSpy.mockRestore();
+        }
+    });
+
 });
