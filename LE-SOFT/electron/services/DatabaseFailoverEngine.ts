@@ -1040,7 +1040,7 @@ export class DatabaseFailoverEngine {
 
         try {
             fileDescriptor = fs.openSync(tempPath, 'wx', 0o600);
-            fs.writeFileSync(fileDescriptor, JSON.stringify(value, null, 2) + '\\n', { encoding: 'utf-8' });
+            fs.writeFileSync(fileDescriptor, JSON.stringify(value, null, 2) + '\n', { encoding: 'utf-8' });
             fs.fsyncSync(fileDescriptor);
             fs.closeSync(fileDescriptor);
             fileDescriptor = null;
@@ -1098,7 +1098,7 @@ export class DatabaseFailoverEngine {
         }
         const previousEntries = this.mirrorRetryEntries.map(item => ({ ...item }));
         const persistWithRollback = () => {
-            try { persistWithRollback(); }
+            try { this.persistMirrorJournal(); }
             catch (error) { this.mirrorRetryEntries = previousEntries; throw error; }
         };
         const pkField = entry.primaryKey?.name || (entry.data?.id ? 'id' : (entry.data?.product_code ? 'product_code' : null));
@@ -1189,7 +1189,7 @@ export class DatabaseFailoverEngine {
         }
 
         this.isRetryingMirror = true;
-        const previousEntries = this.mirrorRetryEntries;
+        const previousEntries = this.mirrorRetryEntries.map(item => ({ ...item }));
         let succeeded = 0;
         let failed = 0;
         let discarded = 0;
