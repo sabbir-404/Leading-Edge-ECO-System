@@ -19,6 +19,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { pathToFileURL } from 'url';
 import { getCfAccessHeaders, getNasStorageAuthHeaders, getNasStorageCandidates, getNasStorageUrl } from '../../supabase';
+import { decodePathSegments, encodePathSegments } from '../../../src/utils/mediaPath';
 
 export interface SafeImageDiagnostic {
     sourceType: 'local_file' | 'nas_storage' | 'supabase_storage' | 'remote_http' | 'data_url' | 'unknown';
@@ -123,7 +124,7 @@ export class MediaProtocolService {
      * Serves local filesystem files safely with accurate MIME headers.
      */
     private async handleLocalFile(pathname: string): Promise<Response> {
-        let cleanPath = decodeURIComponent(pathname);
+        let cleanPath = decodePathSegments(pathname);
 
         // Windows path normalization: e.g. /C:/path/file.png -> C:\path\file.png
         if (process.platform === 'win32') {
@@ -173,7 +174,7 @@ export class MediaProtocolService {
         if (isNas) {
             rawPath = urlObj.pathname.replace(/^\//, '');
         } else {
-            targetUrl = decodeURIComponent(urlObj.searchParams.get('url') || '');
+            // URLSearchParams has already decoded the query value; decoding again can corrupt '%' filenames.\n            targetUrl = urlObj.searchParams.get('url') || '';
             if (targetUrl.includes('storage.lenas.me') || /:[0-9]+\/files\//i.test(targetUrl)) {
                 isNas = true;
                 try {
@@ -218,7 +219,7 @@ export class MediaProtocolService {
         // 2. Fetch from network
         if (isNas) {
             const candidates = typeof getNasStorageCandidates === 'function' ? getNasStorageCandidates() : ['http://100.88.85.6:8081', 'https://storage.lenas.me'];
-            const encodedSubPath = encodeURI(cleanSubPath);
+            const encodedSubPath = encodePathSegments(cleanSubPath);
             const cfHeaders = typeof getCfAccessHeaders === 'function' ? getCfAccessHeaders() : {};
             const storageAuthHeaders = typeof getNasStorageAuthHeaders === 'function' ? getNasStorageAuthHeaders() : {};
 
@@ -358,7 +359,7 @@ export class MediaProtocolService {
 
                     // Test network candidates
                     const candidates = typeof getNasStorageCandidates === 'function' ? getNasStorageCandidates() : ['http://100.88.85.6:8081', 'https://storage.lenas.me'];
-                    const encodedSub = encodeURI(cleanSub);
+                    const encodedSub = encodePathSegments(cleanSub);
                     const cfHeaders = typeof getCfAccessHeaders === 'function' ? getCfAccessHeaders() : {};
                     const storageAuthHeaders = typeof getNasStorageAuthHeaders === 'function' ? getNasStorageAuthHeaders() : {};
 
