@@ -118,6 +118,48 @@ describe('Durable outbox data-integrity regressions', () => {
         expect(insert).not.toHaveBeenCalled();
     });
 
+    it('uses plaintext order lookup keys while preserving encrypted insert payloads', async () => {
+        const existingOrder = { id: 99 };
+        const eq2: any = {
+            maybeSingle: vi.fn().mockResolvedValue({ data: existingOrder, error: null })
+        };
+        const eq1: any = {
+            eq: vi.fn((column: string, value: any) => {
+                expect(column).toBe('description');
+                expect(value).toBe('Custom desk');
+                return eq2;
+            })
+        };
+        const selection: any = {
+            eq: vi.fn((column: string, value: any) => {
+                expect(column).toBe('bill_id');
+                expect(value).toBe(51);
+                return eq1;
+            })
+        };
+        const query: any = { select: vi.fn(() => selection) };
+        const insert = vi.fn();
+        const client: any = {
+            from: vi.fn(() => ({
+                ...query,
+                select: query.select,
+                insert
+            }))
+        };
+
+        const result = await outbox.executeOnClient(
+            client,
+            'make_orders',
+            'insert',
+            { bill_id: 51, description: 'Custom desk' },
+            'id'
+        );
+
+        expect(result.success).toBe(true);
+        expect(result.resolvedId).toBe('99');
+        expect(insert).not.toHaveBeenCalled();
+    });
+
     it('sets a future retry time with bounded exponential backoff', () => {
         const id = `retry-backoff-${Date.now()}-${Math.random().toString(36).slice(2)}`;
         outbox.enqueueSingle({
