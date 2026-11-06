@@ -35,7 +35,7 @@ export type OutboxStatus =
 export interface OutboxOperationInput {
     id?: string;
     entityType: string;
-    operation: 'insert' | 'update' | 'upsert' | 'delete';
+    operation: 'insert' | 'update' | 'upsert' | 'delete' | 'custom';
     payload: Record<string, any> | Record<string, any>[];
     filter?: { column: string; value: any }[];
     primaryKeyCol?: string;
@@ -476,7 +476,8 @@ export class DurableOutboxService {
                         sbPayload,
                         record.primaryKeyCol,
                         record.filter,
-                        record.upsertConflict
+                        record.upsertConflict,
+                        record.id
                     );
                     if (result.success) {
                         const committed = await quotaMgr.releaseDatabaseQuota(`db_${id}`, estBytes, 'committed');
@@ -680,7 +681,7 @@ export class DurableOutboxService {
     public async executeOnClient(
         client: SupabaseClient,
         table: string,
-        op: 'insert' | 'update' | 'upsert' | 'delete',
+        op: 'insert' | 'update' | 'upsert' | 'delete' | 'custom',
         payload: any,
         primaryKeyCol: string = 'id',
         filter?: { column: string; value: any }[] | null,
