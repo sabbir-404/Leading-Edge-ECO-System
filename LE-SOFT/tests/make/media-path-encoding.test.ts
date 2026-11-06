@@ -1,6 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { net } from 'electron';
+import { MediaProtocolService } from '../../electron/services/media/MediaProtocolService';
 import { decodePathSegments, encodePathSegments } from '../../src/utils/mediaPath';
 import { resolveImageSrc } from '../../src/utils/imageSrc';
+
+vi.mock('../../electron/supabase', () => ({
+    getCfAccessHeaders: () => ({}),
+    getNasStorageAuthHeaders: () => ({}),
+    getNasStorageCandidates: () => ['http://127.0.0.1:8081'],
+    getNasStorageUrl: () => 'http://127.0.0.1:8081'
+}));
 
 describe('media path segment encoding', () => {
     it('encodes reserved filename characters without changing path separators', () => {
@@ -57,5 +66,28 @@ describe('media path segment encoding', () => {
         )).toBe(
             'app-media://nas/files/product-images/Desk%20%231.png'
         );
+    });
+
+    it('fetches the exact reserved-character NAS filename from the configured storage endpoint', async () => {
+        const unique = `path-regression-${Date.now()}`;
+        const requestUrl = `app-media://nas/files/product-images/${unique}%20%231%3Fproof%3D1%20100%25.png`;
+        const fetchSpy = vi.spyOn(net, 'fetch').mockResolvedValue(
+            new Response(Buffer.from('image-bytes'), {
+                status: 200,
+                headers: { 'content-type': 'image/png' }
+            }) as any
+        );
+
+        try {
+            const service = MediaProtocolService.getInstance();
+            const response = await (service as any).handleRemoteMedia(new URL(requestUrl));
+            expect(response.status).toBe(200);
+            expect(fetchSpy).toHaveBeenCalledWith(
+                `http://127.0.0.1:8081/files/product-images/${unique}%20%231%3Fproof%3D1%20100%25.png`,
+                expect.objectContaining({ headers: expect.any(Object), signal: expect.any(AbortSignal) })
+            );
+        } finally {
+            fetchSpy.mockRestore();
+        }
     });
 });
