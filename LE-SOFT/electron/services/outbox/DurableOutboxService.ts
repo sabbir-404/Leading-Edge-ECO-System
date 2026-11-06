@@ -696,6 +696,8 @@ export class DurableOutboxService {
                 : Array.isArray(payload)
                     ? await encryptRowsAsync(payload, 100)
                     : (payload && typeof payload === 'object') ? encryptObject(payload) : payload;
+            let writeData: any = encData;
+            let makeOrderOperationId: string | null = null;
 
             if (table === 'inventory_decrement') {
                 // Use the original payload here: string quantities may be field-encrypted by encryptObject.
@@ -742,6 +744,32 @@ export class DurableOutboxService {
                     resolvedId: 'dec_' + operationId,
                     affectedRows: result.already_applied === true ? 0 : 1
                 };
+            }
+
+            if (table === 'make_orders' && (op === 'insert' || op === 'upsert')) {
+                const operationId = String(idempotencyKey || '').trim();
+                if (!operationId || operationId.length > 200) {
+                    return { success: false, error: new Error('MAKE order insert requires a valid durable outbox operation ID.') };
+                }
+                if (!encData || Array.isArray(encData) || typeof encData !== 'object') {
+                    return { success: false, error: new Error('MAKE order insert requires a single object payload.') };
+                }
+
+                // Do not deduplicate on description: field encryption randomizes the
+                // ciphertext, so the same description cannot be queried reliably.
+                const { data: existingOrder, error: existingOrderError } = await client
+                    .from('make_orders')
+                    .select('id')
+                    .eq('outbox_operation_id', operationId)
+                    .maybeSingle();
+
+                if (existingOrderError) return { success: false, error: existingOrderError };
+                if (existingOrder?.id) {
+                    return { success: true, resolvedId: String(existingOrder.id), affectedRows: 0 };
+                }
+
+                makeOrderOperationId = operationId;
+                writeData = { ...encData, outbox_operation_id: operationId };
             }
 
             if (table === 'bill_shipping' && (op === 'insert' || op === 'upsert')) {
@@ -822,48 +850,50 @@ export class DurableOutboxService {
                     }
                 }
 
-                if (table === 'make_orders') {
-                    // Lookup keys must use plaintext values; encryptObject uses random IVs for protected text fields.
-                    const d = payload as Record<string, any>;
-                    if (d.bill_id && d.description) {
-                        try {
-                            const query = client.from('make_orders');
-                            if (query && typeof query.select === 'function') {
-                                const sel = query.select('id');
-                                if (sel && typeof sel.eq === 'function') {
-                                    const eq1 = sel.eq('bill_id', d.bill_id);
-                                    if (eq1 && typeof eq1.eq === 'function') {
-                                        const eq2 = eq1.eq('description', d.description);
-                                        if (eq2 && typeof eq2.maybeSingle === 'function') {
-                                            const { data: existing } = await eq2.maybeSingle();
-                                            if (existing?.id) {
-                                                return { success: true, resolvedId: String(existing.id), affectedRows: 1 };
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        } catch {}
-                    }
-                }
 
                 if (Array.isArray(encData)) {
                     // Multi-row insert: DO NOT use maybeSingle()!
-                    const res = await client.from(table).insert(encData).select(primaryKeyCol);
-                    if (res.error) return { success: false, error: res.error };
+                    const res = await client.from(table).insert(writeData).select(primaryKeyCol);
+                    if (res.error) {
+                        if (table === 'make_orders' && makeOrderOperationId && res.error.code === '23505') {
+                            const { data: duplicate, error: duplicateError } = await client
+                                .from('make_orders')
+                                .select('id')
+                                .eq('outbox_operation_id', makeOrderOperationId)
+                                .maybeSingle();
+                            if (!duplicateError && duplicate?.id) {
+                                return { success: true, resolvedId: String(duplicate.id), affectedRows: 0 };
+                            }
+                        }
+                        return { success: false, error: res.error };
+                    }
                     const rows = (res.data || []) as any[];
                     const resolvedId = rows.length > 0 ? String(rows[0][primaryKeyCol]) : undefined;
                     return { success: true, resolvedId, affectedRows: rows.length };
                 } else {
-                    const res = await client.from(table).insert(encData).select(primaryKeyCol).maybeSingle();
-                    if (res.error) return { success: false, error: res.error };
+                    const res = await client.from(table).insert(writeData).select(primaryKeyCol).maybeSingle();
+                    if (res.error) {
+                        if (table === 'make_orders' && makeOrderOperationId && res.error.code === '23505') {
+                            const { data: duplicate, error: duplicateError } = await client
+                                .from('make_orders')
+                                .select('id')
+                                .eq('outbox_operation_id', makeOrderOperationId)
+                                .maybeSingle();
+                            if (!duplicateError && duplicate?.id) {
+                                return { success: true, resolvedId: String(duplicate.id), affectedRows: 0 };
+                            }
+                        }
+                        return { success: false, error: res.error };
+                    }
                     const resolvedId = res.data ? String((res.data as any)[primaryKeyCol]) : undefined;
                     return { success: true, resolvedId, affectedRows: res.data ? 1 : 0 };
                 }
             } else if (op === 'upsert') {
-                const conflictOption = upsertConflict ? { onConflict: upsertConflict } : (primaryKeyCol ? { onConflict: primaryKeyCol } : undefined);
+                const conflictOption = makeOrderOperationId
+                    ? { onConflict: 'outbox_operation_id' }
+                    : (upsertConflict ? { onConflict: upsertConflict } : (primaryKeyCol ? { onConflict: primaryKeyCol } : undefined));
                 if (Array.isArray(encData)) {
-                    const res = await client.from(table).upsert(encData, conflictOption).select(primaryKeyCol);
+                    const res = await client.from(table).upsert(writeData, conflictOption).select(primaryKeyCol);
                     if (res.error) return { success: false, error: res.error };
                     const rows = (res.data || []) as any[];
                     const resolvedId = rows.length > 0 ? String(rows[0][primaryKeyCol]) : undefined;
