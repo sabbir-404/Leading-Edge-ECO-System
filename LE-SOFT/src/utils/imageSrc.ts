@@ -1,16 +1,13 @@
+import { decodePathSegments, encodePathSegments } from './mediaPath';
+
 /**
  * imageSrc.ts
  * ─────────────────────────────────────────────────────────────────────────────
  * Cross-platform image source normalizer and safe diagnostic handler for LE-SOFT.
  *
- * Ensures all image paths (local files, URLs, data URLs, TrueNAS paths):
- *  - Route safely through the privileged app-media:// protocol in Electron,
- *    eliminating Chromium "Not allowed to load local resource" security blocks.
- *  - Route TrueNAS storage through app-media://nas/... for automatic Cloudflare
- *    Access authentication and persistent disk caching (userData/image-cache).
- *  - Normalize Windows backslashes, drive letters, and spaces properly.
- *  - Retain full compatibility with standard web & test environments.
- *  - Produce safe technical diagnostics on load failures without logging PII.
+ * NAS and local file paths are encoded segment-by-segment. This prevents
+ * filename characters such as #, ?, %, and spaces from being interpreted as
+ * URL fragments, query strings, or malformed escape sequences.
  */
 
 export function resolveImageSrc(imagePath?: string | null): string {
@@ -18,61 +15,63 @@ export function resolveImageSrc(imagePath?: string | null): string {
     const trimmed = imagePath.trim();
     if (!trimmed) return '';
 
-    // 1. Data URLs & Blob URLs can be rendered directly by Chromium
+    // Data URLs & Blob URLs can be rendered directly by Chromium.
     if (/^(data:|blob:)/i.test(trimmed)) {
         return trimmed;
     }
 
-    // 2. Already using app-media protocol
+    // Normalize existing app-media NAS URLs without double encoding.
     if (/^app-media:\/\//i.test(trimmed)) {
-        if (/^app-media:\/\/nas\//i.test(trimmed)) {
-            const sub = trimmed.replace(/^app-media:\/\/nas\/?/i, '');
-            const cleanSub = decodeURIComponent(sub).replace(/^\//, '');
-            return `app-media://nas/${encodeURI(cleanSub)}`;
+        if (/^app-media:\/\/nas(?:\/|$)/i.test(trimmed)) {
+            const url = new URL(trimmed);
+            const cleanSub = decodePathSegments(url.pathname).replace(/^\/+/, '');
+            return `app-media://nas/${encodePathSegments(cleanSub)}`;
         }
         return trimmed;
     }
 
-    // 3. TrueNAS Cloudflare Tunnel Storage URL or legacy LAN storage ports (8080/8081) -> app-media://nas/
-    if (/^https?:\/\/(storage\.lenas\.me|[0-9\.]+:(?:8080|8081))\//i.test(trimmed)) {
-        const subPath = trimmed.replace(/^https?:\/\/(storage\.lenas\.me|[0-9\.]+:(?:8080|8081))\/?/i, '');
-        const cleanSub = decodeURIComponent(subPath).replace(/^\//, '');
-        return `app-media://nas/${encodeURI(cleanSub)}`;
-    }
-
-    // 4. Relative or absolute /files/product-images/ path
-    if (/^\/?files\/product-images\//i.test(trimmed)) {
-        const cleanSub = decodeURIComponent(trimmed).replace(/^\//, '');
-        return `app-media://nas/${encodeURI(cleanSub)}`;
-    }
-
-    // 5. Remote HTTP / HTTPS URLs (e.g. Supabase storage or web links)
+    // TrueNAS storage and legacy LAN storage URLs.
     if (/^https?:\/\//i.test(trimmed)) {
+        try {
+            const url = new URL(trimmed);
+            const isStorageHost = url.hostname.toLowerCase() === 'storage.lenas.me';
+            const isLegacyStoragePort = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(url.hostname) &&
+                (url.port === '8080' || url.port === '8081');
+
+            if (isStorageHost || isLegacyStoragePort) {
+                const cleanSub = decodePathSegments(url.pathname).replace(/^\/+/, '');
+                return `app-media://nas/${encodePathSegments(cleanSub)}`;
+            }
+        } catch {
+            // Leave invalid/unsupported URLs to Chromium; do not crash rendering.
+        }
+
+        // Public Supabase and other external HTTP(S) URLs remain direct.
         return trimmed;
     }
 
-    // 5. Local Filesystem Path (Windows or POSIX)
+    // Relative product-image paths are NAS storage objects.
+    if (/^\/?files\/product-images\//i.test(trimmed)) {
+        const cleanSub = decodePathSegments(trimmed).replace(/^\/+/, '');
+        return `app-media://nas/${encodePathSegments(cleanSub)}`;
+    }
+
+    // Local filesystem path (Windows or POSIX).
     let clean = trimmed;
     if (/^file:\/\//i.test(clean)) {
-        // Strip file:/// or file://
-        clean = decodeURIComponent(clean.replace(/^file:\/\/\/?/i, ''));
+        clean = clean.replace(/^file:\/\/\/?/i, '');
+        clean = decodePathSegments(clean);
     }
 
-    // Normalize Windows backslashes to forward slashes for URL pathing
     clean = clean.replace(/\\/g, '/');
+    if (!clean.startsWith('/')) clean = `/${clean}`;
 
-    // Ensure leading slash
-    if (!clean.startsWith('/')) {
-        clean = '/' + clean;
-    }
-
-    // Encode path segments safely for standard URL representation while preserving Windows drive letter (e.g. /C:)
+    // Preserve Windows drive designator (e.g. /C:) while encoding other segments.
     const encoded = clean.split('/').map((part, idx) => {
         if (idx === 1 && /^[a-zA-Z]:$/.test(part)) return part;
         return encodeURIComponent(part);
     }).join('/');
 
-    // In Electron, route local filesystem access through the secure privileged protocol
     return `app-media://local${encoded}`;
 }
 
@@ -92,8 +91,8 @@ export async function diagnoseImageSrc(src: string): Promise<any> {
 
 /**
  * Standardized error handler for <img> elements:
- *  - Gracefully hides the broken image icon.
- *  - Queries technical diagnosis and reports safely to telemetry (no PII).
+ * - Gracefully hides the broken image icon.
+ * - Queries technical diagnosis and reports safe telemetry metadata.
  */
 export function handleImageLoadError(e: React.SyntheticEvent<HTMLImageElement, Event>, originalSrc?: string | null): void {
     const target = e.currentTarget;
