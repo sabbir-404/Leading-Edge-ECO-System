@@ -52,7 +52,7 @@ DECLARE
 BEGIN
     v_request_role := COALESCE(
         NULLIF(current_setting('request.jwt.claim.role', TRUE), ''),
-        NULLIF(current_setting('request.jwt.claims', TRUE)::JSONB ->> 'role', ''),
+        NULLIF(NULLIF(current_setting('request.jwt.claims', TRUE), '')::JSONB ->> 'role', ''),
         ''
     );
 
