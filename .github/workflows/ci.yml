@@ -82,3 +82,12 @@ jobs:
 
       - name: Type-check and production renderer build
         run: npm run build:check
+
+      - name: Type-check Electron main process
+        run: npx tsc --noEmit -p tsconfig.electron.json
+
+      - name: Bundle Electron main process and preload
+        run: npm run electron:build:main
+
+      - name: Verify third-party license manifest
+        run: npm run license:check
