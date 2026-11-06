@@ -51,7 +51,7 @@ export interface OutboxOperationInput {
 export interface OutboxRecord {
     id: string;
     entityType: string;
-    operation: 'insert' | 'update' | 'upsert' | 'delete';
+    operation: 'insert' | 'update' | 'upsert' | 'delete' | 'custom';
     payload: any;
     filter: { column: string; value: any }[] | null;
     primaryKeyCol: string;
