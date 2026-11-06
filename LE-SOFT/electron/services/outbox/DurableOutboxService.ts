@@ -969,7 +969,7 @@ export class DurableOutboxService {
                 UPDATE outbox_operations
                 SET status = ?, last_error = ?, updated_at = ?, next_attempt_at = ?
                 WHERE id = ?
-            `).run(status, errorMsg, Date.now(), status === 'buffered_supabase' ? Date.now() + 15000 : 0, id);
+            `).run(status, errorMsg, Date.now(), (status === 'buffered_supabase' || status === 'cleanup_pending') ? Date.now() + 15000 : 0, id);
             this.broadcastOutboxStatus();
         } catch {}
     }
