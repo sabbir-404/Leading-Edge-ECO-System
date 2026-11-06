@@ -134,10 +134,12 @@ export class DurableOutboxService {
                     target TEXT DEFAULT 'both',
                     status TEXT NOT NULL DEFAULT 'pending',
                     retry_count INTEGER DEFAULT 0,
+                    next_attempt_at INTEGER NOT NULL DEFAULT 0,
                     max_retries INTEGER DEFAULT 10,
                     last_error TEXT,
                     created_at INTEGER NOT NULL,
                     updated_at INTEGER NOT NULL
+                    next_attempt_at INTEGER NOT NULL DEFAULT 0
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_outbox_status ON outbox_operations(status);
@@ -157,6 +159,7 @@ export class DurableOutboxService {
             try { this.db.exec("ALTER TABLE outbox_operations ADD COLUMN filter_json TEXT"); } catch {}
             try { this.db.exec("ALTER TABLE outbox_operations ADD COLUMN upsert_conflict TEXT"); } catch {}
             try { this.db.exec("ALTER TABLE outbox_operations ADD COLUMN metadata_json TEXT"); } catch {}
+            try { this.db.exec("ALTER TABLE outbox_operations ADD COLUMN next_attempt_at INTEGER NOT NULL DEFAULT 0"); } catch {}
 
             console.log('[DurableOutbox] Initialized SQLite outbox at:', this.dbPath);
         } catch (err: any) {
@@ -207,8 +210,8 @@ export class DurableOutboxService {
                 id, entity_type, operation, payload_json, filter_json,
                 primary_key_col, primary_key_val, upsert_conflict,
                 dependency_op_id, metadata_json, target, status,
-                retry_count, max_retries, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+                retry_count, max_retries, created_at, updated_at, next_attempt_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 0)
         `);
 
         const transaction = this.db.transaction((ops: OutboxOperationInput[]) => {
@@ -334,9 +337,10 @@ export class DurableOutboxService {
             const rows = this.db.prepare(`
                 SELECT * FROM outbox_operations
                 WHERE status IN ('pending', 'buffered_supabase', 'cleanup_pending')
+                  AND next_attempt_at <= ?
                 ORDER BY created_at ASC
                 LIMIT ?
-            `).all(batchSize) as any[];
+            `).all(Date.now(), batchSize) as any[];
 
             if (rows.length === 0) return 0;
 
@@ -381,7 +385,7 @@ export class DurableOutboxService {
             // Find blocked operations whose dependencies have completed, synced to NAS, buffered to Supabase, or have an ID mapped
             this.db.prepare(`
                 UPDATE outbox_operations
-                SET status = 'pending', updated_at = ?
+                SET status = 'pending', updated_at = ?, next_attempt_at = 0
                 WHERE status = 'blocked_dependency'
                   AND (
                       dependency_op_id IN (
@@ -705,29 +709,39 @@ export class DurableOutboxService {
                 return { success: true, resolvedId: `dec_${pId}_${qty}`, affectedRows: 1 };
             }
 
-            if (table === 'bill_shipping') {
+            if (table === 'bill_shipping' && (op === 'insert' || op === 'upsert')) {
                 const d = encData as Record<string, any>;
                 let realBillId = d.bill_id;
+
                 if (d.invoice_number && (!realBillId || realBillId === 0)) {
-                    const { data: b } = await client.from('bills').select('id').eq('invoice_number', d.invoice_number).maybeSingle();
-                    if (b?.id) realBillId = b.id;
+                    const { data: bill, error: billError } = await client
+                        .from('bills')
+                        .select('id')
+                        .eq('invoice_number', d.invoice_number)
+                        .maybeSingle();
+                    if (billError) return { success: false, error: billError };
+                    if (bill?.id) realBillId = bill.id;
                 }
 
-                const { data: sh, error: shErr } = await client.from('bill_shipping').upsert({ 
-                    bill_id: realBillId, 
-                    ship_to_name: d.ship_to_name, 
-                    ship_to_address: d.ship_to_address, 
-                    ship_to_phone: d.ship_to_phone || '', 
-                    ship_from_name: d.ship_from_name || '', 
-                    ship_from_address: d.ship_from_address || '', 
-                    shipping_charge: d.shipping_charge || 0, 
-                    updated_by: d.updated_by, 
-                    status: 'pending_payment' 
-                }, { onConflict: 'bill_id' }).select('id').maybeSingle();
-                
-                if (shErr) return { success: false, error: shErr };
-                const resolvedId = sh?.id ? String(sh.id) : undefined;
-                return { success: true, resolvedId, affectedRows: 1 };
+                if (!realBillId) {
+                    return {
+                        success: false,
+                        error: new Error('Cannot write bill_shipping without a resolved bill_id.')
+                    };
+                }
+
+                // invoice_number is only a lookup hint; it is not a bill_shipping column.
+                const { invoice_number: _invoiceNumber, ...shippingFields } = d;
+                const shippingPayload = { ...shippingFields, bill_id: realBillId };
+                const { data: shipment, error: shippingError } = await client
+                    .from('bill_shipping')
+                    .upsert(shippingPayload, { onConflict: 'bill_id' })
+                    .select('id')
+                    .maybeSingle();
+
+                if (shippingError) return { success: false, error: shippingError };
+                const resolvedId = shipment?.id ? String(shipment.id) : undefined;
+                return { success: true, resolvedId, affectedRows: shipment ? 1 : 0 };
             }
 
             if (op === 'insert') {
@@ -743,23 +757,33 @@ export class DurableOutboxService {
                     const firstBillId = items[0]?.bill_id;
                     if (firstBillId) {
                         try {
-                            const query = client.from('bill_items');
-                            if (query && typeof query.select === 'function') {
-                                const sel = query.select('id');
-                                if (sel && typeof sel.eq === 'function') {
-                                    const { data: existing } = await sel.eq('bill_id', firstBillId);
-                                    if (existing && existing.length >= items.length) {
-                                        return { success: true, resolvedId: String(existing[0].id), affectedRows: existing.length };
-                                    }
-                                    if (existing && existing.length > 0 && typeof query.delete === 'function') {
-                                        const del = query.delete();
-                                        if (del && typeof del.eq === 'function') {
-                                            await del.eq('bill_id', firstBillId);
-                                        }
-                                    }
-                                }
+                            const { data: existing, error: existingError } = await client
+                                .from('bill_items')
+                                .select('id')
+                                .eq('bill_id', firstBillId);
+
+                            if (existingError) return { success: false, error: existingError };
+
+                            if (existing && existing.length === items.length) {
+                                // Existing rows may represent a prior successful request whose
+                                // acknowledgement was lost. Do not delete/reinsert them on retry.
+                                return { success: true, resolvedId: String(existing[0].id), affectedRows: existing.length };
                             }
-                        } catch {}
+
+                            if (existing && existing.length > 0) {
+                                // A partial set is ambiguous. Preserve existing accounting rows and
+                                // surface the conflict instead of deleting them before a new insert.
+                                return {
+                                    success: false,
+                                    affectedRows: existing.length,
+                                    error: new Error(
+                                        `Found ${existing.length} existing bill item(s) for bill ${firstBillId}; expected ${items.length}. Refusing destructive replacement.`
+                                    )
+                                };
+                            }
+                        } catch (error: any) {
+                            return { success: false, error };
+                        }
                     }
                 }
 
@@ -882,7 +906,7 @@ export class DurableOutboxService {
             const row = this.db.prepare(`SELECT entity_type FROM outbox_operations WHERE id = ?`).get(id) as any;
             this.db.prepare(`
                 UPDATE outbox_operations
-                SET status = 'completed', last_error = NULL, updated_at = ?
+                SET status = 'completed', last_error = NULL, updated_at = ?, next_attempt_at = 0
                 WHERE id = ?
             `).run(Date.now(), id);
             this.invokeCallbacks(id, true, { success: true, id });
@@ -908,9 +932,9 @@ export class DurableOutboxService {
         try {
             this.db.prepare(`
                 UPDATE outbox_operations
-                SET status = ?, last_error = ?, updated_at = ?
+                SET status = ?, last_error = ?, updated_at = ?, next_attempt_at = ?
                 WHERE id = ?
-            `).run(status, errorMsg, Date.now(), id);
+            `).run(status, errorMsg, Date.now(), status === 'buffered_supabase' ? Date.now() + 15000 : 0, id);
             this.broadcastOutboxStatus();
         } catch {}
     }
@@ -920,7 +944,7 @@ export class DurableOutboxService {
         try {
             this.db.prepare(`
                 UPDATE outbox_operations
-                SET status = 'dead_letter', last_error = ?, updated_at = ?
+                SET status = 'dead_letter', last_error = ?, updated_at = ?, next_attempt_at = 0
                 WHERE id = ?
             `).run(errorMsg, Date.now(), id);
             console.error(`[DurableOutbox] Operation ${id} moved to DEAD_LETTER:`, errorMsg);
@@ -936,11 +960,14 @@ export class DurableOutboxService {
             if (nextCount >= maxRetries) {
                 this.markDeadLetter(id, `Exceeded max retry threshold (${maxRetries} attempts)`);
             } else {
+                const now = Date.now();
+                const baseDelay = Math.min(60000, 1000 * Math.pow(2, Math.max(0, nextCount - 1)));
+                const jitter = Math.floor(Math.random() * 500);
                 this.db.prepare(`
                     UPDATE outbox_operations
-                    SET retry_count = ?, updated_at = ?
+                    SET retry_count = ?, updated_at = ?, next_attempt_at = ?
                     WHERE id = ?
-                `).run(nextCount, Date.now(), id);
+                `).run(nextCount, now, now + baseDelay + jitter, id);
             }
         } catch {}
     }
@@ -1045,7 +1072,7 @@ export class DurableOutboxService {
         try {
             const res = this.db.prepare(`
                 UPDATE outbox_operations
-                SET status = 'pending', retry_count = 0, last_error = NULL, updated_at = ?
+                SET status = 'pending', retry_count = 0, last_error = NULL, updated_at = ?, next_attempt_at = 0
                 WHERE id = ? AND status = 'dead_letter'
             `).run(Date.now(), id);
             this.broadcastOutboxStatus();
@@ -1060,7 +1087,7 @@ export class DurableOutboxService {
         try {
             const res = this.db.prepare(`
                 UPDATE outbox_operations
-                SET status = 'pending', retry_count = 0, last_error = NULL, updated_at = ?
+                SET status = 'pending', retry_count = 0, last_error = NULL, updated_at = ?, next_attempt_at = 0
                 WHERE status = 'dead_letter'
             `).run(Date.now());
             this.broadcastOutboxStatus();
